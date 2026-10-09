@@ -4,6 +4,8 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "PlanetBody.h"
+#include "StarBody.h"
+#include "Components/DirectionalLightComponent.h"
 #include "GameFramework/WorldSettings.h"
 #include "SpaceTarget.h"
 #include "StarshipHUD.h"
@@ -115,8 +117,18 @@ void ASlonkGameMode::UpdateStarLighting()
 	{
 		return;
 	}
+	const AStarBody* StarBody = Cast<AStarBody>(Star);
 	for (TActorIterator<ADirectionalLight> It(World); It; ++It)
 	{
 		It->SetActorRotation(LightDir.Rotation());
+		if (StarBody)
+		{
+			if (UDirectionalLightComponent* LightComp = Cast<UDirectionalLightComponent>(It->GetLightComponent()))
+			{
+				// Warm/cool the sunlight with the star, keeping it bright.
+				const FLinearColor C = StarBody->StarColor / FMath::Max(StarBody->StarColor.GetMax(), KINDA_SMALL_NUMBER);
+				LightComp->SetLightColor(FLinearColor(FMath::Lerp(1.f, C.R, 0.6f), FMath::Lerp(1.f, C.G, 0.6f), FMath::Lerp(1.f, C.B, 0.6f)));
+			}
+		}
 	}
 }

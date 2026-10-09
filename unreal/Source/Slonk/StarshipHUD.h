@@ -6,6 +6,29 @@
 #include "GameFramework/HUD.h"
 #include "StarshipHUD.generated.h"
 
+UENUM(BlueprintType)
+enum class ENavObjectKind : uint8
+{
+	Star,
+	Planet,
+	Moon,
+	Belt,
+	Target
+};
+
+/** One thing worth navigating to, gathered each frame. */
+USTRUCT(BlueprintType)
+struct FNavObject
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "Nav") TObjectPtr<AActor> Actor;
+	UPROPERTY(BlueprintReadOnly, Category = "Nav") FString Label;
+	UPROPERTY(BlueprintReadOnly, Category = "Nav") ENavObjectKind Kind = ENavObjectKind::Planet;
+	UPROPERTY(BlueprintReadOnly, Category = "Nav") FVector Location = FVector::ZeroVector;
+	UPROPERTY(BlueprintReadOnly, Category = "Nav") double RadiusCm = 0.0;
+};
+
 UCLASS()
 class SLONK_API AStarshipHUD : public AHUD
 {
@@ -19,6 +42,31 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HUD")
 	bool bShowHelp = true;
 
+	/** Diamonds, names and distances for every body in the system (N). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HUD|Nav")
+	bool bShowNavMarkers = true;
+
+	/** 2.5D system overview in the lower-right corner (M). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HUD|Nav")
+	bool bShowMinimap = true;
+
+	/** Tilt of the minimap's orbital plane in degrees (0 = top-down, 90 = edge-on). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HUD|Nav")
+	float MinimapTilt = 55.f;
+
+	/** Minimap rotates with the ship's heading when true; north-up otherwise. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HUD|Nav")
+	bool bMinimapHeadingUp = false;
+
+	/** Currently selected navigation target (L cycles). */
+	UPROPERTY(BlueprintReadOnly, Category = "HUD|Nav")
+	TWeakObjectPtr<AActor> NavTarget;
+
+	UFUNCTION(BlueprintCallable, Category = "HUD|Nav") void ToggleNavMarkers() { bShowNavMarkers = !bShowNavMarkers; }
+	UFUNCTION(BlueprintCallable, Category = "HUD|Nav") void ToggleMinimap() { bShowMinimap = !bShowMinimap; }
+	UFUNCTION(BlueprintCallable, Category = "HUD|Nav") void CycleNavTarget();
+	UFUNCTION(BlueprintCallable, Category = "HUD|Nav") void ClearNavTarget() { NavTarget = nullptr; }
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HUD")
 	FLinearColor Accent = FLinearColor(0.55f, 0.8f, 1.f);
 
@@ -26,6 +74,19 @@ public:
 	FLinearColor Warning = FLinearColor(1.f, 0.6f, 0.2f);
 
 private:
+	void GatherNavObjects();
+	void DrawNavMarkers(const AActor* Ship, float UIScale);
+	void DrawMinimap(const AActor* Ship, float UIScale);
+	void DrawCircle(float CX, float CY, float R, const FLinearColor& Color, int32 Segments = 32, float Thickness = 1.f);
+	void DrawEllipse(float CX, float CY, float RX, float RY, const FLinearColor& Color, int32 Segments = 48, float Thickness = 1.f);
+	FVector2D MinimapProject(const FVector& Relative, double Scale, float CX, float CY, float YawDeg) const;
+	FLinearColor KindColor(ENavObjectKind Kind) const;
+
+	TArray<FNavObject> NavObjects;
+	FVector StarLocation = FVector::ZeroVector;
+	double BeltRadiusCm = 0.0;
+	float NavTime = 0.f;
+
 	void DrawBar(float X, float Y, float W, float H, float Fraction, const FLinearColor& Color) const;
 	void DrawReticle(float Scale);
 	FString FormatSpeed(double CmPerSecond) const;

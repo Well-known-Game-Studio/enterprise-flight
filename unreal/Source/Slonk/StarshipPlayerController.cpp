@@ -101,6 +101,10 @@ void AStarshipPlayerController::CreateDefaultInputAssets()
 	Ensure(IA_ResetCamera, TEXT("IA_ResetCamera"), EInputActionValueType::Boolean);
 	Ensure(IA_ToggleHUD, TEXT("IA_ToggleHUD"), EInputActionValueType::Boolean);
 	Ensure(IA_ToggleHelp, TEXT("IA_ToggleHelp"), EInputActionValueType::Boolean);
+	Ensure(IA_ToggleNavMarkers, TEXT("IA_ToggleNavMarkers"), EInputActionValueType::Boolean);
+	Ensure(IA_ToggleMinimap, TEXT("IA_ToggleMinimap"), EInputActionValueType::Boolean);
+	Ensure(IA_CycleNavTarget, TEXT("IA_CycleNavTarget"), EInputActionValueType::Boolean);
+	Ensure(IA_ClearNavTarget, TEXT("IA_ClearNavTarget"), EInputActionValueType::Boolean);
 
 	if (MappingContext)
 	{
@@ -173,6 +177,14 @@ void AStarshipPlayerController::CreateDefaultInputAssets()
 	Map(Ctx, IA_ToggleHelp, EKeys::H);
 	Map(Ctx, IA_ToggleHelp, EKeys::Gamepad_Special_Left);
 
+	// Navigation.
+	Map(Ctx, IA_ToggleNavMarkers, EKeys::N);
+	Map(Ctx, IA_ToggleMinimap, EKeys::M);
+	Map(Ctx, IA_ToggleMinimap, EKeys::Gamepad_Special_Right);
+	Map(Ctx, IA_CycleNavTarget, EKeys::L);
+	Map(Ctx, IA_CycleNavTarget, EKeys::Gamepad_LeftThumbstick);
+	Map(Ctx, IA_ClearNavTarget, EKeys::K);
+
 	MappingContext = Ctx;
 }
 
@@ -239,6 +251,10 @@ void AStarshipPlayerController::SetupInputComponent()
 	EIC->BindAction(IA_ResetCamera, ETriggerEvent::Started, this, &AStarshipPlayerController::OnResetCamera);
 	EIC->BindAction(IA_ToggleHUD, ETriggerEvent::Started, this, &AStarshipPlayerController::OnToggleHUD);
 	EIC->BindAction(IA_ToggleHelp, ETriggerEvent::Started, this, &AStarshipPlayerController::OnToggleHelp);
+	EIC->BindAction(IA_ToggleNavMarkers, ETriggerEvent::Started, this, &AStarshipPlayerController::OnToggleNavMarkers);
+	EIC->BindAction(IA_ToggleMinimap, ETriggerEvent::Started, this, &AStarshipPlayerController::OnToggleMinimap);
+	EIC->BindAction(IA_CycleNavTarget, ETriggerEvent::Started, this, &AStarshipPlayerController::OnCycleNavTarget);
+	EIC->BindAction(IA_ClearNavTarget, ETriggerEvent::Started, this, &AStarshipPlayerController::OnClearNavTarget);
 }
 
 void AStarshipPlayerController::OnPossess(APawn* InPawn)
@@ -519,4 +535,24 @@ void AStarshipPlayerController::OnToggleHelp()
 	{
 		H->bShowHelp = !H->bShowHelp;
 	}
+}
+
+void AStarshipPlayerController::OnToggleNavMarkers()
+{
+	if (AStarshipHUD* H = Cast<AStarshipHUD>(GetHUD())) { H->ToggleNavMarkers(); }
+}
+
+void AStarshipPlayerController::OnToggleMinimap()
+{
+	if (AStarshipHUD* H = Cast<AStarshipHUD>(GetHUD())) { H->ToggleMinimap(); }
+}
+
+void AStarshipPlayerController::OnCycleNavTarget()
+{
+	if (AStarshipHUD* H = Cast<AStarshipHUD>(GetHUD())) { H->CycleNavTarget(); }
+}
+
+void AStarshipPlayerController::OnClearNavTarget()
+{
+	if (AStarshipHUD* H = Cast<AStarshipHUD>(GetHUD())) { H->ClearNavTarget(); }
 }

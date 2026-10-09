@@ -1,6 +1,8 @@
 #include "StarshipPawn.h"
 
 #include "Camera/CameraComponent.h"
+#include "GameFramework/PlayerController.h"
+#include "StarshipHUD.h"
 #include "Components/BoxComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Components/PostProcessComponent.h"
@@ -553,6 +555,20 @@ void AStarshipPawn::ProcessDebugCommand()
 		DebugSteerTime = Arg(4, 1.f);
 	}
 	else if (Op == TEXT("shake")) { AddCameraShake(Arg(1, 1.f)); }
+	else if (Op == TEXT("nav"))
+	{
+		if (APlayerController* PC = Cast<APlayerController>(GetController()))
+		{
+			if (AStarshipHUD* H = Cast<AStarshipHUD>(PC->GetHUD()))
+			{
+				const FString What = ArgStr(1);
+				if (What == TEXT("next")) { H->CycleNavTarget(); }
+				else if (What == TEXT("clear")) { H->ClearNavTarget(); }
+				else if (What == TEXT("markers")) { H->ToggleNavMarkers(); }
+				else if (What == TEXT("map")) { H->ToggleMinimap(); }
+			}
+		}
+	}
 	else
 	{
 		UE_LOG(LogTemp, Warning, TEXT("Starship debug command not understood: %s"), *Cmd);

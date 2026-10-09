@@ -72,6 +72,11 @@ APlanetBody::APlanetBody()
 	AtmosphereMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_PlanetAtmosphere.M_PlanetAtmosphere")));
 }
 
+FString APlanetBody::GetDisplayName() const
+{
+	return PlanetName.IsEmpty() ? GetActorNameOrLabel() : PlanetName;
+}
+
 double APlanetBody::GetRadiusCm() const
 {
 	return FMath::Max(RadiusKm, 1.f) * 100000.0;
@@ -102,6 +107,7 @@ void APlanetBody::ResolveStyleFromArchetype()
 	FRandomStream Rng(static_cast<int32>(Hash));
 
 	EPlanetArchetype Type = Archetype == EPlanetArchetype::Auto ? PickArchetype(Rng) : Archetype;
+	ResolvedArchetype = Type;
 	FPlanetStyle S; // defaults = temperate terrestrial
 	auto Jitter = [&Rng](const FLinearColor& C, float Amount) { return C * Rng.FRandRange(1.f - Amount, 1.f + Amount); };
 
@@ -113,6 +119,7 @@ void APlanetBody::ResolveStyleFromArchetype()
 		S.LandColor2 = Jitter(FLinearColor(0.55f, 0.45f, 0.28f), 0.25f);
 		S.CloudCoverage = Rng.FRandRange(0.35f, 0.55f);
 		S.AtmosphereColor = Jitter(FLinearColor(0.35f, 0.6f, 1.0f), 0.15f);
+		S.NightLightIntensity = Rng.FRand() < 0.6f ? 6.f : 0.f;
 		break;
 	case EPlanetArchetype::Ocean:
 		S.SeaLevel = Rng.FRandRange(0.7f, 0.85f);
@@ -125,16 +132,17 @@ void APlanetBody::ResolveStyleFromArchetype()
 	case EPlanetArchetype::Desert:
 		S.SeaLevel = Rng.FRandRange(-0.05f, 0.1f);
 		S.OceanColor = FLinearColor(0.35f, 0.25f, 0.15f); // dry basins
-		S.LandColor = Jitter(FLinearColor(0.62f, 0.42f, 0.22f), 0.25f);
-		S.LandColor2 = Jitter(FLinearColor(0.78f, 0.62f, 0.38f), 0.2f);
-		S.MountainColor = FLinearColor(0.45f, 0.3f, 0.22f);
+		S.LandColor = Jitter(FLinearColor(0.52f, 0.32f, 0.16f), 0.25f);
+		S.LandColor2 = Jitter(FLinearColor(0.85f, 0.7f, 0.45f), 0.2f);
+		S.MountainColor = FLinearColor(0.38f, 0.26f, 0.2f);
+		S.NoiseScale = 2.2f;
 		S.IceCapStart = Rng.FRand() < 0.5f ? 0.92f : 2.f;
 		S.CloudCoverage = Rng.FRandRange(0.05f, 0.2f);
 		S.AtmosphereColor = Jitter(FLinearColor(0.95f, 0.65f, 0.4f), 0.2f);
 		S.SunsetColor = FLinearColor(1.0f, 0.35f, 0.1f);
 		S.AtmosphereDepth = 0.04f;
 		S.Intensity = 1.4f;
-		S.ReliefFraction = 0.01f;
+		S.ReliefFraction = 0.004f;
 		break;
 	case EPlanetArchetype::Ice:
 		S.SeaLevel = Rng.FRandRange(0.3f, 0.5f);
@@ -151,7 +159,9 @@ void APlanetBody::ResolveStyleFromArchetype()
 		break;
 	case EPlanetArchetype::Lava:
 		S.SeaLevel = Rng.FRandRange(0.2f, 0.35f);
-		S.OceanColor = FLinearColor(3.0f, 0.6f, 0.05f); // molten, over-bright
+		S.OceanColor = FLinearColor(1.0f, 0.25f, 0.03f); // molten
+		S.ShallowColor = FLinearColor(1.0f, 0.6f, 0.1f);
+		S.LavaEmissive = 4.f;
 		S.LandColor = FLinearColor(0.08f, 0.06f, 0.05f);
 		S.LandColor2 = FLinearColor(0.2f, 0.12f, 0.08f);
 		S.MountainColor = FLinearColor(0.25f, 0.2f, 0.18f);
@@ -164,7 +174,7 @@ void APlanetBody::ResolveStyleFromArchetype()
 		S.SunsetColor = FLinearColor(1.0f, 0.2f, 0.05f);
 		S.AtmosphereDepth = 0.05f;
 		S.NightFactor = 0.25f;
-		S.ReliefFraction = 0.015f;
+		S.ReliefFraction = 0.006f;
 		break;
 	case EPlanetArchetype::GasGiant:
 	{
@@ -174,15 +184,20 @@ void APlanetBody::ResolveStyleFromArchetype()
 		S.SeaLevel = 0.5f;
 		S.OceanColor = A;
 		S.LandColor = B;
-		S.LandColor2 = A * 0.8f;
-		S.MountainColor = B * 1.1f;
+		S.LandColor2 = A * 0.9f;
+		S.MountainColor = A;
 		S.IceCapStart = 2.f;
-		S.NoiseScale = Rng.FRandRange(1.2f, 2.0f);
+		S.NoiseScale = Rng.FRandRange(0.8f, 1.4f);
+		S.BandStrength = 0.92f;
+		S.BandScale = Rng.FRandRange(10.f, 18.f);
+		S.BandWarp = Rng.FRandRange(0.3f, 0.9f);
+		S.NormalStrength = 0.05f;
+		S.ShallowColor = A * 0.9f;
 		S.OceanRoughness = 0.7f;
 		S.LandRoughness = 0.7f;
 		S.bClouds = true;
-		S.CloudCoverage = 0.6f;
-		S.CloudScale = 2.5f;
+		S.CloudCoverage = 0.3f;
+		S.CloudScale = 2.0f;
 		S.CloudColor = A * 1.05f;
 		S.CloudSpinDegPerSec = 0.4f;
 		S.AtmosphereColor = A;
@@ -200,9 +215,11 @@ void APlanetBody::ResolveStyleFromArchetype()
 		S.IceCapStart = 2.f;
 		S.NoiseScale = 5.f;
 		S.LandRoughness = 0.95f;
+		S.NormalStrength = 0.15f;
+		S.DetailNormalScale = 6.f;
 		S.bClouds = false;
 		S.bAtmosphere = false;
-		S.ReliefFraction = 0.02f;
+		S.ReliefFraction = 0.006f;
 		break;
 	}
 
@@ -256,6 +273,16 @@ void APlanetBody::ApplyMaterials()
 		SurfaceMID->SetScalarParameterValue(TEXT("NoiseScale"), S.NoiseScale);
 		SurfaceMID->SetScalarParameterValue(TEXT("OceanRoughness"), S.OceanRoughness);
 		SurfaceMID->SetScalarParameterValue(TEXT("LandRoughness"), S.LandRoughness);
+		SurfaceMID->SetVectorParameterValue(TEXT("ShallowColor"), S.ShallowColor);
+		SurfaceMID->SetScalarParameterValue(TEXT("NormalStrength"), S.NormalStrength);
+		SurfaceMID->SetScalarParameterValue(TEXT("DetailNormalScale"), S.DetailNormalScale);
+		SurfaceMID->SetScalarParameterValue(TEXT("NightLightIntensity"), S.NightLightIntensity);
+		SurfaceMID->SetVectorParameterValue(TEXT("NightLightColor"), S.NightLightColor);
+		SurfaceMID->SetScalarParameterValue(TEXT("LavaEmissive"), S.LavaEmissive);
+		SurfaceMID->SetScalarParameterValue(TEXT("BandStrength"), S.BandStrength);
+		SurfaceMID->SetScalarParameterValue(TEXT("BandScale"), S.BandScale);
+		SurfaceMID->SetScalarParameterValue(TEXT("BandWarp"), S.BandWarp);
+		SurfaceMID->SetVectorParameterValue(TEXT("SunDirection"), FLinearColor(CachedStarDirection.X, CachedStarDirection.Y, CachedStarDirection.Z, 0.f));
 		// HeightScale is in cm per unit of (height - sea level); land tops out ~0.5 above sea level.
 		SurfaceMID->SetScalarParameterValue(TEXT("HeightScale"), S.ReliefFraction * GetRadiusCm() * 2.f);
 	}
@@ -270,7 +297,9 @@ void APlanetBody::ApplyMaterials()
 	{
 		AtmosphereMID->SetVectorParameterValue(TEXT("AtmosphereColor"), S.AtmosphereColor);
 		AtmosphereMID->SetVectorParameterValue(TEXT("SunsetColor"), S.SunsetColor);
-		AtmosphereMID->SetScalarParameterValue(TEXT("RimExponent"), S.RimExponent);
+		AtmosphereMID->SetScalarParameterValue(TEXT("AtmosphereDepth"), S.AtmosphereDepth);
+		AtmosphereMID->SetScalarParameterValue(TEXT("Falloff"), S.Falloff);
+		AtmosphereMID->SetScalarParameterValue(TEXT("HazePower"), S.HazePower);
 		AtmosphereMID->SetScalarParameterValue(TEXT("Intensity"), S.Intensity);
 		AtmosphereMID->SetScalarParameterValue(TEXT("Opacity"), S.Opacity);
 		AtmosphereMID->SetScalarParameterValue(TEXT("Haze"), S.Haze);
@@ -379,9 +408,17 @@ void APlanetBody::Tick(float DeltaTime)
 	{
 		StarSearchTimer = 0.25f;
 		UpdateStarDirection();
-		if (AtmosphereMID)
-		{
-			AtmosphereMID->SetVectorParameterValue(TEXT("SunDirection"), FLinearColor(CachedStarDirection.X, CachedStarDirection.Y, CachedStarDirection.Z, 0.f));
-		}
+		const FLinearColor SunDir(CachedStarDirection.X, CachedStarDirection.Y, CachedStarDirection.Z, 0.f);
+		if (AtmosphereMID) { AtmosphereMID->SetVectorParameterValue(TEXT("SunDirection"), SunDir); }
+		if (SurfaceMID) { SurfaceMID->SetVectorParameterValue(TEXT("SunDirection"), SunDir); }
 	}
 }
+
+#if WITH_EDITOR
+void APlanetBody::PostEditMove(bool bFinished)
+{
+	Super::PostEditMove(bFinished);
+	// Editor tools may set the actor transform after construction; keep the body sized by its radius.
+	ApplyAppearance();
+}
+#endif

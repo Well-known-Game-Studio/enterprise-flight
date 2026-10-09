@@ -40,8 +40,21 @@ struct FPlanetStyle
 	/** Latitude (|z| of the unit normal) where polar ice begins; 2 disables caps. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float IceCapStart = 0.82f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float NoiseScale = 3.f;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float OceanRoughness = 0.25f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float OceanRoughness = 0.45f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float LandRoughness = 0.9f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") FLinearColor ShallowColor = FLinearColor(0.1f, 0.35f, 0.5f);
+	/** Strength of the procedural normal detail. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float NormalStrength = 0.12f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float DetailNormalScale = 5.f;
+	/** Night-side city lights on land (0 = none). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float NightLightIntensity = 0.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") FLinearColor NightLightColor = FLinearColor(1.0f, 0.8f, 0.5f);
+	/** Emissive strength of the "ocean" (molten rock on lava worlds). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float LavaEmissive = 0.f;
+	/** 1 = fully latitude-banded (gas giant), 0 = continents. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface", meta = (ClampMin = "0", ClampMax = "1")) float BandStrength = 0.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float BandScale = 14.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float BandWarp = 0.6f;
 	/** Vertex displacement of land above sea level as a fraction of the radius (heightmap relief). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface", meta = (ClampMin = "0", ClampMax = "0.2")) float ReliefFraction = 0.f;
 
@@ -60,11 +73,13 @@ struct FPlanetStyle
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Atmosphere") FLinearColor AtmosphereColor = FLinearColor(0.35f, 0.6f, 1.0f);
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Atmosphere") FLinearColor SunsetColor = FLinearColor(1.0f, 0.45f, 0.15f);
 	/** Shell thickness as a fraction of the radius (how far the glow extends past the limb). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Atmosphere", meta = (ClampMin = "0", ClampMax = "0.5")) float AtmosphereDepth = 0.06f;
-	/** Rim falloff: higher = thinner, sharper limb glow. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Atmosphere") float RimExponent = 3.f;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Atmosphere") float Intensity = 2.f;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Atmosphere", meta = (ClampMin = "0", ClampMax = "1")) float Opacity = 0.85f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Atmosphere", meta = (ClampMin = "0", ClampMax = "0.5")) float AtmosphereDepth = 0.08f;
+	/** Falloff of the limb glow with height: higher = thinner, sharper. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Atmosphere") float Falloff = 2.f;
+	/** Shape of the haze over the disc: higher keeps haze near the limb. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Atmosphere") float HazePower = 4.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Atmosphere") float Intensity = 2.2f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Atmosphere", meta = (ClampMin = "0", ClampMax = "1")) float Opacity = 1.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Atmosphere", meta = (ClampMin = "0", ClampMax = "1")) float Haze = 0.03f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Atmosphere", meta = (ClampMin = "0", ClampMax = "1")) float SunsetStrength = 0.8f;
 	/** Glow left on the night side (0 = pitch black). */
@@ -81,6 +96,9 @@ public:
 
 	virtual void OnConstruction(const FTransform& Transform) override;
 	virtual void BeginPlay() override;
+#if WITH_EDITOR
+	virtual void PostEditMove(bool bFinished) override;
+#endif
 	virtual void Tick(float DeltaTime) override;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
@@ -117,6 +135,17 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
 	FPlanetStyle Style;
+
+	/** The archetype actually in use (after Auto resolution). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Planet")
+	EPlanetArchetype ResolvedArchetype = EPlanetArchetype::Terrestrial;
+
+	UFUNCTION(BlueprintPure, Category = "Planet")
+	bool IsMoon() const { return ResolvedArchetype == EPlanetArchetype::Moon; }
+
+	/** Display name: PlanetName if set, else the actor label. */
+	UFUNCTION(BlueprintPure, Category = "Planet")
+	FString GetDisplayName() const;
 
 	/** Optional star to light the atmosphere from. If unset, the nearest actor tagged "Star" is used, else the directional light. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")

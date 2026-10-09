@@ -1,6 +1,10 @@
 #include "StarshipHUD.h"
 
 #include "Engine/Canvas.h"
+#include "EngineUtils.h"
+#include "PlanetBody.h"
+#include "SpaceTarget.h"
+#include "StarBody.h"
 #include "Engine/Engine.h"
 #include "Engine/Font.h"
 #include "GameFramework/PlayerController.h"
@@ -185,6 +189,15 @@ void AStarshipHUD::DrawHUD()
 		}
 	}
 
+	if (bShowNavMarkers)
+	{
+		DrawNavMarkers(Ship, UIScale);
+	}
+	if (bShowMinimap)
+	{
+		DrawMinimap(Ship, UIScale);
+	}
+
 	// ---- Right panel: camera + help ----
 	const float RX = Canvas->ClipX - 330.f * UIScale;
 	float RY = 32.f * UIScale;
@@ -212,6 +225,8 @@ void AStarshipHUD::DrawHUD()
 			TEXT("T  cycle target      Y  clear target"),
 			TEXT("V  camera            RMB hold  free look"),
 			TEXT("R  reset camera      Tab  HUD     H  help"),
+			TEXT("N  nav markers       M  minimap"),
+			TEXT("L  next nav target   K  clear nav target"),
 		};
 		for (const TCHAR* L : Help)
 		{
@@ -225,4 +240,393 @@ void AStarshipHUD::DrawHUD()
 		const float W = 240.f * UIScale;
 		DrawBar(Canvas->ClipX * 0.5f - W * 0.5f, Canvas->ClipY * 0.5f + 40.f * UIScale, W, 10.f * UIScale, Warp->GetChargeProgress(), Accent);
 	}
+}
+
+// ---------------------------------------------------------------------------------------------
+// Navigation: markers and minimap
+// ---------------------------------------------------------------------------------------------
+
+FLinearColor AStarshipHUD::KindColor(ENavObjectKind Kind) const
+{
+	switch (Kind)
+	{
+	case ENavObjectKind::Star: return FLinearColor(1.f, 0.85f, 0.45f);
+	case ENavObjectKind::Planet: return FLinearColor(0.55f, 0.85f, 1.f);
+	case ENavObjectKind::Moon: return FLinearColor(0.75f, 0.75f, 0.8f);
+	case ENavObjectKind::Belt: return FLinearColor(0.7f, 0.6f, 0.5f);
+	default: return Warning;
+	}
+}
+
+void AStarshipHUD::GatherNavObjects()
+{
+	NavObjects.Reset();
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	bool bHaveStar = false;
+	for (TActorIterator<AStarBody> It(World); It; ++It)
+	{
+		FNavObject O;
+		O.Actor = *It;
+		O.Label = It->StarName.IsEmpty() ? It->GetActorNameOrLabel() : It->StarName;
+		O.Kind = ENavObjectKind::Star;
+		O.Location = It->GetActorLocation();
+		O.RadiusCm = It->GetRadiusCm();
+		NavObjects.Add(O);
+		if (!bHaveStar)
+		{
+			StarLocation = O.Location;
+			bHaveStar = true;
+		}
+	}
+	if (!bHaveStar)
+	{
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			if (It->ActorHasTag(APlanetBody::StarTag))
+			{
+				FNavObject O;
+				O.Actor = *It;
+				O.Label = It->GetActorNameOrLabel();
+				O.Kind = ENavObjectKind::Star;
+				O.Location = It->GetActorLocation();
+				O.RadiusCm = It->GetComponentsBoundingBox().GetExtent().GetMax();
+				NavObjects.Add(O);
+				StarLocation = O.Location;
+				bHaveStar = true;
+				break;
+			}
+		}
+	}
+	if (!bHaveStar)
+	{
+		StarLocation = FVector::ZeroVector;
+	}
+
+	for (TActorIterator<APlanetBody> It(World); It; ++It)
+	{
+		FNavObject O;
+		O.Actor = *It;
+		O.Label = It->GetDisplayName();
+		O.Kind = It->IsMoon() ? ENavObjectKind::Moon : ENavObjectKind::Planet;
+		O.Location = It->GetActorLocation();
+		O.RadiusCm = It->GetRadiusCm();
+		NavObjects.Add(O);
+	}
+
+	// The belt: average orbit radius of the PCG belt asteroids, plus the nearest rock as a marker.
+	double BeltSum = 0.0;
+	int32 BeltCount = 0;
+	ASpaceTarget* NearestRock = nullptr;
+	double NearestDist = TNumericLimits<double>::Max();
+	const AActor* Ship = PlayerOwner ? PlayerOwner->GetPawn() : nullptr;
+	for (TActorIterator<ASpaceTarget> It(World); It; ++It)
+	{
+		if (!It->GetActorNameOrLabel().StartsWith(TEXT("BeltAsteroid")))
+		{
+			continue;
+		}
+		BeltSum += FVector::Dist2D(It->GetActorLocation(), StarLocation);
+		++BeltCount;
+		if (Ship)
+		{
+			const double D = FVector::DistSquared(It->GetActorLocation(), Ship->GetActorLocation());
+			if (D < NearestDist)
+			{
+				NearestDist = D;
+				NearestRock = *It;
+			}
+		}
+	}
+	BeltRadiusCm = BeltCount > 0 ? BeltSum / BeltCount : 0.0;
+	if (NearestRock)
+	{
+		FNavObject O;
+		O.Actor = NearestRock;
+		O.Label = TEXT("Asteroid belt");
+		O.Kind = ENavObjectKind::Belt;
+		O.Location = NearestRock->GetActorLocation();
+		O.RadiusCm = NearestRock->Radius;
+		NavObjects.Add(O);
+	}
+}
+
+void AStarshipHUD::CycleNavTarget()
+{
+	GatherNavObjects();
+	if (NavObjects.Num() == 0)
+	{
+		NavTarget = nullptr;
+		return;
+	}
+	int32 Index = INDEX_NONE;
+	for (int32 i = 0; i < NavObjects.Num(); ++i)
+	{
+		if (NavObjects[i].Actor == NavTarget.Get())
+		{
+			Index = i;
+			break;
+		}
+	}
+	// Order: star, planets, moons, belt; wrap to "none" after the last entry.
+	const int32 Next = Index + 1;
+	NavTarget = Next < NavObjects.Num() ? NavObjects[Next].Actor : nullptr;
+}
+
+void AStarshipHUD::DrawCircle(float CX, float CY, float R, const FLinearColor& Color, int32 Segments, float Thickness)
+{
+	DrawEllipse(CX, CY, R, R, Color, Segments, Thickness);
+}
+
+void AStarshipHUD::DrawEllipse(float CX, float CY, float RX, float RY, const FLinearColor& Color, int32 Segments, float Thickness)
+{
+	float PX = CX + RX, PY = CY;
+	for (int32 i = 1; i <= Segments; ++i)
+	{
+		const float A = 2.f * PI * i / Segments;
+		const float X = CX + RX * FMath::Cos(A);
+		const float Y = CY + RY * FMath::Sin(A);
+		DrawLine(PX, PY, X, Y, Color, Thickness);
+		PX = X;
+		PY = Y;
+	}
+}
+
+void AStarshipHUD::DrawNavMarkers(const AActor* Ship, float UIScale)
+{
+	GatherNavObjects();
+	if (!Canvas || !Ship)
+	{
+		return;
+	}
+	UFont* SmallFont = GEngine ? GEngine->GetSmallFont() : nullptr;
+	const FVector ShipLoc = Ship->GetActorLocation();
+	const float CX = Canvas->ClipX * 0.5f;
+	const float CY = Canvas->ClipY * 0.5f;
+	const float EdgeMargin = 36.f * UIScale;
+	NavTime += GetWorld()->GetDeltaSeconds();
+
+	for (const FNavObject& O : NavObjects)
+	{
+		const bool bIsNavTarget = NavTarget.IsValid() && O.Actor == NavTarget.Get();
+		const double Dist = FVector::Dist(O.Location, ShipLoc);
+		FLinearColor Color = KindColor(O.Kind);
+		if (bIsNavTarget)
+		{
+			Color = FLinearColor(1.f, 1.f, 1.f, 0.9f + 0.1f * FMath::Sin(NavTime * 6.f));
+		}
+
+		// Project; Project() returns Z > 0 when in front of the camera.
+		const FVector Screen = Project(O.Location);
+		const bool bInFront = Screen.Z > 0.f;
+		const bool bOnScreen = bInFront && Screen.X >= 0.f && Screen.X <= Canvas->ClipX && Screen.Y >= 0.f && Screen.Y <= Canvas->ClipY;
+
+		if (bOnScreen)
+		{
+			// Size the diamond to the body's angular size, with a minimum so distant bodies stay visible.
+			const float Angular = Dist > 0.0 ? (float)(O.RadiusCm / Dist) : 0.f;
+			const float S = FMath::Clamp(Angular * Canvas->ClipY * 0.6f, bIsNavTarget ? 14.f * UIScale : 8.f * UIScale, Canvas->ClipY);
+			DrawLine(Screen.X - S, Screen.Y, Screen.X, Screen.Y - S, Color, bIsNavTarget ? 2.f : 1.f);
+			DrawLine(Screen.X, Screen.Y - S, Screen.X + S, Screen.Y, Color, bIsNavTarget ? 2.f : 1.f);
+			DrawLine(Screen.X + S, Screen.Y, Screen.X, Screen.Y + S, Color, bIsNavTarget ? 2.f : 1.f);
+			DrawLine(Screen.X, Screen.Y + S, Screen.X - S, Screen.Y, Color, bIsNavTarget ? 2.f : 1.f);
+			const FString Text = FString::Printf(TEXT("%s  %s"), *O.Label, *FormatDistance(Dist));
+			DrawText(Text, Color, Screen.X + S + 4.f * UIScale, Screen.Y - 6.f * UIScale, SmallFont, UIScale);
+		}
+		else
+		{
+			// Off-screen: arrow on the screen edge pointing toward it. Behind the camera flips the direction.
+			FVector2D Dir(Screen.X - CX, Screen.Y - CY);
+			if (!bInFront)
+			{
+				Dir *= -1.f;
+			}
+			if (Dir.IsNearlyZero())
+			{
+				Dir = FVector2D(0.f, -1.f);
+			}
+			Dir.Normalize();
+			// Intersect with the inset rectangle.
+			const float HalfW = CX - EdgeMargin, HalfH = CY - EdgeMargin;
+			const float TX = FMath::Abs(Dir.X) > KINDA_SMALL_NUMBER ? HalfW / FMath::Abs(Dir.X) : TNumericLimits<float>::Max();
+			const float TY = FMath::Abs(Dir.Y) > KINDA_SMALL_NUMBER ? HalfH / FMath::Abs(Dir.Y) : TNumericLimits<float>::Max();
+			const float Tm = FMath::Min(TX, TY);
+			const FVector2D P(CX + Dir.X * Tm, CY + Dir.Y * Tm);
+			const FVector2D Perp(-Dir.Y, Dir.X);
+			const float A = (bIsNavTarget ? 12.f : 8.f) * UIScale;
+			const FVector2D Tip = P + Dir * A;
+			const FVector2D L = P - Dir * A * 0.4f + Perp * A * 0.6f;
+			const FVector2D R = P - Dir * A * 0.4f - Perp * A * 0.6f;
+			DrawLine(Tip.X, Tip.Y, L.X, L.Y, Color, 1.5f);
+			DrawLine(Tip.X, Tip.Y, R.X, R.Y, Color, 1.5f);
+			DrawLine(L.X, L.Y, R.X, R.Y, Color, 1.5f);
+			if (bIsNavTarget || O.Kind == ENavObjectKind::Star)
+			{
+				const FString Text = FString::Printf(TEXT("%s %s"), *O.Label, *FormatDistance(Dist));
+				const FVector2D TextPos = P - Dir * (A + 10.f * UIScale);
+				DrawText(Text, Color, FMath::Clamp(TextPos.X - 40.f * UIScale, 4.f, Canvas->ClipX - 160.f * UIScale), FMath::Clamp(TextPos.Y - 6.f * UIScale, 4.f, Canvas->ClipY - 16.f * UIScale), SmallFont, UIScale);
+			}
+		}
+	}
+
+	// Nav target readout under the reticle.
+	if (NavTarget.IsValid())
+	{
+		const FNavObject* O = NavObjects.FindByPredicate([this](const FNavObject& N) { return N.Actor == NavTarget.Get(); });
+		if (O)
+		{
+			const double Dist = FVector::Dist(O->Location, ShipLoc) - O->RadiusCm;
+			double Speed = 0.0;
+			if (const AStarshipPawn* ShipPawn = Cast<AStarshipPawn>(Ship))
+			{
+				Speed = ShipPawn->Movement ? FVector::DotProduct(ShipPawn->Movement->Velocity, (O->Location - ShipLoc).GetSafeNormal()) : 0.0;
+			}
+			FString Eta = TEXT("--");
+			if (Speed > 1.0)
+			{
+				const double Seconds = Dist / Speed;
+				Eta = Seconds < 90.0 ? FString::Printf(TEXT("%.0f s"), Seconds) : Seconds < 5400.0 ? FString::Printf(TEXT("%.1f min"), Seconds / 60.0) : FString::Printf(TEXT("%.1f h"), Seconds / 3600.0);
+			}
+			const FString Text = FString::Printf(TEXT("NAV  %s   %s   ETA %s"), *O->Label, *FormatDistance(FMath::Max(Dist, 0.0)), *Eta);
+			DrawText(Text, FLinearColor::White, CX - 120.f * UIScale, CY + 60.f * UIScale, GEngine ? GEngine->GetMediumFont() : nullptr, UIScale);
+		}
+	}
+}
+
+FVector2D AStarshipHUD::MinimapProject(const FVector& Relative, double Scale, float CX, float CY, float YawDeg) const
+{
+	// Rotate the orbital plane so "up" on the map is north (or the ship's heading), then tilt it.
+	const FVector R = FRotator(0.f, -YawDeg, 0.f).RotateVector(Relative);
+	const float Tilt = FMath::DegreesToRadians(MinimapTilt);
+	const double X = R.Y * Scale;                                   // east to the right
+	const double Y = -R.X * Scale * FMath::Cos(Tilt) - R.Z * Scale * FMath::Sin(Tilt); // north up, height lifts the dot
+	return FVector2D(CX + X, CY + Y);
+}
+
+void AStarshipHUD::DrawMinimap(const AActor* Ship, float UIScale)
+{
+	if (!Canvas || !Ship)
+	{
+		return;
+	}
+	if (!bShowNavMarkers)
+	{
+		GatherNavObjects();
+	}
+	UFont* SmallFont = GEngine ? GEngine->GetSmallFont() : nullptr;
+
+	const float W = 300.f * UIScale, H = 220.f * UIScale;
+	const float X0 = Canvas->ClipX - W - 20.f * UIScale, Y0 = Canvas->ClipY - H - 20.f * UIScale;
+	const float CX = X0 + W * 0.5f, CY = Y0 + H * 0.55f;
+	Canvas->K2_DrawBox(FVector2D(X0, Y0), FVector2D(W, H), 1.f, FLinearColor(1, 1, 1, 0.25f));
+	{
+		FCanvasTileItem Bg(FVector2D(X0, Y0), FVector2D(W, H), FLinearColor(0.f, 0.02f, 0.05f, 0.55f));
+		Bg.BlendMode = SE_BLEND_Translucent;
+		Canvas->DrawItem(Bg);
+	}
+
+	const FVector ShipLoc = Ship->GetActorLocation();
+	// Fit the farthest body (or the ship) with a margin.
+	double MaxR = FVector::Dist2D(ShipLoc, StarLocation);
+	for (const FNavObject& O : NavObjects)
+	{
+		MaxR = FMath::Max(MaxR, FVector::Dist2D(O.Location, StarLocation));
+	}
+	MaxR = FMath::Max(MaxR, BeltRadiusCm);
+	MaxR = FMath::Max(MaxR, 1.0);
+	const double Scale = (W * 0.46) / MaxR;
+	const float YawDeg = bMinimapHeadingUp ? Ship->GetActorRotation().Yaw : 0.f;
+	const float Tilt = FMath::DegreesToRadians(MinimapTilt);
+
+	// Orbit rings: one per distinct planet orbit radius, plus the belt.
+	TArray<double> Orbits;
+	for (const FNavObject& O : NavObjects)
+	{
+		if (O.Kind != ENavObjectKind::Planet)
+		{
+			continue;
+		}
+		const double R = FVector::Dist2D(O.Location, StarLocation);
+		bool bDup = false;
+		for (double E : Orbits)
+		{
+			if (FMath::Abs(E - R) < R * 0.05)
+			{
+				bDup = true;
+				break;
+			}
+		}
+		if (!bDup)
+		{
+			Orbits.Add(R);
+		}
+	}
+	const FLinearColor OrbitColor(0.4f, 0.6f, 0.8f, 0.35f);
+	for (double R : Orbits)
+	{
+		DrawEllipse(CX, CY, R * Scale, R * Scale * FMath::Cos(Tilt), OrbitColor, 64, 1.f);
+	}
+	if (BeltRadiusCm > 0.0)
+	{
+		const FLinearColor BeltColor(0.7f, 0.6f, 0.5f, 0.5f);
+		// Dashed: draw every other segment.
+		const int32 Segments = 72;
+		for (int32 i = 0; i < Segments; i += 2)
+		{
+			const float A0 = 2.f * PI * i / Segments, A1 = 2.f * PI * (i + 1) / Segments;
+			DrawLine(CX + BeltRadiusCm * Scale * FMath::Cos(A0), CY + BeltRadiusCm * Scale * FMath::Cos(Tilt) * FMath::Sin(A0),
+				CX + BeltRadiusCm * Scale * FMath::Cos(A1), CY + BeltRadiusCm * Scale * FMath::Cos(Tilt) * FMath::Sin(A1), BeltColor, 2.f);
+		}
+	}
+
+	// Bodies: a vertical stem from the orbital plane shows height; dot size follows radius.
+	for (const FNavObject& O : NavObjects)
+	{
+		if (O.Kind == ENavObjectKind::Belt)
+		{
+			continue;
+		}
+		const FVector Rel = O.Location - StarLocation;
+		const FVector2D P = MinimapProject(Rel, Scale, CX, CY, YawDeg);
+		const FVector2D Base = MinimapProject(FVector(Rel.X, Rel.Y, 0.0), Scale, CX, CY, YawDeg);
+		const bool bIsNavTarget = NavTarget.IsValid() && O.Actor == NavTarget.Get();
+		FLinearColor Color = KindColor(O.Kind);
+		float Dot = O.Kind == ENavObjectKind::Star ? 5.f : O.Kind == ENavObjectKind::Moon ? 1.5f : 3.f;
+		Dot *= UIScale;
+		if (FMath::Abs(P.Y - Base.Y) > 1.f)
+		{
+			DrawLine(Base.X, Base.Y, P.X, P.Y, FLinearColor(Color.R, Color.G, Color.B, 0.3f), 1.f);
+		}
+		if (bIsNavTarget)
+		{
+			DrawCircle(P.X, P.Y, Dot + 4.f * UIScale, FLinearColor::White, 16, 1.5f);
+		}
+		Canvas->K2_DrawPolygon(nullptr, P, FVector2D(Dot, Dot), 12, Color);
+		if (O.Kind == ENavObjectKind::Star || O.Kind == ENavObjectKind::Planet)
+		{
+			DrawText(O.Label, FLinearColor(Color.R, Color.G, Color.B, 0.8f), P.X + Dot + 2.f, P.Y - 6.f * UIScale, SmallFont, UIScale * 0.85f);
+		}
+	}
+
+	// The ship: blinking dot with a heading tick and its own stem.
+	{
+		const FVector Rel = ShipLoc - StarLocation;
+		const FVector2D P = MinimapProject(Rel, Scale, CX, CY, YawDeg);
+		const FVector2D Base = MinimapProject(FVector(Rel.X, Rel.Y, 0.0), Scale, CX, CY, YawDeg);
+		const FVector Fwd = Ship->GetActorForwardVector();
+		const FVector2D Tip = MinimapProject(Rel + Fwd * (MaxR * 0.08), Scale, CX, CY, YawDeg);
+		const float Blink = 0.6f + 0.4f * FMath::Sin(NavTime * 8.f);
+		const FLinearColor ShipColor(Accent.R, Accent.G, Accent.B, Blink);
+		DrawLine(Base.X, Base.Y, P.X, P.Y, FLinearColor(Accent.R, Accent.G, Accent.B, 0.35f), 1.f);
+		DrawLine(P.X, P.Y, Tip.X, Tip.Y, ShipColor, 1.5f);
+		Canvas->K2_DrawPolygon(nullptr, P, FVector2D(3.f * UIScale, 3.f * UIScale), 10, ShipColor);
+		DrawText(TEXT("YOU"), ShipColor, P.X + 5.f * UIScale, P.Y + 2.f * UIScale, SmallFont, UIScale * 0.85f);
+	}
+
+	// Scale legend.
+	DrawText(FString::Printf(TEXT("SYSTEM MAP  radius %s"), *FormatDistance(MaxR)), FLinearColor(1, 1, 1, 0.6f), X0 + 6.f * UIScale, Y0 + 4.f * UIScale, SmallFont, UIScale * 0.85f);
 }
