@@ -1,0 +1,125 @@
+// Slonk - kinematic 6DOF flight model for a capital starship (impulse + warp).
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/MovementComponent.h"
+#include "StarshipMovementComponent.generated.h"
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnStarshipCollision, const FHitResult&, Hit);
+
+/**
+ * Kinematic flight model for a very large ship. Not physics-simulated: speeds at warp are far beyond
+ * anything Chaos should see, so the component integrates its own velocity and angular rates and moves
+ * the updated component directly. Sweeps for collision at impulse, teleports at warp.
+ *
+ * Steering input is in the range [-1, 1] per axis and is consumed every tick (set it every frame).
+ */
+UCLASS(ClassGroup = (Starship), meta = (BlueprintSpawnableComponent))
+class SLONK_API UStarshipMovementComponent : public UMovementComponent
+{
+	GENERATED_BODY()
+
+public:
+	UStarshipMovementComponent();
+
+	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+
+	// ---- Impulse drive -------------------------------------------------------------------------
+
+	/** Speed at full (100%) impulse, cm/s. 3 km/s by default: fast enough to feel it, slow enough to see the ship. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Impulse")
+	double FullImpulseSpeed = 300000.0;
+
+	/** Linear acceleration at impulse, cm/s^2. 0 -> full impulse in about 5 s by default. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Impulse")
+	double ImpulseAcceleration = 60000.0;
+
+	/** Reverse thrust is limited to this fraction of full impulse. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Impulse", meta = (ClampMin = "0", ClampMax = "1"))
+	double ReverseThrottleLimit = 0.25;
+
+	// ---- Attitude control ---------------------------------------------------------------------
+
+	/** Max pitch rate, deg/s. Capital ships turn slowly. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attitude")
+	float MaxPitchRate = 12.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attitude")
+	float MaxYawRate = 12.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attitude")
+	float MaxRollRate = 20.f;
+
+	/** How quickly angular rates approach their target (1/s). Lower = heavier feel. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attitude")
+	float AngularResponse = 2.0f;
+
+	/** Steering authority while at warp, as a fraction of impulse rates. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attitude", meta = (ClampMin = "0", ClampMax = "1"))
+	float WarpSteeringScale = 0.35f;
+
+	// ---- Limits -------------------------------------------------------------------------------
+
+	/** The ship is clamped inside a sphere of this radius around the origin (cm) so LWC never overflows. 50 million km by default. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Limits")
+	double MaxDistanceFromOrigin = 5.0e12;
+
+	// ---- Runtime state ------------------------------------------------------------------------
+
+	/** Current throttle in [-ReverseThrottleLimit, 1]. */
+	UPROPERTY(BlueprintReadOnly, Category = "State")
+	double Throttle = 0.0;
+
+	/** Current body-frame angular velocity in deg/s (Pitch, Yaw, Roll). */
+	UPROPERTY(BlueprintReadOnly, Category = "State")
+	FRotator AngularVelocity = FRotator::ZeroRotator;
+
+	UPROPERTY(BlueprintReadOnly, Category = "State")
+	bool bWarpActive = false;
+
+	/** Speed commanded by the warp drive while bWarpActive (cm/s). */
+	UPROPERTY(BlueprintReadOnly, Category = "State")
+	double WarpSpeed = 0.0;
+
+	UPROPERTY(BlueprintAssignable, Category = "Events")
+	FOnStarshipCollision OnCollision;
+
+	// ---- API ----------------------------------------------------------------------------------
+
+	UFUNCTION(BlueprintCallable, Category = "Starship|Movement")
+	void SetThrottle(double NewThrottle);
+
+	UFUNCTION(BlueprintCallable, Category = "Starship|Movement")
+	void AdjustThrottle(double Delta);
+
+	/** Set the per-frame steering input, each axis in [-1, 1]. +Pitch = nose up, +Yaw = nose right, +Roll = roll right. */
+	UFUNCTION(BlueprintCallable, Category = "Starship|Movement")
+	void SetSteeringInput(float Pitch, float Yaw, float Roll);
+
+	/** Adds to the per-frame steering input (accumulates until the next tick). */
+	UFUNCTION(BlueprintCallable, Category = "Starship|Movement")
+	void AddSteeringInput(float Pitch, float Yaw, float Roll);
+
+	/** Called by the warp drive. While active, the ship moves at exactly WarpSpeed along its forward axis. */
+	UFUNCTION(BlueprintCallable, Category = "Starship|Movement")
+	void SetWarp(bool bActive, double InWarpSpeed);
+
+	UFUNCTION(BlueprintPure, Category = "Starship|Movement")
+	double GetSpeed() const { return Velocity.Size(); }
+
+	/** Speed the impulse drive is currently trying to reach (cm/s), signed. */
+	UFUNCTION(BlueprintPure, Category = "Starship|Movement")
+	double GetImpulseTargetSpeed() const { return Throttle * FullImpulseSpeed; }
+
+	UFUNCTION(BlueprintPure, Category = "Starship|Movement")
+	FVector GetSteeringInput() const { return SteeringInput; }
+
+	/** Smoothed steering (what the ship is actually doing), each axis in [-1, 1]. Useful for FX / HUD. */
+	UFUNCTION(BlueprintPure, Category = "Starship|Movement")
+	FVector GetNormalizedAngularVelocity() const;
+
+private:
+	/** (Pitch, Yaw, Roll) in [-1, 1], consumed each tick. */
+	FVector SteeringInput = FVector::ZeroVector;
+};

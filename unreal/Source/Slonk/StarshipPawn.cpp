@@ -1,0 +1,560 @@
+#include "StarshipPawn.h"
+
+#include "Camera/CameraComponent.h"
+#include "Components/BoxComponent.h"
+#include "Components/PointLightComponent.h"
+#include "Components/PostProcessComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
+#include "GameFramework/SpringArmComponent.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Materials/MaterialInterface.h"
+#include "StarshipMovementComponent.h"
+#include "StarshipWeaponsComponent.h"
+#include "UObject/ConstructorHelpers.h"
+#include "WarpDriveComponent.h"
+#include "WarpStreaksComponent.h"
+
+AStarshipPawn::AStarshipPawn()
+{
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.TickGroup = TG_PostPhysics; // after movement, before cameras render
+	SpawnCollisionHandlingMethod = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	bUseControllerRotationPitch = false;
+	bUseControllerRotationYaw = false;
+	bUseControllerRotationRoll = false;
+	BaseEyeHeight = 0.f;
+
+	CollisionBox = CreateDefaultSubobject<UBoxComponent>(TEXT("CollisionBox"));
+	SetRootComponent(CollisionBox);
+	CollisionBox->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	CollisionBox->SetCollisionObjectType(ECC_Pawn);
+	CollisionBox->SetCollisionResponseToAllChannels(ECR_Block);
+	CollisionBox->SetCollisionResponseToChannel(ECC_Visibility, ECR_Ignore);
+	CollisionBox->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+	CollisionBox->SetGenerateOverlapEvents(false);
+	CollisionBox->SetCanEverAffectNavigation(false);
+
+	ShipMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ShipMesh"));
+	ShipMesh->SetupAttachment(CollisionBox);
+	ShipMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	ShipMesh->SetGenerateOverlapEvents(false);
+	ShipMesh->SetMobility(EComponentMobility::Movable);
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> HullFinder(TEXT("/Game/Enterprise/1701-a.1701-a"));
+	if (HullFinder.Succeeded())
+	{
+		ShipMesh->SetStaticMesh(HullFinder.Object);
+	}
+
+	Movement = CreateDefaultSubobject<UStarshipMovementComponent>(TEXT("Movement"));
+	Movement->SetUpdatedComponent(CollisionBox);
+
+	WarpDrive = CreateDefaultSubobject<UWarpDriveComponent>(TEXT("WarpDrive"));
+	Weapons = CreateDefaultSubobject<UStarshipWeaponsComponent>(TEXT("Weapons"));
+
+	// Chase camera on a spring arm. Location lag is deliberately off: at impulse speeds the lag
+	// distance would already be kilometres; rotation lag gives the weighty feel instead.
+	ChaseArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("ChaseArm"));
+	ChaseArm->SetupAttachment(CollisionBox);
+	ChaseArm->bDoCollisionTest = false;
+	ChaseArm->bUsePawnControlRotation = false;
+	ChaseArm->bInheritPitch = true;
+	ChaseArm->bInheritYaw = true;
+	ChaseArm->bInheritRoll = true;
+	ChaseArm->bEnableCameraLag = false;
+	ChaseArm->bEnableCameraRotationLag = true;
+	ChaseArm->CameraRotationLagSpeed = 4.f;
+	ChaseArm->CameraLagMaxTimeStep = 1.f / 30.f;
+
+	ChaseCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("ChaseCamera"));
+	ChaseCamera->SetupAttachment(ChaseArm, USpringArmComponent::SocketName);
+	ChaseCamera->bUsePawnControlRotation = false;
+	ChaseCamera->SetFieldOfView(ChaseFOV);
+
+	BridgeCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("BridgeCamera"));
+	BridgeCamera->SetupAttachment(CollisionBox);
+	BridgeCamera->bUsePawnControlRotation = false;
+	BridgeCamera->SetFieldOfView(BridgeFOV);
+	BridgeCamera->SetActive(false);
+
+	OrbitPivot = CreateDefaultSubobject<USceneComponent>(TEXT("OrbitPivot"));
+	OrbitPivot->SetupAttachment(CollisionBox);
+	OrbitPivot->SetUsingAbsoluteRotation(true); // orbit in world space so the ship's own roll doesn't swing the shot
+
+	CinematicCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("CinematicCamera"));
+	CinematicCamera->SetupAttachment(OrbitPivot);
+	CinematicCamera->bUsePawnControlRotation = false;
+	CinematicCamera->SetFieldOfView(CinematicFOV);
+	CinematicCamera->SetActive(false);
+
+	WarpStreaks = CreateDefaultSubobject<UWarpStreaksComponent>(TEXT("WarpStreaks"));
+	WarpStreaks->SetupAttachment(ChaseCamera);
+
+	PostProcess = CreateDefaultSubobject<UPostProcessComponent>(TEXT("PostProcess"));
+	PostProcess->SetupAttachment(CollisionBox);
+	PostProcess->bUnbound = true;
+	PostProcess->BlendWeight = 1.f;
+	PostProcess->Priority = 10.f;
+
+	StarSphere = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("StarSphere"));
+	StarSphere->SetupAttachment(CollisionBox);
+	StarSphere->SetUsingAbsoluteRotation(true);
+	StarSphere->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	StarSphere->SetGenerateOverlapEvents(false);
+	StarSphere->CastShadow = false;
+	StarSphere->bCastDynamicShadow = false;
+	StarSphere->SetReceivesDecals(false);
+	StarSphere->bAffectDistanceFieldLighting = false;
+	StarSphere->bAffectDynamicIndirectLighting = false;
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> SkyFinder(TEXT("/Engine/EngineSky/SM_SkySphere.SM_SkySphere"));
+	if (SkyFinder.Succeeded())
+	{
+		StarSphere->SetStaticMesh(SkyFinder.Object);
+	}
+	StarMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_Stars.M_Stars")));
+
+	// Default hull lights for the Constitution refit, relative to the hull centre. Tune in the editor.
+	auto AddLight = [this](const TCHAR* Name, FVector Offset, FLinearColor Color, float Intensity, float Radius, bool bWarp, bool bImpulse)
+	{
+		FStarshipLightSpec Spec;
+		Spec.Name = Name;
+		Spec.Offset = Offset;
+		Spec.Color = Color;
+		Spec.Intensity = Intensity;
+		Spec.AttenuationRadius = Radius;
+		Spec.bWarpLight = bWarp;
+		Spec.bImpulseLight = bImpulse;
+		LightSpecs.Add(Spec);
+	};
+	const FLinearColor WarpBlue(0.35f, 0.6f, 1.f);
+	const FLinearColor BussardRed(1.f, 0.25f, 0.08f);
+	const FLinearColor ImpulseOrange(1.f, 0.45f, 0.15f);
+	AddLight(TEXT("NacelleGrillePort"), FVector(-7500.0, -3700.0, 2700.0), WarpBlue, 60000.f, 16000.f, true, false);
+	AddLight(TEXT("NacelleGrilleStarboard"), FVector(-7500.0, 3700.0, 2700.0), WarpBlue, 60000.f, 16000.f, true, false);
+	AddLight(TEXT("BussardPort"), FVector(-2600.0, -3700.0, 2700.0), BussardRed, 40000.f, 9000.f, true, false);
+	AddLight(TEXT("BussardStarboard"), FVector(-2600.0, 3700.0, 2700.0), BussardRed, 40000.f, 9000.f, true, false);
+	AddLight(TEXT("Deflector"), FVector(1500.0, 0.0, -1700.0), WarpBlue, 50000.f, 12000.f, true, false);
+	AddLight(TEXT("ImpulseEngines"), FVector(-800.0, 0.0, 1500.0), ImpulseOrange, 30000.f, 10000.f, false, true);
+}
+
+UPawnMovementComponent* AStarshipPawn::GetMovementComponent() const
+{
+	// Our movement component is a UMovementComponent, not a pawn movement component.
+	return nullptr;
+}
+
+void AStarshipPawn::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+	ApplyHullDimensions();
+}
+
+void AStarshipPawn::ApplyHullDimensions()
+{
+	const float LengthCm = GetShipLengthCm();
+	CollisionBox->SetBoxExtent(FVector(LengthCm * 0.5f, ShipWidthMeters * 50.f, ShipHeightMeters * 50.f));
+
+	if (ShipMesh && ShipMesh->GetStaticMesh())
+	{
+		const FBoxSphereBounds Bounds = ShipMesh->GetStaticMesh()->GetBounds();
+		float Scale = 1.f;
+		if (bAutoScaleMesh)
+		{
+			const float LongestExtent = Bounds.BoxExtent.GetMax();
+			if (LongestExtent > KINDA_SMALL_NUMBER)
+			{
+				Scale = LengthCm / (2.f * LongestExtent);
+			}
+		}
+		const FQuat Rot = MeshRelativeRotation.Quaternion();
+		ShipMesh->SetRelativeScale3D(FVector(Scale));
+		ShipMesh->SetRelativeRotation(Rot);
+		ShipMesh->SetRelativeLocation(-Rot.RotateVector(Bounds.Origin) * Scale + MeshCenterOffset);
+	}
+
+	// Cameras scale with the hull so the framing is the same whatever the real length is.
+	// SM_SkySphere is 4096 cm in radius.
+	StarSphere->SetRelativeScale3D(FVector(StarSphereRadius / 4096.0));
+	StarSphere->SetWorldRotation(FRotator::ZeroRotator);
+
+	ChaseArmBaseLength = LengthCm * ChaseDistanceFactor;
+	ChaseArmBaseSocketOffset = FVector(0.0, 0.0, LengthCm * ChaseHeightFactor);
+	ChaseArm->TargetArmLength = ChaseArmBaseLength;
+	ChaseArm->SocketOffset = ChaseArmBaseSocketOffset;
+	ChaseCamera->SetFieldOfView(ChaseFOV);
+
+	BridgeCamera->SetRelativeLocation(BridgeCameraOffset);
+	BridgeCamera->SetFieldOfView(BridgeFOV);
+
+	const float OrbitDistance = LengthCm * CinematicDistanceFactor;
+	const FVector OrbitOffset(-OrbitDistance, 0.0, OrbitDistance * 0.18);
+	CinematicCamera->SetRelativeLocation(OrbitOffset);
+	CinematicCamera->SetRelativeRotation((-OrbitOffset).Rotation());
+	CinematicCamera->SetFieldOfView(CinematicFOV);
+}
+
+void AStarshipPawn::BeginPlay()
+{
+	Super::BeginPlay();
+	ApplyHullDimensions();
+	SetupHullMaterials();
+	SetupHullLights();
+	SetCameraMode(CameraMode);
+
+	if (Movement)
+	{
+		Movement->OnCollision.AddDynamic(this, &AStarshipPawn::HandleCollision);
+	}
+
+	// Post-process overrides we animate.
+	FPostProcessSettings& S = PostProcess->Settings;
+	S.bOverride_SceneFringeIntensity = true;
+	S.bOverride_BloomIntensity = true;
+	S.bOverride_ColorGain = true;
+	S.bOverride_VignetteIntensity = true;
+	S.bOverride_MotionBlurAmount = true;
+	S.SceneFringeIntensity = 0.f;
+	S.BloomIntensity = 0.675f;
+	S.ColorGain = FVector4(1, 1, 1, 1);
+	S.VignetteIntensity = 0.4f;
+	S.MotionBlurAmount = 0.3f;
+	ApplyExposure();
+}
+
+void AStarshipPawn::ApplyExposure()
+{
+	FPostProcessSettings& S = PostProcess->Settings;
+	const bool bLock = LockedExposureEV > -100.f;
+	S.bOverride_AutoExposureMinBrightness = bLock;
+	S.bOverride_AutoExposureMaxBrightness = bLock;
+	S.AutoExposureMinBrightness = LockedExposureEV;
+	S.AutoExposureMaxBrightness = LockedExposureEV;
+}
+
+void AStarshipPawn::SetupHullMaterials()
+{
+	if (UMaterialInterface* Stars = StarMaterial.LoadSynchronous())
+	{
+		StarSphere->SetMaterial(0, Stars);
+	}
+	else
+	{
+		StarSphere->SetVisibility(false);
+	}
+	HullMaterials.Reset();
+	ThrusterMaterialIndex = INDEX_NONE;
+	if (!ShipMesh || !ShipMesh->GetStaticMesh())
+	{
+		return;
+	}
+	const int32 NumMaterials = ShipMesh->GetNumMaterials();
+	for (int32 i = 0; i < NumMaterials; ++i)
+	{
+		UMaterialInstanceDynamic* Mid = ShipMesh->CreateAndSetMaterialInstanceDynamic(i);
+		HullMaterials.Add(Mid);
+	}
+	ThrusterMaterialIndex = ShipMesh->GetMaterialIndex(ThrusterSlotName);
+}
+
+void AStarshipPawn::SetupHullLights()
+{
+	for (UPointLightComponent* L : HullLights)
+	{
+		if (L)
+		{
+			L->DestroyComponent();
+		}
+	}
+	HullLights.Reset();
+
+	for (const FStarshipLightSpec& Spec : LightSpecs)
+	{
+		UPointLightComponent* Light = NewObject<UPointLightComponent>(this, Spec.Name.IsNone() ? NAME_None : Spec.Name);
+		if (!Light)
+		{
+			continue;
+		}
+		Light->SetupAttachment(CollisionBox);
+		Light->SetRelativeLocation(Spec.Offset);
+		Light->SetIntensityUnits(ELightUnits::Candelas);
+		Light->SetIntensity(Spec.Intensity);
+		Light->SetAttenuationRadius(Spec.AttenuationRadius);
+		Light->SetLightColor(Spec.Color);
+		Light->CastShadows = false;
+		Light->SetMobility(EComponentMobility::Movable);
+		Light->RegisterComponent();
+		HullLights.Add(Light);
+	}
+}
+
+void AStarshipPawn::HandleCollision(const FHitResult& Hit)
+{
+	AddCameraShake(0.8f);
+}
+
+void AStarshipPawn::AddCameraShake(float Amplitude)
+{
+	ShakeAmplitude = FMath::Clamp(ShakeAmplitude + Amplitude, 0.f, 2.f);
+}
+
+UCameraComponent* AStarshipPawn::GetActiveCamera() const
+{
+	switch (CameraMode)
+	{
+	case EStarshipCameraMode::Bridge: return BridgeCamera;
+	case EStarshipCameraMode::Cinematic: return CinematicCamera;
+	default: return ChaseCamera;
+	}
+}
+
+void AStarshipPawn::SetCameraMode(EStarshipCameraMode Mode)
+{
+	CameraMode = Mode;
+	ChaseCamera->SetActive(Mode == EStarshipCameraMode::Chase);
+	BridgeCamera->SetActive(Mode == EStarshipCameraMode::Bridge);
+	CinematicCamera->SetActive(Mode == EStarshipCameraMode::Cinematic);
+	// Hide the hull from the bridge so the saucer doesn't fill the lens.
+	ShipMesh->SetOwnerNoSee(false);
+	ShipMesh->SetVisibility(Mode != EStarshipCameraMode::Bridge);
+	AttachStreaksToActiveCamera();
+}
+
+void AStarshipPawn::CycleCameraMode()
+{
+	switch (CameraMode)
+	{
+	case EStarshipCameraMode::Chase: SetCameraMode(EStarshipCameraMode::Bridge); break;
+	case EStarshipCameraMode::Bridge: SetCameraMode(EStarshipCameraMode::Cinematic); break;
+	default: SetCameraMode(EStarshipCameraMode::Chase); break;
+	}
+}
+
+void AStarshipPawn::AttachStreaksToActiveCamera()
+{
+	if (UCameraComponent* Cam = GetActiveCamera())
+	{
+		WarpStreaks->AttachToComponent(Cam, FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+		WarpStreaks->SetRelativeLocationAndRotation(FVector::ZeroVector, FRotator::ZeroRotator);
+	}
+}
+
+void AStarshipPawn::AddLookInput(float YawDegrees, float PitchDegrees)
+{
+	FreeLookAngles.X = FMath::Clamp(FreeLookAngles.X + YawDegrees, -170.f, 170.f);
+	FreeLookAngles.Y = FMath::Clamp(FreeLookAngles.Y + PitchDegrees, -80.f, 80.f);
+}
+
+void AStarshipPawn::ResetCamera()
+{
+	FreeLookAngles = FVector2D::ZeroVector;
+	SetCameraMode(EStarshipCameraMode::Chase);
+}
+
+void AStarshipPawn::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+	ProcessDebugCommand();
+	ApplyExposure();
+	if (DebugSteerTime > 0.f && Movement)
+	{
+		DebugSteerTime -= DeltaTime;
+		// Movement ticks before this (pre-physics); set the input it will consume next frame.
+		Movement->SetSteeringInput(DebugSteer.X, DebugSteer.Y, DebugSteer.Z);
+	}
+	UpdateWarpEffects(DeltaTime);
+	UpdateHullGlow(DeltaTime);
+	UpdateCameras(DeltaTime);
+
+	// Torpedo launch kick.
+	if (Weapons)
+	{
+		const float Ready = Weapons->GetTorpedoReadiness();
+		if (Ready < LastTorpedoReadiness - 0.5f)
+		{
+			AddCameraShake(0.25f);
+		}
+		LastTorpedoReadiness = Ready;
+	}
+}
+
+void AStarshipPawn::UpdateWarpEffects(float DeltaTime)
+{
+	if (!WarpDrive)
+	{
+		return;
+	}
+	const float Streak = WarpDrive->GetStreakIntensity();
+	const float Flash = WarpDrive->GetFlashIntensity();
+
+	WarpStreaks->SetIntensity(Streak);
+
+	FPostProcessSettings& S = PostProcess->Settings;
+	S.SceneFringeIntensity = WarpChromaticAberration * FMath::Max(Flash, Streak * 0.5f);
+	S.BloomIntensity = 0.675f + WarpFlashBloom * Flash + 0.8f * Streak;
+	const float Gain = 1.f + 1.5f * Flash * Flash;
+	S.ColorGain = FVector4(
+		FMath::Lerp(1.f, WarpFlashTint.R * Gain, Flash),
+		FMath::Lerp(1.f, WarpFlashTint.G * Gain, Flash),
+		FMath::Lerp(1.f, WarpFlashTint.B * Gain, Flash),
+		1.f);
+	S.VignetteIntensity = 0.4f + 0.45f * Streak;
+	S.MotionBlurAmount = 0.3f + 0.5f * Streak;
+
+	// Continuous rumble at warp and on the jump.
+	if (Flash > 0.5f)
+	{
+		ShakeAmplitude = FMath::Max(ShakeAmplitude, 0.6f);
+	}
+}
+
+void AStarshipPawn::UpdateHullGlow(float DeltaTime)
+{
+	const float Glow = WarpDrive ? WarpDrive->GetGlowMultiplier() : 1.f;
+	const float Throttle = Movement ? FMath::Abs((float)Movement->Throttle) : 0.f;
+	const float ImpulseGlow = 0.35f + 3.f * Throttle;
+
+	for (int32 i = 0; i < HullMaterials.Num(); ++i)
+	{
+		if (UMaterialInstanceDynamic* Mid = HullMaterials[i])
+		{
+			const float Weight = (i == ThrusterMaterialIndex) ? BaseGlowWeight * ImpulseGlow : BaseGlowWeight * Glow;
+			Mid->SetScalarParameterValue(GlowParameterName, Weight);
+		}
+	}
+
+	for (int32 i = 0; i < HullLights.Num() && i < LightSpecs.Num(); ++i)
+	{
+		UPointLightComponent* Light = HullLights[i];
+		if (!Light)
+		{
+			continue;
+		}
+		const FStarshipLightSpec& Spec = LightSpecs[i];
+		float Mult = 1.f;
+		if (Spec.bWarpLight)
+		{
+			Mult *= Glow;
+		}
+		if (Spec.bImpulseLight)
+		{
+			Mult *= ImpulseGlow;
+		}
+		Light->SetIntensity(Spec.Intensity * Mult);
+	}
+}
+
+void AStarshipPawn::UpdateCameras(float DeltaTime)
+{
+	// Recompute from properties every frame so the camera can be tuned live.
+	ChaseArmBaseLength = GetShipLengthCm() * ChaseDistanceFactor;
+	ChaseArmBaseSocketOffset = FVector(0.0, 0.0, GetShipLengthCm() * ChaseHeightFactor);
+
+	const float Streak = WarpDrive ? WarpDrive->GetStreakIntensity() : 0.f;
+	const float Flash = WarpDrive ? WarpDrive->GetFlashIntensity() : 0.f;
+	const float ThrottleAbs = Movement ? FMath::Abs((float)Movement->Throttle) : 0.f;
+
+	// Free look: hold to orbit, release to spring back.
+	if (!bFreeLook)
+	{
+		const float A = 1.f - FMath::Exp(-FreeLookReturnRate * DeltaTime);
+		FreeLookAngles = FMath::Lerp(FreeLookAngles, FVector2D::ZeroVector, A);
+	}
+
+	// Camera shake: decaying impulse plus rumble from warp / full impulse.
+	ShakeTime += DeltaTime;
+	ShakeAmplitude = FMath::Max(0.f, ShakeAmplitude - ShakeDecayRate * ShakeAmplitude * DeltaTime);
+	const float Rumble = WarpRumble * Streak + 0.05f * ThrottleAbs * ThrottleAbs;
+	const float Amp = ShakeAmplitude + Rumble;
+	const float LengthCm = GetShipLengthCm();
+	const FVector ShakeOffset(
+		FMath::PerlinNoise1D(ShakeTime * 11.f + 3.1f),
+		FMath::PerlinNoise1D(ShakeTime * 13.f + 7.7f),
+		FMath::PerlinNoise1D(ShakeTime * 17.f + 1.3f));
+	const float ShakeRoll = FMath::PerlinNoise1D(ShakeTime * 9.f + 5.5f) * Amp * 1.5f;
+
+	switch (CameraMode)
+	{
+	case EStarshipCameraMode::Chase:
+	{
+		ChaseArm->SetRelativeRotation(FRotator(FreeLookAngles.Y, FreeLookAngles.X, 0.f));
+		ChaseArm->TargetArmLength = ChaseArmBaseLength * (1.f + WarpArmLengthBoost * Streak);
+		ChaseArm->SocketOffset = ChaseArmBaseSocketOffset + ShakeOffset * Amp * LengthCm * 0.01f;
+		ChaseCamera->SetRelativeRotation(FRotator(0.f, 0.f, ShakeRoll));
+		ChaseCamera->SetFieldOfView(ChaseFOV + WarpFovBoost * Streak + 8.f * Flash);
+		break;
+	}
+	case EStarshipCameraMode::Bridge:
+	{
+		BridgeCamera->SetRelativeLocation(BridgeCameraOffset + ShakeOffset * Amp * 40.f);
+		BridgeCamera->SetRelativeRotation(FRotator(FreeLookAngles.Y, FreeLookAngles.X, ShakeRoll * 0.5f));
+		BridgeCamera->SetFieldOfView(BridgeFOV + WarpFovBoost * Streak + 8.f * Flash);
+		break;
+	}
+	case EStarshipCameraMode::Cinematic:
+	{
+		OrbitAngle += CinematicOrbitRate * DeltaTime;
+		const float Pitch = 8.f * FMath::Sin(OrbitAngle * 0.02f);
+		OrbitPivot->SetWorldRotation(FRotator(Pitch, OrbitAngle, 0.f));
+		const float OrbitDistance = LengthCm * CinematicDistanceFactor * (1.f + 0.4f * Streak);
+		const FVector OrbitOffset(-OrbitDistance, 0.0, OrbitDistance * 0.18);
+		CinematicCamera->SetRelativeLocation(OrbitOffset + ShakeOffset * Amp * LengthCm * 0.005f);
+		CinematicCamera->SetRelativeRotation((-OrbitOffset).Rotation() + FRotator(0.f, 0.f, ShakeRoll * 0.3f));
+		CinematicCamera->SetFieldOfView(CinematicFOV + 6.f * Flash);
+		break;
+	}
+	}
+}
+
+void AStarshipPawn::ProcessDebugCommand()
+{
+	if (DebugCommand.IsEmpty())
+	{
+		return;
+	}
+	TArray<FString> Args;
+	DebugCommand.TrimStartAndEnd().ParseIntoArrayWS(Args);
+	const FString Cmd = DebugCommand;
+	DebugCommand.Empty();
+	if (Args.Num() == 0)
+	{
+		return;
+	}
+	const FString Op = Args[0].ToLower();
+	auto Arg = [&Args](int32 Index, float Default) { return Args.IsValidIndex(Index) ? FCString::Atof(*Args[Index]) : Default; };
+	auto ArgStr = [&Args](int32 Index) { return Args.IsValidIndex(Index) ? Args[Index].ToLower() : FString(); };
+
+	UE_LOG(LogTemp, Log, TEXT("Starship debug command: %s"), *Cmd);
+
+	if (Op == TEXT("throttle") && Movement) { Movement->SetThrottle(Arg(1, 0.f)); }
+	else if (Op == TEXT("impulse") && Movement) { Movement->SetThrottle(FMath::Clamp(Arg(1, 4.f), 1.f, 4.f) * 0.25f); }
+	else if (Op == TEXT("stop") && Movement) { Movement->SetThrottle(0.0); if (WarpDrive) { WarpDrive->DisengageWarp(); } }
+	else if (Op == TEXT("warp") && WarpDrive)
+	{
+		const FString Mode = ArgStr(1);
+		if (Mode == TEXT("on")) { WarpDrive->EngageWarp(); }
+		else if (Mode == TEXT("off")) { WarpDrive->DisengageWarp(); }
+		else { WarpDrive->ToggleWarp(); }
+	}
+	else if (Op == TEXT("warpfactor") && WarpDrive) { WarpDrive->SetWarpFactor(Arg(1, 2.f)); }
+	else if (Op == TEXT("phasers") && Weapons) { if (ArgStr(1) == TEXT("off")) { Weapons->StopPhasers(); } else { Weapons->StartPhasers(); } }
+	else if (Op == TEXT("torpedo") && Weapons) { Weapons->FireTorpedo(); }
+	else if (Op == TEXT("target") && Weapons) { if (ArgStr(1) == TEXT("clear")) { Weapons->ClearTarget(); } else { Weapons->CycleTarget(); } }
+	else if (Op == TEXT("camera"))
+	{
+		const FString Mode = ArgStr(1);
+		if (Mode == TEXT("bridge")) { SetCameraMode(EStarshipCameraMode::Bridge); }
+		else if (Mode == TEXT("cinematic")) { SetCameraMode(EStarshipCameraMode::Cinematic); }
+		else if (Mode == TEXT("chase")) { SetCameraMode(EStarshipCameraMode::Chase); }
+		else { CycleCameraMode(); }
+	}
+	else if (Op == TEXT("steer"))
+	{
+		DebugSteer = FVector(Arg(1, 0.f), Arg(2, 0.f), Arg(3, 0.f));
+		DebugSteerTime = Arg(4, 1.f);
+	}
+	else if (Op == TEXT("shake")) { AddCameraShake(Arg(1, 1.f)); }
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Starship debug command not understood: %s"), *Cmd);
+	}
+}
