@@ -21,6 +21,14 @@ public:
 
 	virtual void InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage) override;
 	virtual void BeginPlay() override;
+	virtual void Tick(float DeltaTime) override;
+
+	/**
+	 * Keep the level's directional light pointing from the nearest star (actor tagged "Star") through the player.
+	 * A single directional light cannot be right everywhere in a system, but it is right where the player is.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Lighting")
+	bool bTrackStarLighting = true;
 
 	/** Spawn a ring of target asteroids around the origin at BeginPlay. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Testing")
@@ -42,5 +50,6 @@ public:
 
 private:
 	void DisableWorldBoundsChecks();
+	void UpdateStarLighting();
 	void SpawnTestTargets();
 };

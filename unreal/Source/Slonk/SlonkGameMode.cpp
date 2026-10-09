@@ -1,6 +1,9 @@
 #include "SlonkGameMode.h"
 
+#include "Engine/DirectionalLight.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
+#include "PlanetBody.h"
 #include "GameFramework/WorldSettings.h"
 #include "SpaceTarget.h"
 #include "StarshipHUD.h"
@@ -9,6 +12,7 @@
 
 ASlonkGameMode::ASlonkGameMode()
 {
+	PrimaryActorTick.bCanEverTick = true;
 	DefaultPawnClass = AStarshipPawn::StaticClass();
 	PlayerControllerClass = AStarshipPlayerController::StaticClass();
 	HUDClass = AStarshipHUD::StaticClass();
@@ -65,5 +69,54 @@ void ASlonkGameMode::SpawnTestTargets()
 		{
 			Target->RandomizeAppearance(Rng);
 		}
+	}
+}
+
+void ASlonkGameMode::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+	if (bTrackStarLighting)
+	{
+		UpdateStarLighting();
+	}
+}
+
+void ASlonkGameMode::UpdateStarLighting()
+{
+	UWorld* World = GetWorld();
+	APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+	APawn* Pawn = PC ? PC->GetPawn() : nullptr;
+	if (!Pawn)
+	{
+		return;
+	}
+	const FVector Here = Pawn->GetActorLocation();
+
+	AActor* Star = nullptr;
+	double BestDist = TNumericLimits<double>::Max();
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (It->ActorHasTag(APlanetBody::StarTag))
+		{
+			const double D = FVector::DistSquared(It->GetActorLocation(), Here);
+			if (D < BestDist)
+			{
+				BestDist = D;
+				Star = *It;
+			}
+		}
+	}
+	if (!Star)
+	{
+		return;
+	}
+	const FVector LightDir = (Here - Star->GetActorLocation()).GetSafeNormal();
+	if (LightDir.IsNearlyZero())
+	{
+		return;
+	}
+	for (TActorIterator<ADirectionalLight> It(World); It; ++It)
+	{
+		It->SetActorRotation(LightDir.Rotation());
 	}
 }
