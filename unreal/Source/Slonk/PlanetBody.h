@@ -65,9 +65,11 @@ struct FPlanetStyle
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Clouds") float CloudScale = 4.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Clouds") FLinearColor CloudColor = FLinearColor::White;
 	/** Cloud layer height as a fraction of the radius. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Clouds") float CloudHeightFraction = 0.012f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Clouds") float CloudHeightFraction = 0.006f;
 	/** Extra spin of the cloud layer, deg/s. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Clouds") float CloudSpinDegPerSec = 0.15f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Clouds") float CloudSpinDegPerSec = 0.5f;
+	/** Internal evolution of the cloud shapes (noise units per second). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Clouds") float CloudDrift = 0.03f;
 
 	// Atmosphere
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Atmosphere") bool bAtmosphere = true;

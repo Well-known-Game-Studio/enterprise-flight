@@ -247,6 +247,13 @@ void APlanetBody::ResolveStyleFromArchetype()
 	{
 		SpinDegPerSec *= 2.f;
 	}
+	// Weather moves against or well ahead of the ground so the deck visibly slides over the surface.
+	Style.CloudSpinDegPerSec = (Rng.FRand() < 0.5f ? -1.f : 1.f) * Rng.FRandRange(0.6f, 1.4f) * FMath::Max(FMath::Abs(SpinDegPerSec), 0.3f);
+	Style.CloudDrift = Rng.FRandRange(0.02f, 0.05f);
+	if (Type == EPlanetArchetype::GasGiant)
+	{
+		Style.CloudSpinDegPerSec *= 1.5f;
+	}
 }
 
 void APlanetBody::ApplyMaterials()
@@ -339,6 +346,7 @@ void APlanetBody::ApplyMaterials()
 		}
 		CloudMID->SetScalarParameterValue(TEXT("CloudBrightness"), SunLux / PI);
 		CloudMID->SetScalarParameterValue(TEXT("CloudNightLevel"), SunLux / PI * 0.015f);
+		CloudMID->SetVectorParameterValue(TEXT("CloudDrift"), FLinearColor(S.CloudDrift, S.CloudDrift * 0.35f, 0.f, 0.f));
 		CloudMID->SetVectorParameterValue(TEXT("SunDirection"), FLinearColor(CachedStarDirection.X, CachedStarDirection.Y, CachedStarDirection.Z, 0.f));
 		CloudMID->SetScalarParameterValue(TEXT("Coverage"), S.CloudCoverage);
 		CloudMID->SetScalarParameterValue(TEXT("CloudScale"), S.CloudScale);
@@ -373,7 +381,9 @@ void APlanetBody::ApplyAppearance()
 	Body->SetWorldScale3D(FVector(RadiusCm / MeshUnitRadius));
 
 	Clouds->SetVisibility(Style.bClouds);
-	Clouds->SetRelativeScale3D(FVector(1.0 + Style.CloudHeightFraction));
+	// Keep the cloud deck well inside the scattering layer (the volumetric atmosphere is ~AtmosphereDepth/4 deep).
+	const float MaxCloudHeight = Style.bAtmosphere ? Style.AtmosphereDepth * 0.25f * 0.45f : Style.CloudHeightFraction;
+	Clouds->SetRelativeScale3D(FVector(1.0 + FMath::Min(Style.CloudHeightFraction, MaxCloudHeight)));
 	Atmosphere->SetVisibility(Style.bAtmosphere && !bUsingSkyAtmosphere);
 	Atmosphere->SetRelativeScale3D(FVector(1.0 + Style.AtmosphereDepth));
 

@@ -47,7 +47,7 @@ public:
 
 	/** Emissive multiplier of the photosphere. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star")
-	float Intensity = 12.f;
+	float Intensity = 80.f;
 
 	/** Minimum angular size of the glow sprite (fraction of the camera distance) so the star stays visible from across the system. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star")
@@ -58,7 +58,7 @@ public:
 	float CoronaDepth = 2.5f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star")
-	float CoronaIntensity = 3.f;
+	float CoronaIntensity = 2.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star")
 	float CoronaFalloff = 3.5f;
