@@ -30,6 +30,18 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Lighting")
 	bool bTrackStarLighting = true;
 
+	/** Park the world's single Sky Atmosphere on the nearest planet with an atmosphere (true Rayleigh/Mie, works from inside). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
+	bool bUseSkyAtmosphere = true;
+
+	/** Only planets closer than this many radii get the volumetric atmosphere; further ones keep the shell. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
+	float SkyAtmosphereRadii = 14.f;
+
+	/** Sky / aerial-perspective brightness multiplier. The sun is only tens of lux in this scene (not 100k), so the physically scaled sky needs a boost to read. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
+	float SkyLuminanceBoost = 10.f;
+
 	/** Spawn a ring of target asteroids around the origin at BeginPlay. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Testing")
 	bool bSpawnTestTargets = true;
@@ -51,5 +63,10 @@ public:
 private:
 	void DisableWorldBoundsChecks();
 	void UpdateStarLighting();
+	void UpdateSkyAtmosphere();
+
+	UPROPERTY() TObjectPtr<AActor> AtmosphereHolder;
+	UPROPERTY() TObjectPtr<class USkyAtmosphereComponent> SkyAtmosphere;
+	UPROPERTY() TObjectPtr<class APlanetBody> AtmospherePlanet;
 	void SpawnTestTargets();
 };

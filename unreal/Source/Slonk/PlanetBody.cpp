@@ -1,7 +1,12 @@
 #include "PlanetBody.h"
 
 #include "Components/DirectionalLightComponent.h"
+#include "Components/DynamicMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "GameFramework/PlayerController.h"
+#include "GeometryScript/MeshNormalsFunctions.h"
+#include "GeometryScript/MeshPrimitiveFunctions.h"
+#include "UDynamicMesh.h"
 #include "Engine/DirectionalLight.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
@@ -63,6 +68,14 @@ APlanetBody::APlanetBody()
 		Body->SetStaticMesh(Mesh);
 	}
 
+	DetailBody = CreateDefaultSubobject<UDynamicMeshComponent>(TEXT("DetailBody"));
+	DetailBody->SetupAttachment(Body);
+	DetailBody->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	DetailBody->SetGenerateOverlapEvents(false);
+	DetailBody->SetMobility(EComponentMobility::Movable);
+	DetailBody->SetVisibility(false);
+	DetailBody->bCastDynamicShadow = false;
+
 	Clouds = MakeShell(this, TEXT("Clouds"), Body, Mesh);
 	Atmosphere = MakeShell(this, TEXT("Atmosphere"), Body, Mesh);
 	Atmosphere->SetTranslucentSortPriority(1);
@@ -120,6 +133,7 @@ void APlanetBody::ResolveStyleFromArchetype()
 		S.CloudCoverage = Rng.FRandRange(0.35f, 0.55f);
 		S.AtmosphereColor = Jitter(FLinearColor(0.35f, 0.6f, 1.0f), 0.15f);
 		S.NightLightIntensity = Rng.FRand() < 0.6f ? 6.f : 0.f;
+		S.ReliefFraction = 0.003f;
 		break;
 	case EPlanetArchetype::Ocean:
 		S.SeaLevel = Rng.FRandRange(0.7f, 0.85f);
@@ -252,6 +266,17 @@ void APlanetBody::ApplyMaterials()
 		}
 	};
 	EnsureMID(SurfaceMID, SurfaceMaterial, Body, TEXT("PlanetSurface"), true);
+	if (!DetailSurfaceMID)
+	{
+		if (UMaterialInterface* Mat = SlonkMaterials::LoadOrFallback(SurfaceMaterial, TEXT("PlanetSurfaceDetail"), true))
+		{
+			DetailSurfaceMID = UMaterialInstanceDynamic::Create(Mat, this);
+		}
+	}
+	if (DetailSurfaceMID && bDetailBuilt && DetailBody->GetMaterial(0) != DetailSurfaceMID)
+	{
+		DetailBody->SetMaterial(0, DetailSurfaceMID);
+	}
 	EnsureMID(CloudMID, CloudMaterial, Clouds, TEXT("PlanetClouds"), true);
 	EnsureMID(AtmosphereMID, AtmosphereMaterial, Atmosphere, TEXT("PlanetAtmosphere"), false);
 
@@ -260,34 +285,61 @@ void APlanetBody::ApplyMaterials()
 	const FVector L = GetActorLocation();
 	const FLinearColor Seed(FMath::Frac(L.X / 7.3e9) * 100.f, FMath::Frac(L.Y / 5.1e9) * 100.f, FMath::Frac(L.Z / 3.7e9) * 100.f, 0.f);
 
-	if (SurfaceMID)
+	for (UMaterialInstanceDynamic* Mid : { SurfaceMID.Get(), DetailSurfaceMID.Get() })
 	{
-		SurfaceMID->SetVectorParameterValue(TEXT("OceanColor"), S.OceanColor);
-		SurfaceMID->SetVectorParameterValue(TEXT("LandColor"), S.LandColor);
-		SurfaceMID->SetVectorParameterValue(TEXT("LandColor2"), S.LandColor2);
-		SurfaceMID->SetVectorParameterValue(TEXT("MountainColor"), S.MountainColor);
-		SurfaceMID->SetVectorParameterValue(TEXT("IceColor"), S.IceColor);
-		SurfaceMID->SetVectorParameterValue(TEXT("SeedOffset"), Seed);
-		SurfaceMID->SetScalarParameterValue(TEXT("SeaLevel"), S.SeaLevel);
-		SurfaceMID->SetScalarParameterValue(TEXT("IceCapStart"), S.IceCapStart);
-		SurfaceMID->SetScalarParameterValue(TEXT("NoiseScale"), S.NoiseScale);
-		SurfaceMID->SetScalarParameterValue(TEXT("OceanRoughness"), S.OceanRoughness);
-		SurfaceMID->SetScalarParameterValue(TEXT("LandRoughness"), S.LandRoughness);
-		SurfaceMID->SetVectorParameterValue(TEXT("ShallowColor"), S.ShallowColor);
-		SurfaceMID->SetScalarParameterValue(TEXT("NormalStrength"), S.NormalStrength);
-		SurfaceMID->SetScalarParameterValue(TEXT("DetailNormalScale"), S.DetailNormalScale);
-		SurfaceMID->SetScalarParameterValue(TEXT("NightLightIntensity"), S.NightLightIntensity);
-		SurfaceMID->SetVectorParameterValue(TEXT("NightLightColor"), S.NightLightColor);
-		SurfaceMID->SetScalarParameterValue(TEXT("LavaEmissive"), S.LavaEmissive);
-		SurfaceMID->SetScalarParameterValue(TEXT("BandStrength"), S.BandStrength);
-		SurfaceMID->SetScalarParameterValue(TEXT("BandScale"), S.BandScale);
-		SurfaceMID->SetScalarParameterValue(TEXT("BandWarp"), S.BandWarp);
-		SurfaceMID->SetVectorParameterValue(TEXT("SunDirection"), FLinearColor(CachedStarDirection.X, CachedStarDirection.Y, CachedStarDirection.Z, 0.f));
+		if (!Mid)
+		{
+			continue;
+		}
+		// Relief only on the dense mesh: on the 5k-triangle far sphere it just shows the facets.
+		const bool bDetail = Mid == DetailSurfaceMID;
+		Mid->SetScalarParameterValue(TEXT("PlanetRadiusCm"), GetRadiusCm());
+		Mid->SetScalarParameterValue(TEXT("CloudScale"), S.CloudScale);
+		Mid->SetScalarParameterValue(TEXT("Coverage"), S.bClouds ? S.CloudCoverage : 0.f);
+		Mid->SetVectorParameterValue(TEXT("CloudSeedOffset"), Seed * 0.37f);
+		Mid->SetScalarParameterValue(TEXT("CloudYaw"), FMath::DegreesToRadians(CloudYawDeg));
+		Mid->SetVectorParameterValue(TEXT("OceanColor"), S.OceanColor);
+		Mid->SetVectorParameterValue(TEXT("LandColor"), S.LandColor);
+		Mid->SetVectorParameterValue(TEXT("LandColor2"), S.LandColor2);
+		Mid->SetVectorParameterValue(TEXT("MountainColor"), S.MountainColor);
+		Mid->SetVectorParameterValue(TEXT("IceColor"), S.IceColor);
+		Mid->SetVectorParameterValue(TEXT("SeedOffset"), Seed);
+		Mid->SetScalarParameterValue(TEXT("SeaLevel"), S.SeaLevel);
+		Mid->SetScalarParameterValue(TEXT("IceCapStart"), S.IceCapStart);
+		Mid->SetScalarParameterValue(TEXT("NoiseScale"), S.NoiseScale);
+		Mid->SetScalarParameterValue(TEXT("OceanRoughness"), S.OceanRoughness);
+		Mid->SetScalarParameterValue(TEXT("LandRoughness"), S.LandRoughness);
+		Mid->SetVectorParameterValue(TEXT("ShallowColor"), S.ShallowColor);
+		Mid->SetScalarParameterValue(TEXT("NormalStrength"), S.NormalStrength);
+		Mid->SetScalarParameterValue(TEXT("DetailNormalScale"), S.DetailNormalScale);
+		Mid->SetScalarParameterValue(TEXT("NightLightIntensity"), S.NightLightIntensity);
+		Mid->SetVectorParameterValue(TEXT("NightLightColor"), S.NightLightColor);
+		Mid->SetScalarParameterValue(TEXT("LavaEmissive"), S.LavaEmissive);
+		Mid->SetScalarParameterValue(TEXT("BandStrength"), S.BandStrength);
+		Mid->SetScalarParameterValue(TEXT("BandScale"), S.BandScale);
+		Mid->SetScalarParameterValue(TEXT("BandWarp"), S.BandWarp);
+		Mid->SetVectorParameterValue(TEXT("SunDirection"), FLinearColor(CachedStarDirection.X, CachedStarDirection.Y, CachedStarDirection.Z, 0.f));
 		// HeightScale is in cm per unit of (height - sea level); land tops out ~0.5 above sea level.
-		SurfaceMID->SetScalarParameterValue(TEXT("HeightScale"), S.ReliefFraction * GetRadiusCm() * 2.f);
+		Mid->SetScalarParameterValue(TEXT("HeightScale"), bDetail ? S.ReliefFraction * GetRadiusCm() * 2.f : 0.f);
 	}
 	if (CloudMID)
 	{
+		// Unlit clouds: match the radiance a white lit surface would have under the scene's sunlight (E / pi).
+		float SunLux = 30.f;
+		if (UWorld* World = GetWorld())
+		{
+			TActorIterator<ADirectionalLight> LightIt(World);
+			if (LightIt)
+			{
+				if (const UDirectionalLightComponent* LightComp = Cast<UDirectionalLightComponent>(LightIt->GetLightComponent()))
+				{
+					SunLux = LightComp->Intensity;
+				}
+			}
+		}
+		CloudMID->SetScalarParameterValue(TEXT("CloudBrightness"), SunLux / PI);
+		CloudMID->SetScalarParameterValue(TEXT("CloudNightLevel"), SunLux / PI * 0.015f);
+		CloudMID->SetVectorParameterValue(TEXT("SunDirection"), FLinearColor(CachedStarDirection.X, CachedStarDirection.Y, CachedStarDirection.Z, 0.f));
 		CloudMID->SetScalarParameterValue(TEXT("Coverage"), S.CloudCoverage);
 		CloudMID->SetScalarParameterValue(TEXT("CloudScale"), S.CloudScale);
 		CloudMID->SetVectorParameterValue(TEXT("CloudColor"), S.CloudColor);
@@ -322,7 +374,7 @@ void APlanetBody::ApplyAppearance()
 
 	Clouds->SetVisibility(Style.bClouds);
 	Clouds->SetRelativeScale3D(FVector(1.0 + Style.CloudHeightFraction));
-	Atmosphere->SetVisibility(Style.bAtmosphere);
+	Atmosphere->SetVisibility(Style.bAtmosphere && !bUsingSkyAtmosphere);
 	Atmosphere->SetRelativeScale3D(FVector(1.0 + Style.AtmosphereDepth));
 
 	UpdateStarDirection();
@@ -399,7 +451,18 @@ void APlanetBody::Tick(float DeltaTime)
 	}
 	if (Clouds && Style.bClouds && !FMath::IsNearlyZero(Style.CloudSpinDegPerSec))
 	{
-		Clouds->AddLocalRotation(FRotator(0.f, Style.CloudSpinDegPerSec * DeltaTime, 0.f));
+		CloudYawDeg = FMath::Fmod(CloudYawDeg + Style.CloudSpinDegPerSec * DeltaTime, 360.f);
+		Clouds->SetRelativeRotation(FRotator(0.f, CloudYawDeg, 0.f));
+		const float Yaw = FMath::DegreesToRadians(CloudYawDeg);
+		if (SurfaceMID) { SurfaceMID->SetScalarParameterValue(TEXT("CloudYaw"), Yaw); }
+		if (DetailSurfaceMID) { DetailSurfaceMID->SetScalarParameterValue(TEXT("CloudYaw"), Yaw); }
+	}
+
+	LODTimer -= DeltaTime;
+	if (LODTimer <= 0.f)
+	{
+		LODTimer = 0.2f;
+		UpdateLOD();
 	}
 
 	// The star direction only changes as bodies move; refresh a few times a second.
@@ -410,7 +473,9 @@ void APlanetBody::Tick(float DeltaTime)
 		UpdateStarDirection();
 		const FLinearColor SunDir(CachedStarDirection.X, CachedStarDirection.Y, CachedStarDirection.Z, 0.f);
 		if (AtmosphereMID) { AtmosphereMID->SetVectorParameterValue(TEXT("SunDirection"), SunDir); }
+		if (CloudMID) { CloudMID->SetVectorParameterValue(TEXT("SunDirection"), SunDir); }
 		if (SurfaceMID) { SurfaceMID->SetVectorParameterValue(TEXT("SunDirection"), SunDir); }
+		if (DetailSurfaceMID) { DetailSurfaceMID->SetVectorParameterValue(TEXT("SunDirection"), SunDir); }
 	}
 }
 
@@ -422,3 +487,73 @@ void APlanetBody::PostEditMove(bool bFinished)
 	ApplyAppearance();
 }
 #endif
+
+void APlanetBody::SetUsingSkyAtmosphere(bool bEnabled)
+{
+	if (bUsingSkyAtmosphere != bEnabled)
+	{
+		bUsingSkyAtmosphere = bEnabled;
+		Atmosphere->SetVisibility(Style.bAtmosphere && !bUsingSkyAtmosphere);
+	}
+}
+
+void APlanetBody::BuildDetailMesh()
+{
+	if (bDetailBuilt || !DetailBody)
+	{
+		return;
+	}
+	UDynamicMesh* Mesh = DetailBody->GetDynamicMesh();
+	if (!Mesh)
+	{
+		return;
+	}
+	Mesh->Reset();
+	FGeometryScriptPrimitiveOptions Options;
+	const int32 Steps = FMath::Clamp(DetailSphereSteps, 8, 200);
+	// Unit sphere (radius 1 cm) so the same world scale as the far sphere applies.
+	UGeometryScriptLibrary_MeshPrimitiveFunctions::AppendSphereBox(Mesh, Options, FTransform::Identity, 1.f, Steps, Steps, Steps);
+	FGeometryScriptCalculateNormalsOptions NormalOptions;
+	UGeometryScriptLibrary_MeshNormalsFunctions::RecomputeNormals(Mesh, NormalOptions);
+	DetailBody->NotifyMeshUpdated();
+	bDetailBuilt = true;
+	// The material slot only exists once the mesh does.
+	if (DetailSurfaceMID)
+	{
+		DetailBody->SetMaterial(0, DetailSurfaceMID);
+	}
+}
+
+void APlanetBody::UpdateLOD()
+{
+	UWorld* World = GetWorld();
+	if (!World || !World->IsGameWorld())
+	{
+		return;
+	}
+	APlayerController* PC = World->GetFirstPlayerController();
+	if (!PC)
+	{
+		return;
+	}
+	FVector ViewLoc;
+	FRotator ViewRot;
+	PC->GetPlayerViewPoint(ViewLoc, ViewRot);
+	const double RadiusCm = GetRadiusCm();
+	const double Dist = FVector::Dist(ViewLoc, GetActorLocation()) / RadiusCm;
+	// Hysteresis so the swap never flickers at the boundary.
+	const bool bWantDetail = bDetailActive ? Dist < DetailMeshRadii * 1.15 : Dist < DetailMeshRadii;
+	if (bWantDetail == bDetailActive)
+	{
+		return;
+	}
+	bDetailActive = bWantDetail;
+	if (bDetailActive)
+	{
+		BuildDetailMesh();
+		// Unit sphere scales with the body; the far mesh used MeshUnitRadius units.
+		DetailBody->SetRelativeScale3D(FVector(MeshUnitRadius));
+	}
+	DetailBody->SetVisibility(bDetailActive);
+	Body->SetVisibility(!bDetailActive);
+}

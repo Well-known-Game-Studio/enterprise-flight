@@ -1,6 +1,8 @@
 #include "StarBody.h"
 
 #include "Components/StaticMeshComponent.h"
+#include "Engine/World.h"
+#include "GameFramework/PlayerController.h"
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
@@ -33,10 +35,12 @@ AStarBody::AStarBody()
 	Corona->SetMobility(EComponentMobility::Movable);
 	Corona->CastShadow = false;
 	Corona->SetTranslucentSortPriority(2);
-	if (Mesh) { Corona->SetStaticMesh(Mesh); }
+	Corona->SetUsingAbsoluteRotation(true);
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> PlaneFinder(TEXT("/Engine/BasicShapes/Plane.Plane"));
+	if (PlaneFinder.Succeeded()) { Corona->SetStaticMesh(PlaneFinder.Object); }
 
 	StarMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_Star.M_Star")));
-	CoronaMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_StarCorona.M_StarCorona")));
+	CoronaMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_StarGlow.M_StarGlow")));
 
 	Tags.AddUnique(APlanetBody::StarTag);
 }
@@ -44,23 +48,27 @@ AStarBody::AStarBody()
 void AStarBody::ApplyAppearance()
 {
 	Tags.AddUnique(APlanetBody::StarTag);
+	// Older saved instances may still reference the retired corona shell material.
+	if (CoronaMaterial.ToString().Contains(TEXT("M_StarCorona")))
+	{
+		CoronaMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_StarGlow.M_StarGlow")));
+		CoronaMID = nullptr;
+	}
 	Body->SetWorldScale3D(FVector(GetRadiusCm() / MeshUnitRadius));
-	Corona->SetRelativeScale3D(FVector(1.0 + CoronaDepth));
+	// The plane is 100 cm wide in local units; the glow spans (1 + CoronaDepth) radii each side of the centre.
+	Corona->SetWorldScale3D(FVector(GetRadiusCm() * 2.0 * (1.0 + CoronaDepth) / 100.0));
 
-	if (!StarMID)
+	// MIDs are serialized with the actor, so a saved instance can carry one made from a retired parent material.
+	auto EnsureMID = [this](TObjectPtr<UMaterialInstanceDynamic>& Slot, const TSoftObjectPtr<UMaterialInterface>& Source, const TCHAR* DebugName)
 	{
-		if (UMaterialInterface* Mat = SlonkMaterials::LoadOrFallback(StarMaterial, TEXT("Star")))
+		UMaterialInterface* Mat = SlonkMaterials::LoadOrFallback(Source, DebugName);
+		if (Mat && (!Slot || Slot->Parent != Mat))
 		{
-			StarMID = UMaterialInstanceDynamic::Create(Mat, this);
+			Slot = UMaterialInstanceDynamic::Create(Mat, this);
 		}
-	}
-	if (!CoronaMID)
-	{
-		if (UMaterialInterface* Mat = SlonkMaterials::LoadOrFallback(CoronaMaterial, TEXT("StarCorona")))
-		{
-			CoronaMID = UMaterialInstanceDynamic::Create(Mat, this);
-		}
-	}
+	};
+	EnsureMID(StarMID, StarMaterial, TEXT("Star"));
+	EnsureMID(CoronaMID, CoronaMaterial, TEXT("StarGlow"));
 	if (StarMID)
 	{
 		if (Body->GetMaterial(0) != StarMID) { Body->SetMaterial(0, StarMID); }
@@ -74,8 +82,9 @@ void AStarBody::ApplyAppearance()
 		if (Corona->GetMaterial(0) != CoronaMID) { Corona->SetMaterial(0, CoronaMID); }
 		CoronaMID->SetVectorParameterValue(TEXT("CoronaColor"), CoronaColor);
 		CoronaMID->SetScalarParameterValue(TEXT("Intensity"), CoronaIntensity);
-		CoronaMID->SetScalarParameterValue(TEXT("CoronaDepth"), CoronaDepth);
 		CoronaMID->SetScalarParameterValue(TEXT("Falloff"), CoronaFalloff);
+		// Where the photosphere disc ends inside the sprite (0..1 of the half-width).
+		CoronaMID->SetScalarParameterValue(TEXT("DiscFraction"), 1.0f / (1.0f + CoronaDepth));
 	}
 }
 
@@ -102,6 +111,33 @@ void AStarBody::Tick(float DeltaTime)
 	if (!FMath::IsNearlyZero(SpinDegPerSec))
 	{
 		AddActorLocalRotation(FRotator(0.f, SpinDegPerSec * DeltaTime, 0.f));
+	}
+
+	// Billboard the glow toward the player's camera and keep it a minimum angular size.
+	if (APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr)
+	{
+		FVector ViewLoc;
+		FRotator ViewRot;
+		PC->GetPlayerViewPoint(ViewLoc, ViewRot);
+		const FVector ToCam = ViewLoc - GetActorLocation();
+		const double Dist = ToCam.Size();
+		if (Dist > 1.0)
+		{
+			// The engine plane faces +Z; point that at the camera.
+			Corona->SetWorldRotation(FRotationMatrix::MakeFromZ(ToCam / Dist).Rotator());
+			const double Natural = GetRadiusCm() * 2.0 * (1.0 + CoronaDepth);
+			const double Minimum = Dist * GlowMinAngularSize;
+			const double Width = FMath::Max(Natural, Minimum);
+			Corona->SetWorldScale3D(FVector(Width / 100.0));
+			if (CoronaMID)
+			{
+				// Keep the photosphere cut-out matched to the real disc, and brighten the glow with distance
+				// so the star reads as a star from across the system instead of a dim dot.
+				CoronaMID->SetScalarParameterValue(TEXT("DiscFraction"), (float)(GetRadiusCm() * 2.0 / Width));
+				const float Radii = (float)(Dist / GetRadiusCm());
+				CoronaMID->SetScalarParameterValue(TEXT("Intensity"), CoronaIntensity * FMath::Clamp(Radii / 8.f, 1.f, 40.f));
+			}
+		}
 	}
 }
 

@@ -6,6 +6,7 @@
 #include "PlanetBody.h"
 #include "StarBody.h"
 #include "Components/DirectionalLightComponent.h"
+#include "Components/SkyAtmosphereComponent.h"
 #include "GameFramework/WorldSettings.h"
 #include "SpaceTarget.h"
 #include "StarshipHUD.h"
@@ -81,6 +82,130 @@ void ASlonkGameMode::Tick(float DeltaTime)
 	{
 		UpdateStarLighting();
 	}
+	if (bUseSkyAtmosphere)
+	{
+		UpdateSkyAtmosphere();
+	}
+}
+
+void ASlonkGameMode::UpdateSkyAtmosphere()
+{
+	UWorld* World = GetWorld();
+	APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+	if (!PC)
+	{
+		return;
+	}
+	FVector ViewLoc;
+	FRotator ViewRot;
+	PC->GetPlayerViewPoint(ViewLoc, ViewRot);
+
+	// Nearest planet (in radii) that has an atmosphere.
+	APlanetBody* Best = nullptr;
+	double BestRadii = TNumericLimits<double>::Max();
+	for (TActorIterator<APlanetBody> It(World); It; ++It)
+	{
+		if (!It->Style.bAtmosphere)
+		{
+			continue;
+		}
+		const double Radii = FVector::Dist(It->GetActorLocation(), ViewLoc) / It->GetRadiusCm();
+		if (Radii < BestRadii)
+		{
+			BestRadii = Radii;
+			Best = *It;
+		}
+	}
+	if (Best && BestRadii > SkyAtmosphereRadii)
+	{
+		Best = nullptr;
+	}
+
+	if (Best != AtmospherePlanet)
+	{
+		if (AtmospherePlanet)
+		{
+			AtmospherePlanet->SetUsingSkyAtmosphere(false);
+		}
+		AtmospherePlanet = Best;
+	}
+
+	if (!AtmospherePlanet)
+	{
+		if (SkyAtmosphere && SkyAtmosphere->IsVisible())
+		{
+			SkyAtmosphere->SetVisibility(false);
+		}
+		return;
+	}
+
+	if (!AtmosphereHolder)
+	{
+		FActorSpawnParameters Params;
+		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		AtmosphereHolder = World->SpawnActor<AActor>(AActor::StaticClass(), AtmospherePlanet->GetActorLocation(), FRotator::ZeroRotator, Params);
+		if (!AtmosphereHolder)
+		{
+			return;
+		}
+		USceneComponent* Root = NewObject<USceneComponent>(AtmosphereHolder, TEXT("Root"));
+		Root->RegisterComponent();
+		AtmosphereHolder->SetRootComponent(Root);
+		SkyAtmosphere = NewObject<USkyAtmosphereComponent>(AtmosphereHolder, TEXT("SkyAtmosphere"));
+		SkyAtmosphere->TransformMode = ESkyAtmosphereTransformMode::PlanetCenterAtComponentTransform;
+		SkyAtmosphere->SetupAttachment(Root);
+		SkyAtmosphere->RegisterComponent();
+	}
+
+	// Sunlight must be flagged as an atmosphere light for the scattering to pick it up.
+	for (TActorIterator<ADirectionalLight> It(World); It; ++It)
+	{
+		if (UDirectionalLightComponent* LightComp = Cast<UDirectionalLightComponent>(It->GetLightComponent()))
+		{
+			if (!LightComp->bAtmosphereSunLight)
+			{
+				LightComp->SetAtmosphereSunLight(true);
+			}
+		}
+	}
+
+	AtmosphereHolder->SetActorLocation(AtmospherePlanet->GetActorLocation());
+	const FPlanetStyle& S = AtmospherePlanet->Style;
+	const float RadiusKm = AtmospherePlanet->RadiusKm;
+	// The style's AtmosphereDepth sizes the far glow shell; the real scattering layer is much thinner
+	// (Earth: 1% of the radius), otherwise the limb from orbit becomes a thick white ring.
+	const float HeightKm = FMath::Clamp(S.AtmosphereDepth * RadiusKm * 0.25f, 6.f, 80.f);
+	SkyAtmosphere->SetBottomRadius(RadiusKm);
+	SkyAtmosphere->SetAtmosphereHeight(HeightKm);
+	// Scale heights proportional to the atmosphere thickness (Earth: 60 km / 8 km / 1.2 km).
+	SkyAtmosphere->SetRayleighExponentialDistribution(HeightKm * (8.f / 60.f));
+	SkyAtmosphere->SetMieExponentialDistribution(HeightKm * (1.2f / 60.f));
+	// Artistic Rayleigh: the planet's atmosphere colour decides which wavelengths scatter most.
+	const FLinearColor Col = S.AtmosphereColor / FMath::Max(S.AtmosphereColor.GetMax(), KINDA_SMALL_NUMBER);
+	SkyAtmosphere->SetRayleighScattering(FLinearColor(FMath::Max(Col.R, 0.1f), FMath::Max(Col.G, 0.1f), FMath::Max(Col.B, 0.1f)));
+	// Thinner atmospheres need stronger coefficients to show at all; Earth is 0.0331 at 60 km.
+	// Earth is 0.0331 / 0.004 at 60 km; keep that density regardless of planet size, scaled by the style's intensity.
+	SkyAtmosphere->SetRayleighScatteringScale(0.0331f * (S.Intensity / 2.2f) * 0.7f);
+	SkyAtmosphere->SetMieScatteringScale(0.003996f * (0.5f + S.Haze * 8.f));
+	SkyAtmosphere->SetMieAnisotropy(0.8f);
+	// Keep distant terrain readable from orbit.
+	SkyAtmosphere->SetAerialPespectiveViewDistanceScale(0.35f);
+	SkyAtmosphere->SetGroundAlbedo(S.OceanColor.ToFColor(true));
+	// Full boost inside the atmosphere (the sky needs it to read), easing off with altitude so the limb seen
+	// from orbit stays a thin blue line instead of a white ring.
+	const double AltitudeKm = (FVector::Dist(ViewLoc, AtmospherePlanet->GetActorLocation()) - AtmospherePlanet->GetRadiusCm()) / 100000.0;
+	const float Blend = FMath::Clamp((float)(AltitudeKm / (HeightKm * 8.0)), 0.f, 1.f);
+	const float Boost = FMath::Lerp(SkyLuminanceBoost, FMath::Max(SkyLuminanceBoost * 0.3f, 1.f), Blend);
+	// Aerial perspective washes the surface out from orbit at anything above 1x; only boost it when inside.
+	const float ApBoost = FMath::Lerp(SkyLuminanceBoost, 1.f, Blend);
+	SkyAtmosphere->SetSkyLuminanceFactor(FLinearColor(Boost, Boost, Boost));
+	SkyAtmosphere->SetSkyAndAerialPerspectiveLuminanceFactor(FLinearColor(ApBoost, ApBoost, ApBoost));
+	SkyAtmosphere->SetMultiScatteringFactor(1.f);
+	if (!SkyAtmosphere->IsVisible())
+	{
+		SkyAtmosphere->SetVisibility(true);
+	}
+	AtmospherePlanet->SetUsingSkyAtmosphere(true);
 }
 
 void ASlonkGameMode::UpdateStarLighting()

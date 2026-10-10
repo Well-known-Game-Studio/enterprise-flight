@@ -8,6 +8,7 @@
 #include "PlanetBody.generated.h"
 
 class UStaticMeshComponent;
+class UDynamicMeshComponent;
 class UMaterialInstanceDynamic;
 
 UENUM(BlueprintType)
@@ -104,6 +105,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> Body;
 
+	/** Dense cube-sphere used when the camera is close (built on demand with GeometryScript). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UDynamicMeshComponent> DetailBody;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> Clouds;
 
@@ -158,6 +163,26 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Planet")
 	double GetRadiusCm() const;
 
+	// ---- Level of detail ----
+
+	/** Switch to the dense mesh when the camera is closer than this many radii from the centre. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|LOD")
+	float DetailMeshRadii = 10.f;
+
+	/** Steps per cube face of the dense sphere (triangles = 12 * steps^2). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|LOD", meta = (ClampMin = "8", ClampMax = "200"))
+	int32 DetailSphereSteps = 80;
+
+	/** True while the world's Sky Atmosphere is parked on this planet (the shell atmosphere is hidden). */
+	UFUNCTION(BlueprintCallable, Category = "Planet")
+	void SetUsingSkyAtmosphere(bool bEnabled);
+
+	UFUNCTION(BlueprintPure, Category = "Planet")
+	bool IsUsingSkyAtmosphere() const { return bUsingSkyAtmosphere; }
+
+	UFUNCTION(BlueprintPure, Category = "Planet")
+	bool IsDetailMeshActive() const { return bDetailActive; }
+
 	/** Hook for PCG "Spawn Actor" post-spawn functions: re-applies everything after property overrides were copied in. */
 	UFUNCTION(BlueprintCallable, CallInEditor, Category = "Planet")
 	void PCGPostSpawn();
@@ -178,7 +203,16 @@ private:
 	void UpdateStarDirection();
 	EPlanetArchetype PickArchetype(FRandomStream& Rng) const;
 
+	void UpdateLOD();
+	void BuildDetailMesh();
+
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> SurfaceMID;
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> DetailSurfaceMID;
+	bool bUsingSkyAtmosphere = false;
+	bool bDetailActive = false;
+	bool bDetailBuilt = false;
+	float LODTimer = 0.f;
+	float CloudYawDeg = 0.f;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> CloudMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> AtmosphereMID;
 
