@@ -337,7 +337,7 @@ void AStarshipPawn::AttachStreaksToActiveCamera()
 	if (UCameraComponent* Cam = GetActiveCamera())
 	{
 		WarpStreaks->AttachToComponent(Cam, FAttachmentTransformRules::SnapToTargetNotIncludingScale);
-		WarpStreaks->SetRelativeLocationAndRotation(FVector::ZeroVector, FRotator::ZeroRotator);
+		WarpStreaks->SetRelativeLocation(FVector::ZeroVector);
 	}
 }
 
@@ -390,6 +390,9 @@ void AStarshipPawn::UpdateWarpEffects(float DeltaTime)
 	const float Flash = WarpDrive->GetFlashIntensity();
 
 	WarpStreaks->SetIntensity(Streak);
+	// Streaks fly past along the real direction of travel, whatever the camera is doing.
+	const FVector Travel = (Movement && Movement->Velocity.SizeSquared() > 1.0) ? Movement->Velocity.GetSafeNormal() : GetActorForwardVector();
+	WarpStreaks->SetTravelDirection(Travel);
 
 	FPostProcessSettings& S = PostProcess->Settings;
 	S.SceneFringeIntensity = WarpChromaticAberration * FMath::Max(Flash, Streak * 0.5f);

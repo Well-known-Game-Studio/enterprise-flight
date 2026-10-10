@@ -19,6 +19,8 @@ UWarpStreaksComponent::UWarpStreaksComponent()
 	SetCanEverAffectNavigation(false);
 	SetVisibility(false);
 	NumCustomDataFloats = 0;
+	// Rotation is driven by the ship's velocity, not by whichever camera we are parented to.
+	SetUsingAbsoluteRotation(true);
 
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> CylinderFinder(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
 	if (CylinderFinder.Succeeded())
@@ -75,6 +77,14 @@ void UWarpStreaksComponent::BuildInstances()
 		Transforms[i] = MakeStreakTransform(P, 0.01f);
 	}
 	AddInstances(Transforms, /*bShouldReturnIndices*/ false, /*bWorldSpace*/ false);
+}
+
+void UWarpStreaksComponent::SetTravelDirection(const FVector& WorldDirection)
+{
+	if (!WorldDirection.IsNearlyZero())
+	{
+		SetWorldRotation(WorldDirection.GetSafeNormal().Rotation());
+	}
 }
 
 void UWarpStreaksComponent::SetIntensity(float NewIntensity)

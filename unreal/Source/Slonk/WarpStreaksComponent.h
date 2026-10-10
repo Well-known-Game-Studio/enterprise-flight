@@ -58,6 +58,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Starship|Warp")
 	float GetIntensity() const { return Intensity; }
 
+	/** World-space direction of travel. The tunnel stays centred on whatever it is attached to (the camera) but its axis follows this. */
+	UFUNCTION(BlueprintCallable, Category = "Starship|Warp")
+	void SetTravelDirection(const FVector& WorldDirection);
+
 private:
 	void BuildInstances();
 	FTransform MakeStreakTransform(const FVector& Position, float LengthScale) const;
