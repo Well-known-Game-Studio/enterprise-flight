@@ -3,6 +3,7 @@
 #include "Camera/CameraComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "StarshipHUD.h"
+#include "PlanetBody.h"
 #include "Components/BoxComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Components/PostProcessComponent.h"
@@ -555,6 +556,17 @@ void AStarshipPawn::ProcessDebugCommand()
 		DebugSteerTime = Arg(4, 1.f);
 	}
 	else if (Op == TEXT("shake")) { AddCameraShake(Arg(1, 1.f)); }
+	else if (Op == TEXT("jump")) { JumpToNavTarget(); }
+	else if (Op == TEXT("exec"))
+	{
+		// Everything after "exec" is a console command (e.g. "exec stat unit").
+		FString Rest = Cmd.TrimStartAndEnd();
+		Rest.RemoveFromStart(TEXT("exec"), ESearchCase::IgnoreCase);
+		if (APlayerController* PC = Cast<APlayerController>(GetController()))
+		{
+			PC->ConsoleCommand(Rest.TrimStartAndEnd());
+		}
+	}
 	else if (Op == TEXT("nav"))
 	{
 		if (APlayerController* PC = Cast<APlayerController>(GetController()))
@@ -573,4 +585,65 @@ void AStarshipPawn::ProcessDebugCommand()
 	{
 		UE_LOG(LogTemp, Warning, TEXT("Starship debug command not understood: %s"), *Cmd);
 	}
+}
+
+void AStarshipPawn::JumpToActor(AActor* Target, double TargetRadiusCm, float StandoffRadii)
+{
+	if (!Target)
+	{
+		return;
+	}
+	const FVector TargetLoc = Target->GetActorLocation();
+	// Approach from the star's side so the body is lit; fall back to "from where we are".
+	FVector Approach = FVector::ZeroVector;
+	if (const APlanetBody* Planet = Cast<APlanetBody>(Target))
+	{
+		Approach = Planet->GetStarDirection();
+	}
+	if (Approach.IsNearlyZero())
+	{
+		Approach = (GetActorLocation() - TargetLoc).GetSafeNormal();
+	}
+	if (Approach.IsNearlyZero())
+	{
+		Approach = FVector::ForwardVector;
+	}
+	const double Standoff = FMath::Max(TargetRadiusCm * StandoffRadii, GetShipLengthCm() * 20.0);
+	const FVector NewLoc = TargetLoc + Approach * Standoff;
+	const FRotator NewRot = (-Approach).Rotation();
+
+	if (WarpDrive && WarpDrive->IsWarpEngaged())
+	{
+		WarpDrive->DisengageWarp();
+	}
+	if (Movement)
+	{
+		Movement->SetThrottle(0.0);
+		Movement->Velocity = FVector::ZeroVector;
+		Movement->AngularVelocity = FRotator::ZeroRotator;
+		Movement->SetWarp(false, 0.0);
+	}
+	SetActorLocationAndRotation(NewLoc, NewRot, false, nullptr, ETeleportType::TeleportPhysics);
+	FreeLookAngles = FVector2D::ZeroVector;
+	AddCameraShake(0.4f);
+}
+
+void AStarshipPawn::JumpToNavTarget()
+{
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	AStarshipHUD* H = PC ? Cast<AStarshipHUD>(PC->GetHUD()) : nullptr;
+	if (!H)
+	{
+		return;
+	}
+	FNavObject Info;
+	if (!H->GetNavTargetInfo(Info))
+	{
+		H->CycleNavTarget();
+		if (!H->GetNavTargetInfo(Info))
+		{
+			return;
+		}
+	}
+	JumpToActor(Info.Actor, Info.RadiusCm);
 }

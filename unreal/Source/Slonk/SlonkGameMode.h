@@ -65,6 +65,9 @@ private:
 	void UpdateStarLighting();
 	void UpdateSkyAtmosphere();
 
+	TWeakObjectPtr<AActor> CachedStar;
+	float StarSearchTimer = 0.f;
+
 	UPROPERTY() TObjectPtr<AActor> AtmosphereHolder;
 	UPROPERTY() TObjectPtr<class USkyAtmosphereComponent> SkyAtmosphere;
 	UPROPERTY() TObjectPtr<class APlanetBody> AtmospherePlanet;

@@ -48,6 +48,10 @@ APlanetBody::APlanetBody()
 	Body->SetCollisionResponseToAllChannels(ECR_Block);
 	Body->SetMobility(EComponentMobility::Movable);
 	Body->SetGenerateOverlapEvents(false);
+	// A spinning 1000 km movable sphere is a terrible shadow caster (it churns the virtual shadow maps every frame).
+	Body->CastShadow = false;
+	Body->bCastDynamicShadow = false;
+	Body->bAffectDistanceFieldLighting = false;
 
 	// Higher-poly unit sphere (radius 1 cm) so the silhouette stays round at 1000 km.
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereFinder(TEXT("/Engine/ArtTools/RenderToTexture/Meshes/S_1_Unit_Sphere_HI.S_1_Unit_Sphere_HI"));
@@ -74,7 +78,9 @@ APlanetBody::APlanetBody()
 	DetailBody->SetGenerateOverlapEvents(false);
 	DetailBody->SetMobility(EComponentMobility::Movable);
 	DetailBody->SetVisibility(false);
+	DetailBody->CastShadow = false;
 	DetailBody->bCastDynamicShadow = false;
+	DetailBody->bAffectDistanceFieldLighting = false;
 
 	Clouds = MakeShell(this, TEXT("Clouds"), Body, Mesh);
 	Atmosphere = MakeShell(this, TEXT("Atmosphere"), Body, Mesh);

@@ -67,6 +67,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "HUD|Nav") void CycleNavTarget();
 	UFUNCTION(BlueprintCallable, Category = "HUD|Nav") void ClearNavTarget() { NavTarget = nullptr; }
 
+	/** The current nav target's gathered record, if any. */
+	bool GetNavTargetInfo(FNavObject& Out);
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HUD")
 	FLinearColor Accent = FLinearColor(0.55f, 0.8f, 1.f);
 
@@ -74,7 +77,7 @@ public:
 	FLinearColor Warning = FLinearColor(1.f, 0.6f, 0.2f);
 
 private:
-	void GatherNavObjects();
+	void GatherNavObjects(bool bForce = false);
 	void DrawNavMarkers(const AActor* Ship, float UIScale);
 	void DrawMinimap(const AActor* Ship, float UIScale);
 	void DrawCircle(float CX, float CY, float R, const FLinearColor& Color, int32 Segments = 32, float Thickness = 1.f);
@@ -86,6 +89,9 @@ private:
 	FVector StarLocation = FVector::ZeroVector;
 	double BeltRadiusCm = 0.0;
 	float NavTime = 0.f;
+	double LastNavGatherTime = -1.0;
+	float SmoothedFrameMs = 0.f;
+	float SmoothedGpuMs = 0.f;
 
 	void DrawBar(float X, float Y, float W, float H, float Fraction, const FLinearColor& Color) const;
 	void DrawReticle(float Scale);

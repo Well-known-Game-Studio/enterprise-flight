@@ -219,20 +219,27 @@ void ASlonkGameMode::UpdateStarLighting()
 	}
 	const FVector Here = Pawn->GetActorLocation();
 
-	AActor* Star = nullptr;
-	double BestDist = TNumericLimits<double>::Max();
-	for (TActorIterator<AActor> It(World); It; ++It)
+	StarSearchTimer -= World->GetDeltaSeconds();
+	if (!CachedStar.IsValid() || StarSearchTimer <= 0.f)
 	{
-		if (It->ActorHasTag(APlanetBody::StarTag))
+		StarSearchTimer = 1.f;
+		AActor* Best = nullptr;
+		double BestDist = TNumericLimits<double>::Max();
+		for (TActorIterator<AActor> It(World); It; ++It)
 		{
-			const double D = FVector::DistSquared(It->GetActorLocation(), Here);
-			if (D < BestDist)
+			if (It->ActorHasTag(APlanetBody::StarTag))
 			{
-				BestDist = D;
-				Star = *It;
+				const double D = FVector::DistSquared(It->GetActorLocation(), Here);
+				if (D < BestDist)
+				{
+					BestDist = D;
+					Best = *It;
+				}
 			}
 		}
+		CachedStar = Best;
 	}
+	AActor* Star = CachedStar.Get();
 	if (!Star)
 	{
 		return;
@@ -245,14 +252,24 @@ void ASlonkGameMode::UpdateStarLighting()
 	const AStarBody* StarBody = Cast<AStarBody>(Star);
 	for (TActorIterator<ADirectionalLight> It(World); It; ++It)
 	{
-		It->SetActorRotation(LightDir.Rotation());
+		// Rotating a directional light invalidates every cached / virtual shadow page, so only move it when
+		// the direction has drifted by a visible amount (about 0.1 degrees).
+		const FVector CurrentDir = It->GetActorForwardVector();
+		if (FVector::DotProduct(CurrentDir, LightDir) < FMath::Cos(FMath::DegreesToRadians(0.1f)))
+		{
+			It->SetActorRotation(LightDir.Rotation());
+		}
 		if (StarBody)
 		{
 			if (UDirectionalLightComponent* LightComp = Cast<UDirectionalLightComponent>(It->GetLightComponent()))
 			{
 				// Warm/cool the sunlight with the star, keeping it bright.
 				const FLinearColor C = StarBody->StarColor / FMath::Max(StarBody->StarColor.GetMax(), KINDA_SMALL_NUMBER);
-				LightComp->SetLightColor(FLinearColor(FMath::Lerp(1.f, C.R, 0.6f), FMath::Lerp(1.f, C.G, 0.6f), FMath::Lerp(1.f, C.B, 0.6f)));
+				const FLinearColor Wanted(FMath::Lerp(1.f, C.R, 0.6f), FMath::Lerp(1.f, C.G, 0.6f), FMath::Lerp(1.f, C.B, 0.6f));
+				if (!LightComp->GetLightColor().Equals(Wanted, 0.002f))
+				{
+					LightComp->SetLightColor(Wanted);
+				}
 			}
 		}
 	}

@@ -21,6 +21,8 @@ AStarBody::AStarBody()
 	Body->SetCollisionResponseToAllChannels(ECR_Block);
 	Body->SetMobility(EComponentMobility::Movable);
 	Body->CastShadow = false;
+	Body->bCastDynamicShadow = false;
+	Body->bAffectDistanceFieldLighting = false;
 
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereFinder(TEXT("/Engine/ArtTools/RenderToTexture/Meshes/S_1_Unit_Sphere_HI.S_1_Unit_Sphere_HI"));
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> FallbackSphereFinder(TEXT("/Engine/BasicShapes/Sphere.Sphere"));

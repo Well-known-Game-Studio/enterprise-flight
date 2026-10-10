@@ -260,6 +260,14 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Starship|Camera")
 	UCameraComponent* GetActiveCamera() const;
 
+	/** Teleport the ship to a safe standoff from an actor (a few radii sunward), facing it, at rest. */
+	UFUNCTION(BlueprintCallable, Category = "Starship")
+	void JumpToActor(AActor* Target, double TargetRadiusCm, float StandoffRadii = 3.f);
+
+	/** Jump to the HUD's nav target (cycling to the next body first if none is set). */
+	UFUNCTION(BlueprintCallable, Category = "Starship")
+	void JumpToNavTarget();
+
 	/** Kick the camera (0..1 is a sensible range; stacks). */
 	UFUNCTION(BlueprintCallable, Category = "Starship|Camera")
 	void AddCameraShake(float Amplitude);

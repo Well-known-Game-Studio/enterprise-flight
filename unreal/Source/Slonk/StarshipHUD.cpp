@@ -1,6 +1,7 @@
 #include "StarshipHUD.h"
 
 #include "Engine/Canvas.h"
+#include "RHI.h"
 #include "EngineUtils.h"
 #include "PlanetBody.h"
 #include "SpaceTarget.h"
@@ -102,6 +103,15 @@ void AStarshipHUD::DrawHUD()
 	float X = 32.f * UIScale;
 	float Y = 32.f * UIScale;
 	DrawText(TEXT("U.S.S. ENTERPRISE  NCC-1701-A"), Accent, X, Y, Font, UIScale); Y += Line * 1.4f;
+
+	// Frame timing (smoothed) so performance is visible without console stats.
+	{
+		const float Dt = GetWorld()->GetDeltaSeconds();
+		SmoothedFrameMs = SmoothedFrameMs <= 0.f ? Dt * 1000.f : FMath::Lerp(SmoothedFrameMs, Dt * 1000.f, 0.05f);
+		const float GpuMs = FPlatformTime::ToMilliseconds(RHIGetGPUFrameCycles());
+		SmoothedGpuMs = SmoothedGpuMs <= 0.f ? GpuMs : FMath::Lerp(SmoothedGpuMs, GpuMs, 0.05f);
+		DrawText(FString::Printf(TEXT("%.0f FPS   frame %.1f ms   gpu %.1f ms"), SmoothedFrameMs > 0.f ? 1000.f / SmoothedFrameMs : 0.f, SmoothedFrameMs, SmoothedGpuMs), FLinearColor(1, 1, 1, 0.5f), X, Y, SmallFont, UIScale); Y += Line;
+	}
 
 	if (Movement)
 	{
@@ -227,6 +237,7 @@ void AStarshipHUD::DrawHUD()
 			TEXT("R  reset camera      Tab  HUD     H  help"),
 			TEXT("N  nav markers       M  minimap"),
 			TEXT("L  next nav target   K  clear nav target"),
+			TEXT("Home  jump to nav target (dev)"),
 		};
 		for (const TCHAR* L : Help)
 		{
@@ -258,14 +269,28 @@ FLinearColor AStarshipHUD::KindColor(ENavObjectKind Kind) const
 	}
 }
 
-void AStarshipHUD::GatherNavObjects()
+void AStarshipHUD::GatherNavObjects(bool bForce)
 {
-	NavObjects.Reset();
 	UWorld* World = GetWorld();
 	if (!World)
 	{
 		return;
 	}
+	// Walking every actor each frame is wasteful; bodies barely move between refreshes.
+	const double Now = World->GetTimeSeconds();
+	if (!bForce && NavObjects.Num() > 0 && Now - LastNavGatherTime < 0.25)
+	{
+		for (FNavObject& O : NavObjects)
+		{
+			if (O.Actor)
+			{
+				O.Location = O.Actor->GetActorLocation();
+			}
+		}
+		return;
+	}
+	LastNavGatherTime = Now;
+	NavObjects.Reset();
 
 	bool bHaveStar = false;
 	for (TActorIterator<AStarBody> It(World); It; ++It)
@@ -357,7 +382,7 @@ void AStarshipHUD::GatherNavObjects()
 
 void AStarshipHUD::CycleNavTarget()
 {
-	GatherNavObjects();
+	GatherNavObjects(true);
 	if (NavObjects.Num() == 0)
 	{
 		NavTarget = nullptr;
@@ -629,4 +654,22 @@ void AStarshipHUD::DrawMinimap(const AActor* Ship, float UIScale)
 
 	// Scale legend.
 	DrawText(FString::Printf(TEXT("SYSTEM MAP  radius %s"), *FormatDistance(MaxR)), FLinearColor(1, 1, 1, 0.6f), X0 + 6.f * UIScale, Y0 + 4.f * UIScale, SmallFont, UIScale * 0.85f);
+}
+
+bool AStarshipHUD::GetNavTargetInfo(FNavObject& Out)
+{
+	if (!NavTarget.IsValid())
+	{
+		return false;
+	}
+	GatherNavObjects(true);
+	for (const FNavObject& O : NavObjects)
+	{
+		if (O.Actor == NavTarget.Get())
+		{
+			Out = O;
+			return true;
+		}
+	}
+	return false;
 }

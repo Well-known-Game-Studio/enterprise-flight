@@ -105,6 +105,7 @@ void AStarshipPlayerController::CreateDefaultInputAssets()
 	Ensure(IA_ToggleMinimap, TEXT("IA_ToggleMinimap"), EInputActionValueType::Boolean);
 	Ensure(IA_CycleNavTarget, TEXT("IA_CycleNavTarget"), EInputActionValueType::Boolean);
 	Ensure(IA_ClearNavTarget, TEXT("IA_ClearNavTarget"), EInputActionValueType::Boolean);
+	Ensure(IA_JumpToNavTarget, TEXT("IA_JumpToNavTarget"), EInputActionValueType::Boolean);
 
 	if (MappingContext)
 	{
@@ -184,6 +185,7 @@ void AStarshipPlayerController::CreateDefaultInputAssets()
 	Map(Ctx, IA_CycleNavTarget, EKeys::L);
 	Map(Ctx, IA_CycleNavTarget, EKeys::Gamepad_LeftThumbstick);
 	Map(Ctx, IA_ClearNavTarget, EKeys::K);
+	Map(Ctx, IA_JumpToNavTarget, EKeys::Home);
 
 	MappingContext = Ctx;
 }
@@ -255,6 +257,7 @@ void AStarshipPlayerController::SetupInputComponent()
 	EIC->BindAction(IA_ToggleMinimap, ETriggerEvent::Started, this, &AStarshipPlayerController::OnToggleMinimap);
 	EIC->BindAction(IA_CycleNavTarget, ETriggerEvent::Started, this, &AStarshipPlayerController::OnCycleNavTarget);
 	EIC->BindAction(IA_ClearNavTarget, ETriggerEvent::Started, this, &AStarshipPlayerController::OnClearNavTarget);
+	EIC->BindAction(IA_JumpToNavTarget, ETriggerEvent::Started, this, &AStarshipPlayerController::OnJumpToNavTarget);
 }
 
 void AStarshipPlayerController::OnPossess(APawn* InPawn)
@@ -555,4 +558,12 @@ void AStarshipPlayerController::OnCycleNavTarget()
 void AStarshipPlayerController::OnClearNavTarget()
 {
 	if (AStarshipHUD* H = Cast<AStarshipHUD>(GetHUD())) { H->ClearNavTarget(); }
+}
+
+void AStarshipPlayerController::OnJumpToNavTarget()
+{
+	if (AStarshipPawn* Ship = GetStarship())
+	{
+		Ship->JumpToNavTarget();
+	}
 }
