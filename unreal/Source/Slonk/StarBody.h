@@ -75,6 +75,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star|Materials") TSoftObjectPtr<UMaterialInterface> StarMaterial;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star|Materials") TSoftObjectPtr<UMaterialInterface> CoronaMaterial;
 
+	/**
+	 * Beyond this camera distance (cm) the star's own glow sprite is hidden and the player's
+	 * UDistantStarsComponent draws a correctly sized stand-in inside the ship's star sphere instead
+	 * (the star sphere is opaque, so the real star is invisible from further out).
+	 */
+	static constexpr double FarSpriteDistanceCm = 2.5e11;
+
 	UFUNCTION(BlueprintPure, Category = "Star")
 	double GetRadiusCm() const { return FMath::Max(RadiusKm, 1.f) * 100000.0; }
 

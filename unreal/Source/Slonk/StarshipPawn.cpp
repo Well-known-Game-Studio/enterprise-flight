@@ -20,6 +20,8 @@
 #include "UObject/ConstructorHelpers.h"
 #include "WarpDriveComponent.h"
 #include "WarpStreaksComponent.h"
+#include "BridgeInteriorComponent.h"
+#include "DistantStarsComponent.h"
 
 AStarshipPawn::AStarshipPawn()
 {
@@ -82,6 +84,13 @@ AStarshipPawn::AStarshipPawn()
 	BridgeCamera->bUsePawnControlRotation = false;
 	BridgeCamera->SetFieldOfView(BridgeFOV);
 	BridgeCamera->SetActive(false);
+
+	BridgeInterior = CreateDefaultSubobject<UBridgeInteriorComponent>(TEXT("BridgeInterior"));
+	BridgeInterior->SetupAttachment(CollisionBox);
+	BridgeInterior->SetVisibility(false, true);
+
+	DistantStars = CreateDefaultSubobject<UDistantStarsComponent>(TEXT("DistantStars"));
+	DistantStars->SetupAttachment(CollisionBox);
 
 	OrbitPivot = CreateDefaultSubobject<USceneComponent>(TEXT("OrbitPivot"));
 	OrbitPivot->SetupAttachment(CollisionBox);
@@ -192,6 +201,8 @@ void AStarshipPawn::ApplyHullDimensions()
 
 	BridgeCamera->SetRelativeLocation(BridgeCameraOffset);
 	BridgeCamera->SetFieldOfView(BridgeFOV);
+	// The set's origin is the deck under the captain's chair; the camera sits at the seated eye point.
+	BridgeInterior->SetRelativeLocation(BridgeCameraOffset - BridgeInterior->EyeOffset);
 
 	const float OrbitDistance = LengthCm * CinematicDistanceFactor;
 	const FVector OrbitOffset(-OrbitDistance, 0.0, OrbitDistance * 0.18);
@@ -407,6 +418,7 @@ void AStarshipPawn::SetCameraMode(EStarshipCameraMode Mode)
 	// Hide the hull from the bridge so the saucer doesn't fill the lens.
 	ShipMesh->SetOwnerNoSee(false);
 	ShipMesh->SetVisibility(Mode != EStarshipCameraMode::Bridge);
+	BridgeInterior->SetVisibility(Mode == EStarshipCameraMode::Bridge, true);
 	AttachStreaksToActiveCamera();
 }
 
@@ -451,6 +463,11 @@ void AStarshipPawn::Tick(float DeltaTime)
 		DebugSteerTime -= DeltaTime;
 		// Movement ticks before this (pre-physics); set the input it will consume next frame.
 		Movement->SetSteeringInput(DebugSteer.X, DebugSteer.Y, DebugSteer.Z);
+	}
+	if (DebugLookTime > 0.f)
+	{
+		DebugLookTime -= DeltaTime;
+		FreeLookAngles = DebugLook;
 	}
 	UpdateWarpEffects(DeltaTime);
 	UpdateHullGlow(DeltaTime);
@@ -550,7 +567,7 @@ void AStarshipPawn::UpdateCameras(float DeltaTime)
 	const float ThrottleAbs = Movement ? FMath::Abs((float)Movement->Throttle) : 0.f;
 
 	// Free look: hold to orbit, release to spring back.
-	if (!bFreeLook)
+	if (!bFreeLook && DebugLookTime <= 0.f)
 	{
 		const float A = 1.f - FMath::Exp(-FreeLookReturnRate * DeltaTime);
 		FreeLookAngles = FMath::Lerp(FreeLookAngles, FVector2D::ZeroVector, A);
@@ -647,6 +664,11 @@ void AStarshipPawn::ProcessDebugCommand()
 	{
 		DebugSteer = FVector(Arg(1, 0.f), Arg(2, 0.f), Arg(3, 0.f));
 		DebugSteerTime = Arg(4, 1.f);
+	}
+	else if (Op == TEXT("look"))
+	{
+		DebugLook = FVector2D(Arg(1, 0.f), Arg(2, 0.f));
+		DebugLookTime = Arg(3, 2.f);
 	}
 	else if (Op == TEXT("shake")) { AddCameraShake(Arg(1, 1.f)); }
 	else if (Op == TEXT("jump")) { JumpToNavTarget(); }

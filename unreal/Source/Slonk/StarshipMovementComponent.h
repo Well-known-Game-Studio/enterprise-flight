@@ -45,19 +45,19 @@ public:
 
 	// ---- Attitude control ---------------------------------------------------------------------
 
-	/** Max pitch rate, deg/s. Capital ships turn slowly. */
+	/** Max pitch rate, deg/s. A capital ship, but one that has to be fun to fly: a 180 takes ~6 s. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attitude")
-	float MaxPitchRate = 12.f;
+	float MaxPitchRate = 30.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attitude")
-	float MaxYawRate = 12.f;
+	float MaxYawRate = 30.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attitude")
-	float MaxRollRate = 20.f;
+	float MaxRollRate = 50.f;
 
 	/** How quickly angular rates approach their target (1/s). Lower = heavier feel. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attitude")
-	float AngularResponse = 2.0f;
+	float AngularResponse = 3.5f;
 
 	/** Steering authority while at warp, as a fraction of impulse rates. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attitude", meta = (ClampMin = "0", ClampMax = "1"))

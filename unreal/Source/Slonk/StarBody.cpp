@@ -123,7 +123,13 @@ void AStarBody::Tick(float DeltaTime)
 		PC->GetPlayerViewPoint(ViewLoc, ViewRot);
 		const FVector ToCam = ViewLoc - GetActorLocation();
 		const double Dist = ToCam.Size();
-		if (Dist > 1.0)
+		// Past the hand-over distance the distant-star sprite on the player takes over.
+		const bool bNear = Dist < FarSpriteDistanceCm;
+		if (Corona->IsVisible() != bNear)
+		{
+			Corona->SetVisibility(bNear);
+		}
+		if (Dist > 1.0 && bNear)
 		{
 			// The engine plane faces +Z; point that at the camera.
 			Corona->SetWorldRotation(FRotationMatrix::MakeFromZ(ToCam / Dist).Rotator());

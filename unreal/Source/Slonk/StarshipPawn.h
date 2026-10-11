@@ -17,6 +17,8 @@ class UStarshipMovementComponent;
 class UWarpDriveComponent;
 class UStarshipWeaponsComponent;
 class UWarpStreaksComponent;
+class UBridgeInteriorComponent;
+class UDistantStarsComponent;
 
 UENUM(BlueprintType)
 enum class EWarpVisualMode : uint8
@@ -121,6 +123,14 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|FX")
 	TObjectPtr<UStaticMeshComponent> StarSphere;
 
+	/** Stand-in sprites for stars beyond the star sphere (the real sun from across the system). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|FX")
+	TObjectPtr<UDistantStarsComponent> DistantStars;
+
+	/** Procedural bridge set around the bridge camera; only visible in the bridge view. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|Cameras")
+	TObjectPtr<UBridgeInteriorComponent> BridgeInterior;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|FX")
 	TArray<TObjectPtr<UPointLightComponent>> HullLights;
 
@@ -214,6 +224,7 @@ public:
 	 * PIE runs) and the pawn executes it on the next tick, then clears it. Commands:
 	 *   throttle <-0.25..1> | impulse <1-4> | stop | warp | warp on | warp off | warpfactor <f>
 	 *   phasers on|off | torpedo | target | camera chase|bridge|cinematic | steer <pitch> <yaw> <roll> <seconds>
+	 *   look <yaw> <pitch> <seconds> (free-look the active camera)
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
 	FString DebugCommand;
@@ -355,4 +366,6 @@ private:
 	float LastTorpedoReadiness = 1.f;
 	FVector DebugSteer = FVector::ZeroVector;
 	float DebugSteerTime = 0.f;
+	FVector2D DebugLook = FVector2D::ZeroVector;
+	float DebugLookTime = 0.f;
 };
