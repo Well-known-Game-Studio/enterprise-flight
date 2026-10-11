@@ -716,11 +716,22 @@ void AStarshipPawn::JumpToActor(AActor* Target, double TargetRadiusCm, float Sta
 		return;
 	}
 	const FVector TargetLoc = Target->GetActorLocation();
-	// Approach from the star's side so the body is lit; fall back to "from where we are".
+	// Park 90 degrees from the star in the orbital plane, so the view runs straight down the
+	// terminator: half lit, half dark. Fall back to "from where we are".
 	FVector Approach = FVector::ZeroVector;
 	if (const APlanetBody* Planet = Cast<APlanetBody>(Target))
 	{
-		Approach = Planet->GetStarDirection();
+		const FVector ToStar = Planet->GetStarDirection();
+		if (!ToStar.IsNearlyZero())
+		{
+			// Orbits lie in the world XY plane; rotate the star bearing a quarter turn about Z.
+			FVector Side = FVector::CrossProduct(FVector::UpVector, ToStar);
+			if (Side.IsNearlyZero())
+			{
+				Side = FVector::CrossProduct(ToStar, FVector::ForwardVector);
+			}
+			Approach = Side.GetSafeNormal();
+		}
 	}
 	if (Approach.IsNearlyZero())
 	{
@@ -746,6 +757,11 @@ void AStarshipPawn::JumpToActor(AActor* Target, double TargetRadiusCm, float Sta
 		Movement->SetWarp(false, 0.0);
 	}
 	SetActorLocationAndRotation(NewLoc, NewRot, false, nullptr, ETeleportType::TeleportPhysics);
+	// Rebase right away: the floating origin ticks during physics, which may already have run this frame.
+	if (UFloatingOriginComponent* Origin = ASlonkGameMode::FindFloatingOrigin(GetWorld()))
+	{
+		Origin->ShiftWorld(-GetActorLocation());
+	}
 	FreeLookAngles = FVector2D::ZeroVector;
 	AddCameraShake(0.4f);
 }

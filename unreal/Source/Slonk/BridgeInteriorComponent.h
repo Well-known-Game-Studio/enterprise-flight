@@ -1,5 +1,8 @@
-// Slonk - a procedural starship bridge built from engine primitives around the bridge camera, so the
-// bridge view looks out of the viewscreen from the captain's chair past the helm and navigation stations.
+// Slonk - a procedural starship bridge in the style of the original Enterprise: a sunken central well
+// with the captain's chair and the two-seat helm/navigation console, a raised outer deck edged in red with
+// red handrails, a continuous ring of sloped button consoles under a band of monitors, blue-grey upper
+// walls with framed viewers, and swivel chairs on white pedestals. Built from revolved profiles
+// (GeometryScript) plus engine primitives around the bridge camera.
 
 #pragma once
 
@@ -9,14 +12,16 @@
 
 class UStaticMesh;
 class UStaticMeshComponent;
+class UDynamicMeshComponent;
 class UPointLightComponent;
 class UMaterialInterface;
 class UMaterialInstanceDynamic;
 
 /**
- * Attach to the ship so that this component's origin is the floor under the captain's chair, +X facing
- * the viewscreen. The bridge camera belongs at EyeOffset. Geometry is built once on BeginPlay from the
- * parameters below; everything is collision-free and hidden unless SetVisibility(true, true) is called.
+ * Attach to the ship so that this component's origin is the well floor under the captain's chair (the
+ * centre of the bridge), +X facing the viewscreen. The bridge camera belongs at EyeOffset. Geometry is
+ * built once on BeginPlay; everything is collision-free and hidden unless SetVisibility(true, true).
+ * Angles below are yaw degrees: 0 = toward the viewscreen, 90 = starboard, 180 = aft.
  */
 UCLASS(ClassGroup = (Starship), meta = (BlueprintSpawnableComponent))
 class SLONK_API UBridgeInteriorComponent : public USceneComponent
@@ -30,54 +35,68 @@ public:
 
 	/** Where the seated captain's eyes are, relative to this component (cm). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
-	FVector EyeOffset = FVector(10.0, 0.0, 185.0);
+	FVector EyeOffset = FVector(12.0, 0.0, 165.0);
 
-	/** Centre of the circular bridge relative to this component; the chair sits forward of centre. */
+	/** Radius of the wall / console ring. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
-	FVector BridgeCenter = FVector(-120.0, 0.0, 0.0);
+	float WallRadius = 560.f;
+
+	/** Inner radius of the raised outer deck (the central well is inside this). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
+	float DeckRadius = 335.f;
+
+	/** Height of the outer deck above the well floor. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
+	float DeckHeight = 40.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
-	float WallRadius = 545.f;
+	float CeilingHeight = 300.f;
+
+	/** Half-angle of the viewscreen opening in the forward wall (degrees). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
+	float ViewscreenHalfAngle = 34.f;
+
+	/** Bottom and top of the viewscreen opening (cm above the well floor). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
+	float ViewscreenBottom = 85.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
-	float CeilingHeight = 285.f;
+	float ViewscreenTop = 275.f;
 
-	/** Number of wall segments around the room. */
+	/** Bearing of the turbolift alcove (degrees, aft-port by default). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
+	float TurboliftAngle = 150.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
+	float TurboliftHalfAngle = 13.f;
+
+	/** Number of monitor / viewer bays around the wall. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge", meta = (ClampMin = "8", ClampMax = "32"))
-	int32 WallSegments = 16;
+	int32 WallBays = 16;
 
-	/** Wall segments (centred on the forward axis) left open as the viewscreen. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge", meta = (ClampMin = "1", ClampMax = "7"))
-	int32 ViewscreenSegments = 3;
-
-	/** Bottom and top of the viewscreen opening (cm above the deck). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
-	float ViewscreenBottom = 80.f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
-	float ViewscreenTop = 262.f;
-
-	/** Seated crew figures at the helm, navigation and perimeter stations. */
+	/** Seated crew figures at the helm, navigation and some perimeter stations. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
 	bool bShowCrew = true;
 
 	/** Point light intensity (candelas) of the overhead lights. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
-	float LightIntensity = 260.f;
+	float LightIntensity = 150.f;
 
-	/** Emissive strength of the ceiling light strips. */
+	/** Emissive strength of the ceiling light ring. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
-	float LightPanelEmissive = 1.6f;
+	float LightPanelEmissive = 3.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
-	FLinearColor LightColor = FLinearColor(1.0f, 0.93f, 0.85f);
+	FLinearColor LightColor = FLinearColor(1.0f, 0.95f, 0.9f);
 
-	/** Emissive strength of the console displays. */
+	/** Emissive strength of the button panels, monitors and viewers. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
 	float DisplayIntensity = 4.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge|Materials") TSoftObjectPtr<UMaterialInterface> LitMaterial;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge|Materials") TSoftObjectPtr<UMaterialInterface> DisplayMaterial;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge|Materials") TSoftObjectPtr<UMaterialInterface> ButtonsMaterial;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge|Materials") TSoftObjectPtr<UMaterialInterface> ViewerMaterial;
 
 	/** (Re)build the set. Safe to call again; existing pieces are destroyed first. */
 	UFUNCTION(BlueprintCallable, Category = "Bridge")
@@ -88,18 +107,21 @@ public:
 
 private:
 	UMaterialInstanceDynamic* MakeLit(const TCHAR* Name, FLinearColor Base, float Roughness, float Metallic = 0.f, FLinearColor Emissive = FLinearColor::Black, float EmissiveStrength = 0.f);
-	UMaterialInstanceDynamic* MakeDisplay(const TCHAR* Name, float Seed, float Intensity);
+	UMaterialInstanceDynamic* MakeScreen(const TSoftObjectPtr<UMaterialInterface>& Parent, const TCHAR* Name, float Seed, float Intensity, float CellScale = 1.f);
 
+	void PrepPrimitive(class UPrimitiveComponent* C, bool bShadow);
 	UStaticMeshComponent* Piece(UStaticMesh* Mesh, const FVector& Center, const FVector& Size, const FRotator& Rot, UMaterialInterface* Mat, bool bShadow = true);
 	UStaticMeshComponent* Box(const FVector& Center, const FVector& Size, const FRotator& Rot, UMaterialInterface* Mat, bool bShadow = true) { return Piece(CubeMesh, Center, Size, Rot, Mat, bShadow); }
 	UStaticMeshComponent* Cyl(const FVector& Center, float Radius, float Height, UMaterialInterface* Mat, const FRotator& Rot = FRotator::ZeroRotator, bool bShadow = true) { return Piece(CylinderMesh, Center, FVector(Radius * 2.f, Radius * 2.f, Height), Rot, Mat, bShadow); }
 	UStaticMeshComponent* Ball(const FVector& Center, float Radius, UMaterialInterface* Mat) { return Piece(SphereMesh, Center, FVector(Radius * 2.f), FRotator::ZeroRotator, Mat, true); }
+	/** Revolve a counter-clockwise (radius, height) profile about the vertical axis through the origin over [StartDeg, EndDeg]. */
+	UDynamicMeshComponent* Revolve(const TArray<FVector2D>& Profile, float StartDeg, float EndDeg, UMaterialInterface* Mat, bool bShadow = true);
 	void Light(const FVector& Pos, float Intensity, float Radius);
 
-	/** A station: console with a slanted display and a chair facing +Forward, at Pos (console front edge). */
-	void Station(const FVector& ConsolePos, float YawDeg, float Width, bool bWallDisplay, bool bCrew, float Seed);
-	void Chair(const FVector& FloorPos, float YawDeg, float SeatHeight, bool bCrew, bool bArmrests);
-	void Crew(const FVector& SeatPos, float YawDeg);
+	/** A box lying on the wall at the given bearing: Radial = distance from the centre, Width tangential, Height vertical. */
+	UStaticMeshComponent* WallBox(float AngleDeg, float Radial, float Z, float Thickness, float Width, float Height, UMaterialInterface* Mat, float PitchDeg = 0.f, bool bShadow = true);
+	void SwivelChair(const FVector& FloorPos, float YawDeg, bool bCrew, UMaterialInterface* UniformMat);
+	void Crew(const FVector& SeatPos, float YawDeg, UMaterialInterface* UniformMat);
 
 	UPROPERTY() TObjectPtr<UStaticMesh> CubeMesh;
 	UPROPERTY() TObjectPtr<UStaticMesh> CylinderMesh;
@@ -108,16 +130,19 @@ private:
 	UPROPERTY() TArray<TObjectPtr<UMaterialInstanceDynamic>> Materials;
 
 	// Palette, filled by Build().
-	UMaterialInterface* Panel = nullptr;
-	UMaterialInterface* DarkPanel = nullptr;
-	UMaterialInterface* Trim = nullptr;
-	UMaterialInterface* Carpet = nullptr;
-	UMaterialInterface* PlatformCarpet = nullptr;
-	UMaterialInterface* ChairMat = nullptr;
-	UMaterialInterface* Uniform = nullptr;
+	UMaterialInterface* WallBlue = nullptr;
+	UMaterialInterface* CeilingGrey = nullptr;
+	UMaterialInterface* Deck = nullptr;
+	UMaterialInterface* WellFloor = nullptr;
+	UMaterialInterface* ConsoleBlack = nullptr;
+	UMaterialInterface* Red = nullptr;
+	UMaterialInterface* LightGrey = nullptr;
+	UMaterialInterface* ChairBlack = nullptr;
 	UMaterialInterface* Skin = nullptr;
 	UMaterialInterface* Hair = nullptr;
 	UMaterialInterface* LightPanel = nullptr;
-	UMaterialInterface* Rail = nullptr;
+	UMaterialInterface* UniformGold = nullptr;
+	UMaterialInterface* UniformBlue = nullptr;
+	UMaterialInterface* UniformRed = nullptr;
 	int32 PieceCount = 0;
 };

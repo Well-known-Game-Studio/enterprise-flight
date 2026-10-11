@@ -351,7 +351,7 @@ void APlanetBody::ApplyMaterials()
 			}
 		}
 		CloudMID->SetScalarParameterValue(TEXT("CloudBrightness"), SunLux / PI);
-		CloudMID->SetScalarParameterValue(TEXT("CloudNightLevel"), SunLux / PI * 0.015f);
+		CloudMID->SetScalarParameterValue(TEXT("CloudNightLevel"), SunLux / PI * 0.002f);
 		CloudMID->SetVectorParameterValue(TEXT("CloudDrift"), FLinearColor(S.CloudDrift, S.CloudDrift * 0.35f, 0.f, 0.f));
 		CloudMID->SetVectorParameterValue(TEXT("SunDirection"), FLinearColor(CachedStarDirection.X, CachedStarDirection.Y, CachedStarDirection.Z, 0.f));
 		CloudMID->SetScalarParameterValue(TEXT("Coverage"), S.CloudCoverage);
@@ -386,11 +386,11 @@ void APlanetBody::ApplyAppearance()
 	const double RadiusCm = GetRadiusCm();
 	Body->SetWorldScale3D(FVector(RadiusCm / MeshUnitRadius));
 
-	Clouds->SetVisibility(Style.bClouds);
+	Clouds->SetVisibility(Style.bClouds && !bBeyondHorizon);
 	// Keep the cloud deck well inside the scattering layer (the volumetric atmosphere is ~AtmosphereDepth/4 deep).
 	const float MaxCloudHeight = Style.bAtmosphere ? Style.AtmosphereDepth * 0.25f * 0.45f : Style.CloudHeightFraction;
 	Clouds->SetRelativeScale3D(FVector(1.0 + FMath::Min(Style.CloudHeightFraction, MaxCloudHeight)));
-	Atmosphere->SetVisibility(Style.bAtmosphere && !bUsingSkyAtmosphere);
+	Atmosphere->SetVisibility(Style.bAtmosphere && !bUsingSkyAtmosphere && !bBeyondHorizon);
 	Atmosphere->SetRelativeScale3D(FVector(1.0 + Style.AtmosphereDepth));
 
 	UpdateStarDirection();
@@ -441,10 +441,33 @@ void APlanetBody::UpdateStarDirection()
 	}
 }
 
+void APlanetBody::SetBeyondHorizon(bool bBeyond)
+{
+	bBeyondHorizon = bBeyond;
+	SetActorHiddenInGame(bBeyond);
+#if WITH_EDITOR
+	if (GetWorld() && !GetWorld()->IsGameWorld())
+	{
+		SetIsTemporarilyHiddenInEditor(bBeyond);
+	}
+#endif
+	if (Body) { Body->SetVisibility(!bDetailActive && !bBeyond); }
+	if (DetailBody) { DetailBody->SetVisibility(bDetailActive && !bBeyond); }
+	if (Clouds) { Clouds->SetVisibility(Style.bClouds && !bBeyond); }
+	if (Atmosphere) { Atmosphere->SetVisibility(Style.bAtmosphere && !bUsingSkyAtmosphere && !bBeyond); }
+}
+
 void APlanetBody::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
 	ApplyAppearance();
+}
+
+void APlanetBody::PreRegisterAllComponents()
+{
+	Super::PreRegisterAllComponents();
+	// Hide before any scene proxy can exist (see IFarBody).
+	SetBeyondHorizon(IsLocationBeyondHorizon(PreRegistrationLocation(this)));
 }
 
 void APlanetBody::BeginPlay()
@@ -478,6 +501,8 @@ void APlanetBody::Tick(float DeltaTime)
 	if (LODTimer <= 0.f)
 	{
 		LODTimer = 0.2f;
+		// The floating origin keeps the player near the world origin, so distance from the origin is what the GPU sees.
+		SetBeyondHorizon(IsLocationBeyondHorizon(GetActorLocation()));
 		UpdateLOD();
 	}
 
@@ -509,7 +534,7 @@ void APlanetBody::SetUsingSkyAtmosphere(bool bEnabled)
 	if (bUsingSkyAtmosphere != bEnabled)
 	{
 		bUsingSkyAtmosphere = bEnabled;
-		Atmosphere->SetVisibility(Style.bAtmosphere && !bUsingSkyAtmosphere);
+		Atmosphere->SetVisibility(Style.bAtmosphere && !bUsingSkyAtmosphere && !bBeyondHorizon);
 	}
 }
 
@@ -570,6 +595,6 @@ void APlanetBody::UpdateLOD()
 		// Unit sphere scales with the body; the far mesh used MeshUnitRadius units.
 		DetailBody->SetRelativeScale3D(FVector(MeshUnitRadius));
 	}
-	DetailBody->SetVisibility(bDetailActive);
-	Body->SetVisibility(!bDetailActive);
+	DetailBody->SetVisibility(bDetailActive && !bBeyondHorizon);
+	Body->SetVisibility(!bDetailActive && !bBeyondHorizon);
 }

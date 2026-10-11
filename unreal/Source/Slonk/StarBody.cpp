@@ -90,10 +90,31 @@ void AStarBody::ApplyAppearance()
 	}
 }
 
+void AStarBody::SetBeyondHorizon(bool bBeyond)
+{
+	bBeyondHorizon = bBeyond;
+	SetActorHiddenInGame(bBeyond);
+#if WITH_EDITOR
+	if (GetWorld() && !GetWorld()->IsGameWorld())
+	{
+		SetIsTemporarilyHiddenInEditor(bBeyond);
+	}
+#endif
+	if (Body) { Body->SetVisibility(!bBeyond); }
+	if (Corona) { Corona->SetVisibility(!bBeyond); }
+}
+
 void AStarBody::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
 	ApplyAppearance();
+}
+
+void AStarBody::PreRegisterAllComponents()
+{
+	Super::PreRegisterAllComponents();
+	// Hide before any scene proxy can exist (see IFarBody).
+	SetBeyondHorizon(IsLocationBeyondHorizon(PreRegistrationLocation(this)));
 }
 
 void AStarBody::BeginPlay()
@@ -114,6 +135,8 @@ void AStarBody::Tick(float DeltaTime)
 	{
 		AddActorLocalRotation(FRotator(0.f, SpinDegPerSec * DeltaTime, 0.f));
 	}
+	// Beyond the GPU precision horizon the player's distant-star sprite stands in for the mesh.
+	SetBeyondHorizon(IsLocationBeyondHorizon(GetActorLocation()));
 
 	// Billboard the glow toward the player's camera and keep it a minimum angular size.
 	if (APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr)
@@ -125,9 +148,9 @@ void AStarBody::Tick(float DeltaTime)
 		const double Dist = ToCam.Size();
 		// Past the hand-over distance the distant-star sprite on the player takes over.
 		const bool bNear = Dist < FarSpriteDistanceCm;
-		if (Corona->IsVisible() != bNear)
+		if (Corona->IsVisible() != (bNear && !bBeyondHorizon))
 		{
-			Corona->SetVisibility(bNear);
+			Corona->SetVisibility(bNear && !bBeyondHorizon);
 		}
 		if (Dist > 1.0 && bNear)
 		{

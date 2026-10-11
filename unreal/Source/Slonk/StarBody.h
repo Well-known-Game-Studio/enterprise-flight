@@ -5,17 +5,22 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "FarBody.h"
 #include "StarBody.generated.h"
 
 class UStaticMeshComponent;
 class UMaterialInstanceDynamic;
 
 UCLASS()
-class SLONK_API AStarBody : public AActor
+class SLONK_API AStarBody : public AActor, public IFarBody
 {
 	GENERATED_BODY()
 
 public:
+	// IFarBody
+	virtual void SetBeyondHorizon(bool bBeyond) override;
+	virtual bool IsBeyondHorizon() const override { return bBeyondHorizon; }
+
 	AStarBody();
 
 	virtual void OnConstruction(const FTransform& Transform) override;
@@ -24,6 +29,7 @@ public:
 	virtual void PostEditMove(bool bFinished) override;
 #endif
 	virtual void Tick(float DeltaTime) override;
+	virtual void PreRegisterAllComponents() override;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> Body;
@@ -95,5 +101,6 @@ private:
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> StarMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> CoronaMID;
 	int32 SettleTicks = 3;
+	bool bBeyondHorizon = false;
 	float MeshUnitRadius = 50.f;
 };

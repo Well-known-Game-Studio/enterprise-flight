@@ -53,6 +53,19 @@ void ASpaceTarget::RandomizeAppearance(FRandomStream& Rng)
 	ApplyRadius();
 }
 
+void ASpaceTarget::SetBeyondHorizon(bool bBeyond)
+{
+	bBeyondHorizon = bBeyond;
+	SetActorHiddenInGame(bBeyond);
+#if WITH_EDITOR
+	if (GetWorld() && !GetWorld()->IsGameWorld())
+	{
+		SetIsTemporarilyHiddenInEditor(bBeyond);
+	}
+#endif
+	if (Body) { Body->SetVisibility(!bBeyond); }
+}
+
 void ASpaceTarget::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
@@ -80,6 +93,19 @@ void ASpaceTarget::Tick(float DeltaTime)
 		ApplyRadius();
 	}
 	AddActorLocalRotation(TumbleRate * DeltaTime);
+	HorizonTimer -= DeltaTime;
+	if (HorizonTimer <= 0.f)
+	{
+		HorizonTimer = 0.5f;
+		SetBeyondHorizon(IsLocationBeyondHorizon(GetActorLocation()));
+	}
+}
+
+void ASpaceTarget::PreRegisterAllComponents()
+{
+	Super::PreRegisterAllComponents();
+	// Hide before any scene proxy can exist (see IFarBody).
+	SetBeyondHorizon(IsLocationBeyondHorizon(PreRegistrationLocation(this)));
 }
 
 float ASpaceTarget::TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent, AController* EventInstigator, AActor* DamageCauser)

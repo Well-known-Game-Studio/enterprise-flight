@@ -8,6 +8,7 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerStart.h"
 #include "GameFramework/WorldSettings.h"
+#include "FarBody.h"
 
 UFloatingOriginComponent::UFloatingOriginComponent()
 {
@@ -73,7 +74,34 @@ void UFloatingOriginComponent::ShiftWorld(const FVector& Offset)
 		{
 			Root->SetMobility(EComponentMobility::Movable);
 		}
+		// A body that crosses the GPU precision horizon must be switched off *before* its transform update is
+		// queued, or the renderer still builds a matrix for it this frame and trips the precision ensure.
+		TArray<AActor*> Bodies;
+		if (Cast<IFarBody>(Actor)) { Bodies.Add(Actor); }
+		TArray<AActor*> Children;
+		Actor->GetAttachedActors(Children, true, true);
+		for (AActor* Child : Children)
+		{
+			if (Child && Cast<IFarBody>(Child)) { Bodies.Add(Child); }
+		}
+		for (AActor* Body : Bodies)
+		{
+			IFarBody* Far = Cast<IFarBody>(Body);
+			if (!Far->IsBeyondHorizon() && IFarBody::IsLocationBeyondHorizon(Body->GetActorLocation() + Offset))
+			{
+				Far->SetBeyondHorizon(true);
+			}
+		}
 		Actor->SetActorLocation(Root->GetComponentLocation() + Offset, false, nullptr, ETeleportType::TeleportPhysics);
+		for (AActor* Body : Bodies)
+		{
+			IFarBody* Far = Cast<IFarBody>(Body);
+			const bool bBeyond = IFarBody::IsLocationBeyondHorizon(Body->GetActorLocation());
+			if (Far->IsBeyondHorizon() != bBeyond)
+			{
+				Far->SetBeyondHorizon(bBeyond);
+			}
+		}
 	}
 
 	OriginUniversePosition -= Offset;

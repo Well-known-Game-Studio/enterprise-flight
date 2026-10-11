@@ -5,6 +5,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "FarBody.h"
 #include "PlanetBody.generated.h"
 
 class UStaticMeshComponent;
@@ -90,11 +91,15 @@ struct FPlanetStyle
 };
 
 UCLASS()
-class SLONK_API APlanetBody : public AActor
+class SLONK_API APlanetBody : public AActor, public IFarBody
 {
 	GENERATED_BODY()
 
 public:
+	// IFarBody
+	virtual void SetBeyondHorizon(bool bBeyond) override;
+	virtual bool IsBeyondHorizon() const override { return bBeyondHorizon; }
+
 	APlanetBody();
 
 	virtual void OnConstruction(const FTransform& Transform) override;
@@ -103,6 +108,7 @@ public:
 	virtual void PostEditMove(bool bFinished) override;
 #endif
 	virtual void Tick(float DeltaTime) override;
+	virtual void PreRegisterAllComponents() override;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> Body;
@@ -212,6 +218,7 @@ private:
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> DetailSurfaceMID;
 	bool bUsingSkyAtmosphere = false;
 	bool bDetailActive = false;
+	bool bBeyondHorizon = false;
 	bool bDetailBuilt = false;
 	float LODTimer = 0.f;
 	float CloudYawDeg = 0.f;

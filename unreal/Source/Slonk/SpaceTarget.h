@@ -4,16 +4,21 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "FarBody.h"
 #include "SpaceTarget.generated.h"
 
 class UStaticMeshComponent;
 
 UCLASS()
-class SLONK_API ASpaceTarget : public AActor
+class SLONK_API ASpaceTarget : public AActor, public IFarBody
 {
 	GENERATED_BODY()
 
 public:
+	// IFarBody
+	virtual void SetBeyondHorizon(bool bBeyond) override;
+	virtual bool IsBeyondHorizon() const override { return bBeyondHorizon; }
+
 	ASpaceTarget();
 
 	static const FName TargetableTag;
@@ -21,6 +26,7 @@ public:
 	virtual void OnConstruction(const FTransform& Transform) override;
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
+	virtual void PreRegisterAllComponents() override;
 	virtual float TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent, AController* EventInstigator, AActor* DamageCauser) override;
 
 	/** Hook for PCG "Spawn Actor" post-spawn functions: re-applies the radius after property overrides were copied in. */
@@ -55,4 +61,6 @@ public:
 private:
 	void ApplyRadius();
 	int32 SettleTicks = 3;
+	float HorizonTimer = 0.f;
+	bool bBeyondHorizon = false;
 };

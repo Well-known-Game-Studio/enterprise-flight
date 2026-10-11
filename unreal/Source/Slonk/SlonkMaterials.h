@@ -16,6 +16,14 @@ namespace SlonkMaterials
 	inline const TCHAR* ExplosionPath = TEXT("/Game/Slonk/Materials/M_Explosion.M_Explosion");
 	inline const TCHAR* AsteroidPath = TEXT("/Game/Slonk/Materials/M_Asteroid.M_Asteroid");
 
+	/**
+	 * Primitives further than this (cm) from the world origin lose GPU matrix precision (the engine's
+	 * double-float relative origin only holds ~2^21 cm of residual, which a float position past ~1.1 AU
+	 * cannot provide) and trigger the "precision loss converting matrix" ensure. Bodies hide themselves
+	 * beyond it; the sun is covered by UDistantStarsComponent.
+	 */
+	inline const double RenderHorizonCm = 1.2e13;
+
 	/** Unlit engine material used when a project material is missing. */
 	inline const TCHAR* FallbackUnlitPath = TEXT("/Engine/EngineDebugMaterials/VertexColorMaterial.VertexColorMaterial");
 	/** Lit engine material used when a project material is missing. */
