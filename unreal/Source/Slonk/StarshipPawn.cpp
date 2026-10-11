@@ -511,7 +511,9 @@ void AStarshipPawn::UpdateWarpEffects(float DeltaTime)
 		FMath::Lerp(1.f, WarpFlashTint.B * Gain, Flash),
 		1.f);
 	S.VignetteIntensity = 0.4f + 0.45f * Streak;
-	S.MotionBlurAmount = 0.3f + 0.5f * Streak;
+	// The bridge set rides with the ship, which the floating origin teleports every frame at warp; the
+	// renderer reads that as motion and smears the interior, so leave motion blur to the exterior views.
+	S.MotionBlurAmount = (CameraMode == EStarshipCameraMode::Bridge) ? 0.f : 0.3f + 0.5f * Streak;
 
 	// Continuous rumble at warp and on the jump.
 	if (Flash > 0.5f)
