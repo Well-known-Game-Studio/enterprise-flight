@@ -1,6 +1,8 @@
 #include "SlonkGameMode.h"
 
 #include "Engine/DirectionalLight.h"
+#include "FloatingOriginComponent.h"
+#include "GameFramework/GameModeBase.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "PlanetBody.h"
@@ -16,6 +18,7 @@
 ASlonkGameMode::ASlonkGameMode()
 {
 	PrimaryActorTick.bCanEverTick = true;
+	FloatingOrigin = CreateDefaultSubobject<UFloatingOriginComponent>(TEXT("FloatingOrigin"));
 	DefaultPawnClass = AStarshipPawn::StaticClass();
 	PlayerControllerClass = AStarshipPlayerController::StaticClass();
 	HUDClass = AStarshipHUD::StaticClass();
@@ -36,6 +39,15 @@ void ASlonkGameMode::BeginPlay()
 	{
 		SpawnTestTargets();
 	}
+}
+
+UFloatingOriginComponent* ASlonkGameMode::FindFloatingOrigin(const UWorld* World)
+{
+	if (const ASlonkGameMode* GM = World ? Cast<ASlonkGameMode>(World->GetAuthGameMode()) : nullptr)
+	{
+		return GM->FloatingOrigin;
+	}
+	return nullptr;
 }
 
 void ASlonkGameMode::DisableWorldBoundsChecks()
@@ -105,7 +117,7 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 	double BestRadii = TNumericLimits<double>::Max();
 	for (TActorIterator<APlanetBody> It(World); It; ++It)
 	{
-		if (!It->Style.bAtmosphere)
+		if (!It->Style.bAtmosphere || It->RadiusKm > 10000.f)
 		{
 			continue;
 		}

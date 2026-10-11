@@ -19,6 +19,15 @@ class UStarshipWeaponsComponent;
 class UWarpStreaksComponent;
 
 UENUM(BlueprintType)
+enum class EWarpVisualMode : uint8
+{
+	/** Star streaks plus radial streaking of everything you fly past. */
+	Classic,
+	/** Relativistic: aberration bunches the view forward, blue shift ahead, red shift behind, contraction along the travel axis. */
+	Relativistic
+};
+
+UENUM(BlueprintType)
 enum class EStarshipCameraMode : uint8
 {
 	Chase,
@@ -212,6 +221,38 @@ public:
 	// ---- Warp FX ----
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Warp FX")
+	EWarpVisualMode WarpVisualMode = EWarpVisualMode::Classic;
+
+	/** Post-process material driving both warp looks (parameters: Mode, Strength, ForwardUV, Behind, ...). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Warp FX")
+	TSoftObjectPtr<UMaterialInterface> WarpPostProcessMaterial;
+
+	/** How hard the classic look streaks the scene toward the vanishing point (0..1). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Warp FX")
+	float ClassicStreakStrength = 0.6f;
+
+	/** Relativistic aberration / contraction amount (0..1). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Warp FX")
+	float RelativisticContraction = 0.8f;
+
+	/** Relativistic Doppler tint amount (0..1). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Warp FX")
+	float RelativisticDoppler = 0.85f;
+
+	UFUNCTION(BlueprintCallable, Category = "Starship|Warp")
+	void SetWarpVisualMode(EWarpVisualMode Mode) { WarpVisualMode = Mode; }
+
+	UFUNCTION(BlueprintCallable, Category = "Starship|Warp")
+	void ToggleWarpVisualMode() { WarpVisualMode = WarpVisualMode == EWarpVisualMode::Classic ? EWarpVisualMode::Relativistic : EWarpVisualMode::Classic; }
+
+	UFUNCTION(BlueprintPure, Category = "Starship|Warp")
+	EWarpVisualMode GetWarpVisualMode() const { return WarpVisualMode; }
+
+	/** Ship position in universe space (world space plus the floating-origin offset). */
+	UFUNCTION(BlueprintPure, Category = "Starship")
+	FVector GetUniversePosition() const;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Warp FX")
 	float WarpFovBoost = 16.f;
 
 	/** Extra chase-arm length at warp, as a fraction of the normal arm. */
@@ -296,6 +337,11 @@ private:
 
 	UPROPERTY()
 	TArray<TObjectPtr<UMaterialInstanceDynamic>> HullMaterials;
+
+	UPROPERTY()
+	TObjectPtr<UMaterialInstanceDynamic> WarpPPMID;
+
+	void UpdateWarpPostProcess(float Streak, float Flash);
 
 	int32 ThrusterMaterialIndex = INDEX_NONE;
 	EStarshipCameraMode CameraMode = EStarshipCameraMode::Chase;

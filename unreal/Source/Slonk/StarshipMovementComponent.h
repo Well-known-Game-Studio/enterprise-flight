@@ -27,13 +27,17 @@ public:
 
 	// ---- Impulse drive -------------------------------------------------------------------------
 
-	/** Speed at full (100%) impulse, cm/s. 3 km/s by default: fast enough to feel it, slow enough to see the ship. */
+	/** Speed at full (100%) impulse, cm/s. Canon full impulse is 0.25 c. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Impulse")
-	double FullImpulseSpeed = 300000.0;
+	double FullImpulseSpeed = 7.4948e9;
 
-	/** Linear acceleration at impulse, cm/s^2. 0 -> full impulse in about 5 s by default. */
+	/** Linear acceleration at impulse, cm/s^2. 0 -> full impulse in about 8 s by default. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Impulse")
-	double ImpulseAcceleration = 60000.0;
+	double ImpulseAcceleration = 9.4e8;
+
+	/** Speed = FullImpulseSpeed * throttle^ThrottleExponent, so low throttle gives km/s precision near planets. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Impulse", meta = (ClampMin = "1", ClampMax = "5"))
+	float ThrottleExponent = 3.f;
 
 	/** Reverse thrust is limited to this fraction of full impulse. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Impulse", meta = (ClampMin = "0", ClampMax = "1"))
@@ -58,12 +62,6 @@ public:
 	/** Steering authority while at warp, as a fraction of impulse rates. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attitude", meta = (ClampMin = "0", ClampMax = "1"))
 	float WarpSteeringScale = 0.35f;
-
-	// ---- Limits -------------------------------------------------------------------------------
-
-	/** The ship is clamped inside a sphere of this radius around the origin (cm) so LWC never overflows. 50 million km by default. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Limits")
-	double MaxDistanceFromOrigin = 5.0e12;
 
 	// ---- Runtime state ------------------------------------------------------------------------
 
@@ -110,7 +108,7 @@ public:
 
 	/** Speed the impulse drive is currently trying to reach (cm/s), signed. */
 	UFUNCTION(BlueprintPure, Category = "Starship|Movement")
-	double GetImpulseTargetSpeed() const { return Throttle * FullImpulseSpeed; }
+	double GetImpulseTargetSpeed() const { return FMath::Sign(Throttle) * FMath::Pow(FMath::Abs(Throttle), (double)ThrottleExponent) * FullImpulseSpeed; }
 
 	UFUNCTION(BlueprintPure, Category = "Starship|Movement")
 	FVector GetSteeringInput() const { return SteeringInput; }

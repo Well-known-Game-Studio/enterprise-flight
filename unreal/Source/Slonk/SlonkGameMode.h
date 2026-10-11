@@ -30,6 +30,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Lighting")
 	bool bTrackStarLighting = true;
 
+	/** Keeps the ship near the origin and shifts the universe around it (real-scale systems). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Slonk|Scale")
+	TObjectPtr<class UFloatingOriginComponent> FloatingOrigin;
+
+	/** Convenience: the floating origin of the current world's game mode, if any. */
+	static UFloatingOriginComponent* FindFloatingOrigin(const UWorld* World);
+
 	/** Park the world's single Sky Atmosphere on the nearest planet with an atmosphere (true Rayleigh/Mie, works from inside). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
 	bool bUseSkyAtmosphere = true;

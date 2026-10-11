@@ -36,6 +36,10 @@ FString AStarshipHUD::FormatSpeed(double CmPerSecond) const
 FString AStarshipHUD::FormatDistance(double Cm) const
 {
 	const double Km = Cm / 100000.0;
+	if (Km >= 2.0e6)
+	{
+		return FString::Printf(TEXT("%.3f AU"), Km / 149597870.7);
+	}
 	if (Km >= 1000.0)
 	{
 		return FString::Printf(TEXT("%.0f km"), Km);
@@ -145,7 +149,7 @@ void AStarshipHUD::DrawHUD()
 
 		const FRotator Rot = Ship->GetActorRotation();
 		DrawText(FString::Printf(TEXT("HEADING  %03d  PITCH %+03d  ROLL %+03d"), FMath::RoundToInt(FRotator::ClampAxis(Rot.Yaw)), FMath::RoundToInt(Rot.Pitch), FMath::RoundToInt(Rot.Roll)), Dim, X, Y, Font, UIScale); Y += Line;
-		DrawText(FString::Printf(TEXT("POSITION %s from origin"), *FormatDistance(Ship->GetActorLocation().Size())), Dim, X, Y, Font, UIScale); Y += Line * 1.4f;
+		DrawText(FString::Printf(TEXT("POSITION %s from the star"), *FormatDistance(Ship->GetUniversePosition().Size())), Dim, X, Y, Font, UIScale); Y += Line * 1.4f;
 	}
 
 	if (Warp)
@@ -160,7 +164,7 @@ void AStarshipHUD::DrawHUD()
 		case EWarpState::AtWarp: State = TEXT("AT WARP"); StateColor = Accent; break;
 		case EWarpState::Dropping: State = TEXT("DROPPING TO IMPULSE"); StateColor = Warning; break;
 		}
-		DrawText(FString::Printf(TEXT("WARP %.1f   %s"), Warp->WarpFactor, *State), StateColor, X, Y, Font, UIScale); Y += Line;
+		DrawText(FString::Printf(TEXT("WARP %.1f   %s   [%s]"), Warp->WarpFactor, *State, Ship->GetWarpVisualMode() == EWarpVisualMode::Relativistic ? TEXT("RELATIVISTIC") : TEXT("CLASSIC")), StateColor, X, Y, Font, UIScale); Y += Line;
 		DrawText(FString::Printf(TEXT("  cruise %s"), *FormatSpeed(Warp->GetWarpSpeedForFactor(Warp->WarpFactor))), Dim, X, Y, SmallFont, UIScale); Y += Line * 1.4f;
 	}
 
@@ -238,6 +242,7 @@ void AStarshipHUD::DrawHUD()
 			TEXT("N  nav markers       M  minimap"),
 			TEXT("L  next nav target   K  clear nav target"),
 			TEXT("Home  jump to nav target (dev)"),
+			TEXT("U  warp visuals: classic / relativistic"),
 		};
 		for (const TCHAR* L : Help)
 		{

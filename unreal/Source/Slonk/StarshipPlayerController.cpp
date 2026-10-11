@@ -106,6 +106,7 @@ void AStarshipPlayerController::CreateDefaultInputAssets()
 	Ensure(IA_CycleNavTarget, TEXT("IA_CycleNavTarget"), EInputActionValueType::Boolean);
 	Ensure(IA_ClearNavTarget, TEXT("IA_ClearNavTarget"), EInputActionValueType::Boolean);
 	Ensure(IA_JumpToNavTarget, TEXT("IA_JumpToNavTarget"), EInputActionValueType::Boolean);
+	Ensure(IA_ToggleWarpVisuals, TEXT("IA_ToggleWarpVisuals"), EInputActionValueType::Boolean);
 
 	if (MappingContext)
 	{
@@ -186,6 +187,7 @@ void AStarshipPlayerController::CreateDefaultInputAssets()
 	Map(Ctx, IA_CycleNavTarget, EKeys::Gamepad_LeftThumbstick);
 	Map(Ctx, IA_ClearNavTarget, EKeys::K);
 	Map(Ctx, IA_JumpToNavTarget, EKeys::Home);
+	Map(Ctx, IA_ToggleWarpVisuals, EKeys::U);
 
 	MappingContext = Ctx;
 }
@@ -258,6 +260,7 @@ void AStarshipPlayerController::SetupInputComponent()
 	EIC->BindAction(IA_CycleNavTarget, ETriggerEvent::Started, this, &AStarshipPlayerController::OnCycleNavTarget);
 	EIC->BindAction(IA_ClearNavTarget, ETriggerEvent::Started, this, &AStarshipPlayerController::OnClearNavTarget);
 	EIC->BindAction(IA_JumpToNavTarget, ETriggerEvent::Started, this, &AStarshipPlayerController::OnJumpToNavTarget);
+	EIC->BindAction(IA_ToggleWarpVisuals, ETriggerEvent::Started, this, &AStarshipPlayerController::OnToggleWarpVisuals);
 }
 
 void AStarshipPlayerController::OnPossess(APawn* InPawn)
@@ -565,5 +568,13 @@ void AStarshipPlayerController::OnJumpToNavTarget()
 	if (AStarshipPawn* Ship = GetStarship())
 	{
 		Ship->JumpToNavTarget();
+	}
+}
+
+void AStarshipPlayerController::OnToggleWarpVisuals()
+{
+	if (AStarshipPawn* Ship = GetStarship())
+	{
+		Ship->ToggleWarpVisualMode();
 	}
 }

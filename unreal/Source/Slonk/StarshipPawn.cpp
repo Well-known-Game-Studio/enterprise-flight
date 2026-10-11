@@ -4,6 +4,9 @@
 #include "GameFramework/PlayerController.h"
 #include "StarshipHUD.h"
 #include "PlanetBody.h"
+#include "SlonkGameMode.h"
+#include "FloatingOriginComponent.h"
+#include "Engine/BlendableInterface.h"
 #include "Components/BoxComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Components/PostProcessComponent.h"
@@ -115,6 +118,7 @@ AStarshipPawn::AStarshipPawn()
 		StarSphere->SetStaticMesh(SkyFinder.Object);
 	}
 	StarMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_Stars.M_Stars")));
+	WarpPostProcessMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_PP_Warp.M_PP_Warp")));
 
 	// Default hull lights for the Constitution refit, relative to the hull centre. Tune in the editor.
 	auto AddLight = [this](const TCHAR* Name, FVector Offset, FLinearColor Color, float Intensity, float Radius, bool bWarp, bool bImpulse)
@@ -222,6 +226,90 @@ void AStarshipPawn::BeginPlay()
 	S.VignetteIntensity = 0.4f;
 	S.MotionBlurAmount = 0.3f;
 	ApplyExposure();
+
+	if (UMaterialInterface* PPMat = WarpPostProcessMaterial.LoadSynchronous())
+	{
+		WarpPPMID = UMaterialInstanceDynamic::Create(PPMat, this);
+		S.WeightedBlendables.Array.Add(FWeightedBlendable(0.f, WarpPPMID));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Starship: warp post-process material %s not found; warp visuals limited to streaks."), *WarpPostProcessMaterial.ToString());
+	}
+}
+
+FVector AStarshipPawn::GetUniversePosition() const
+{
+	if (const UFloatingOriginComponent* Origin = ASlonkGameMode::FindFloatingOrigin(GetWorld()))
+	{
+		return Origin->WorldToUniverse(GetActorLocation());
+	}
+	return GetActorLocation();
+}
+
+void AStarshipPawn::UpdateWarpPostProcess(float Streak, float Flash)
+{
+	if (!WarpPPMID)
+	{
+		return;
+	}
+	FPostProcessSettings& S = PostProcess->Settings;
+	for (FWeightedBlendable& B : S.WeightedBlendables.Array)
+	{
+		if (B.Object == WarpPPMID)
+		{
+			B.Weight = FMath::Clamp(Streak, 0.f, 1.f);
+		}
+	}
+	if (Streak <= 0.001f)
+	{
+		return;
+	}
+
+	const bool bRelativistic = WarpVisualMode == EWarpVisualMode::Relativistic;
+	const FVector Travel = (Movement && Movement->Velocity.SizeSquared() > 1.0) ? Movement->Velocity.GetSafeNormal() : GetActorForwardVector();
+
+	// Where the direction of travel lands on screen (viewport UV). If it is behind the camera, use the
+	// anti-direction and flag it so the shader pushes outward instead of pulling inward.
+	float ForwardU = 0.5f, ForwardV = 0.5f, Behind = 0.f;
+	if (APlayerController* PC = Cast<APlayerController>(GetController()))
+	{
+		FVector CamLoc;
+		FRotator CamRot;
+		PC->GetPlayerViewPoint(CamLoc, CamRot);
+		const float Facing = FVector::DotProduct(CamRot.Vector(), Travel);
+		const FVector Dir = Facing >= 0.f ? Travel : -Travel;
+		Behind = Facing >= 0.f ? 0.f : 1.f;
+		FVector2D Screen;
+		int32 SizeX = 0, SizeY = 0;
+		PC->GetViewportSize(SizeX, SizeY);
+		if (SizeX > 0 && SizeY > 0 && PC->ProjectWorldLocationToScreen(CamLoc + Dir * 1.0e9, Screen, true))
+		{
+			ForwardU = Screen.X / SizeX;
+			ForwardV = Screen.Y / SizeY;
+		}
+		else
+		{
+			// Exactly sideways: pick the edge the travel direction points to.
+			const FVector Right = CamRot.RotateVector(FVector::RightVector);
+			const FVector Up = CamRot.RotateVector(FVector::UpVector);
+			ForwardU = 0.5f + 0.5f * FVector::DotProduct(Right, Dir) * 3.f;
+			ForwardV = 0.5f - 0.5f * FVector::DotProduct(Up, Dir) * 3.f;
+		}
+	}
+
+	const double Speed = Movement ? Movement->GetSpeed() : 0.0;
+	const float Beta = (float)FMath::Clamp(Speed / 2.99792458e10, 0.0, 1.0);
+
+	WarpPPMID->SetScalarParameterValue(TEXT("Mode"), bRelativistic ? 1.f : 0.f);
+	WarpPPMID->SetScalarParameterValue(TEXT("Strength"), Streak);
+	WarpPPMID->SetScalarParameterValue(TEXT("Flash"), Flash);
+	WarpPPMID->SetScalarParameterValue(TEXT("Behind"), Behind);
+	WarpPPMID->SetScalarParameterValue(TEXT("Beta"), FMath::Max(Beta, Streak * 0.9f));
+	WarpPPMID->SetScalarParameterValue(TEXT("BlurStrength"), ClassicStreakStrength);
+	WarpPPMID->SetScalarParameterValue(TEXT("ContractStrength"), RelativisticContraction);
+	WarpPPMID->SetScalarParameterValue(TEXT("DopplerStrength"), RelativisticDoppler);
+	WarpPPMID->SetVectorParameterValue(TEXT("ForwardUV"), FLinearColor(ForwardU, ForwardV, 0.f, 0.f));
 }
 
 void AStarshipPawn::ApplyExposure()
@@ -389,7 +477,9 @@ void AStarshipPawn::UpdateWarpEffects(float DeltaTime)
 	const float Streak = WarpDrive->GetStreakIntensity();
 	const float Flash = WarpDrive->GetFlashIntensity();
 
-	WarpStreaks->SetIntensity(Streak);
+	// Relativistic mode has no cartoon star streaks; the scene itself does the work.
+	WarpStreaks->SetIntensity(WarpVisualMode == EWarpVisualMode::Relativistic ? Streak * 0.15f : Streak);
+	UpdateWarpPostProcess(Streak, Flash);
 	// Streaks fly past along the real direction of travel, whatever the camera is doing.
 	const FVector Travel = (Movement && Movement->Velocity.SizeSquared() > 1.0) ? Movement->Velocity.GetSafeNormal() : GetActorForwardVector();
 	WarpStreaks->SetTravelDirection(Travel);
@@ -560,6 +650,13 @@ void AStarshipPawn::ProcessDebugCommand()
 	}
 	else if (Op == TEXT("shake")) { AddCameraShake(Arg(1, 1.f)); }
 	else if (Op == TEXT("jump")) { JumpToNavTarget(); }
+	else if (Op == TEXT("warpvis"))
+	{
+		const FString Mode = ArgStr(1);
+		if (Mode == TEXT("classic")) { SetWarpVisualMode(EWarpVisualMode::Classic); }
+		else if (Mode == TEXT("real") || Mode == TEXT("relativistic")) { SetWarpVisualMode(EWarpVisualMode::Relativistic); }
+		else { ToggleWarpVisualMode(); }
+	}
 	else if (Op == TEXT("exec"))
 	{
 		// Everything after "exec" is a console command (e.g. "exec stat unit").

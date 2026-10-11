@@ -39,9 +39,9 @@ public:
 
 	// ---- Tuning ----
 
-	/** Speed at warp 1 in cm/s. 100 km/s by default (game scale; real warp 1 would cross the map instantly). */
+	/** Speed at warp 1 in cm/s. Canon: the speed of light. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Warp")
-	double Warp1Speed = 1.0e7;
+	double Warp1Speed = 2.99792458e10;
 
 	/** Exponent of the warp curve. 10/3 matches the TNG scale below warp 9. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Warp")

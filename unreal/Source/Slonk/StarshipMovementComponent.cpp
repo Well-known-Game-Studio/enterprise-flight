@@ -86,7 +86,7 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 	}
 	else
 	{
-		const FVector TargetVelocity = Forward * (Throttle * FullImpulseSpeed);
+		const FVector TargetVelocity = Forward * GetImpulseTargetSpeed();
 		const FVector DeltaV = TargetVelocity - Velocity;
 		Velocity += DeltaV.GetClampedToMaxSize(ImpulseAcceleration * DeltaTime);
 	}
@@ -110,13 +110,6 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 			Throttle = 0.0;
 			OnCollision.Broadcast(Hit);
 		}
-	}
-
-	// Keep the ship inside the LWC-safe range.
-	const FVector Location = UpdatedComponent->GetComponentLocation();
-	if (Location.SizeSquared() > FMath::Square(MaxDistanceFromOrigin))
-	{
-		UpdatedComponent->SetWorldLocation(Location.GetSafeNormal() * MaxDistanceFromOrigin, false, nullptr, ETeleportType::TeleportPhysics);
 	}
 
 	UpdateComponentVelocity();
