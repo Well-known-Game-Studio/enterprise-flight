@@ -1,6 +1,8 @@
 #include "SlonkGameMode.h"
 
 #include "Engine/DirectionalLight.h"
+#include "Engine/SkyLight.h"
+#include "Components/SkyLightComponent.h"
 #include "FloatingOriginComponent.h"
 #include "GameFramework/GameModeBase.h"
 #include "Engine/World.h"
@@ -142,6 +144,9 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 		AtmospherePlanet = Best;
 	}
 
+	// The real-time sky capture only has a sky to capture while an atmosphere is active; without one the
+	// renderer warns on screen and the capture is black anyway.
+	SetSkyCaptureActive(AtmospherePlanet != nullptr);
 	if (!AtmospherePlanet)
 	{
 		if (SkyAtmosphere && SkyAtmosphere->IsVisible())
@@ -218,6 +223,24 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 		SkyAtmosphere->SetVisibility(true);
 	}
 	AtmospherePlanet->SetUsingSkyAtmosphere(true);
+}
+
+void ASlonkGameMode::SetSkyCaptureActive(bool bActive)
+{
+	if (bSkyCaptureActive == bActive && bSkyCaptureInitialised)
+	{
+		return;
+	}
+	bSkyCaptureActive = bActive;
+	bSkyCaptureInitialised = true;
+	for (TActorIterator<ASkyLight> It(GetWorld()); It; ++It)
+	{
+		if (USkyLightComponent* Sky = It->GetLightComponent())
+		{
+			Sky->SetRealTimeCaptureEnabled(bActive);
+			Sky->SetIntensity(bActive ? SkyLightIntensityNearPlanet : 0.f);
+		}
+	}
 }
 
 void ASlonkGameMode::UpdateStarLighting()

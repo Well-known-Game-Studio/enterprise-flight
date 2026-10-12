@@ -38,6 +38,10 @@ void UStarshipMovementComponent::AddSteeringInput(float Pitch, float Yaw, float 
 
 void UStarshipMovementComponent::SetWarp(bool bActive, double InWarpSpeed)
 {
+	if (bActive)
+	{
+		ClearOrbitHold();
+	}
 	bWarpActive = bActive;
 	WarpSpeed = FMath::Max(0.0, InWarpSpeed);
 }
@@ -83,7 +87,48 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 
 	// ---- Linear ----
 	const FVector Forward = NewQuat.GetForwardVector();
+	const FVector Up = NewQuat.GetUpVector();
+	const FVector Here = UpdatedComponent->GetComponentLocation();
+	LastVerticalInput = VerticalInput;
 	bProximityLimited = false;
+
+	// Orbit hold: station-keeping around a body. Attitude stays free; translation follows the circle.
+	if (bOrbitHold && !bWarpActive)
+	{
+		if (!OrbitBody)
+		{
+			ClearOrbitHold();
+		}
+		else
+		{
+			const FVector Center = OrbitBody->GetActorLocation();
+			const FVector R = Here - Center;
+			const double Dist = R.Size();
+			const FVector Radial = Dist > 1.0 ? R / Dist : FVector::UpVector;
+			// Vertical thrust raises or lowers the orbit.
+			const double MinRadius = OrbitBodyRadius * 1.01 + 5.0e5;
+			OrbitRadius = FMath::Max(OrbitRadius + VerticalInput * VerticalThrustFraction * FullImpulseSpeed * DeltaTime, MinRadius);
+			const double Speed = GetOrbitSpeed();
+			const double Angle = Speed * DeltaTime / FMath::Max(OrbitRadius, 1.0);
+			const FVector NewRadial = Radial.RotateAngleAxisRad(Angle, OrbitAxis).GetSafeNormal();
+			const FVector NewPos = Center + NewRadial * OrbitRadius;
+			Velocity = (NewPos - Here) / DeltaTime;
+			FQuat OrbitQuat = NewQuat;
+			if (bOrbitFaceBody && SteeringInput.IsNearlyZero(0.02))
+			{
+				// Nose on the body, orbit plane level: the planet sits ahead and slides past as we circle.
+				const FQuat Want = FRotationMatrix::MakeFromXZ(-NewRadial, OrbitAxis).ToQuat();
+				OrbitQuat = FQuat::Slerp(OrbitQuat, Want, 1.f - FMath::Exp(-OrbitFaceRate * DeltaTime)).GetNormalized();
+				AngularVelocity = FRotator::ZeroRotator;
+			}
+			UpdatedComponent->MoveComponent(NewPos - Here, OrbitQuat, /*bSweep*/ false, nullptr, MOVECOMP_NoFlags, ETeleportType::TeleportPhysics);
+			UpdateComponentVelocity();
+			SteeringInput = FVector::ZeroVector;
+			VerticalInput = 0.f;
+			return;
+		}
+	}
+
 	if (bWarpActive)
 	{
 		// The warp drive owns the speed profile; we follow it exactly unless a body is in the way.
@@ -91,7 +136,7 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 	}
 	else
 	{
-		const FVector TargetVelocity = Forward * GetImpulseTargetSpeed();
+		const FVector TargetVelocity = Forward * GetImpulseTargetSpeed() + Up * (VerticalInput * VerticalThrustFraction * FullImpulseSpeed);
 		const FVector DeltaV = TargetVelocity - Velocity;
 		Velocity += DeltaV.GetClampedToMaxSize(ImpulseAcceleration * DeltaTime);
 	}
@@ -99,7 +144,7 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 	// closing rate never exceeds the cap (scaling keeps the heading; clamping one axis bled thrust sideways).
 	{
 		const FVector Dir = Velocity.GetSafeNormal();
-		const FVector ToBody = UpdateProximity(UpdatedComponent->GetComponentLocation(), Dir);
+		const FVector ToBody = UpdateProximity(Here, Dir);
 		if (!ToBody.IsNearlyZero())
 		{
 			const double Closing = FVector::DotProduct(Velocity, ToBody);
@@ -134,6 +179,42 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 
 	UpdateComponentVelocity();
 	SteeringInput = FVector::ZeroVector;
+	VerticalInput = 0.f;
+}
+
+void UStarshipMovementComponent::SetOrbitHold(AActor* Body, double BodyRadiusCm, const FString& BodyName)
+{
+	if (!Body || !UpdatedComponent)
+	{
+		return;
+	}
+	const FVector Here = UpdatedComponent->GetComponentLocation();
+	const FVector R = Here - Body->GetActorLocation();
+	const double Dist = R.Size();
+	if (Dist < 1.0)
+	{
+		return;
+	}
+	const FVector Radial = R / Dist;
+	// Prograde along the current heading; if we are pointed straight at or away from the body, use the right vector.
+	FVector Axis = FVector::CrossProduct(Radial, UpdatedComponent->GetForwardVector());
+	if (Axis.SizeSquared() < 1e-4)
+	{
+		Axis = FVector::CrossProduct(Radial, UpdatedComponent->GetRightVector());
+	}
+	OrbitAxis = Axis.GetSafeNormal();
+	OrbitBody = Body;
+	OrbitBodyRadius = BodyRadiusCm;
+	OrbitBodyName = BodyName;
+	OrbitRadius = FMath::Max(Dist, BodyRadiusCm * 1.01 + 5.0e5);
+	bOrbitHold = true;
+}
+
+void UStarshipMovementComponent::ClearOrbitHold()
+{
+	bOrbitHold = false;
+	OrbitBody = nullptr;
+	OrbitBodyName.Empty();
 }
 
 FVector UStarshipMovementComponent::UpdateProximity(const FVector& Here, const FVector& Dir)

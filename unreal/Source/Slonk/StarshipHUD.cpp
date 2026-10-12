@@ -146,6 +146,17 @@ void AStarshipHUD::DrawHUD()
 		}
 		DrawText(FString::Printf(TEXT("THROTTLE %s"), *ThrottleLabel), Dim, X, Y, Font, UIScale); Y += Line;
 		DrawBar(X, Y + 3.f * UIScale, 180.f * UIScale, 8.f * UIScale, FMath::Abs(Throttle), Throttle < 0 ? Warning : Accent); Y += Line;
+		if (!FMath::IsNearlyZero(Movement->LastVerticalInput))
+		{
+			DrawText(FString::Printf(TEXT("VERTICAL %s"), Movement->LastVerticalInput > 0.f ? TEXT("UP") : TEXT("DOWN")), Accent, X, Y, Font, UIScale); Y += Line;
+		}
+		if (Movement->bOrbitHold)
+		{
+			const double Alt = Movement->OrbitRadius - Movement->OrbitBodyRadius;
+			const double Period = Movement->GetOrbitPeriod();
+			const FString PeriodText = Period <= 0.0 ? TEXT("holding position") : (Period < 120.0 ? FString::Printf(TEXT("period %.0f s"), Period) : FString::Printf(TEXT("period %.1f min"), Period / 60.0));
+			DrawText(FString::Printf(TEXT("ORBIT HOLD  %s   alt %s   %s   (O releases, PgUp/PgDn alt)"), *Movement->OrbitBodyName.ToUpper(), *FormatDistance(Alt), *PeriodText), Accent, X, Y, Font, UIScale); Y += Line;
+		}
 
 		const FRotator Rot = Ship->GetActorRotation();
 		DrawText(FString::Printf(TEXT("HEADING  %03d  PITCH %+03d  ROLL %+03d"), FMath::RoundToInt(FRotator::ClampAxis(Rot.Yaw)), FMath::RoundToInt(Rot.Pitch), FMath::RoundToInt(Rot.Roll)), Dim, X, Y, Font, UIScale); Y += Line;
@@ -236,6 +247,8 @@ void AStarshipHUD::DrawHUD()
 			TEXT("W S / wheel          throttle"),
 			TEXT("1 2 3 4              1/4 .. full impulse"),
 			TEXT("X or 0  all stop     Z  reverse"),
+			TEXT("PgUp PgDn            vertical thrusters"),
+			TEXT("O  orbit hold around nav target / nearest body"),
 			TEXT("J / Y button         engage / disengage warp"),
 			TEXT("[ ]  or  - +         warp factor"),
 			TEXT("LMB / F / RT         phasers (hold)"),

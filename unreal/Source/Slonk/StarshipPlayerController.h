@@ -97,6 +97,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_ClearNavTarget;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_JumpToNavTarget;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_ToggleWarpVisuals;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_Vertical;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_OrbitHold;
 
 	UFUNCTION(BlueprintPure, Category = "Starship|Input")
 	FVector2D GetVirtualStick() const { return MouseStick; }
@@ -142,6 +144,9 @@ protected:
 	void OnClearNavTarget();
 	void OnJumpToNavTarget();
 	void OnToggleWarpVisuals();
+	void OnVertical(const FInputActionValue& Value);
+	void OnVerticalReleased(const FInputActionValue& Value);
+	void OnOrbitHold();
 
 private:
 	FVector2D MouseDeltaThisFrame = FVector2D::ZeroVector;
@@ -150,5 +155,6 @@ private:
 	FVector2D LookStickInput = FVector2D::ZeroVector;
 	float RollInput = 0.f;
 	float YawKeyInput = 0.f;
+	float VerticalInput = 0.f;
 	bool bFreeLookHeld = false;
 };

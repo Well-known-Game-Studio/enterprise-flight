@@ -5,6 +5,7 @@
 #include "StarshipHUD.h"
 #include "PlanetBody.h"
 #include "StarBody.h"
+#include "EngineUtils.h"
 #include "SlonkGameMode.h"
 #include "FloatingOriginComponent.h"
 #include "Engine/BlendableInterface.h"
@@ -470,6 +471,11 @@ void AStarshipPawn::Tick(float DeltaTime)
 		DebugLookTime -= DeltaTime;
 		FreeLookAngles = DebugLook;
 	}
+	if (DebugVerticalTime > 0.f && Movement)
+	{
+		DebugVerticalTime -= DeltaTime;
+		Movement->SetVerticalInput(DebugVertical);
+	}
 	UpdateWarpEffects(DeltaTime);
 	UpdateHullGlow(DeltaTime);
 	UpdateCameras(DeltaTime);
@@ -673,6 +679,18 @@ void AStarshipPawn::ProcessDebugCommand()
 		DebugLook = FVector2D(Arg(1, 0.f), Arg(2, 0.f));
 		DebugLookTime = Arg(3, 2.f);
 	}
+	else if (Op == TEXT("vert"))
+	{
+		DebugVertical = Arg(1, 0.f);
+		DebugVerticalTime = Arg(2, 1.f);
+	}
+	else if (Op == TEXT("orbit"))
+	{
+		const FString Mode = ArgStr(1);
+		if (Mode == TEXT("on")) { SetOrbitHold(true); }
+		else if (Mode == TEXT("off")) { SetOrbitHold(false); }
+		else { ToggleOrbitHold(); }
+	}
 	else if (Op == TEXT("shake")) { AddCameraShake(Arg(1, 1.f)); }
 	else if (Op == TEXT("jump")) { JumpToNavTarget(); }
 	else if (Op == TEXT("warpvis"))
@@ -791,4 +809,60 @@ void AStarshipPawn::JumpToNavTarget()
 		}
 	}
 	JumpToActor(Info.Actor, Info.RadiusCm);
+}
+
+void AStarshipPawn::ToggleOrbitHold()
+{
+	SetOrbitHold(!(Movement && Movement->bOrbitHold));
+}
+
+void AStarshipPawn::SetOrbitHold(bool bEnable)
+{
+	if (!Movement)
+	{
+		return;
+	}
+	if (!bEnable)
+	{
+		Movement->ClearOrbitHold();
+		return;
+	}
+	AActor* Body = nullptr;
+	double Radius = 0.0;
+	FString Name;
+	// Prefer the nav target, then whatever body is nearest.
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	AStarshipHUD* H = PC ? Cast<AStarshipHUD>(PC->GetHUD()) : nullptr;
+	FNavObject Info;
+	if (H && H->GetNavTargetInfo(Info) && Info.Actor && Info.RadiusCm > 0.0)
+	{
+		Body = Info.Actor;
+		Radius = Info.RadiusCm;
+		Name = Info.Label;
+	}
+	if (!Body)
+	{
+		double BestSurface = TNumericLimits<double>::Max();
+		auto Consider = [&](AActor* Candidate, double R, const FString& Label)
+		{
+			const double Surface = FVector::Dist(Candidate->GetActorLocation(), GetActorLocation()) - R;
+			if (Surface < BestSurface)
+			{
+				BestSurface = Surface;
+				Body = Candidate;
+				Radius = R;
+				Name = Label;
+			}
+		};
+		for (TActorIterator<APlanetBody> It(GetWorld()); It; ++It) { Consider(*It, It->GetRadiusCm(), It->GetDisplayName()); }
+		for (TActorIterator<AStarBody> It(GetWorld()); It; ++It) { Consider(*It, It->GetRadiusCm(), It->StarName); }
+	}
+	if (Body)
+	{
+		if (WarpDrive && WarpDrive->IsWarpEngaged())
+		{
+			WarpDrive->DisengageWarp();
+		}
+		Movement->SetOrbitHold(Body, Radius, Name);
+	}
 }

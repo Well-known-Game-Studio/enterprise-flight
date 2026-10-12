@@ -224,7 +224,7 @@ public:
 	 * PIE runs) and the pawn executes it on the next tick, then clears it. Commands:
 	 *   throttle <-0.25..1> | impulse <1-4> | stop | warp | warp on | warp off | warpfactor <f>
 	 *   phasers on|off | torpedo | target | camera chase|bridge|cinematic | steer <pitch> <yaw> <roll> <seconds>
-	 *   look <yaw> <pitch> <seconds> (free-look the active camera)
+	 *   look <yaw> <pitch> <seconds> (free-look the active camera) | vert <up -1..1> <seconds> | orbit [on|off]
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
 	FString DebugCommand;
@@ -324,6 +324,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Starship")
 	void JumpToNavTarget();
 
+	/** Hold a circular orbit around the nav target (or the nearest planet/star when none is set); call again to release. */
+	UFUNCTION(BlueprintCallable, Category = "Starship")
+	void ToggleOrbitHold();
+
+	UFUNCTION(BlueprintCallable, Category = "Starship")
+	void SetOrbitHold(bool bEnable);
+
 	/** Kick the camera (0..1 is a sensible range; stacks). */
 	UFUNCTION(BlueprintCallable, Category = "Starship|Camera")
 	void AddCameraShake(float Amplitude);
@@ -334,6 +341,9 @@ public:
 	/** True while a debug "steer" command is driving the ship (the controller leaves steering alone). */
 	UFUNCTION(BlueprintPure, Category = "Starship")
 	bool IsDebugSteering() const { return DebugSteerTime > 0.f; }
+
+	UFUNCTION(BlueprintPure, Category = "Starship")
+	bool IsDebugVertical() const { return DebugVerticalTime > 0.f; }
 
 protected:
 	UFUNCTION()
@@ -372,4 +382,6 @@ private:
 	float DebugSteerTime = 0.f;
 	FVector2D DebugLook = FVector2D::ZeroVector;
 	float DebugLookTime = 0.f;
+	float DebugVertical = 0.f;
+	float DebugVerticalTime = 0.f;
 };

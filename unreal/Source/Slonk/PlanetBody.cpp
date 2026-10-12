@@ -145,8 +145,9 @@ void APlanetBody::ResolveStyleFromArchetype()
 	{
 	case EPlanetArchetype::Terrestrial:
 		S.SeaLevel = Rng.FRandRange(0.45f, 0.6f);
-		S.LandColor = Jitter(FLinearColor(0.28f, 0.36f, 0.16f), 0.25f);
-		S.LandColor2 = Jitter(FLinearColor(0.55f, 0.45f, 0.28f), 0.25f);
+		S.LandColor = Jitter(FLinearColor(0.36f, 0.46f, 0.20f), 0.25f);
+		S.CraterStrength = 0.1f;
+		S.LandColor2 = Jitter(FLinearColor(0.66f, 0.54f, 0.34f), 0.25f);
 		S.CloudCoverage = Rng.FRandRange(0.35f, 0.55f);
 		S.AtmosphereColor = Jitter(FLinearColor(0.35f, 0.6f, 1.0f), 0.15f);
 		S.NightLightIntensity = Rng.FRand() < 0.6f ? 6.f : 0.f;
@@ -154,8 +155,8 @@ void APlanetBody::ResolveStyleFromArchetype()
 		break;
 	case EPlanetArchetype::Ocean:
 		S.SeaLevel = Rng.FRandRange(0.7f, 0.85f);
-		S.OceanColor = Jitter(FLinearColor(0.03f, 0.2f, 0.42f), 0.3f);
-		S.LandColor = FLinearColor(0.35f, 0.38f, 0.25f);
+		S.OceanColor = Jitter(FLinearColor(0.04f, 0.26f, 0.52f), 0.3f);
+		S.LandColor = FLinearColor(0.44f, 0.48f, 0.30f);
 		S.CloudCoverage = Rng.FRandRange(0.5f, 0.7f);
 		S.AtmosphereColor = Jitter(FLinearColor(0.3f, 0.65f, 1.0f), 0.15f);
 		S.AtmosphereDepth = 0.07f;
@@ -163,7 +164,9 @@ void APlanetBody::ResolveStyleFromArchetype()
 	case EPlanetArchetype::Desert:
 		S.SeaLevel = Rng.FRandRange(-0.05f, 0.1f);
 		S.OceanColor = FLinearColor(0.35f, 0.25f, 0.15f); // dry basins
-		S.LandColor = Jitter(FLinearColor(0.52f, 0.32f, 0.16f), 0.25f);
+		S.LandColor = Jitter(FLinearColor(0.62f, 0.40f, 0.20f), 0.25f);
+		S.CraterStrength = 0.45f;
+		S.MariaStrength = 0.2f;
 		S.LandColor2 = Jitter(FLinearColor(0.85f, 0.7f, 0.45f), 0.2f);
 		S.MountainColor = FLinearColor(0.38f, 0.26f, 0.2f);
 		S.NoiseScale = 2.2f;
@@ -178,6 +181,7 @@ void APlanetBody::ResolveStyleFromArchetype()
 	case EPlanetArchetype::Ice:
 		S.SeaLevel = Rng.FRandRange(0.3f, 0.5f);
 		S.OceanColor = FLinearColor(0.55f, 0.65f, 0.75f);
+		S.CraterStrength = 0.35f;
 		S.LandColor = FLinearColor(0.8f, 0.85f, 0.9f);
 		S.LandColor2 = FLinearColor(0.65f, 0.7f, 0.78f);
 		S.MountainColor = FLinearColor(0.72f, 0.74f, 0.8f);
@@ -193,7 +197,8 @@ void APlanetBody::ResolveStyleFromArchetype()
 		S.OceanColor = FLinearColor(1.0f, 0.25f, 0.03f); // molten
 		S.ShallowColor = FLinearColor(1.0f, 0.6f, 0.1f);
 		S.LavaEmissive = 4.f;
-		S.LandColor = FLinearColor(0.08f, 0.06f, 0.05f);
+		S.LandColor = FLinearColor(0.10f, 0.08f, 0.07f);
+		S.CraterStrength = 0.25f;
 		S.LandColor2 = FLinearColor(0.2f, 0.12f, 0.08f);
 		S.MountainColor = FLinearColor(0.25f, 0.2f, 0.18f);
 		S.IceCapStart = 2.f;
@@ -239,10 +244,12 @@ void APlanetBody::ResolveStyleFromArchetype()
 	}
 	case EPlanetArchetype::Moon:
 	default:
-		S.SeaLevel = -0.05f; // no "ocean" pits: everything is land
-		S.LandColor = Jitter(FLinearColor(0.32f, 0.31f, 0.3f), 0.2f);
-		S.LandColor2 = Jitter(FLinearColor(0.2f, 0.2f, 0.2f), 0.2f);
-		S.MountainColor = FLinearColor(0.45f, 0.44f, 0.43f);
+		S.SeaLevel = -0.3f; // no "ocean" pits: everything is land (fBm can dip a little below 0)
+		S.LandColor = Jitter(FLinearColor(0.42f, 0.41f, 0.40f), 0.2f);
+		S.CraterStrength = 1.f;
+		S.MariaStrength = 0.8f;
+		S.LandColor2 = Jitter(FLinearColor(0.30f, 0.30f, 0.30f), 0.2f);
+		S.MountainColor = FLinearColor(0.58f, 0.57f, 0.56f);
 		S.IceCapStart = 2.f;
 		S.NoiseScale = 5.f;
 		S.LandRoughness = 0.95f;
@@ -335,6 +342,8 @@ void APlanetBody::ApplyMaterials()
 		Mid->SetScalarParameterValue(TEXT("LandRoughness"), S.LandRoughness);
 		Mid->SetVectorParameterValue(TEXT("ShallowColor"), S.ShallowColor);
 		Mid->SetScalarParameterValue(TEXT("NormalStrength"), S.NormalStrength);
+		Mid->SetScalarParameterValue(TEXT("CraterStrength"), S.CraterStrength);
+		Mid->SetScalarParameterValue(TEXT("MariaStrength"), S.MariaStrength);
 		Mid->SetScalarParameterValue(TEXT("DetailNormalScale"), S.DetailNormalScale);
 		Mid->SetScalarParameterValue(TEXT("NightLightIntensity"), S.NightLightIntensity);
 		Mid->SetVectorParameterValue(TEXT("NightLightColor"), S.NightLightColor);

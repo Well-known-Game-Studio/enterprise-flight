@@ -63,6 +63,61 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attitude", meta = (ClampMin = "0", ClampMax = "1"))
 	float WarpSteeringScale = 0.35f;
 
+	// ---- Vertical thrust and orbit hold -------------------------------------------------------
+
+	/** Max vertical (ship-up) thruster speed as a fraction of full impulse. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Impulse", meta = (ClampMin = "0", ClampMax = "1"))
+	float VerticalThrustFraction = 0.02f;
+
+	/** Vertical input in [-1, 1] as of the last tick (for the HUD). */
+	UPROPERTY(BlueprintReadOnly, Category = "State")
+	float LastVerticalInput = 0.f;
+
+	/** Per-frame vertical thruster input, +1 = up along the hull. Consumed each tick. */
+	UFUNCTION(BlueprintCallable, Category = "Starship|Movement")
+	void SetVerticalInput(float Up) { VerticalInput = FMath::Clamp(Up, -1.f, 1.f); }
+
+	/** While holding orbit the ship circles OrbitBody at OrbitRadius; the throttle sets the tangential speed. */
+	UPROPERTY(BlueprintReadOnly, Category = "Orbit")
+	bool bOrbitHold = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Orbit")
+	TObjectPtr<AActor> OrbitBody;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Orbit")
+	FString OrbitBodyName;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Orbit")
+	double OrbitRadius = 0.0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Orbit")
+	double OrbitBodyRadius = 0.0;
+
+	/** While holding orbit and not steering, the nose turns to keep the body ahead (orbit plane level). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Orbit")
+	bool bOrbitFaceBody = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Orbit")
+	float OrbitFaceRate = 1.5f;
+
+	/** Cap on the orbital speed (cm/s). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Orbit")
+	double OrbitMaxSpeed = 3.0e8;
+
+	/** Start circling Body (radius BodyRadiusCm) at the current distance, prograde along the current heading. */
+	UFUNCTION(BlueprintCallable, Category = "Starship|Movement")
+	void SetOrbitHold(AActor* Body, double BodyRadiusCm, const FString& BodyName);
+
+	UFUNCTION(BlueprintCallable, Category = "Starship|Movement")
+	void ClearOrbitHold();
+
+	UFUNCTION(BlueprintPure, Category = "Starship|Movement")
+	double GetOrbitSpeed() const { return FMath::Clamp(GetImpulseTargetSpeed(), -OrbitMaxSpeed, OrbitMaxSpeed); }
+
+	/** Orbital period at the current throttle (s), 0 when stationary. */
+	UFUNCTION(BlueprintPure, Category = "Starship|Movement")
+	double GetOrbitPeriod() const { const double V = FMath::Abs(GetOrbitSpeed()); return V > 1.0 ? 2.0 * PI * OrbitRadius / V : 0.0; }
+
 	// ---- Proximity governor -------------------------------------------------------------------
 
 	/**
@@ -159,6 +214,8 @@ private:
 
 	/** (Pitch, Yaw, Roll) in [-1, 1], consumed each tick. */
 	FVector SteeringInput = FVector::ZeroVector;
+	float VerticalInput = 0.f;
+	FVector OrbitAxis = FVector::UpVector;
 	float ProximityScanTimer = 0.f;
 	struct FProximityCandidate { TWeakObjectPtr<AActor> Body; double Radius = 0.0; };
 	TArray<FProximityCandidate> ProximityCandidates;

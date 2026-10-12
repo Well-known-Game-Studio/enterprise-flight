@@ -43,11 +43,15 @@ struct FPlanetStyle
 	/** Latitude (|z| of the unit normal) where polar ice begins; 2 disables caps. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float IceCapStart = 0.82f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float NoiseScale = 3.f;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float OceanRoughness = 0.45f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float OceanRoughness = 0.15f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float LandRoughness = 0.9f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") FLinearColor ShallowColor = FLinearColor(0.1f, 0.35f, 0.5f);
 	/** Strength of the procedural normal detail. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float NormalStrength = 0.25f;
+	/** Impact craters (0 none .. 1 lunar). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface", meta = (ClampMin = "0", ClampMax = "1")) float CraterStrength = 0.f;
+	/** Smooth dark basins between cratered highlands (0 none .. 1 lunar maria). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface", meta = (ClampMin = "0", ClampMax = "1")) float MariaStrength = 0.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float DetailNormalScale = 5.f;
 	/** Night-side city lights on land (0 = none). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float NightLightIntensity = 0.f;

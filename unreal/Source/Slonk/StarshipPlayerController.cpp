@@ -107,6 +107,8 @@ void AStarshipPlayerController::CreateDefaultInputAssets()
 	Ensure(IA_ClearNavTarget, TEXT("IA_ClearNavTarget"), EInputActionValueType::Boolean);
 	Ensure(IA_JumpToNavTarget, TEXT("IA_JumpToNavTarget"), EInputActionValueType::Boolean);
 	Ensure(IA_ToggleWarpVisuals, TEXT("IA_ToggleWarpVisuals"), EInputActionValueType::Boolean);
+	Ensure(IA_Vertical, TEXT("IA_Vertical"), EInputActionValueType::Axis1D);
+	Ensure(IA_OrbitHold, TEXT("IA_OrbitHold"), EInputActionValueType::Boolean);
 
 	if (MappingContext)
 	{
@@ -189,6 +191,11 @@ void AStarshipPlayerController::CreateDefaultInputAssets()
 	Map(Ctx, IA_JumpToNavTarget, EKeys::Home);
 	Map(Ctx, IA_ToggleWarpVisuals, EKeys::U);
 
+	// Vertical thrusters: Page Up / Page Down (hold). Orbit hold: O.
+	Map(Ctx, IA_Vertical, EKeys::PageUp);
+	MapNegated(Ctx, IA_Vertical, EKeys::PageDown);
+	Map(Ctx, IA_OrbitHold, EKeys::O);
+
 	MappingContext = Ctx;
 }
 
@@ -260,6 +267,9 @@ void AStarshipPlayerController::SetupInputComponent()
 	EIC->BindAction(IA_CycleNavTarget, ETriggerEvent::Started, this, &AStarshipPlayerController::OnCycleNavTarget);
 	EIC->BindAction(IA_ClearNavTarget, ETriggerEvent::Started, this, &AStarshipPlayerController::OnClearNavTarget);
 	EIC->BindAction(IA_JumpToNavTarget, ETriggerEvent::Started, this, &AStarshipPlayerController::OnJumpToNavTarget);
+	EIC->BindAction(IA_Vertical, ETriggerEvent::Triggered, this, &AStarshipPlayerController::OnVertical);
+	EIC->BindAction(IA_Vertical, ETriggerEvent::Completed, this, &AStarshipPlayerController::OnVerticalReleased);
+	EIC->BindAction(IA_OrbitHold, ETriggerEvent::Started, this, &AStarshipPlayerController::OnOrbitHold);
 	EIC->BindAction(IA_ToggleWarpVisuals, ETriggerEvent::Started, this, &AStarshipPlayerController::OnToggleWarpVisuals);
 }
 
@@ -327,6 +337,10 @@ void AStarshipPlayerController::PlayerTick(float DeltaTime)
 	if (!Ship->IsDebugSteering())
 	{
 		Ship->Movement->SetSteeringInput(Pitch, FMath::Clamp(Yaw + YawKeyInput, -1.f, 1.f), RollInput);
+	}
+	if (!Ship->IsDebugVertical())
+	{
+		Ship->Movement->SetVerticalInput(VerticalInput);
 	}
 }
 
@@ -576,5 +590,23 @@ void AStarshipPlayerController::OnToggleWarpVisuals()
 	if (AStarshipPawn* Ship = GetStarship())
 	{
 		Ship->ToggleWarpVisualMode();
+	}
+}
+
+void AStarshipPlayerController::OnVertical(const FInputActionValue& Value)
+{
+	VerticalInput = Value.Get<float>();
+}
+
+void AStarshipPlayerController::OnVerticalReleased(const FInputActionValue& Value)
+{
+	VerticalInput = 0.f;
+}
+
+void AStarshipPlayerController::OnOrbitHold()
+{
+	if (AStarshipPawn* Ship = GetStarship())
+	{
+		Ship->ToggleOrbitHold();
 	}
 }

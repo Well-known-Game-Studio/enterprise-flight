@@ -49,6 +49,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
 	float SkyLuminanceBoost = 1.5f;
 
+	/** Sky light intensity while a planet's atmosphere is active (the capture is switched off in deep space). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
+	float SkyLightIntensityNearPlanet = 0.5f;
+
 	/** Spawn a ring of target asteroids around the origin at BeginPlay. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Testing")
 	bool bSpawnTestTargets = true;
@@ -70,6 +74,9 @@ public:
 private:
 	void DisableWorldBoundsChecks();
 	void UpdateStarLighting();
+	void SetSkyCaptureActive(bool bActive);
+	bool bSkyCaptureActive = false;
+	bool bSkyCaptureInitialised = false;
 	void UpdateSkyAtmosphere();
 
 	TWeakObjectPtr<AActor> CachedStar;
