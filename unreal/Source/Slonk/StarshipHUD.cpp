@@ -5,6 +5,7 @@
 #include "EngineUtils.h"
 #include "PlanetBody.h"
 #include "SpaceTarget.h"
+#include "BeltField.h"
 #include "StarBody.h"
 #include "Engine/Engine.h"
 #include "Engine/Font.h"
@@ -365,7 +366,22 @@ void AStarshipHUD::GatherNavObjects(bool bForce)
 		NavObjects.Add(O);
 	}
 
-	// The belt: average orbit radius of the PCG belt asteroids, plus the nearest rock as a marker.
+	// The belt field (if the level has one) is the nav target; it parks itself on the belt nearest the ship.
+	TActorIterator<ABeltField> FieldIt(World);
+	if (FieldIt)
+	{
+		BeltRadiusCm = FieldIt->BeltRadiusCm;
+		FNavObject O;
+		O.Actor = *FieldIt;
+		O.Label = TEXT("Asteroid belt");
+		O.Kind = ENavObjectKind::Belt;
+		O.Location = FieldIt->GetActorLocation();
+		O.RadiusCm = FieldIt->CellSizeCm;
+		NavObjects.Add(O);
+		return;
+	}
+
+	// Otherwise the belt is the average orbit radius of the PCG belt asteroids, plus the nearest rock as a marker.
 	double BeltSum = 0.0;
 	int32 BeltCount = 0;
 	ASpaceTarget* NearestRock = nullptr;

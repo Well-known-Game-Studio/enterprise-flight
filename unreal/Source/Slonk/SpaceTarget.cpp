@@ -4,6 +4,7 @@
 #include "Engine/StaticMesh.h"
 #include "ExplosionEffect.h"
 #include "Materials/MaterialInterface.h"
+#include "RockMeshes.h"
 #include "SlonkMaterials.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -76,6 +77,13 @@ void ASpaceTarget::BeginPlay()
 {
 	Super::BeginPlay();
 	Health = MaxHealth;
+	// Swap the placeholder sphere for a shaped rock. Game worlds only: the rock meshes are transient, and a
+	// PCG-spawned actor saved with the level must not reference them.
+	const uint32 Hash = GetTypeHash(GetFName()) ^ GetTypeHash(FMath::RoundToInt64(GetActorLocation().X / 1000.0));
+	if (UStaticMesh* Rock = SlonkRocks::GetRockMesh(static_cast<int32>(Hash % SlonkRocks::NumVariants)))
+	{
+		Body->SetStaticMesh(Rock);
+	}
 	ApplyRadius();
 	if (UMaterialInterface* Mat = SlonkMaterials::LoadOrFallback(BodyMaterial, TEXT("Asteroid"), /*bLit*/ true))
 	{

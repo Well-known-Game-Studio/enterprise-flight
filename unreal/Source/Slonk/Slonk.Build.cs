@@ -8,7 +8,7 @@ public class Slonk : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "Niagara", "GeometryCore", "GeometryFramework", "GeometryScriptingCore", "RHI" });
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "Niagara", "GeometryCore", "GeometryFramework", "GeometryScriptingCore", "RHI", "MeshDescription", "StaticMeshDescription", "MeshConversion", "PhysicsCore" });
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });
 	}

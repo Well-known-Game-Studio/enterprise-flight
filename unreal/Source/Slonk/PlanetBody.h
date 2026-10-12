@@ -12,6 +12,8 @@ class UStaticMeshComponent;
 class USphereComponent;
 class UDynamicMeshComponent;
 class UMaterialInstanceDynamic;
+class UTexture2D;
+class UHierarchicalInstancedStaticMeshComponent;
 
 UENUM(BlueprintType)
 enum class EPlanetArchetype : uint8
@@ -76,6 +78,20 @@ struct FPlanetStyle
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float BandWarp = 0.6f;
 	/** Vertex displacement of land above sea level as a fraction of the radius (heightmap relief). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface", meta = (ClampMin = "0", ClampMax = "0.2")) float ReliefFraction = 0.006f;
+	/** Size scale of the crater fields (1 = lunar: basins up to a third of the radius); larger = smaller craters. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float CraterScale = 1.f;
+
+	// Rings
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rings") bool bRings = false;
+	/** Inner / outer edge of the ring system in planet radii. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rings") float RingInner = 1.5f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rings") float RingOuter = 2.4f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rings") FLinearColor RingColor = FLinearColor(0.85f, 0.78f, 0.65f);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rings", meta = (ClampMin = "0", ClampMax = "1")) float RingOpacity = 0.9f;
+	/** Offsets the ring band noise so no two ring systems match. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rings") float RingSeed = 0.f;
+	/** Fine ringlet frequency multiplier. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rings") float RingDetail = 1.f;
 
 	// Clouds
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Clouds") bool bClouds = true;
@@ -144,6 +160,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> Atmosphere;
 
+	/** Flat annulus in the equatorial plane, built on demand when the style has rings. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UDynamicMeshComponent> Rings;
+
 	/** Radius in km. Drives the body's world scale directly (PCG feeds this through a property override). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
 	float RadiusKm = 600.f;
@@ -192,6 +212,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Materials") TSoftObjectPtr<UMaterialInterface> SurfaceMaterial;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Materials") TSoftObjectPtr<UMaterialInterface> CloudMaterial;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Materials") TSoftObjectPtr<UMaterialInterface> AtmosphereMaterial;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Materials") TSoftObjectPtr<UMaterialInterface> RingMaterial;
 
 	UFUNCTION(BlueprintPure, Category = "Planet")
 	double GetRadiusCm() const;
@@ -205,6 +226,67 @@ public:
 	/** Steps per cube face of the dense sphere (triangles = 12 * steps^2). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|LOD", meta = (ClampMin = "8", ClampMax = "200"))
 	int32 DetailSphereSteps = 200;
+
+	/**
+	 * Close-range terrain: nested square grid patches (a clipmap) under the camera, each level four times the
+	 * extent of the one inside it, so the vertex displacement is sampled finely where the player looks. The
+	 * dense sphere keeps drawing underneath, lowered beneath the outermost patch so it never pokes through.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|LOD", meta = (ClampMin = "0", ClampMax = "4"))
+	int32 PatchLevels = 3;
+
+	/** Grid cells per side of each patch level. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|LOD", meta = (ClampMin = "16", ClampMax = "400"))
+	int32 PatchGridSteps = 160;
+
+	/** Patches are active below this altitude (in radii). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|LOD")
+	float PatchMaxAltitudeRadii = 0.6f;
+
+	/** Half-extent of the innermost patch as a multiple of the altitude (gnomonic units; 1 ~ 45 degrees). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|LOD")
+	float PatchExtentPerAltitude = 2.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|LOD")
+	float PatchMinHalfExtent = 0.003f;
+
+	UFUNCTION(BlueprintPure, Category = "Planet")
+	bool AreTerrainPatchesActive() const { return bPatchesActive; }
+
+	// ---- Ring particles ----
+
+	/** Individual ring rocks materialise in cells around the camera when it is this close (radii) to the ring plane. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Rings")
+	float RingParticleMaxPlaneDistanceRadii = 0.25f;
+
+	/** Edge of one ring particle cell (cm). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Rings")
+	double RingParticleCellCm = 1.0e7;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Rings", meta = (ClampMin = "1", ClampMax = "4"))
+	int32 RingParticleCellRange = 4;
+
+	/** Candidate rocks per cell; each is kept with the ring's local density as probability. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Rings", meta = (ClampMin = "0", ClampMax = "300"))
+	int32 RingParticlesPerCell = 120;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Rings")
+	float RingParticleMinRadiusCm = 10000.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Rings")
+	float RingParticleMaxRadiusCm = 400000.f;
+
+	/** Half-thickness of the particle sheet as a fraction of the planet radius. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Rings")
+	float RingThicknessFraction = 0.0012f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Materials") TSoftObjectPtr<UMaterialInterface> RingRockMaterial;
+
+	UFUNCTION(BlueprintPure, Category = "Planet")
+	bool AreRingParticlesActive() const { return bRingParticlesActive; }
+
+	/** Ring density (0..1) at fraction x across the ring's width; the same table the materials sample. */
+	float RingDensityAt(float X) const;
 
 	/** True while the world's Sky Atmosphere is parked on this planet (the shell atmosphere is hidden). */
 	UFUNCTION(BlueprintCallable, Category = "Planet")
@@ -238,6 +320,41 @@ private:
 
 	void UpdateLOD();
 	void BuildDetailMesh();
+	void UpdatePatches(const FVector& ViewLoc);
+	void EnsurePatchComponents();
+	void BuildPatchLevel(int32 Level, double HalfExtent);
+	void SetPatchesActive(bool bActive);
+	void ApplyPatchRegions();
+	void BuildRings();
+	void BuildRingProfile();
+	void UpdateRingParticles(const FVector& ViewLoc);
+	void ClearRingParticles();
+	void UpdateSunDirectionParams();
+	TArray<UMaterialInstanceDynamic*> SurfaceMIDs() const;
+
+	UPROPERTY() TArray<TObjectPtr<UDynamicMeshComponent>> Patches;
+	UPROPERTY() TArray<TObjectPtr<UMaterialInstanceDynamic>> PatchMIDs;
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> RingMID;
+	UPROPERTY() TObjectPtr<UTexture2D> RingProfileTexture;
+	/** Tilted with the body but counter-rotated against its spin, so the particle field does not stream past. */
+	UPROPERTY() TObjectPtr<USceneComponent> RingFrame;
+	UPROPERTY() TArray<TObjectPtr<UHierarchicalInstancedStaticMeshComponent>> RingRocks;
+	float SpinAccumDeg = 0.f;
+	TArray<float> RingProfile;
+	TArray<float> RingTint;
+	float RingProfileSeed = -1.f;
+	float RingProfileDetail = -1.f;
+	bool bRingParticlesActive = false;
+	FIntVector RingParticleCell = FIntVector(TNumericLimits<int32>::Max());
+	bool bPatchesActive = false;
+	bool bRingsBuilt = false;
+	float RingsBuiltInner = 0.f;
+	float RingsBuiltOuter = 0.f;
+	FVector PatchCenter = FVector::ZAxisVector;
+	FVector PatchEast = FVector::XAxisVector;
+	FVector PatchNorth = FVector::YAxisVector;
+	double PatchHalfExtent0 = 0.0;
+	TArray<double> PatchHalfExtents;
 
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> SurfaceMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> DetailSurfaceMID;

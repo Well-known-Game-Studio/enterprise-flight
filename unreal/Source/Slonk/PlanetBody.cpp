@@ -1,9 +1,14 @@
 #include "PlanetBody.h"
 
 #include "Components/DirectionalLightComponent.h"
+#include "Components/HierarchicalInstancedStaticMeshComponent.h"
+#include "Engine/Texture2D.h"
+#include "RockMeshes.h"
 #include "Components/DynamicMeshComponent.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "DynamicMesh/DynamicMesh3.h"
+#include "DynamicMesh/DynamicMeshAttributeSet.h"
 #include "GameFramework/PlayerController.h"
 #include "GeometryScript/MeshNormalsFunctions.h"
 #include "GeometryScript/MeshPrimitiveFunctions.h"
@@ -97,9 +102,112 @@ APlanetBody::APlanetBody()
 	Atmosphere = MakeShell(this, TEXT("Atmosphere"), Body, Mesh);
 	Atmosphere->SetTranslucentSortPriority(1);
 
+	Rings = CreateDefaultSubobject<UDynamicMeshComponent>(TEXT("Rings"));
+	Rings->SetupAttachment(Body);
+	Rings->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Rings->SetGenerateOverlapEvents(false);
+	Rings->SetMobility(EComponentMobility::Movable);
+	Rings->SetVisibility(false);
+	Rings->CastShadow = false;
+	Rings->bCastDynamicShadow = false;
+	Rings->bAffectDistanceFieldLighting = false;
+	Rings->SetTranslucentSortPriority(2);
+
 	SurfaceMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_PlanetSurface.M_PlanetSurface")));
 	CloudMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_PlanetClouds.M_PlanetClouds")));
 	AtmosphereMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_PlanetAtmosphere.M_PlanetAtmosphere")));
+	RingMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_PlanetRings.M_PlanetRings")));
+	RingRockMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(SlonkMaterials::AsteroidPath));
+}
+
+namespace
+{
+	float SmoothStepAny(float Lo, float Hi, float V)
+	{
+		const float Den = Hi - Lo;
+		if (FMath::IsNearlyZero(Den)) { return V >= Hi ? 1.f : 0.f; }
+		const float T = FMath::Clamp((V - Lo) / Den, 0.f, 1.f);
+		return T * T * (3.f - 2.f * T);
+	}
+	float Fbm1(float X, int32 Octaves)
+	{
+		float Sum = 0.f, Amp = 0.5f, Freq = 1.f;
+		for (int32 i = 0; i < Octaves; ++i)
+		{
+			Sum += Amp * FMath::PerlinNoise1D(X * Freq);
+			Amp *= 0.5f;
+			Freq *= 2.1f;
+		}
+		return 0.5f + 0.5f * Sum;
+	}
+}
+
+void APlanetBody::BuildRingProfile()
+{
+	// A radial density table shared by the ring material, the ring-shadow terms and the particle field, so all
+	// three agree exactly on where the ringlets and gaps are.
+	if (RingProfile.Num() == 512 && FMath::IsNearlyEqual(RingProfileSeed, Style.RingSeed) && FMath::IsNearlyEqual(RingProfileDetail, Style.RingDetail))
+	{
+		return;
+	}
+	const int32 N = 512;
+	RingProfile.SetNum(N);
+	RingTint.SetNum(N);
+	const float Seed = Style.RingSeed;
+	const float Inner = Style.RingInner, Outer = FMath::Max(Style.RingOuter, Inner + 0.05f);
+	for (int32 i = 0; i < N; ++i)
+	{
+		const float X = (i + 0.5f) / N;
+		const float R = Inner + X * (Outer - Inner);
+		const float N1 = Fbm1(R * 9.f + Seed, 5);
+		const float N2 = Fbm1(R * 60.f * Style.RingDetail + Seed * 1.3f, 3);
+		float D = FMath::Clamp((0.65f * N1 + 0.35f * N2 - 0.30f) * 2.4f, 0.f, 1.f);
+		D *= 1.f - 0.93f * SmoothStepAny(0.03f, 0.f, FMath::Abs(X - 0.63f));
+		D *= 1.f - 0.7f * SmoothStepAny(0.014f, 0.f, FMath::Abs(X - 0.81f));
+		D *= 1.f - 0.5f * SmoothStepAny(0.010f, 0.f, FMath::Abs(X - 0.36f));
+		D *= SmoothStepAny(0.f, 0.05f, X) * SmoothStepAny(1.f, 0.92f, X) * (1.f - 0.45f * X);
+		RingProfile[i] = D;
+		RingTint[i] = Fbm1(R * 4.f + Seed * 0.7f, 3);
+	}
+	RingProfileSeed = Style.RingSeed;
+	RingProfileDetail = Style.RingDetail;
+
+	if (!RingProfileTexture)
+	{
+		RingProfileTexture = UTexture2D::CreateTransient(N, 1, PF_B8G8R8A8);
+		RingProfileTexture->SRGB = false;
+		RingProfileTexture->Filter = TF_Bilinear;
+		RingProfileTexture->AddressX = TA_Clamp;
+		RingProfileTexture->AddressY = TA_Clamp;
+		RingProfileTexture->CompressionSettings = TC_VectorDisplacementmap;
+		RingProfileTexture->MipGenSettings = TMGS_NoMipmaps;
+#if WITH_EDITORONLY_DATA
+		RingProfileTexture->MipGenSettings = TMGS_NoMipmaps;
+#endif
+	}
+	FTexture2DMipMap& Mip = RingProfileTexture->GetPlatformData()->Mips[0];
+	uint8* Data = static_cast<uint8*>(Mip.BulkData.Lock(LOCK_READ_WRITE));
+	for (int32 i = 0; i < N; ++i)
+	{
+		Data[i * 4 + 0] = 0;                                              // B
+		Data[i * 4 + 1] = (uint8)FMath::RoundToInt(RingTint[i] * 255.f);   // G
+		Data[i * 4 + 2] = (uint8)FMath::RoundToInt(RingProfile[i] * 255.f); // R
+		Data[i * 4 + 3] = 255;
+	}
+	Mip.BulkData.Unlock();
+	RingProfileTexture->UpdateResource();
+}
+
+float APlanetBody::RingDensityAt(float X) const
+{
+	if (RingProfile.Num() == 0 || X < 0.f || X > 1.f)
+	{
+		return 0.f;
+	}
+	const float F = X * (RingProfile.Num() - 1);
+	const int32 I0 = FMath::Clamp((int32)F, 0, RingProfile.Num() - 1);
+	const int32 I1 = FMath::Min(I0 + 1, RingProfile.Num() - 1);
+	return FMath::Lerp(RingProfile[I0], RingProfile[I1], F - I0);
 }
 
 FString APlanetBody::GetDisplayName() const
@@ -168,9 +276,11 @@ void APlanetBody::ResolveStyleFromArchetype()
 	case EPlanetArchetype::Desert:
 		S.SeaLevel = Rng.FRandRange(-0.05f, 0.1f);
 		S.OceanColor = FLinearColor(0.28f, 0.20f, 0.12f); // dry basins
+		S.OceanRoughness = 0.85f;                          // ...so no water-like mirror reflections
 		S.LandColor = Jitter(FLinearColor(0.50f, 0.31f, 0.15f), 0.25f);
 		S.CraterStrength = 0.45f;
 		S.MariaStrength = 0.2f;
+		S.CraterScale = 1.3f;
 		S.LandColor2 = Jitter(FLinearColor(0.68f, 0.53f, 0.32f), 0.2f);
 		S.MountainColor = FLinearColor(0.38f, 0.26f, 0.2f);
 		S.NoiseScale = 2.2f;
@@ -280,6 +390,7 @@ void APlanetBody::ResolveStyleFromArchetype()
 		S.NoiseScale = 2.6f;
 		S.CraterStrength = 0.55f;
 		S.MariaStrength = 0.25f;
+		S.CraterScale = 1.4f;
 		S.CloudCoverage = Rng.FRandRange(0.12f, 0.3f);
 		S.CloudColor = FLinearColor(1.0f, 0.98f, 0.95f);
 		S.AtmosphereColor = Jitter(FLinearColor(0.95f, 0.62f, 0.42f), 0.15f);
@@ -294,7 +405,8 @@ void APlanetBody::ResolveStyleFromArchetype()
 	{
 		S.SeaLevel = -0.3f; // no "ocean" pits: everything is land (fBm can dip a little below 0)
 		S.IceCapStart = 2.f;
-		S.NoiseScale = 5.f;
+		// Fewer, broader hills than before: the old scale 5 read as a uniform stipple from orbit.
+		S.NoiseScale = 3.2f;
 		S.bClouds = false;
 		S.bAtmosphere = false;
 		const float K = Rng.FRand();
@@ -306,11 +418,12 @@ void APlanetBody::ResolveStyleFromArchetype()
 			S.LandColor = Jitter(FLinearColor(0.62f, 0.70f, 0.78f), 0.1f);
 			S.LandColor2 = Jitter(FLinearColor(0.62f, 0.70f, 0.80f), 0.1f);
 			S.MountainColor = FLinearColor(0.78f, 0.82f, 0.88f);
-			S.CraterStrength = 0.35f;
-			S.MariaStrength = 0.5f;
+			S.CraterStrength = 0.4f;
+			S.MariaStrength = 0.6f;
+			S.CraterScale = 0.85f;
 			S.LandRoughness = 0.55f;
-			S.NormalStrength = 0.15f;
-			S.DetailNormalScale = 4.f;
+			S.NormalStrength = 0.12f;
+			S.DetailNormalScale = 3.f;
 			S.ReliefFraction = 0.005f;
 			break;
 		case EMoonKind::Lava:
@@ -325,20 +438,22 @@ void APlanetBody::ResolveStyleFromArchetype()
 			S.MountainColor = FLinearColor(0.3f, 0.24f, 0.2f);
 			S.CraterStrength = 0.4f;
 			S.MariaStrength = 0.f;
+			S.CraterScale = 1.2f;
 			S.LandRoughness = 0.9f;
-			S.NormalStrength = 0.3f;
-			S.DetailNormalScale = 6.f;
+			S.NormalStrength = 0.22f;
+			S.DetailNormalScale = 4.f;
 			S.ReliefFraction = 0.012f;
 			break;
 		default:
 			S.LandColor = Jitter(FLinearColor(0.20f, 0.20f, 0.19f), 0.2f);
 			S.CraterStrength = 1.f;
 			S.MariaStrength = 0.8f;
+			S.CraterScale = 1.f;
 			S.LandColor2 = Jitter(FLinearColor(0.13f, 0.13f, 0.13f), 0.2f);
 			S.MountainColor = FLinearColor(0.30f, 0.30f, 0.29f);
 			S.LandRoughness = 0.95f;
-			S.NormalStrength = 0.3f;
-			S.DetailNormalScale = 6.f;
+			S.NormalStrength = 0.2f;
+			S.DetailNormalScale = 3.5f;
 			S.ReliefFraction = 0.010f;
 			break;
 		}
@@ -363,6 +478,38 @@ void APlanetBody::ResolveStyleFromArchetype()
 	{
 		Style.CloudSpinDegPerSec *= 1.5f;
 	}
+
+	// Rings: most gas giants, some ice worlds, the odd rocky planet. Rolled last so the draws above are stable.
+	float RingChance = 0.f;
+	switch (Type)
+	{
+	case EPlanetArchetype::GasGiant: RingChance = 0.7f; break;
+	case EPlanetArchetype::Ice: RingChance = 0.35f; break;
+	case EPlanetArchetype::Ocean: case EPlanetArchetype::Terrestrial: case EPlanetArchetype::Desert: RingChance = 0.1f; break;
+	default: break;
+	}
+	if (Rng.FRand() < RingChance)
+	{
+		Style.bRings = true;
+		Style.RingInner = Rng.FRandRange(1.25f, 1.7f);
+		Style.RingOuter = Style.RingInner + Rng.FRandRange(0.5f, 1.5f);
+		Style.RingSeed = Rng.FRandRange(0.f, 100.f);
+		Style.RingDetail = Rng.FRandRange(0.7f, 1.4f);
+		Style.RingOpacity = Rng.FRandRange(0.6f, 1.f);
+		Style.RingColor = Type == EPlanetArchetype::GasGiant ? Jitter(FLinearColor(0.82f, 0.76f, 0.64f), 0.15f) : Jitter(FLinearColor(0.78f, 0.82f, 0.9f), 0.1f);
+	}
+}
+
+TArray<UMaterialInstanceDynamic*> APlanetBody::SurfaceMIDs() const
+{
+	TArray<UMaterialInstanceDynamic*> Out;
+	if (SurfaceMID) { Out.Add(SurfaceMID); }
+	if (DetailSurfaceMID) { Out.Add(DetailSurfaceMID); }
+	for (UMaterialInstanceDynamic* Mid : PatchMIDs)
+	{
+		if (Mid) { Out.Add(Mid); }
+	}
+	return Out;
 }
 
 void APlanetBody::ApplyMaterials()
@@ -401,14 +548,43 @@ void APlanetBody::ApplyMaterials()
 	const FVector L = GetActorLocation();
 	const FLinearColor Seed(FMath::Frac(L.X / 7.3e9) * 100.f, FMath::Frac(L.Y / 5.1e9) * 100.f, FMath::Frac(L.Z / 3.7e9) * 100.f, 0.f);
 
-	for (UMaterialInstanceDynamic* Mid : { SurfaceMID.Get(), DetailSurfaceMID.Get() })
+	if (!RingMID && Rings)
 	{
-		if (!Mid)
+		if (UMaterialInterface* Mat = SlonkMaterials::LoadOrFallback(RingMaterial, TEXT("PlanetRings"), false))
 		{
-			continue;
+			RingMID = UMaterialInstanceDynamic::Create(Mat, this);
 		}
-		// Relief only on the dense mesh: on the 5k-triangle far sphere it just shows the facets.
-		const bool bDetail = Mid == DetailSurfaceMID;
+	}
+	float SunLux = 30.f;
+	if (UWorld* World = GetWorld())
+	{
+		TActorIterator<ADirectionalLight> LightIt(World);
+		if (LightIt)
+		{
+			if (const UDirectionalLightComponent* LightComp = Cast<UDirectionalLightComponent>(LightIt->GetLightComponent()))
+			{
+				SunLux = LightComp->Intensity;
+			}
+		}
+	}
+	const float RingInner = S.bRings ? S.RingInner : 0.f;
+	const float RingOuter = S.bRings ? S.RingOuter : 0.f;
+	if (S.bRings)
+	{
+		BuildRingProfile();
+	}
+
+	for (UMaterialInstanceDynamic* Mid : SurfaceMIDs())
+	{
+		// Relief only on the dense meshes: on the 5k-triangle far sphere it just shows the facets.
+		const bool bDetail = Mid != SurfaceMID;
+		Mid->SetScalarParameterValue(TEXT("CraterScale"), S.CraterScale);
+		Mid->SetScalarParameterValue(TEXT("RingInner"), RingInner);
+		Mid->SetScalarParameterValue(TEXT("RingOuter"), RingOuter);
+		Mid->SetScalarParameterValue(TEXT("RingSeed"), S.RingSeed);
+		Mid->SetScalarParameterValue(TEXT("RingDetail"), S.RingDetail);
+		Mid->SetScalarParameterValue(TEXT("RingOpacity"), S.RingOpacity);
+		if (RingProfileTexture) { Mid->SetTextureParameterValue(TEXT("RingProfile"), RingProfileTexture); }
 		Mid->SetScalarParameterValue(TEXT("PlanetRadiusCm"), GetRadiusCm());
 		Mid->SetScalarParameterValue(TEXT("CloudScale"), S.CloudScale);
 		Mid->SetScalarParameterValue(TEXT("Coverage"), S.bClouds ? S.CloudCoverage : 0.f);
@@ -443,18 +619,12 @@ void APlanetBody::ApplyMaterials()
 	if (CloudMID)
 	{
 		// Unlit clouds: match the radiance a white lit surface would have under the scene's sunlight (E / pi).
-		float SunLux = 30.f;
-		if (UWorld* World = GetWorld())
-		{
-			TActorIterator<ADirectionalLight> LightIt(World);
-			if (LightIt)
-			{
-				if (const UDirectionalLightComponent* LightComp = Cast<UDirectionalLightComponent>(LightIt->GetLightComponent()))
-				{
-					SunLux = LightComp->Intensity;
-				}
-			}
-		}
+		CloudMID->SetScalarParameterValue(TEXT("RingInner"), RingInner);
+		CloudMID->SetScalarParameterValue(TEXT("RingOuter"), RingOuter);
+		CloudMID->SetScalarParameterValue(TEXT("RingSeed"), S.RingSeed);
+		CloudMID->SetScalarParameterValue(TEXT("RingDetail"), S.RingDetail);
+		CloudMID->SetScalarParameterValue(TEXT("RingOpacity"), S.RingOpacity);
+		if (RingProfileTexture) { CloudMID->SetTextureParameterValue(TEXT("RingProfile"), RingProfileTexture); }
 		// Cloud albedo ~0.75: brightness is the radiance of a white cloud top under the sun.
 		CloudMID->SetScalarParameterValue(TEXT("CloudBrightness"), SunLux / PI * 0.75f);
 		CloudMID->SetScalarParameterValue(TEXT("CloudNightLevel"), SunLux / PI * 0.002f);
@@ -479,6 +649,48 @@ void APlanetBody::ApplyMaterials()
 		AtmosphereMID->SetScalarParameterValue(TEXT("NightFactor"), S.NightFactor);
 		AtmosphereMID->SetVectorParameterValue(TEXT("SunDirection"), FLinearColor(CachedStarDirection.X, CachedStarDirection.Y, CachedStarDirection.Z, 0.f));
 	}
+	if (RingMID)
+	{
+		RingMID->SetScalarParameterValue(TEXT("RingInner"), S.RingInner);
+		RingMID->SetScalarParameterValue(TEXT("RingOuter"), S.RingOuter);
+		RingMID->SetScalarParameterValue(TEXT("RingSeed"), S.RingSeed);
+		RingMID->SetScalarParameterValue(TEXT("RingDetail"), S.RingDetail);
+		RingMID->SetScalarParameterValue(TEXT("RingOpacity"), S.RingOpacity);
+		RingMID->SetVectorParameterValue(TEXT("RingColor"), S.RingColor);
+		if (RingProfileTexture) { RingMID->SetTextureParameterValue(TEXT("RingProfile"), RingProfileTexture); }
+		// Ice particles ~0.8 albedo under the scene sun; the material does its own lighting.
+		RingMID->SetScalarParameterValue(TEXT("RingBrightness"), SunLux / PI * 0.8f);
+	}
+	UpdateSunDirectionParams();
+}
+
+void APlanetBody::UpdateSunDirectionParams()
+{
+	const FLinearColor SunDir(CachedStarDirection.X, CachedStarDirection.Y, CachedStarDirection.Z, 0.f);
+	// The ring plane is the body's local XY, so shadows need the star bearing in each component's own frame
+	// (the cloud shell is yawed relative to the body).
+	auto LocalDir = [this](const USceneComponent* C)
+	{
+		const FVector L = C ? C->GetComponentTransform().InverseTransformVectorNoScale(CachedStarDirection).GetSafeNormal() : CachedStarDirection;
+		return FLinearColor(L.X, L.Y, L.Z, 0.f);
+	};
+	const FLinearColor BodyLocal = LocalDir(Body);
+	if (AtmosphereMID) { AtmosphereMID->SetVectorParameterValue(TEXT("SunDirection"), SunDir); }
+	if (CloudMID)
+	{
+		CloudMID->SetVectorParameterValue(TEXT("SunDirection"), SunDir);
+		CloudMID->SetVectorParameterValue(TEXT("SunDirectionLocal"), LocalDir(Clouds));
+	}
+	for (UMaterialInstanceDynamic* Mid : SurfaceMIDs())
+	{
+		Mid->SetVectorParameterValue(TEXT("SunDirection"), SunDir);
+		Mid->SetVectorParameterValue(TEXT("SunDirectionLocal"), BodyLocal);
+	}
+	if (RingMID)
+	{
+		RingMID->SetVectorParameterValue(TEXT("SunDirection"), SunDir);
+		RingMID->SetVectorParameterValue(TEXT("SunDirectionLocal"), BodyLocal);
+	}
 }
 
 void APlanetBody::ApplyAppearance()
@@ -502,6 +714,46 @@ void APlanetBody::ApplyAppearance()
 
 	UpdateStarDirection();
 	ApplyMaterials();
+	BuildRings();
+}
+
+void APlanetBody::BuildRings()
+{
+	if (!Rings)
+	{
+		return;
+	}
+	UWorld* World = GetWorld();
+	// Game worlds only: a PCG-spawned actor saved with the level should not carry the mesh.
+	if (!Style.bRings || !World || !World->IsGameWorld())
+	{
+		Rings->SetVisibility(false);
+		return;
+	}
+	if (!bRingsBuilt || !FMath::IsNearlyEqual(RingsBuiltInner, Style.RingInner) || !FMath::IsNearlyEqual(RingsBuiltOuter, Style.RingOuter))
+	{
+		UDynamicMesh* Mesh = Rings->GetDynamicMesh();
+		if (!Mesh)
+		{
+			return;
+		}
+		Mesh->Reset();
+		FGeometryScriptPrimitiveOptions Options;
+		// Unit space: radii in planet radii, like the sphere meshes. Flat, so the material reads the radius per pixel.
+		UGeometryScriptLibrary_MeshPrimitiveFunctions::AppendDisc(Mesh, Options, FTransform::Identity, Style.RingOuter, 256, 6, 0.f, 360.f, Style.RingInner);
+		FGeometryScriptCalculateNormalsOptions NormalOptions;
+		UGeometryScriptLibrary_MeshNormalsFunctions::RecomputeNormals(Mesh, NormalOptions);
+		Rings->NotifyMeshUpdated();
+		Rings->SetRelativeScale3D(FVector(MeshUnitRadius));
+		bRingsBuilt = true;
+		RingsBuiltInner = Style.RingInner;
+		RingsBuiltOuter = Style.RingOuter;
+	}
+	if (RingMID && Rings->GetMaterial(0) != RingMID)
+	{
+		Rings->SetMaterial(0, RingMID);
+	}
+	Rings->SetVisibility(!bBeyondHorizon);
 }
 
 FVector APlanetBody::GetStarDirection() const
@@ -562,6 +814,15 @@ void APlanetBody::SetBeyondHorizon(bool bBeyond)
 	if (DetailBody) { DetailBody->SetVisibility(bDetailActive && !bBeyond); }
 	if (Clouds) { Clouds->SetVisibility(Style.bClouds && !bBeyond); }
 	if (Atmosphere) { Atmosphere->SetVisibility(Style.bAtmosphere && !bUsingSkyAtmosphere && !bBeyond); }
+	if (Rings) { Rings->SetVisibility(Style.bRings && bRingsBuilt && !bBeyond); }
+	for (UHierarchicalInstancedStaticMeshComponent* H : RingRocks)
+	{
+		if (H) { H->SetVisibility(bRingParticlesActive && !bBeyond); }
+	}
+	for (UDynamicMeshComponent* P : Patches)
+	{
+		if (P) { P->SetVisibility(bPatchesActive && !bBeyond); }
+	}
 }
 
 void APlanetBody::OnConstruction(const FTransform& Transform)
@@ -594,14 +855,21 @@ void APlanetBody::Tick(float DeltaTime)
 	if (!FMath::IsNearlyZero(SpinDegPerSec))
 	{
 		AddActorLocalRotation(FRotator(0.f, SpinDegPerSec * DeltaTime, 0.f));
+		SpinAccumDeg = FMath::Fmod(SpinAccumDeg + SpinDegPerSec * DeltaTime, 360.f);
+		if (RingFrame)
+		{
+			RingFrame->SetRelativeRotation(FRotator(0.f, -SpinAccumDeg, 0.f));
+		}
 	}
 	if (Clouds && Style.bClouds && !FMath::IsNearlyZero(Style.CloudSpinDegPerSec))
 	{
 		CloudYawDeg = FMath::Fmod(CloudYawDeg + Style.CloudSpinDegPerSec * DeltaTime, 360.f);
 		Clouds->SetRelativeRotation(FRotator(0.f, CloudYawDeg, 0.f));
 		const float Yaw = FMath::DegreesToRadians(CloudYawDeg);
-		if (SurfaceMID) { SurfaceMID->SetScalarParameterValue(TEXT("CloudYaw"), Yaw); }
-		if (DetailSurfaceMID) { DetailSurfaceMID->SetScalarParameterValue(TEXT("CloudYaw"), Yaw); }
+		for (UMaterialInstanceDynamic* Mid : SurfaceMIDs())
+		{
+			Mid->SetScalarParameterValue(TEXT("CloudYaw"), Yaw);
+		}
 	}
 
 	LODTimer -= DeltaTime;
@@ -617,13 +885,10 @@ void APlanetBody::Tick(float DeltaTime)
 	StarSearchTimer -= DeltaTime;
 	if (StarSearchTimer <= 0.f)
 	{
-		StarSearchTimer = 0.25f;
+		StarSearchTimer = 0.1f;
 		UpdateStarDirection();
-		const FLinearColor SunDir(CachedStarDirection.X, CachedStarDirection.Y, CachedStarDirection.Z, 0.f);
-		if (AtmosphereMID) { AtmosphereMID->SetVectorParameterValue(TEXT("SunDirection"), SunDir); }
-		if (CloudMID) { CloudMID->SetVectorParameterValue(TEXT("SunDirection"), SunDir); }
-		if (SurfaceMID) { SurfaceMID->SetVectorParameterValue(TEXT("SunDirection"), SunDir); }
-		if (DetailSurfaceMID) { DetailSurfaceMID->SetVectorParameterValue(TEXT("SunDirection"), SunDir); }
+		// Also refreshes the body-local bearing, which the planet's spin changes every frame.
+		UpdateSunDirectionParams();
 	}
 }
 
@@ -691,17 +956,377 @@ void APlanetBody::UpdateLOD()
 	const double Dist = FVector::Dist(ViewLoc, GetActorLocation()) / RadiusCm;
 	// Hysteresis so the swap never flickers at the boundary.
 	const bool bWantDetail = bDetailActive ? Dist < DetailMeshRadii * 1.15 : Dist < DetailMeshRadii;
-	if (bWantDetail == bDetailActive)
+	if (bWantDetail != bDetailActive)
+	{
+		bDetailActive = bWantDetail;
+		if (bDetailActive)
+		{
+			BuildDetailMesh();
+			// Unit sphere scales with the body; the far mesh used MeshUnitRadius units.
+			DetailBody->SetRelativeScale3D(FVector(MeshUnitRadius));
+		}
+		DetailBody->SetVisibility(bDetailActive && !bBeyondHorizon);
+		Body->SetVisibility(!bDetailActive && !bBeyondHorizon);
+	}
+	UpdatePatches(ViewLoc);
+	UpdateRingParticles(ViewLoc);
+}
+
+void APlanetBody::ClearRingParticles()
+{
+	for (UHierarchicalInstancedStaticMeshComponent* H : RingRocks)
+	{
+		if (H && H->GetInstanceCount() > 0) { H->ClearInstances(); }
+	}
+	bRingParticlesActive = false;
+	RingParticleCell = FIntVector(TNumericLimits<int32>::Max());
+}
+
+void APlanetBody::UpdateRingParticles(const FVector& ViewLoc)
+{
+	if (!Style.bRings || !Body || RingParticlesPerCell <= 0)
+	{
+		if (bRingParticlesActive) { ClearRingParticles(); }
+		return;
+	}
+	const double R = GetRadiusCm();
+	// Camera in the body's rotated frame, in cm (the ring plane is local XY).
+	if (!RingFrame)
+	{
+		RingFrame = NewObject<USceneComponent>(this, TEXT("RingFrame"));
+		RingFrame->SetupAttachment(Body);
+		RingFrame->SetUsingAbsoluteScale(true);
+		RingFrame->SetMobility(EComponentMobility::Movable);
+		RingFrame->RegisterComponent();
+		RingFrame->SetRelativeRotation(FRotator(0.f, -SpinAccumDeg, 0.f));
+	}
+	// Camera in the (non-spinning) ring frame, in cm; the ring plane is its XY.
+	const FVector Local = RingFrame->GetComponentTransform().InverseTransformPosition(ViewLoc);
+	const double Radial = FMath::Sqrt(Local.X * Local.X + Local.Y * Local.Y) / R;
+	const double Margin = RingParticleCellCm * (RingParticleCellRange + 1) / R;
+	const bool bNear = FMath::Abs(Local.Z) < RingParticleMaxPlaneDistanceRadii * R
+		&& Radial > Style.RingInner - Margin && Radial < Style.RingOuter + Margin;
+	if (!bNear)
+	{
+		if (bRingParticlesActive) { ClearRingParticles(); }
+		return;
+	}
+	BuildRingProfile();
+	if (RingRocks.Num() == 0)
+	{
+		UMaterialInterface* Mat = SlonkMaterials::LoadOrFallback(RingRockMaterial, TEXT("RingRock"), true);
+		for (int32 V = 0; V < SlonkRocks::NumVariants; ++V)
+		{
+			UHierarchicalInstancedStaticMeshComponent* H = NewObject<UHierarchicalInstancedStaticMeshComponent>(this, *FString::Printf(TEXT("RingRocks%d"), V));
+			H->SetupAttachment(RingFrame);
+			H->SetMobility(EComponentMobility::Movable);
+			H->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			H->SetGenerateOverlapEvents(false);
+			H->CastShadow = false;
+			H->bCastDynamicShadow = false;
+			H->bAffectDistanceFieldLighting = false;
+			H->bAffectDynamicIndirectLighting = false;
+			H->SetStaticMesh(SlonkRocks::GetRockMesh(V));
+			if (Mat) { H->SetMaterial(0, Mat); }
+			H->RegisterComponent();
+			RingRocks.Add(H);
+		}
+	}
+	// Columns over the ring plane: the sheet is only a few km thick, so rocks are placed in z by a gaussian
+	// rather than wasted uniformly through a 3D cell.
+	const FIntVector Cell(FMath::FloorToInt(Local.X / RingParticleCellCm), FMath::FloorToInt(Local.Y / RingParticleCellCm), 0);
+	if (bRingParticlesActive)
+	{
+		// The planet's spin drags the field past a resting ship; only rebuild once it has drifted well off centre.
+		const FVector Centre = (FVector(RingParticleCell) + FVector(0.5, 0.5, 0.0)) * RingParticleCellCm;
+		const double Drift = FVector::Dist2D(Local, Centre) / RingParticleCellCm;
+		if (Drift < 1.5)
+		{
+			return;
+		}
+	}
+	// Instances are relative to the centre cell's origin (the ring frame is unscaled, so this is in cm).
+	const FVector OriginCm = FVector(Cell) * RingParticleCellCm;
+	for (UHierarchicalInstancedStaticMeshComponent* H : RingRocks)
+	{
+		H->SetRelativeLocation(OriginCm);
+	}
+	TArray<TArray<FTransform>> PerLayer;
+	PerLayer.SetNum(RingRocks.Num());
+	const float Thick = RingThicknessFraction * (float)R;
+	const int32 Range = FMath::Clamp(RingParticleCellRange, 1, 4);
+	const int32 SeedBase = (int32)(Style.RingSeed * 1000.f);
+	for (int32 Y = -Range; Y <= Range; ++Y)
+	{
+		for (int32 X = -Range; X <= Range; ++X)
+		{
+			const FIntVector Key = Cell + FIntVector(X, Y, 0);
+			const FVector CellMin = FVector(Key) * RingParticleCellCm;
+			const uint32 Hash = HashCombine(HashCombine(GetTypeHash(Key.X), GetTypeHash(Key.Y)), GetTypeHash(SeedBase));
+			FRandomStream Rng(static_cast<int32>(Hash));
+			for (int32 i = 0; i < RingParticlesPerCell; ++i)
+			{
+				const float Gz = (Rng.FRand() + Rng.FRand() + Rng.FRand() - 1.5f) * 1.2f; // ~gaussian, sigma ~0.6
+				const FVector P = CellMin + FVector(Rng.FRand() * RingParticleCellCm, Rng.FRand() * RingParticleCellCm, Gz * Thick);
+				const float Rad = (float)(FMath::Sqrt(P.X * P.X + P.Y * P.Y) / R);
+				const float Xf = (Rad - Style.RingInner) / FMath::Max(Style.RingOuter - Style.RingInner, 0.05f);
+				if (Rng.FRand() > RingDensityAt(Xf))
+				{
+					continue;
+				}
+				const float T = FMath::Pow(Rng.FRand(), 2.5f);
+				const float RockR = RingParticleMinRadiusCm * FMath::Pow(FMath::Max(RingParticleMaxRadiusCm / RingParticleMinRadiusCm, 1.f), T);
+				const FRotator Rot(Rng.FRandRange(0.f, 360.f), Rng.FRandRange(0.f, 360.f), Rng.FRandRange(0.f, 360.f));
+				PerLayer[Rng.RandRange(0, RingRocks.Num() - 1)].Add(FTransform(Rot, P - OriginCm, FVector(RockR / SlonkRocks::UnitRadius)));
+			}
+		}
+	}
+	for (int32 L = 0; L < RingRocks.Num(); ++L)
+	{
+		RingRocks[L]->ClearInstances();
+		if (PerLayer[L].Num() > 0)
+		{
+			RingRocks[L]->AddInstances(PerLayer[L], false, false);
+		}
+		RingRocks[L]->SetVisibility(!bBeyondHorizon);
+	}
+	UE_LOG(LogTemp, Log, TEXT("PlanetBody %s: ring particles rebuilt, %d rocks"), *GetName(), PerLayer[0].Num() + (PerLayer.Num() > 1 ? PerLayer[1].Num() : 0));
+	RingParticleCell = Cell;
+	bRingParticlesActive = true;
+}
+
+void APlanetBody::EnsurePatchComponents()
+{
+	const int32 Levels = FMath::Clamp(PatchLevels, 0, 4);
+	bool bNewMIDs = false;
+	while (Patches.Num() < Levels)
+	{
+		const int32 L = Patches.Num();
+		UDynamicMeshComponent* P = NewObject<UDynamicMeshComponent>(this, *FString::Printf(TEXT("TerrainPatch%d"), L));
+		P->SetupAttachment(Body);
+		P->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		P->SetGenerateOverlapEvents(false);
+		P->SetMobility(EComponentMobility::Movable);
+		P->CastShadow = false;
+		P->bCastDynamicShadow = false;
+		P->bAffectDistanceFieldLighting = false;
+		P->SetVisibility(false);
+		// The displacement pushes vertices past the un-displaced bounds.
+		P->BoundsScale = 1.15f;
+		P->RegisterComponent();
+		P->SetRelativeScale3D(FVector(MeshUnitRadius));
+		Patches.Add(P);
+		UMaterialInstanceDynamic* Mid = nullptr;
+		if (UMaterialInterface* Mat = SlonkMaterials::LoadOrFallback(SurfaceMaterial, TEXT("PlanetSurfacePatch"), true))
+		{
+			Mid = UMaterialInstanceDynamic::Create(Mat, this);
+		}
+		PatchMIDs.Add(Mid);
+		bNewMIDs = true;
+	}
+	PatchHalfExtents.SetNumZeroed(Patches.Num());
+	if (bNewMIDs)
+	{
+		// New instances start with the material defaults; give them the planet's style straight away.
+		ApplyMaterials();
+	}
+}
+
+void APlanetBody::BuildPatchLevel(int32 Level, double H)
+{
+	using namespace UE::Geometry;
+	UDynamicMeshComponent* Comp = Patches.IsValidIndex(Level) ? Patches[Level].Get() : nullptr;
+	if (!Comp || !Comp->GetDynamicMesh())
 	{
 		return;
 	}
-	bDetailActive = bWantDetail;
-	if (bDetailActive)
+	const int32 N = FMath::Clamp(PatchGridSteps, 16, 400);
+	const int32 W = N + 1;
+	// Skirt depth and the lowering of the coarser surface underneath must match (see ApplyPatchRegions).
+	const double Skirt = FMath::Max(Style.ReliefFraction * 3.0, 0.002);
+
+	FDynamicMesh3 M;
+	M.EnableAttributes();
+	FDynamicMeshNormalOverlay* NO = M.Attributes()->PrimaryNormals();
+	FDynamicMeshUVOverlay* UV = M.Attributes()->PrimaryUV();
+	auto AddVert = [&](const FVector& Dir, double Radial, float U, float V)
 	{
-		BuildDetailMesh();
-		// Unit sphere scales with the body; the far mesh used MeshUnitRadius units.
-		DetailBody->SetRelativeScale3D(FVector(MeshUnitRadius));
+		const int32 Vid = M.AppendVertex(Dir * Radial);
+		NO->AppendElement(FVector3f(Dir));
+		UV->AppendElement(FVector2f(U, V));
+		return Vid;
+	};
+	TArray<int32> GridTris, SkirtTris;
+	auto AddTri = [&](int32 A, int32 B, int32 C, TArray<int32>& Group)
+	{
+		const int32 Tid = M.AppendTriangle(FIndex3i(A, B, C));
+		if (Tid >= 0)
+		{
+			NO->SetTriangle(Tid, FIndex3i(A, B, C));
+			UV->SetTriangle(Tid, FIndex3i(A, B, C));
+			Group.Add(Tid);
+		}
+	};
+	auto DirAt = [&](int32 i, int32 j)
+	{
+		const double U = (2.0 * i / N - 1.0) * H;
+		const double V = (2.0 * j / N - 1.0) * H;
+		return (PatchCenter + PatchEast * U + PatchNorth * V).GetSafeNormal();
+	};
+	for (int32 j = 0; j < W; ++j)
+	{
+		for (int32 i = 0; i < W; ++i)
+		{
+			AddVert(DirAt(i, j), 1.0, (float)i / N, (float)j / N);
+		}
 	}
-	DetailBody->SetVisibility(bDetailActive && !bBeyondHorizon);
-	Body->SetVisibility(!bDetailActive && !bBeyondHorizon);
+	for (int32 j = 0; j < N; ++j)
+	{
+		for (int32 i = 0; i < N; ++i)
+		{
+			const int32 A = j * W + i, B = A + 1, C = A + W, D = C + 1;
+			AddTri(A, C, B, GridTris);
+			AddTri(B, C, D, GridTris);
+		}
+	}
+	// Skirt: the boundary loop counter-clockwise (opposite to the grid's edge traversal) hung down by Skirt.
+	TArray<int32> Loop;
+	for (int32 i = 0; i <= N; ++i) { Loop.Add(i); }
+	for (int32 j = 1; j <= N; ++j) { Loop.Add(j * W + N); }
+	for (int32 i = N - 1; i >= 0; --i) { Loop.Add(N * W + i); }
+	for (int32 j = N - 1; j >= 1; --j) { Loop.Add(j * W); }
+	TArray<int32> Lower;
+	for (int32 Vid : Loop)
+	{
+		const FVector Dir = M.GetVertex(Vid);
+		Lower.Add(AddVert(Dir, 1.0 - Skirt, 0.f, 0.f));
+	}
+	for (int32 k = 0; k < Loop.Num(); ++k)
+	{
+		const int32 P = Loop[k], Q = Loop[(k + 1) % Loop.Num()];
+		const int32 Pd = Lower[k], Qd = Lower[(k + 1) % Loop.Num()];
+		AddTri(P, Q, Pd, SkirtTris);
+		AddTri(Q, Qd, Pd, SkirtTris);
+	}
+	if (SkirtTris.Num() < 2 * Loop.Num())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("PlanetBody %s: patch skirt incomplete (%d of %d triangles)"), *GetName(), SkirtTris.Num(), 2 * Loop.Num());
+	}
+	// Front faces outward.
+	if (GridTris.Num() > 0)
+	{
+		const FIndex3i T0 = M.GetTriangle(GridTris[0]);
+		const FVector Centroid = (M.GetVertex(T0.A) + M.GetVertex(T0.B) + M.GetVertex(T0.C)) / 3.0;
+		if (FVector::DotProduct(M.GetTriNormal(GridTris[0]), Centroid) < 0.0)
+		{
+			M.ReverseOrientation(false);
+		}
+	}
+	Comp->GetDynamicMesh()->SetMesh(MoveTemp(M));
+	if (PatchMIDs.IsValidIndex(Level) && PatchMIDs[Level] && Comp->GetMaterial(0) != PatchMIDs[Level])
+	{
+		Comp->SetMaterial(0, PatchMIDs[Level]);
+	}
+}
+
+void APlanetBody::SetPatchesActive(bool bActive)
+{
+	if (bPatchesActive == bActive && !bActive)
+	{
+		return;
+	}
+	bPatchesActive = bActive;
+	for (int32 L = 0; L < Patches.Num(); ++L)
+	{
+		if (Patches[L])
+		{
+			// Levels whose extent collapsed onto the previous one are not drawn.
+			const bool bUsed = PatchHalfExtents.IsValidIndex(L) && PatchHalfExtents[L] > 0.0;
+			Patches[L]->SetVisibility(bActive && bUsed && !bBeyondHorizon);
+		}
+	}
+	ApplyPatchRegions();
+}
+
+void APlanetBody::ApplyPatchRegions()
+{
+	// Each surface lowers itself under the patch level drawn on top of it; the patch's skirt hides the step.
+	const double R = GetRadiusCm();
+	const float DepthCm = (float)(FMath::Max(Style.ReliefFraction * 3.0, 0.002) * R);
+	const FLinearColor C(PatchCenter.X, PatchCenter.Y, PatchCenter.Z, 0.f);
+	const FLinearColor E(PatchEast.X, PatchEast.Y, PatchEast.Z, 0.f);
+	const FLinearColor Nn(PatchNorth.X, PatchNorth.Y, PatchNorth.Z, 0.f);
+	auto Set = [&](UMaterialInstanceDynamic* Mid, double InnerExtent)
+	{
+		if (!Mid) { return; }
+		Mid->SetVectorParameterValue(TEXT("InnerCenter"), C);
+		Mid->SetVectorParameterValue(TEXT("InnerEast"), E);
+		Mid->SetVectorParameterValue(TEXT("InnerNorth"), Nn);
+		Mid->SetScalarParameterValue(TEXT("InnerHalfExtent"), bPatchesActive ? (float)InnerExtent : 0.f);
+		Mid->SetScalarParameterValue(TEXT("InnerDepthCm"), DepthCm);
+	};
+	double Top = 0.0;
+	for (int32 L = 0; L < PatchMIDs.Num(); ++L)
+	{
+		const double Inner = L > 0 && PatchHalfExtents.IsValidIndex(L - 1) ? PatchHalfExtents[L - 1] : 0.0;
+		Set(PatchMIDs[L], Inner);
+		if (PatchHalfExtents.IsValidIndex(L) && PatchHalfExtents[L] > 0.0)
+		{
+			Top = PatchHalfExtents[L];
+		}
+	}
+	Set(DetailSurfaceMID, Top);
+	Set(SurfaceMID, 0.0);
+}
+
+void APlanetBody::UpdatePatches(const FVector& ViewLoc)
+{
+	const int32 Levels = FMath::Clamp(PatchLevels, 0, 4);
+	if (Levels == 0 || !bDetailActive || !Body)
+	{
+		SetPatchesActive(false);
+		return;
+	}
+	// Camera in the body's unit space (the body is scaled by its radius).
+	const FVector Cam = Body->GetComponentTransform().InverseTransformPosition(ViewLoc);
+	const double Dist = Cam.Size();
+	const double Alt = Dist - 1.0;
+	if (Dist < 1e-3 || Alt > PatchMaxAltitudeRadii)
+	{
+		SetPatchesActive(false);
+		return;
+	}
+	EnsurePatchComponents();
+	const FVector C = Cam / Dist;
+	const double H0 = FMath::Max((double)PatchExtentPerAltitude * FMath::Max(Alt, 0.0), (double)PatchMinHalfExtent);
+	const bool bRebuild = !bPatchesActive
+		|| (C - PatchCenter).Size() > 0.3 * PatchHalfExtent0
+		|| H0 > PatchHalfExtent0 * 1.3 || H0 < PatchHalfExtent0 / 1.3;
+	if (bRebuild)
+	{
+		PatchCenter = C;
+		FVector E = FVector::CrossProduct(FVector::ZAxisVector, C);
+		if (E.SizeSquared() < 1e-6)
+		{
+			E = FVector::CrossProduct(FVector::XAxisVector, C);
+		}
+		PatchEast = E.GetSafeNormal();
+		PatchNorth = FVector::CrossProduct(C, PatchEast).GetSafeNormal();
+		PatchHalfExtent0 = H0;
+		const double MaxExtent = 1.3; // ~52 degrees of arc in gnomonic units; wider is pointless on a sphere
+		double Prev = 0.0;
+		for (int32 L = 0; L < Patches.Num(); ++L)
+		{
+			const double H = FMath::Min(H0 * FMath::Pow(4.0, L), MaxExtent);
+			if (Prev >= MaxExtent)
+			{
+				PatchHalfExtents[L] = 0.0;
+				continue;
+			}
+			PatchHalfExtents[L] = H;
+			BuildPatchLevel(L, H);
+			Prev = H;
+		}
+	}
+	SetPatchesActive(true);
 }
