@@ -34,9 +34,20 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Distant Stars")
 	double SpriteDistance = 4.0e11;
 
+	/**
+	 * Artistic enlargement of the distant disc: the real sun is only half a degree across at 1 AU, which reads
+	 * as a dot. Blended in from 1x at the mesh hand-over distance to the full value at ScaleFullDistance.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Distant Stars", meta = (ClampMin = "1", ClampMax = "10"))
+	float ApparentSizeScale = 3.f;
+
+	/** Distance (cm) at which ApparentSizeScale applies in full. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Distant Stars")
+	double ScaleFullDistance = 2.0e12;
+
 	/** Minimum width of the glow sprite as a fraction of SpriteDistance (radians, roughly). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Distant Stars")
-	float MinAngularSize = 0.06f;
+	float MinAngularSize = 0.08f;
 
 	/** How far the glow extends beyond the disc, in disc radii, when the disc is large enough to matter. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Distant Stars")

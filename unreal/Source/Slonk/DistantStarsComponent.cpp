@@ -109,7 +109,9 @@ void UDistantStarsComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 
 		// True angular diameter of the photosphere, projected onto the sprite distance.
 		const double StarRadius = Star->GetRadiusCm();
-		const double DiscWidth = 2.0 * StarRadius / Dist * SpriteDistance;
+		const double Blend = FMath::Clamp((Dist - AStarBody::FarSpriteDistanceCm) / FMath::Max(ScaleFullDistance - AStarBody::FarSpriteDistanceCm, 1.0), 0.0, 1.0);
+		const double SizeScale = FMath::Lerp(1.0, (double)ApparentSizeScale, Blend);
+		const double DiscWidth = 2.0 * StarRadius / Dist * SpriteDistance * SizeScale;
 		const double Width = FMath::Max(DiscWidth * (1.0 + GlowRadii), SpriteDistance * (double)MinAngularSize);
 
 		Sprite->SetRelativeLocation(Dir * SpriteDistance);
