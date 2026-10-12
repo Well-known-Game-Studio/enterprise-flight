@@ -6,6 +6,7 @@
 #include "PlanetBody.h"
 #include "SpaceTarget.h"
 #include "BeltField.h"
+#include "SpaceVessel.h"
 #include "StarBody.h"
 #include "Engine/Engine.h"
 #include "Engine/Font.h"
@@ -288,6 +289,8 @@ FLinearColor AStarshipHUD::KindColor(ENavObjectKind Kind) const
 	case ENavObjectKind::Planet: return FLinearColor(0.55f, 0.85f, 1.f);
 	case ENavObjectKind::Moon: return FLinearColor(0.75f, 0.75f, 0.8f);
 	case ENavObjectKind::Belt: return FLinearColor(0.7f, 0.6f, 0.5f);
+	case ENavObjectKind::Station: return FLinearColor(0.6f, 1.f, 0.7f);
+	case ENavObjectKind::Ship: return FLinearColor(1.f, 0.95f, 0.6f);
 	default: return Warning;
 	}
 }
@@ -363,6 +366,28 @@ void AStarshipHUD::GatherNavObjects(bool bForce)
 		O.Kind = It->IsMoon() ? ENavObjectKind::Moon : ENavObjectKind::Planet;
 		O.Location = It->GetActorLocation();
 		O.RadiusCm = It->GetRadiusCm();
+		NavObjects.Add(O);
+	}
+
+	// Stations, then ships.
+	for (TActorIterator<ASpaceStation> It(World); It; ++It)
+	{
+		FNavObject O;
+		O.Actor = *It;
+		O.Label = It->GetDisplayName();
+		O.Kind = ENavObjectKind::Station;
+		O.Location = It->GetActorLocation();
+		O.RadiusCm = It->GetBoundingRadiusCm();
+		NavObjects.Add(O);
+	}
+	for (TActorIterator<AProceduralStarship> It(World); It; ++It)
+	{
+		FNavObject O;
+		O.Actor = *It;
+		O.Label = It->GetDisplayName();
+		O.Kind = ENavObjectKind::Ship;
+		O.Location = It->GetActorLocation();
+		O.RadiusCm = It->GetBoundingRadiusCm();
 		NavObjects.Add(O);
 	}
 

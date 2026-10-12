@@ -15,6 +15,8 @@ namespace SlonkMaterials
 	inline const TCHAR* TorpedoPath = TEXT("/Game/Slonk/Materials/M_Torpedo.M_Torpedo");
 	inline const TCHAR* ExplosionPath = TEXT("/Game/Slonk/Materials/M_Explosion.M_Explosion");
 	inline const TCHAR* AsteroidPath = TEXT("/Game/Slonk/Materials/M_Asteroid.M_Asteroid");
+	inline const TCHAR* HullPath = TEXT("/Game/Slonk/Materials/M_Hull.M_Hull");
+	inline const TCHAR* GlowPath = TEXT("/Game/Slonk/Materials/M_Glow.M_Glow");
 
 	/**
 	 * Primitives further than this (cm) from the world origin lose GPU matrix precision (the engine's

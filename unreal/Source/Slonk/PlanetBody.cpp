@@ -102,6 +102,23 @@ APlanetBody::APlanetBody()
 	Atmosphere = MakeShell(this, TEXT("Atmosphere"), Body, Mesh);
 	Atmosphere->SetTranslucentSortPriority(1);
 
+	auto MakeDyn = [this](const TCHAR* Name, USceneComponent* Parent)
+	{
+		UDynamicMeshComponent* C = CreateDefaultSubobject<UDynamicMeshComponent>(Name);
+		C->SetupAttachment(Parent);
+		C->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		C->SetGenerateOverlapEvents(false);
+		C->SetMobility(EComponentMobility::Movable);
+		C->SetVisibility(false);
+		C->CastShadow = false;
+		C->bCastDynamicShadow = false;
+		C->bAffectDistanceFieldLighting = false;
+		return C;
+	};
+	FarBody = MakeDyn(TEXT("FarBody"), Body);
+	// Under the cloud shell so it inherits the shell's height scale and yaw.
+	CloudsMesh = MakeDyn(TEXT("CloudsMesh"), Clouds);
+
 	Rings = CreateDefaultSubobject<UDynamicMeshComponent>(TEXT("Rings"));
 	Rings->SetupAttachment(Body);
 	Rings->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -310,7 +327,7 @@ void APlanetBody::ResolveStyleFromArchetype()
 		S.SeaLevel = Rng.FRandRange(0.2f, 0.35f);
 		S.OceanColor = FLinearColor(1.0f, 0.25f, 0.03f); // molten
 		S.ShallowColor = FLinearColor(1.0f, 0.6f, 0.1f);
-		S.LavaEmissive = 4.f;
+		S.LavaEmissive = 160.f;
 		S.LandColor = FLinearColor(0.10f, 0.08f, 0.07f);
 		S.CraterStrength = 0.25f;
 		S.LandColor2 = FLinearColor(0.2f, 0.12f, 0.08f);
@@ -431,7 +448,7 @@ void APlanetBody::ResolveStyleFromArchetype()
 			S.SeaLevel = Rng.FRandRange(0.18f, 0.3f);
 			S.OceanColor = FLinearColor(0.9f, 0.18f, 0.02f);
 			S.ShallowColor = FLinearColor(1.0f, 0.55f, 0.1f);
-			S.LavaEmissive = 3.f;
+			S.LavaEmissive = 110.f;
 			S.OceanRoughness = 0.7f;
 			S.LandColor = FLinearColor(0.12f, 0.10f, 0.09f);
 			S.LandColor2 = FLinearColor(0.22f, 0.15f, 0.11f);
@@ -541,6 +558,14 @@ void APlanetBody::ApplyMaterials()
 		DetailBody->SetMaterial(0, DetailSurfaceMID);
 	}
 	EnsureMID(CloudMID, CloudMaterial, Clouds, TEXT("PlanetClouds"), true);
+	if (CloudMID && bFarBuilt && CloudsMesh->GetMaterial(0) != CloudMID)
+	{
+		CloudsMesh->SetMaterial(0, CloudMID);
+	}
+	if (SurfaceMID && bFarBuilt && FarBody->GetMaterial(0) != SurfaceMID)
+	{
+		FarBody->SetMaterial(0, SurfaceMID);
+	}
 	EnsureMID(AtmosphereMID, AtmosphereMaterial, Atmosphere, TEXT("PlanetAtmosphere"), false);
 
 	const FPlanetStyle& S = Style;
@@ -705,16 +730,59 @@ void APlanetBody::ApplyAppearance()
 	Body->SetWorldScale3D(FVector(RadiusCm / MeshUnitRadius));
 	if (CollisionSphere) { CollisionSphere->SetSphereRadius((float)RadiusCm, false); }
 
-	Clouds->SetVisibility(Style.bClouds && !bBeyondHorizon);
 	// Keep the cloud deck well inside the scattering layer (the volumetric atmosphere is ~AtmosphereDepth/4 deep).
 	const float MaxCloudHeight = Style.bAtmosphere ? Style.AtmosphereDepth * 0.25f * 0.45f : Style.CloudHeightFraction;
 	Clouds->SetRelativeScale3D(FVector(1.0 + FMath::Min(Style.CloudHeightFraction, MaxCloudHeight)));
-	Atmosphere->SetVisibility(Style.bAtmosphere && !bUsingSkyAtmosphere && !bBeyondHorizon);
 	Atmosphere->SetRelativeScale3D(FVector(1.0 + Style.AtmosphereDepth));
 
 	UpdateStarDirection();
+	BuildFarMeshes();
 	ApplyMaterials();
 	BuildRings();
+	UpdateShellVisibility();
+}
+
+void APlanetBody::BuildFarMeshes()
+{
+	UWorld* World = GetWorld();
+	if (bFarBuilt || !World || !World->IsGameWorld() || !FarBody || !CloudsMesh)
+	{
+		return;
+	}
+	for (UDynamicMeshComponent* C : { FarBody.Get(), CloudsMesh.Get() })
+	{
+		UDynamicMesh* Mesh = C->GetDynamicMesh();
+		if (!Mesh) { return; }
+		Mesh->Reset();
+		FGeometryScriptPrimitiveOptions Options;
+		UGeometryScriptLibrary_MeshPrimitiveFunctions::AppendSphereBox(Mesh, Options, FTransform::Identity, 1.f, 40, 40, 40);
+		FGeometryScriptCalculateNormalsOptions NormalOptions;
+		UGeometryScriptLibrary_MeshNormalsFunctions::RecomputeNormals(Mesh, NormalOptions);
+		C->NotifyMeshUpdated();
+		C->SetRelativeScale3D(FVector(MeshUnitRadius));
+	}
+	CloudsMesh->SetTranslucentSortPriority(Clouds->TranslucencySortPriority);
+	bFarBuilt = true;
+}
+
+void APlanetBody::UpdateShellVisibility()
+{
+	const bool bShow = !bBeyondHorizon;
+	if (bFarBuilt)
+	{
+		// Game: generated spheres draw, the static placeholders only keep collision / editor display.
+		Body->SetVisibility(false);
+		Clouds->SetVisibility(false);
+		FarBody->SetVisibility(bShow && !bDetailActive);
+		CloudsMesh->SetVisibility(bShow && Style.bClouds);
+	}
+	else
+	{
+		Body->SetVisibility(bShow && !bDetailActive);
+		Clouds->SetVisibility(bShow && Style.bClouds);
+	}
+	if (DetailBody) { DetailBody->SetVisibility(bShow && bDetailActive); }
+	if (Atmosphere) { Atmosphere->SetVisibility(bShow && Style.bAtmosphere && !bUsingSkyAtmosphere); }
 }
 
 void APlanetBody::BuildRings()
@@ -810,10 +878,7 @@ void APlanetBody::SetBeyondHorizon(bool bBeyond)
 		SetIsTemporarilyHiddenInEditor(bBeyond);
 	}
 #endif
-	if (Body) { Body->SetVisibility(!bDetailActive && !bBeyond); }
-	if (DetailBody) { DetailBody->SetVisibility(bDetailActive && !bBeyond); }
-	if (Clouds) { Clouds->SetVisibility(Style.bClouds && !bBeyond); }
-	if (Atmosphere) { Atmosphere->SetVisibility(Style.bAtmosphere && !bUsingSkyAtmosphere && !bBeyond); }
+	if (Body && Clouds && DetailBody && Atmosphere) { UpdateShellVisibility(); }
 	if (Rings) { Rings->SetVisibility(Style.bRings && bRingsBuilt && !bBeyond); }
 	for (UHierarchicalInstancedStaticMeshComponent* H : RingRocks)
 	{
@@ -906,7 +971,7 @@ void APlanetBody::SetUsingSkyAtmosphere(bool bEnabled)
 	if (bUsingSkyAtmosphere != bEnabled)
 	{
 		bUsingSkyAtmosphere = bEnabled;
-		Atmosphere->SetVisibility(Style.bAtmosphere && !bUsingSkyAtmosphere && !bBeyondHorizon);
+		UpdateShellVisibility();
 	}
 }
 
@@ -965,8 +1030,7 @@ void APlanetBody::UpdateLOD()
 			// Unit sphere scales with the body; the far mesh used MeshUnitRadius units.
 			DetailBody->SetRelativeScale3D(FVector(MeshUnitRadius));
 		}
-		DetailBody->SetVisibility(bDetailActive && !bBeyondHorizon);
-		Body->SetVisibility(!bDetailActive && !bBeyondHorizon);
+		UpdateShellVisibility();
 	}
 	UpdatePatches(ViewLoc);
 	UpdateRingParticles(ViewLoc);
@@ -1143,17 +1207,25 @@ void APlanetBody::BuildPatchLevel(int32 Level, double H)
 	const int32 N = FMath::Clamp(PatchGridSteps, 16, 400);
 	const int32 W = N + 1;
 	// Skirt depth and the lowering of the coarser surface underneath must match (see ApplyPatchRegions).
-	const double Skirt = FMath::Max(Style.ReliefFraction * 3.0, 0.002);
+	const double Skirt = FMath::Max(Style.ReliefFraction * 4.0, 0.002);
 
 	FDynamicMesh3 M;
 	M.EnableAttributes();
+	M.Attributes()->SetNumUVLayers(3);
 	FDynamicMeshNormalOverlay* NO = M.Attributes()->PrimaryNormals();
-	FDynamicMeshUVOverlay* UV = M.Attributes()->PrimaryUV();
-	auto AddVert = [&](const FVector& Dir, double Radial, float U, float V)
+	FDynamicMeshUVOverlay* UV0 = M.Attributes()->GetUVLayer(0);
+	FDynamicMeshUVOverlay* UV1 = M.Attributes()->GetUVLayer(1);
+	FDynamicMeshUVOverlay* UV2 = M.Attributes()->GetUVLayer(2);
+	// Border vertices that fall between two vertices of the next coarser level (four times the spacing) carry
+	// those two parents' gnomonic coordinates in UV1/UV2; the material displaces them by the mean of the parents'
+	// heights, so the two levels meet exactly. Every other vertex is its own parent.
+	auto AddVert = [&](const FVector& Pos, const FVector& Normal, const FVector2f& Own, const FVector2f& PA, const FVector2f& PB)
 	{
-		const int32 Vid = M.AppendVertex(Dir * Radial);
-		NO->AppendElement(FVector3f(Dir));
-		UV->AppendElement(FVector2f(U, V));
+		const int32 Vid = M.AppendVertex(Pos);
+		NO->AppendElement(FVector3f(Normal));
+		UV0->AppendElement(Own);
+		UV1->AppendElement(PA);
+		UV2->AppendElement(PB);
 		return Vid;
 	};
 	TArray<int32> GridTris, SkirtTris;
@@ -1163,9 +1235,15 @@ void APlanetBody::BuildPatchLevel(int32 Level, double H)
 		if (Tid >= 0)
 		{
 			NO->SetTriangle(Tid, FIndex3i(A, B, C));
-			UV->SetTriangle(Tid, FIndex3i(A, B, C));
+			UV0->SetTriangle(Tid, FIndex3i(A, B, C));
+			UV1->SetTriangle(Tid, FIndex3i(A, B, C));
+			UV2->SetTriangle(Tid, FIndex3i(A, B, C));
 			Group.Add(Tid);
 		}
+	};
+	auto UVAt = [&](int32 i, int32 j)
+	{
+		return FVector2f((float)((2.0 * i / N - 1.0) * H), (float)((2.0 * j / N - 1.0) * H));
 	};
 	auto DirAt = [&](int32 i, int32 j)
 	{
@@ -1173,11 +1251,35 @@ void APlanetBody::BuildPatchLevel(int32 Level, double H)
 		const double V = (2.0 * j / N - 1.0) * H;
 		return (PatchCenter + PatchEast * U + PatchNorth * V).GetSafeNormal();
 	};
+	const bool bHasParent = Level + 1 < Patches.Num() && PatchHalfExtents.IsValidIndex(Level + 1) && PatchHalfExtents[Level + 1] > H;
 	for (int32 j = 0; j < W; ++j)
 	{
 		for (int32 i = 0; i < W; ++i)
 		{
-			AddVert(DirAt(i, j), 1.0, (float)i / N, (float)j / N);
+			const FVector Dir = DirAt(i, j);
+			const FVector2f Own = UVAt(i, j);
+			const bool bBorder = (i == 0 || i == N || j == 0 || j == N);
+			FVector Pos = Dir;
+			FVector2f PA = Own, PB = Own;
+			if (bHasParent && bBorder)
+			{
+				// Parent spacing is 4 of our cells along the border; snap to the enclosing parent vertices.
+				const bool bAlongI = (j == 0 || j == N);
+				const int32 k = bAlongI ? i : j;
+				const int32 k0 = (k / 4) * 4;
+				if (k0 != k)
+				{
+					const int32 k1 = FMath::Min(k0 + 4, N);
+					const int32 ia = bAlongI ? k0 : i, ja = bAlongI ? j : k0;
+					const int32 ib = bAlongI ? k1 : i, jb = bAlongI ? j : k1;
+					PA = UVAt(ia, ja);
+					PB = UVAt(ib, jb);
+					// Sit on the parent's chord so the un-displaced surfaces coincide too.
+					const double T = (double)(k - k0) / (k1 - k0);
+					Pos = FMath::Lerp(DirAt(ia, ja), DirAt(ib, jb), T);
+				}
+			}
+			AddVert(Pos, Dir, Own, PA, PB);
 		}
 	}
 	for (int32 j = 0; j < N; ++j)
@@ -1198,8 +1300,10 @@ void APlanetBody::BuildPatchLevel(int32 Level, double H)
 	TArray<int32> Lower;
 	for (int32 Vid : Loop)
 	{
-		const FVector Dir = M.GetVertex(Vid);
-		Lower.Add(AddVert(Dir, 1.0 - Skirt, 0.f, 0.f));
+		const FVector Pos = M.GetVertex(Vid);
+		const FVector Dir = Pos.GetSafeNormal();
+		const FVector2f Own = UV0->GetElement(Vid), PA = UV1->GetElement(Vid), PB = UV2->GetElement(Vid);
+		Lower.Add(AddVert(Pos - Dir * Skirt, Dir, Own, PA, PB));
 	}
 	for (int32 k = 0; k < Loop.Num(); ++k)
 	{
@@ -1252,7 +1356,7 @@ void APlanetBody::ApplyPatchRegions()
 {
 	// Each surface lowers itself under the patch level drawn on top of it; the patch's skirt hides the step.
 	const double R = GetRadiusCm();
-	const float DepthCm = (float)(FMath::Max(Style.ReliefFraction * 3.0, 0.002) * R);
+	const float DepthCm = (float)(FMath::Max(Style.ReliefFraction * 4.0, 0.002) * R);
 	const FLinearColor C(PatchCenter.X, PatchCenter.Y, PatchCenter.Z, 0.f);
 	const FLinearColor E(PatchEast.X, PatchEast.Y, PatchEast.Z, 0.f);
 	const FLinearColor Nn(PatchNorth.X, PatchNorth.Y, PatchNorth.Z, 0.f);
@@ -1265,6 +1369,10 @@ void APlanetBody::ApplyPatchRegions()
 		Mid->SetScalarParameterValue(TEXT("InnerHalfExtent"), bPatchesActive ? (float)InnerExtent : 0.f);
 		Mid->SetScalarParameterValue(TEXT("InnerDepthCm"), DepthCm);
 	};
+	for (UMaterialInstanceDynamic* Mid : PatchMIDs)
+	{
+		if (Mid) { Mid->SetScalarParameterValue(TEXT("ParentBlend"), 1.f); }
+	}
 	double Top = 0.0;
 	for (int32 L = 0; L < PatchMIDs.Num(); ++L)
 	{
@@ -1318,14 +1426,15 @@ void APlanetBody::UpdatePatches(const FVector& ViewLoc)
 		for (int32 L = 0; L < Patches.Num(); ++L)
 		{
 			const double H = FMath::Min(H0 * FMath::Pow(4.0, L), MaxExtent);
-			if (Prev >= MaxExtent)
-			{
-				PatchHalfExtents[L] = 0.0;
-				continue;
-			}
-			PatchHalfExtents[L] = H;
-			BuildPatchLevel(L, H);
+			PatchHalfExtents[L] = Prev >= MaxExtent ? 0.0 : H;
 			Prev = H;
+		}
+		for (int32 L = 0; L < Patches.Num(); ++L)
+		{
+			if (PatchHalfExtents[L] > 0.0)
+			{
+				BuildPatchLevel(L, PatchHalfExtents[L]);
+			}
 		}
 	}
 	SetPatchesActive(true);

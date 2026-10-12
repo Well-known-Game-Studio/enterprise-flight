@@ -154,6 +154,17 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UDynamicMeshComponent> DetailBody;
 
+	/**
+	 * In game the far sphere and the cloud shell are generated cube-spheres like the detail mesh (the engine's unit
+	 * sphere asset gave the material different vertex positions, so continents changed at the hand-over). Body and
+	 * Clouds keep the static meshes for the editor viewport and for collision.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UDynamicMeshComponent> FarBody;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UDynamicMeshComponent> CloudsMesh;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> Clouds;
 
@@ -324,6 +335,8 @@ private:
 
 	void UpdateLOD();
 	void BuildDetailMesh();
+	void BuildFarMeshes();
+	void UpdateShellVisibility();
 	void UpdatePatches(const FVector& ViewLoc);
 	void EnsurePatchComponents();
 	void BuildPatchLevel(int32 Level, double HalfExtent);
@@ -366,6 +379,7 @@ private:
 	bool bDetailActive = false;
 	bool bBeyondHorizon = false;
 	bool bDetailBuilt = false;
+	bool bFarBuilt = false;
 	float LODTimer = 0.f;
 	float CloudYawDeg = 0.f;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> CloudMID;

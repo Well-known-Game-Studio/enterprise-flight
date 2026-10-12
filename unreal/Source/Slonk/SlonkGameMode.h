@@ -75,6 +75,7 @@ private:
 	void DisableWorldBoundsChecks();
 	void UpdateStarLighting();
 	void SetSkyCaptureActive(bool bActive);
+	void ApplySkyLightIntensity(float Intensity);
 	bool bSkyCaptureActive = false;
 	bool bSkyCaptureInitialised = false;
 	void UpdateSkyAtmosphere();

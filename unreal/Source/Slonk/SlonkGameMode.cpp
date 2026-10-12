@@ -223,6 +223,9 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 	const float Boost = FMath::Lerp(SkyLuminanceBoost, FMath::Max(SkyLuminanceBoost * 0.3f, 1.f), Blend);
 	// Aerial perspective washes the surface out from orbit at anything above 1x; only boost it when inside.
 	const float ApBoost = FMath::Lerp(FMath::Max(SkyLuminanceBoost * 0.5f, 1.f), 1.f, Blend);
+	// The captured sky is full daylight wherever the sky light sits, so in orbit it floods everything with
+	// ambient (no dark sides, no visible sun glint). Fade it out with altitude; a trace stays as planetshine.
+	ApplySkyLightIntensity(SkyLightIntensityNearPlanet * FMath::Lerp(1.f, 0.04f, Blend));
 	SkyAtmosphere->SetSkyLuminanceFactor(FLinearColor(Boost, Boost, Boost));
 	SkyAtmosphere->SetSkyAndAerialPerspectiveLuminanceFactor(FLinearColor(ApBoost, ApBoost, ApBoost));
 	SkyAtmosphere->SetMultiScatteringFactor(1.f);
@@ -231,6 +234,20 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 		SkyAtmosphere->SetVisibility(true);
 	}
 	AtmospherePlanet->SetUsingSkyAtmosphere(true);
+}
+
+void ASlonkGameMode::ApplySkyLightIntensity(float Intensity)
+{
+	for (TActorIterator<ASkyLight> It(GetWorld()); It; ++It)
+	{
+		if (USkyLightComponent* Sky = It->GetLightComponent())
+		{
+			if (!FMath::IsNearlyEqual(Sky->Intensity, Intensity, 1e-3f))
+			{
+				Sky->SetIntensity(Intensity);
+			}
+		}
+	}
 }
 
 void ASlonkGameMode::SetSkyCaptureActive(bool bActive)
