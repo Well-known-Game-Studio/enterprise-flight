@@ -289,6 +289,7 @@ void APlanetBody::ResolveStyleFromArchetype()
 		S.CloudCoverage = Rng.FRandRange(0.5f, 0.7f);
 		S.AtmosphereColor = Jitter(FLinearColor(0.3f, 0.65f, 1.0f), 0.15f);
 		S.AtmosphereDepth = 0.07f;
+		S.OceanRoughness = 0.25f;
 		break;
 	case EPlanetArchetype::Desert:
 		S.SeaLevel = Rng.FRandRange(-0.05f, 0.1f);
