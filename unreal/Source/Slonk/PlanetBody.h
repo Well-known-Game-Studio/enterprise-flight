@@ -201,6 +201,17 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
 	FPlanetStyle Style;
 
+	/**
+	 * World location the style and noise seed are hashed from. Captured the first time the appearance is applied
+	 * (in the editor for placed/PCG planets) and never updated: the floating origin moves the actor at runtime,
+	 * and a seed taken from the moved location would re-roll the continents mid-flight.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Planet")
+	FVector SeedLocation = FVector::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Planet")
+	bool bSeedLocationSet = false;
+
 	/** The archetype actually in use (after Auto resolution). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Planet")
 	EPlanetArchetype ResolvedArchetype = EPlanetArchetype::Terrestrial;
@@ -329,6 +340,7 @@ public:
 
 private:
 	void ResolveStyleFromArchetype();
+	FVector GetSeedLocation();
 	void ApplyMaterials();
 	void UpdateStarDirection();
 	EPlanetArchetype PickArchetype(FRandomStream& Rng) const;

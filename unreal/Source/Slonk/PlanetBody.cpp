@@ -258,9 +258,19 @@ EPlanetArchetype APlanetBody::PickArchetype(FRandomStream& Rng) const
 	return EPlanetArchetype::Moon;
 }
 
+FVector APlanetBody::GetSeedLocation()
+{
+	if (!bSeedLocationSet)
+	{
+		SeedLocation = GetActorLocation();
+		bSeedLocationSet = true;
+	}
+	return SeedLocation;
+}
+
 void APlanetBody::ResolveStyleFromArchetype()
 {
-	const FVector L = GetActorLocation();
+	const FVector L = GetSeedLocation();
 	const uint32 Hash = HashCombine(HashCombine(GetTypeHash(FMath::RoundToInt64(L.X / 1000.0)), GetTypeHash(FMath::RoundToInt64(L.Y / 1000.0))), GetTypeHash(FMath::RoundToInt64(L.Z / 1000.0)));
 	FRandomStream Rng(static_cast<int32>(Hash));
 
@@ -571,7 +581,7 @@ void APlanetBody::ApplyMaterials()
 
 	const FPlanetStyle& S = Style;
 	// A per-planet offset so two planets with the same style never share a coastline.
-	const FVector L = GetActorLocation();
+	const FVector L = GetSeedLocation();
 	const FLinearColor Seed(FMath::Frac(L.X / 7.3e9) * 100.f, FMath::Frac(L.Y / 5.1e9) * 100.f, FMath::Frac(L.Z / 3.7e9) * 100.f, 0.f);
 
 	if (!RingMID && Rings)
