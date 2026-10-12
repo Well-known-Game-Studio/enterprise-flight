@@ -361,7 +361,8 @@ void APlanetBody::ApplyMaterials()
 				}
 			}
 		}
-		CloudMID->SetScalarParameterValue(TEXT("CloudBrightness"), SunLux / PI);
+		// Cloud albedo ~0.75: brightness is the radiance of a white cloud top under the sun.
+		CloudMID->SetScalarParameterValue(TEXT("CloudBrightness"), SunLux / PI * 0.75f);
 		CloudMID->SetScalarParameterValue(TEXT("CloudNightLevel"), SunLux / PI * 0.002f);
 		CloudMID->SetVectorParameterValue(TEXT("CloudDrift"), FLinearColor(S.CloudDrift, S.CloudDrift * 0.35f, 0.f, 0.f));
 		CloudMID->SetVectorParameterValue(TEXT("SunDirection"), FLinearColor(CachedStarDirection.X, CachedStarDirection.Y, CachedStarDirection.Z, 0.f));
