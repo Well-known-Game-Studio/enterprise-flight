@@ -858,7 +858,7 @@ void APlanetBody::Tick(float DeltaTime)
 		SpinAccumDeg = FMath::Fmod(SpinAccumDeg + SpinDegPerSec * DeltaTime, 360.f);
 		if (RingFrame)
 		{
-			RingFrame->SetRelativeRotation(FRotator(0.f, -SpinAccumDeg, 0.f));
+			RingFrame->SetRelativeRotation(FRotator(0.f, -SpinAccumDeg * (1.f - RingOrbitRateScale), 0.f));
 		}
 	}
 	if (Clouds && Style.bClouds && !FMath::IsNearlyZero(Style.CloudSpinDegPerSec))
@@ -998,7 +998,7 @@ void APlanetBody::UpdateRingParticles(const FVector& ViewLoc)
 		RingFrame->SetUsingAbsoluteScale(true);
 		RingFrame->SetMobility(EComponentMobility::Movable);
 		RingFrame->RegisterComponent();
-		RingFrame->SetRelativeRotation(FRotator(0.f, -SpinAccumDeg, 0.f));
+		RingFrame->SetRelativeRotation(FRotator(0.f, -SpinAccumDeg * (1.f - RingOrbitRateScale), 0.f));
 	}
 	// Camera in the (non-spinning) ring frame, in cm; the ring plane is its XY.
 	const FVector Local = RingFrame->GetComponentTransform().InverseTransformPosition(ViewLoc);
@@ -1040,7 +1040,7 @@ void APlanetBody::UpdateRingParticles(const FVector& ViewLoc)
 		// The planet's spin drags the field past a resting ship; only rebuild once it has drifted well off centre.
 		const FVector Centre = (FVector(RingParticleCell) + FVector(0.5, 0.5, 0.0)) * RingParticleCellCm;
 		const double Drift = FVector::Dist2D(Local, Centre) / RingParticleCellCm;
-		if (Drift < 1.5)
+		if (Drift < 2.0)
 		{
 			return;
 		}
@@ -1054,7 +1054,7 @@ void APlanetBody::UpdateRingParticles(const FVector& ViewLoc)
 	TArray<TArray<FTransform>> PerLayer;
 	PerLayer.SetNum(RingRocks.Num());
 	const float Thick = RingThicknessFraction * (float)R;
-	const int32 Range = FMath::Clamp(RingParticleCellRange, 1, 4);
+	const int32 Range = FMath::Clamp(RingParticleCellRange, 1, 8);
 	const int32 SeedBase = (int32)(Style.RingSeed * 1000.f);
 	for (int32 Y = -Range; Y <= Range; ++Y)
 	{

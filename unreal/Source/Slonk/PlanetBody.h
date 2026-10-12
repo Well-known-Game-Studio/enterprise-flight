@@ -261,14 +261,18 @@ public:
 
 	/** Edge of one ring particle cell (cm). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Rings")
-	double RingParticleCellCm = 1.0e7;
+	double RingParticleCellCm = 1.5e7;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Rings", meta = (ClampMin = "1", ClampMax = "4"))
-	int32 RingParticleCellRange = 4;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Rings", meta = (ClampMin = "1", ClampMax = "8"))
+	int32 RingParticleCellRange = 6;
+
+	/** How fast the ring rocks orbit, as a multiple of the planet's spin (1 = they turn with the planet, 0 = fixed). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Rings")
+	float RingOrbitRateScale = 1.f;
 
 	/** Candidate rocks per cell; each is kept with the ring's local density as probability. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Rings", meta = (ClampMin = "0", ClampMax = "300"))
-	int32 RingParticlesPerCell = 120;
+	int32 RingParticlesPerCell = 260;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Rings")
 	float RingParticleMinRadiusCm = 10000.f;
@@ -336,7 +340,7 @@ private:
 	UPROPERTY() TArray<TObjectPtr<UMaterialInstanceDynamic>> PatchMIDs;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> RingMID;
 	UPROPERTY() TObjectPtr<UTexture2D> RingProfileTexture;
-	/** Tilted with the body but counter-rotated against its spin, so the particle field does not stream past. */
+	/** Tilted with the body; turns at RingOrbitRateScale times the body's spin so the rocks visibly orbit. */
 	UPROPERTY() TObjectPtr<USceneComponent> RingFrame;
 	UPROPERTY() TArray<TObjectPtr<UHierarchicalInstancedStaticMeshComponent>> RingRocks;
 	float SpinAccumDeg = 0.f;
