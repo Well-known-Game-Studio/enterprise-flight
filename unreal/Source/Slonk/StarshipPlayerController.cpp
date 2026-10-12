@@ -109,6 +109,7 @@ void AStarshipPlayerController::CreateDefaultInputAssets()
 	Ensure(IA_ToggleWarpVisuals, TEXT("IA_ToggleWarpVisuals"), EInputActionValueType::Boolean);
 	Ensure(IA_Vertical, TEXT("IA_Vertical"), EInputActionValueType::Axis1D);
 	Ensure(IA_OrbitHold, TEXT("IA_OrbitHold"), EInputActionValueType::Boolean);
+	Ensure(IA_TractorBeam, TEXT("IA_TractorBeam"), EInputActionValueType::Boolean);
 
 	if (MappingContext)
 	{
@@ -195,6 +196,7 @@ void AStarshipPlayerController::CreateDefaultInputAssets()
 	Map(Ctx, IA_Vertical, EKeys::PageUp);
 	MapNegated(Ctx, IA_Vertical, EKeys::PageDown);
 	Map(Ctx, IA_OrbitHold, EKeys::O);
+	Map(Ctx, IA_TractorBeam, EKeys::B);
 
 	MappingContext = Ctx;
 }
@@ -270,6 +272,7 @@ void AStarshipPlayerController::SetupInputComponent()
 	EIC->BindAction(IA_Vertical, ETriggerEvent::Triggered, this, &AStarshipPlayerController::OnVertical);
 	EIC->BindAction(IA_Vertical, ETriggerEvent::Completed, this, &AStarshipPlayerController::OnVerticalReleased);
 	EIC->BindAction(IA_OrbitHold, ETriggerEvent::Started, this, &AStarshipPlayerController::OnOrbitHold);
+	EIC->BindAction(IA_TractorBeam, ETriggerEvent::Started, this, &AStarshipPlayerController::OnTractorBeam);
 	EIC->BindAction(IA_ToggleWarpVisuals, ETriggerEvent::Started, this, &AStarshipPlayerController::OnToggleWarpVisuals);
 }
 
@@ -608,5 +611,13 @@ void AStarshipPlayerController::OnOrbitHold()
 	if (AStarshipPawn* Ship = GetStarship())
 	{
 		Ship->ToggleOrbitHold();
+	}
+}
+
+void AStarshipPlayerController::OnTractorBeam()
+{
+	if (AStarshipPawn* Ship = Cast<AStarshipPawn>(GetPawn()))
+	{
+		Ship->ToggleTractorBeam();
 	}
 }

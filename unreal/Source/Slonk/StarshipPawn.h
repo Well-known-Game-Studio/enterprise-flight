@@ -19,6 +19,8 @@ class UStarshipWeaponsComponent;
 class UWarpStreaksComponent;
 class UBridgeInteriorComponent;
 class UDistantStarsComponent;
+class UShieldComponent;
+class UTractorBeamComponent;
 
 UENUM(BlueprintType)
 enum class EWarpVisualMode : uint8
@@ -79,6 +81,25 @@ public:
 	virtual void OnConstruction(const FTransform& Transform) override;
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
+	virtual float TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent, AController* EventInstigator, AActor* DamageCauser) override;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|Defence")
+	TObjectPtr<UShieldComponent> Shield;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|Defence")
+	TObjectPtr<UTractorBeamComponent> TractorBeam;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Defence") float MaxShieldStrength = 100.f;
+	UPROPERTY(BlueprintReadOnly, Category = "Defence") float ShieldStrength = 100.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Defence") float ShieldRechargePerSecond = 5.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Defence") float ShieldRechargeDelay = 4.f;
+	UPROPERTY(BlueprintReadOnly, Category = "Defence") float HullIntegrity = 100.f;
+
+	UFUNCTION(BlueprintPure, Category = "Starship|Defence") float GetShieldFraction() const { return MaxShieldStrength > 0.f ? ShieldStrength / MaxShieldStrength : 0.f; }
+	UFUNCTION(BlueprintPure, Category = "Starship|Defence") float GetHullFraction() const { return HullIntegrity / 100.f; }
+
+	/** Engage the tractor beam on the locked target (else the nav target), or release it. */
+	UFUNCTION(BlueprintCallable, Category = "Starship|Defence") void ToggleTractorBeam();
 	virtual UPawnMovementComponent* GetMovementComponent() const override;
 
 	// ---- Components ----
@@ -367,6 +388,7 @@ private:
 	TObjectPtr<UMaterialInstanceDynamic> WarpPPMID;
 
 	void UpdateWarpPostProcess(float Streak, float Flash);
+	float ShieldRechargeTimer = 0.f;
 
 	int32 ThrusterMaterialIndex = INDEX_NONE;
 	EStarshipCameraMode CameraMode = EStarshipCameraMode::Chase;

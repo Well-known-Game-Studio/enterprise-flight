@@ -25,6 +25,8 @@ public:
 	/** Ships spawned around the player's start so there is traffic to look at straight away. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic") int32 ShipsNearStart = 3;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic") float StartSpreadCm = 4.0e6f;
+	/** Distance (cm) from the player start to the Borg cube; 0 spawns none. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic") float BorgDistanceCm = 6.0e7f;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Traffic") TArray<TObjectPtr<ASpaceVessel>> Spawned;
 

@@ -12,6 +12,7 @@ class UDynamicMeshComponent;
 class UDynamicMesh;
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
+class UShieldComponent;
 
 UCLASS(Abstract)
 class SLONK_API ASpaceVessel : public AActor, public IFarBody
@@ -58,6 +59,24 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<USceneComponent> Root;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UDynamicMeshComponent> Hull;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UDynamicMeshComponent> Glow;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UShieldComponent> Shield;
+
+	/** Held by a tractor beam: the AI stops moving itself. */
+	UFUNCTION(BlueprintCallable, Category = "Vessel")
+	void SetTractored(bool bHeld) { bTractored = bHeld; }
+
+	UFUNCTION(BlueprintPure, Category = "Vessel")
+	bool IsTractored() const { return bTractored; }
+
+	UFUNCTION(BlueprintPure, Category = "Vessel")
+	bool IsDying() const { return bDying; }
+
+	/** Seconds of secondary explosions before the hull lets go. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vessel")
+	float DeathSeconds = 1.6f;
+
+	/** Velocity the wreck carries into its debris (set by moving subclasses). */
+	FVector WreckVelocity = FVector::ZeroVector;
 
 	UFUNCTION(BlueprintPure, Category = "Vessel")
 	FString GetDisplayName() const { return VesselName.IsEmpty() ? GetActorNameOrLabel() : VesselName; }
@@ -78,6 +97,13 @@ protected:
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> GlowMID;
 	bool bBuilt = false;
 	bool bBeyondHorizon = false;
+	bool bTractored = false;
+	bool bDying = false;
+	float DeathTimer = 0.f;
+	float DeathFlashTimer = 0.f;
+	FRandomStream DeathRng;
+	void BeginDying();
+	void TickDying(float DeltaTime);
 	float HorizonTimer = 0.f;
 };
 

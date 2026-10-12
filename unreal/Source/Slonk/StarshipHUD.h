@@ -14,6 +14,7 @@ enum class ENavObjectKind : uint8
 	Moon,
 	Station,
 	Ship,
+	Hostile,
 	Belt,
 	Target
 };

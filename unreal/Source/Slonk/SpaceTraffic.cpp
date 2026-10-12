@@ -6,6 +6,7 @@
 #include "GameFramework/PlayerController.h"
 #include "PlanetBody.h"
 #include "SpaceVessel.h"
+#include "BorgCube.h"
 
 namespace
 {
@@ -117,5 +118,18 @@ void ASpaceTraffic::Tick(float DeltaTime)
 		Ship->PatrolRadiusCm = StartSpreadCm * 1.5;
 		Ship->Rebuild();
 		Spawned.Add(Ship);
+	}
+	if (BorgDistanceCm > 0.f)
+	{
+		const float A = Rng.FRandRange(0.f, 2.f * PI);
+		const FVector Loc = Base + FVector(FMath::Cos(A), FMath::Sin(A), 0.05f) * BorgDistanceCm;
+		FActorSpawnParameters P;
+		P.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		if (ABorgCube* Cube = World->SpawnActor<ABorgCube>(ABorgCube::StaticClass(), Loc, FRotator(0.f, Rng.FRandRange(0.f, 360.f), 0.f), P))
+		{
+			Cube->Seed = Rng.RandRange(1, 1 << 20);
+			Cube->Rebuild();
+			Spawned.Add(Cube);
+		}
 	}
 }

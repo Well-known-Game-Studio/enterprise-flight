@@ -7,6 +7,8 @@
 #include "SpaceTarget.h"
 #include "BeltField.h"
 #include "SpaceVessel.h"
+#include "BorgCube.h"
+#include "TractorBeamComponent.h"
 #include "StarBody.h"
 #include "Engine/Engine.h"
 #include "Engine/Font.h"
@@ -168,6 +170,15 @@ void AStarshipHUD::DrawHUD()
 			}
 		}
 
+		{
+			const float SF = Ship->GetShieldFraction();
+			const FLinearColor ShieldColor = SF <= 0.f ? FLinearColor(1.f, 0.3f, 0.25f) : (SF < 0.35f ? FLinearColor(1.f, 0.75f, 0.3f) : Accent);
+			DrawText(FString::Printf(TEXT("SHIELDS %3.0f%%%s   HULL %3.0f%%"), SF * 100.f, SF <= 0.f ? TEXT(" DOWN") : TEXT(""), Ship->GetHullFraction() * 100.f), ShieldColor, X, Y, Font, UIScale); Y += Line;
+			if (Ship->TractorBeam && Ship->TractorBeam->IsBeamActive() && Ship->TractorBeam->Target)
+			{
+				DrawText(FString::Printf(TEXT("TRACTOR BEAM  %s   range %s   (B releases)"), *Ship->TractorBeam->Target->GetActorNameOrLabel().ToUpper(), *FormatDistance(Ship->TractorBeam->GetRangeCm())), Accent, X, Y, Font, UIScale); Y += Line;
+			}
+		}
 		const FRotator Rot = Ship->GetActorRotation();
 		DrawText(FString::Printf(TEXT("HEADING  %03d  PITCH %+03d  ROLL %+03d"), FMath::RoundToInt(FRotator::ClampAxis(Rot.Yaw)), FMath::RoundToInt(Rot.Pitch), FMath::RoundToInt(Rot.Roll)), Dim, X, Y, Font, UIScale); Y += Line;
 		DrawText(FString::Printf(TEXT("POSITION %s from the star"), *FormatDistance(Ship->GetUniversePosition().Size())), Dim, X, Y, Font, UIScale); Y += Line * 1.4f;
@@ -259,6 +270,7 @@ void AStarshipHUD::DrawHUD()
 			TEXT("X or 0  all stop     Z  reverse"),
 			TEXT("PgUp PgDn            vertical thrusters"),
 			TEXT("O  orbit hold around nav target / nearest body (follows ships)"),
+			TEXT("B  tractor beam on the locked target (else the nav target)"),
 			TEXT("J / Y button         engage / disengage warp"),
 			TEXT("[ ]  or  - +         warp factor"),
 			TEXT("LMB / F / RT         phasers (hold)"),
@@ -299,6 +311,7 @@ FLinearColor AStarshipHUD::KindColor(ENavObjectKind Kind) const
 	case ENavObjectKind::Belt: return FLinearColor(0.7f, 0.6f, 0.5f);
 	case ENavObjectKind::Station: return FLinearColor(0.6f, 1.f, 0.7f);
 	case ENavObjectKind::Ship: return FLinearColor(1.f, 0.95f, 0.6f);
+	case ENavObjectKind::Hostile: return FLinearColor(1.f, 0.3f, 0.25f);
 	default: return Warning;
 	}
 }
@@ -384,6 +397,16 @@ void AStarshipHUD::GatherNavObjects(bool bForce)
 		O.Actor = *It;
 		O.Label = It->GetDisplayName();
 		O.Kind = ENavObjectKind::Station;
+		O.Location = It->GetActorLocation();
+		O.RadiusCm = It->GetBoundingRadiusCm();
+		NavObjects.Add(O);
+	}
+	for (TActorIterator<ABorgCube> It(World); It; ++It)
+	{
+		FNavObject O;
+		O.Actor = *It;
+		O.Label = It->GetDisplayName();
+		O.Kind = ENavObjectKind::Hostile;
 		O.Location = It->GetActorLocation();
 		O.RadiusCm = It->GetBoundingRadiusCm();
 		NavObjects.Add(O);

@@ -13,6 +13,9 @@
 #include "Components/BoxComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Components/PostProcessComponent.h"
+#include "ShieldComponent.h"
+#include "TractorBeamComponent.h"
+#include "Engine/DamageEvents.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "GameFramework/SpringArmComponent.h"
@@ -59,6 +62,10 @@ AStarshipPawn::AStarshipPawn()
 
 	Movement = CreateDefaultSubobject<UStarshipMovementComponent>(TEXT("Movement"));
 	Movement->SetUpdatedComponent(CollisionBox);
+
+	Shield = CreateDefaultSubobject<UShieldComponent>(TEXT("Shield"));
+	Shield->SetupAttachment(CollisionBox);
+	TractorBeam = CreateDefaultSubobject<UTractorBeamComponent>(TEXT("TractorBeam"));
 
 	WarpDrive = CreateDefaultSubobject<UWarpDriveComponent>(TEXT("WarpDrive"));
 	Weapons = CreateDefaultSubobject<UStarshipWeaponsComponent>(TEXT("Weapons"));
@@ -172,6 +179,15 @@ void AStarshipPawn::ApplyHullDimensions()
 {
 	const float LengthCm = GetShipLengthCm();
 	CollisionBox->SetBoxExtent(FVector(LengthCm * 0.5f, ShipWidthMeters * 50.f, ShipHeightMeters * 50.f));
+	if (Shield)
+	{
+		Shield->SetShellExtent(FVector(LengthCm * 0.6f, ShipWidthMeters * 100.f * 0.75f, ShipHeightMeters * 100.f * 1.3f));
+	}
+	if (TractorBeam)
+	{
+		// Deflector dish: forward on the secondary hull, below the centreline.
+		TractorBeam->EmitterOffset = FVector(LengthCm * 0.22f, 0.f, -ShipHeightMeters * 100.f * 0.45f);
+	}
 
 	if (ShipMesh && ShipMesh->GetStaticMesh())
 	{
@@ -395,6 +411,70 @@ void AStarshipPawn::SetupHullLights()
 void AStarshipPawn::HandleCollision(const FHitResult& Hit)
 {
 	AddCameraShake(0.8f);
+	if (Shield)
+	{
+		const FVector Point = Hit.ImpactPoint.IsNearlyZero() ? GetActorLocation() + GetActorForwardVector() * GetShipLengthCm() * 0.5f : FVector(Hit.ImpactPoint);
+		Shield->RegisterImpact(Point, 1.5f);
+	}
+	ShieldStrength = FMath::Max(ShieldStrength - 4.f, 0.f);
+	ShieldRechargeTimer = ShieldRechargeDelay;
+}
+
+float AStarshipPawn::TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent, AController* EventInstigator, AActor* DamageCauser)
+{
+	const float Applied = Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
+	if (Applied <= 0.f)
+	{
+		return Applied;
+	}
+	FVector Point = GetActorLocation();
+	if (DamageEvent.IsOfType(FPointDamageEvent::ClassID))
+	{
+		Point = static_cast<const FPointDamageEvent&>(DamageEvent).HitInfo.ImpactPoint;
+	}
+	else if (DamageEvent.IsOfType(FRadialDamageEvent::ClassID))
+	{
+		Point = static_cast<const FRadialDamageEvent&>(DamageEvent).Origin;
+	}
+	else if (DamageCauser)
+	{
+		Point = DamageCauser->GetActorLocation();
+	}
+	if (Shield && ShieldStrength > 0.f)
+	{
+		Shield->RegisterImpact(Point, FMath::Clamp(Applied / 10.f, 0.3f, 3.f));
+	}
+	const float Absorbed = FMath::Min(ShieldStrength, Applied);
+	ShieldStrength -= Absorbed;
+	HullIntegrity = FMath::Max(HullIntegrity - (Applied - Absorbed) * 0.5f, 1.f);
+	ShieldRechargeTimer = ShieldRechargeDelay;
+	AddCameraShake(FMath::Clamp(Applied / 40.f, 0.05f, 0.6f));
+	return Applied;
+}
+
+void AStarshipPawn::ToggleTractorBeam()
+{
+	if (!TractorBeam)
+	{
+		return;
+	}
+	if (TractorBeam->IsBeamActive())
+	{
+		TractorBeam->Release();
+		return;
+	}
+	AActor* Candidate = Weapons ? Weapons->LockedTarget.Get() : nullptr;
+	if (!Candidate)
+	{
+		APlayerController* PC = Cast<APlayerController>(GetController());
+		AStarshipHUD* H = PC ? Cast<AStarshipHUD>(PC->GetHUD()) : nullptr;
+		FNavObject Info;
+		if (H && H->GetNavTargetInfo(Info))
+		{
+			Candidate = Info.Actor;
+		}
+	}
+	TractorBeam->Engage(Candidate);
 }
 
 void AStarshipPawn::AddCameraShake(float Amplitude)
@@ -460,6 +540,11 @@ void AStarshipPawn::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 	ProcessDebugCommand();
+	ShieldRechargeTimer -= DeltaTime;
+	if (ShieldRechargeTimer <= 0.f && ShieldStrength < MaxShieldStrength)
+	{
+		ShieldStrength = FMath::Min(ShieldStrength + ShieldRechargePerSecond * DeltaTime, MaxShieldStrength);
+	}
 	ApplyExposure();
 	if (DebugSteerTime > 0.f && Movement)
 	{
@@ -693,6 +778,14 @@ void AStarshipPawn::ProcessDebugCommand()
 		else { ToggleOrbitHold(); }
 	}
 	else if (Op == TEXT("shake")) { AddCameraShake(Arg(1, 1.f)); }
+	else if (Op == TEXT("tractor")) { ToggleTractorBeam(); }
+	else if (Op == TEXT("hit"))
+	{
+		// Test: flare the shields as if struck from the left.
+		FPointDamageEvent E(Arg(1, 15.f), FHitResult(), -GetActorRightVector(), nullptr);
+		E.HitInfo.ImpactPoint = GetActorLocation() + GetActorRightVector() * ShipWidthMeters * 60.f;
+		TakeDamage(Arg(1, 15.f), E, nullptr, nullptr);
+	}
 	else if (Op == TEXT("jump")) { JumpToNavTarget(); }
 	else if (Op == TEXT("warpvis"))
 	{

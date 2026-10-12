@@ -4,6 +4,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInterface.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "SlonkMaterials.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -51,9 +52,11 @@ void APhaserBeam::BeginPlay()
 	Super::BeginPlay();
 	if (UMaterialInterface* Mat = SlonkMaterials::LoadOrFallback(BeamMaterial, TEXT("PhaserBeam")))
 	{
-		Beam->SetMaterial(0, Mat);
-		MuzzleGlow->SetMaterial(0, Mat);
-		ImpactGlow->SetMaterial(0, Mat);
+		UMaterialInstanceDynamic* Mid = UMaterialInstanceDynamic::Create(Mat, this);
+		Mid->SetVectorParameterValue(TEXT("BeamColor"), BeamColor);
+		Beam->SetMaterial(0, Mid);
+		MuzzleGlow->SetMaterial(0, Mid);
+		ImpactGlow->SetMaterial(0, Mid);
 	}
 	ImpactLight->SetLightColor(BeamColor);
 }

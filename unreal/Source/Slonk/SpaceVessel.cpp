@@ -2,12 +2,15 @@
 
 #include "Components/DynamicMeshComponent.h"
 #include "ExplosionEffect.h"
+#include "HullDebris.h"
 #include "Engine/World.h"
 #include "GeometryScript/MeshNormalsFunctions.h"
 #include "GeometryScript/MeshPrimitiveFunctions.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "SlonkMaterials.h"
 #include "SpaceTarget.h"
+#include "ShieldComponent.h"
+#include "Engine/DamageEvents.h"
 #include "UDynamicMesh.h"
 
 namespace
@@ -88,6 +91,8 @@ ASpaceVessel::ASpaceVessel()
 	SetRootComponent(Root);
 	Hull = MakePart(this, TEXT("Hull"), Root, true);
 	Glow = MakePart(this, TEXT("Glow"), Root, false);
+	Shield = CreateDefaultSubobject<UShieldComponent>(TEXT("Shield"));
+	Shield->SetupAttachment(Root);
 	HullMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(SlonkMaterials::HullPath));
 	GlowMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(SlonkMaterials::GlowPath));
 	Tags.Add(ASpaceTarget::TargetableTag);
@@ -130,16 +135,17 @@ void ASpaceVessel::ApplyMaterials()
 			GlowMID = UMaterialInstanceDynamic::Create(Mat, this);
 		}
 	}
+	// A dynamic mesh component ignores SetMaterial until it has material slots; ConfigureMaterialSet always applies.
 	if (HullMID)
 	{
 		HullMID->SetVectorParameterValue(TEXT("HullColor"), HullColor);
 		HullMID->SetScalarParameterValue(TEXT("PanelScale"), 400.f / FMath::Max(SizeCm, 1.f));
-		Hull->SetMaterial(0, HullMID);
+		Hull->ConfigureMaterialSet({ HullMID.Get() });
 	}
 	if (GlowMID)
 	{
 		GlowMID->SetVectorParameterValue(TEXT("GlowColor"), GlowColor);
-		Glow->SetMaterial(0, GlowMID);
+		Glow->ConfigureMaterialSet({ GlowMID.Get() });
 	}
 }
 
@@ -164,11 +170,20 @@ void ASpaceVessel::Rebuild()
 	Finish(Glow);
 	bBuilt = true;
 	ApplyMaterials();
+	if (Shield)
+	{
+		Shield->SetShellExtent(FVector(GetBoundingRadiusCm() * 1.15f));
+	}
 }
 
 void ASpaceVessel::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+	if (bDying)
+	{
+		TickDying(DeltaTime);
+		return;
+	}
 	HorizonTimer -= DeltaTime;
 	if (HorizonTimer <= 0.f)
 	{
@@ -184,13 +199,64 @@ float ASpaceVessel::TakeDamage(float DamageAmount, const FDamageEvent& DamageEve
 	{
 		return Applied;
 	}
-	Health -= Applied;
-	if (Health <= 0.f)
+	if (Shield)
 	{
-		AExplosionEffect::SpawnExplosion(GetWorld(), GetActorLocation(), SizeCm * 1.5f, 1.8f);
-		Destroy();
+		FVector Point = GetActorLocation();
+		if (DamageEvent.IsOfType(FPointDamageEvent::ClassID))
+		{
+			Point = static_cast<const FPointDamageEvent&>(DamageEvent).HitInfo.ImpactPoint;
+		}
+		else if (DamageEvent.IsOfType(FRadialDamageEvent::ClassID))
+		{
+			Point = static_cast<const FRadialDamageEvent&>(DamageEvent).Origin;
+		}
+		else if (DamageCauser)
+		{
+			Point = DamageCauser->GetActorLocation();
+		}
+		Shield->RegisterImpact(Point, FMath::Clamp(Applied / 20.f, 0.3f, 2.5f));
+	}
+	Health -= Applied;
+	if (Health <= 0.f && !bDying)
+	{
+		BeginDying();
 	}
 	return Applied;
+}
+
+void ASpaceVessel::BeginDying()
+{
+	bDying = true;
+	DeathTimer = DeathSeconds;
+	DeathFlashTimer = 0.f;
+	DeathRng.Initialize(Seed * 13 + 5);
+	Tags.Remove(ASpaceTarget::TargetableTag);
+	if (Shield) { Shield->SetVisibility(false); }
+	// The first blast right away so the kill reads immediately.
+	AExplosionEffect::SpawnExplosion(GetWorld(), GetActorLocation() + DeathRng.GetUnitVector() * SizeCm * 0.25f, SizeCm * 0.6f, 0.8f);
+}
+
+void ASpaceVessel::TickDying(float DeltaTime)
+{
+	DeathTimer -= DeltaTime;
+	DeathFlashTimer -= DeltaTime;
+	if (DeathFlashTimer <= 0.f && DeathTimer > 0.f)
+	{
+		// Secondary explosions ripple across the hull.
+		DeathFlashTimer = DeathRng.FRandRange(0.12f, 0.3f);
+		const FVector At = GetActorLocation() + GetActorTransform().TransformVector(FVector(DeathRng.FRandRange(-0.45f, 0.45f), DeathRng.FRandRange(-0.3f, 0.3f), DeathRng.FRandRange(-0.15f, 0.15f)) * SizeCm);
+		AExplosionEffect::SpawnExplosion(GetWorld(), At, SizeCm * DeathRng.FRandRange(0.25f, 0.5f), DeathRng.FRandRange(0.5f, 0.9f));
+	}
+	if (DeathTimer <= 0.f)
+	{
+		UWorld* World = GetWorld();
+		const FVector Here = GetActorLocation();
+		AExplosionEffect::SpawnExplosion(World, Here, SizeCm * 2.2f, 2.0f);
+		AExplosionEffect::SpawnExplosion(World, Here, SizeCm * 1.2f, 1.2f);
+		UMaterialInterface* Mat = HullMID ? static_cast<UMaterialInterface*>(HullMID) : SlonkMaterials::LoadOrFallback(HullMaterial, TEXT("Hull"), true);
+		AHullDebris::Scatter(World, Here, WreckVelocity, SizeCm, Mat, HullColor, FMath::Clamp((int32)(SizeCm / 2500.f), 10, 40), Seed);
+		Destroy();
+	}
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -276,8 +342,9 @@ void AProceduralStarship::Tick(float DeltaTime)
 		NavRng.Initialize(Seed * 31 + 7);
 		bHomeSet = true;
 	}
-	if (bBeyondHorizon)
+	if (bBeyondHorizon || bTractored || bDying)
 	{
+		Velocity = FVector::ZeroVector;
 		return;
 	}
 	const FVector Here = GetActorLocation();
@@ -296,6 +363,7 @@ void AProceduralStarship::Tick(float DeltaTime)
 	SetActorLocation(Here + Velocity * DeltaTime);
 	if (Root) { Root->ComponentVelocity = Velocity; }
 	if (Hull) { Hull->ComponentVelocity = Velocity; }
+	WreckVelocity = Velocity;
 	if (!Velocity.IsNearlyZero())
 	{
 		const FQuat Want = FRotationMatrix::MakeFromXZ(Velocity.GetSafeNormal(), FVector::UpVector).ToQuat();

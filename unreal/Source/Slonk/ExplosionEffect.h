@@ -8,6 +8,7 @@
 
 class UStaticMeshComponent;
 class UPointLightComponent;
+class UMaterialInstanceDynamic;
 
 UCLASS()
 class SLONK_API AExplosionEffect : public AActor
@@ -45,9 +46,23 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UPointLightComponent> Light;
 
+	/** Camera-facing expanding ring. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UStaticMeshComponent> Shockwave;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Explosion")
+	TSoftObjectPtr<UMaterialInterface> ShockwaveMaterial;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Explosion")
+	float Intensity = 30.f;
+
 	/** Spawn helper. */
 	static AExplosionEffect* SpawnExplosion(UWorld* World, const FVector& Location, float Radius, float InDuration = 0.9f);
 
 private:
 	float Age = 0.f;
+	float Seed = 0.f;
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> ShellMID;
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> CoreMID;
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> RingMID;
 };

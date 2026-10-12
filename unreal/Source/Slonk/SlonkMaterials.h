@@ -17,6 +17,10 @@ namespace SlonkMaterials
 	inline const TCHAR* AsteroidPath = TEXT("/Game/Slonk/Materials/M_Asteroid.M_Asteroid");
 	inline const TCHAR* HullPath = TEXT("/Game/Slonk/Materials/M_Hull.M_Hull");
 	inline const TCHAR* GlowPath = TEXT("/Game/Slonk/Materials/M_Glow.M_Glow");
+	inline const TCHAR* ShockwavePath = TEXT("/Game/Slonk/Materials/M_Shockwave.M_Shockwave");
+	inline const TCHAR* ShieldPath = TEXT("/Game/Slonk/Materials/M_Shield.M_Shield");
+	inline const TCHAR* TractorBeamPath = TEXT("/Game/Slonk/Materials/M_TractorBeam.M_TractorBeam");
+	inline const TCHAR* BorgBeamPath = TEXT("/Game/Slonk/Materials/M_BorgBeam.M_BorgBeam");
 
 	/**
 	 * Primitives further than this (cm) from the world origin lose GPU matrix precision (the engine's
