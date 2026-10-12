@@ -200,7 +200,10 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 	// The style's AtmosphereDepth sizes the far glow shell; the real scattering layer is much thinner
 	// (Earth: 1% of the radius), otherwise the limb from orbit becomes a thick white ring.
 	const float HeightKm = FMath::Clamp(S.AtmosphereDepth * RadiusKm * 0.3f, 8.f, 120.f);
-	SkyAtmosphere->SetBottomRadius(RadiusKm);
+	// The atmosphere's ground sits a little below the rendered surface: pixels at or under the ground radius get
+	// the full-atmosphere transmittance (black) from the aerial perspective LUT, which blacked out the un-displaced
+	// far sphere and every ocean.
+	SkyAtmosphere->SetBottomRadius(RadiusKm * 0.992f);
 	SkyAtmosphere->SetAtmosphereHeight(HeightKm);
 	// Scale heights proportional to the atmosphere thickness (Earth: 60 km / 8 km / 1.2 km).
 	SkyAtmosphere->SetRayleighExponentialDistribution(HeightKm * (8.f / 60.f));

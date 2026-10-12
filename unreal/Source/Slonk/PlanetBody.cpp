@@ -755,7 +755,8 @@ void APlanetBody::BuildFarMeshes()
 		if (!Mesh) { return; }
 		Mesh->Reset();
 		FGeometryScriptPrimitiveOptions Options;
-		UGeometryScriptLibrary_MeshPrimitiveFunctions::AppendSphereBox(Mesh, Options, FTransform::Identity, 1.f, 40, 40, 40);
+		const int32 Steps = C == FarBody ? 48 : 40;
+		UGeometryScriptLibrary_MeshPrimitiveFunctions::AppendSphereBox(Mesh, Options, FTransform::Identity, 1.f, Steps, Steps, Steps);
 		FGeometryScriptCalculateNormalsOptions NormalOptions;
 		UGeometryScriptLibrary_MeshNormalsFunctions::RecomputeNormals(Mesh, NormalOptions);
 		C->NotifyMeshUpdated();
