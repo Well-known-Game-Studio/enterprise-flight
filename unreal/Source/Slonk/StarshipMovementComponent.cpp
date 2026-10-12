@@ -1,5 +1,9 @@
 #include "StarshipMovementComponent.h"
 
+#include "EngineUtils.h"
+#include "PlanetBody.h"
+#include "StarBody.h"
+
 #include "Components/SceneComponent.h"
 
 UStarshipMovementComponent::UStarshipMovementComponent()
@@ -79,9 +83,10 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 
 	// ---- Linear ----
 	const FVector Forward = NewQuat.GetForwardVector();
+	bProximityLimited = false;
 	if (bWarpActive)
 	{
-		// The warp drive owns the speed profile; we just follow it exactly.
+		// The warp drive owns the speed profile; we follow it exactly unless a body is in the way.
 		Velocity = Forward * WarpSpeed;
 	}
 	else
@@ -89,6 +94,21 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 		const FVector TargetVelocity = Forward * GetImpulseTargetSpeed();
 		const FVector DeltaV = TargetVelocity - Velocity;
 		Velocity += DeltaV.GetClampedToMaxSize(ImpulseAcceleration * DeltaTime);
+	}
+	// Automatic braking: when the heading would carry us into a body, scale the whole velocity so the
+	// closing rate never exceeds the cap (scaling keeps the heading; clamping one axis bled thrust sideways).
+	{
+		const FVector Dir = Velocity.GetSafeNormal();
+		const FVector ToBody = UpdateProximity(UpdatedComponent->GetComponentLocation(), Dir);
+		if (!ToBody.IsNearlyZero())
+		{
+			const double Closing = FVector::DotProduct(Velocity, ToBody);
+			if (Closing > ProximityCap)
+			{
+				Velocity *= ProximityCap / Closing;
+				bProximityLimited = true;
+			}
+		}
 	}
 
 	const FVector Delta = Velocity * DeltaTime;
@@ -114,4 +134,77 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 
 	UpdateComponentVelocity();
 	SteeringInput = FVector::ZeroVector;
+}
+
+FVector UStarshipMovementComponent::UpdateProximity(const FVector& Here, const FVector& Dir)
+{
+	ProximityBody = nullptr;
+	ProximityCap = 0.0;
+	ProximityBodyName.Empty();
+	if (!bProximityGovernor)
+	{
+		return FVector::ZeroVector;
+	}
+	ProximityScanTimer -= GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.f;
+	if (ProximityScanTimer <= 0.f)
+	{
+		ProximityScanTimer = 1.f;
+		ProximityCandidates.Reset();
+		if (UWorld* World = GetWorld())
+		{
+			for (TActorIterator<APlanetBody> It(World); It; ++It) { ProximityCandidates.Add({ *It, It->GetRadiusCm() }); }
+			for (TActorIterator<AStarBody> It(World); It; ++It) { ProximityCandidates.Add({ *It, It->GetRadiusCm() }); }
+		}
+	}
+	// Among the bodies our straight-line path would pass through (within ThreatRadii), keep the tightest cap.
+	FVector BestDir = FVector::ZeroVector;
+	double BestCap = TNumericLimits<double>::Max();
+	AActor* BestBody = nullptr;
+	for (const FProximityCandidate& C : ProximityCandidates)
+	{
+		AActor* Body = C.Body.Get();
+		if (!Body)
+		{
+			continue;
+		}
+		const FVector To = Body->GetActorLocation() - Here;
+		const double Dist = To.Size();
+		if (Dist < 1.0)
+		{
+			continue;
+		}
+		const FVector ToDir = To / Dist;
+		const double Dot = Dir.IsNearlyZero() ? 1.0 : FVector::DotProduct(Dir, ToDir);
+		const double Surface = FMath::Max(Dist - C.Radius, 0.0);
+		const bool bInside = Surface <= 0.0;
+		if (!bInside)
+		{
+			if (Dot <= 0.0)
+			{
+				continue; // moving away
+			}
+			const double Periapsis = Dist * FMath::Sqrt(FMath::Max(1.0 - Dot * Dot, 0.0));
+			if (Periapsis >= C.Radius * FMath::Max(ThreatRadii, 1.f))
+			{
+				continue; // the path misses it
+			}
+		}
+		const double Cap = FMath::Max(Surface / FMath::Max(ApproachSeconds, 0.5f), MinApproachSpeed);
+		if (Cap < BestCap)
+		{
+			BestCap = Cap;
+			BestBody = Body;
+			BestDir = ToDir;
+		}
+	}
+	if (!BestBody)
+	{
+		return FVector::ZeroVector;
+	}
+	ProximityBody = BestBody;
+	ProximityCap = BestCap;
+	ProximityBodyName = BestBody->GetActorNameOrLabel();
+	if (const APlanetBody* Planet = Cast<APlanetBody>(BestBody)) { if (!Planet->PlanetName.IsEmpty()) { ProximityBodyName = Planet->PlanetName; } }
+	if (const AStarBody* Star = Cast<AStarBody>(BestBody)) { if (!Star->StarName.IsEmpty()) { ProximityBodyName = Star->StarName; } }
+	return BestDir;
 }

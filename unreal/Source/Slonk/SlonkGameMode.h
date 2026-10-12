@@ -47,7 +47,7 @@ public:
 
 	/** Sky / aerial-perspective brightness multiplier. The sun is only tens of lux in this scene (not 100k), so the physically scaled sky needs a boost to read. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
-	float SkyLuminanceBoost = 10.f;
+	float SkyLuminanceBoost = 5.f;
 
 	/** Spawn a ring of target asteroids around the origin at BeginPlay. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Testing")

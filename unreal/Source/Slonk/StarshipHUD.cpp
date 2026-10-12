@@ -167,6 +167,10 @@ void AStarshipHUD::DrawHUD()
 		DrawText(FString::Printf(TEXT("WARP %.1f   %s   [%s]"), Warp->WarpFactor, *State, Ship->GetWarpVisualMode() == EWarpVisualMode::Relativistic ? TEXT("RELATIVISTIC") : TEXT("CLASSIC")), StateColor, X, Y, Font, UIScale); Y += Line;
 		DrawText(FString::Printf(TEXT("  cruise %s"), *FormatSpeed(Warp->GetWarpSpeedForFactor(Warp->WarpFactor))), Dim, X, Y, SmallFont, UIScale); Y += Line * 1.4f;
 	}
+	if (Ship->Movement && Ship->Movement->bProximityLimited)
+	{
+		DrawText(FString::Printf(TEXT("PROXIMITY  %s   closing speed held to %s"), *Ship->Movement->ProximityBodyName.ToUpper(), *FormatSpeed(Ship->Movement->ProximityCap)), Warning, X, Y, Font, UIScale); Y += Line;
+	}
 
 	if (Weapons)
 	{

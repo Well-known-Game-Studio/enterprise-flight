@@ -2,6 +2,7 @@
 
 #include "Components/DirectionalLightComponent.h"
 #include "Components/DynamicMeshComponent.h"
+#include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "GeometryScript/MeshNormalsFunctions.h"
@@ -45,7 +46,17 @@ APlanetBody::APlanetBody()
 	SetRootComponent(Body);
 	Body->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	Body->SetCollisionObjectType(ECC_WorldStatic);
-	Body->SetCollisionResponseToAllChannels(ECR_Block);
+	Body->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	CollisionSphere = CreateDefaultSubobject<USphereComponent>(TEXT("CollisionSphere"));
+	CollisionSphere->SetupAttachment(Body);
+	CollisionSphere->SetUsingAbsoluteScale(true);
+	CollisionSphere->SetMobility(EComponentMobility::Movable);
+	CollisionSphere->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	CollisionSphere->SetCollisionObjectType(ECC_WorldStatic);
+	CollisionSphere->SetCollisionResponseToAllChannels(ECR_Block);
+	CollisionSphere->SetGenerateOverlapEvents(false);
+	CollisionSphere->SetHiddenInGame(true);
 	Body->SetMobility(EComponentMobility::Movable);
 	Body->SetGenerateOverlapEvents(false);
 	// A spinning 1000 km movable sphere is a terrible shadow caster (it churns the virtual shadow maps every frame).
@@ -139,7 +150,7 @@ void APlanetBody::ResolveStyleFromArchetype()
 		S.CloudCoverage = Rng.FRandRange(0.35f, 0.55f);
 		S.AtmosphereColor = Jitter(FLinearColor(0.35f, 0.6f, 1.0f), 0.15f);
 		S.NightLightIntensity = Rng.FRand() < 0.6f ? 6.f : 0.f;
-		S.ReliefFraction = 0.003f;
+		S.ReliefFraction = 0.006f;
 		break;
 	case EPlanetArchetype::Ocean:
 		S.SeaLevel = Rng.FRandRange(0.7f, 0.85f);
@@ -162,7 +173,7 @@ void APlanetBody::ResolveStyleFromArchetype()
 		S.SunsetColor = FLinearColor(1.0f, 0.35f, 0.1f);
 		S.AtmosphereDepth = 0.04f;
 		S.Intensity = 1.4f;
-		S.ReliefFraction = 0.004f;
+		S.ReliefFraction = 0.008f;
 		break;
 	case EPlanetArchetype::Ice:
 		S.SeaLevel = Rng.FRandRange(0.3f, 0.5f);
@@ -194,7 +205,7 @@ void APlanetBody::ResolveStyleFromArchetype()
 		S.SunsetColor = FLinearColor(1.0f, 0.2f, 0.05f);
 		S.AtmosphereDepth = 0.05f;
 		S.NightFactor = 0.25f;
-		S.ReliefFraction = 0.006f;
+		S.ReliefFraction = 0.010f;
 		break;
 	case EPlanetArchetype::GasGiant:
 	{
@@ -235,11 +246,11 @@ void APlanetBody::ResolveStyleFromArchetype()
 		S.IceCapStart = 2.f;
 		S.NoiseScale = 5.f;
 		S.LandRoughness = 0.95f;
-		S.NormalStrength = 0.15f;
+		S.NormalStrength = 0.3f;
 		S.DetailNormalScale = 6.f;
 		S.bClouds = false;
 		S.bAtmosphere = false;
-		S.ReliefFraction = 0.006f;
+		S.ReliefFraction = 0.010f;
 		break;
 	}
 
@@ -332,8 +343,8 @@ void APlanetBody::ApplyMaterials()
 		Mid->SetScalarParameterValue(TEXT("BandScale"), S.BandScale);
 		Mid->SetScalarParameterValue(TEXT("BandWarp"), S.BandWarp);
 		Mid->SetVectorParameterValue(TEXT("SunDirection"), FLinearColor(CachedStarDirection.X, CachedStarDirection.Y, CachedStarDirection.Z, 0.f));
-		// HeightScale is in cm per unit of (height - sea level); land tops out ~0.5 above sea level.
-		Mid->SetScalarParameterValue(TEXT("HeightScale"), bDetail ? S.ReliefFraction * GetRadiusCm() * 2.f : 0.f);
+		// HeightScale is the displacement (cm) of the tallest peak: the material normalises land height to 0..1.
+		Mid->SetScalarParameterValue(TEXT("HeightScale"), bDetail ? S.ReliefFraction * GetRadiusCm() : 0.f);
 	}
 	if (CloudMID)
 	{
@@ -385,6 +396,7 @@ void APlanetBody::ApplyAppearance()
 	// Body is the root: set its world scale so the planet is exactly RadiusKm whatever the spawner did to the actor scale.
 	const double RadiusCm = GetRadiusCm();
 	Body->SetWorldScale3D(FVector(RadiusCm / MeshUnitRadius));
+	if (CollisionSphere) { CollisionSphere->SetSphereRadius((float)RadiusCm, false); }
 
 	Clouds->SetVisibility(Style.bClouds && !bBeyondHorizon);
 	// Keep the cloud deck well inside the scattering layer (the volumetric atmosphere is ~AtmosphereDepth/4 deep).

@@ -204,6 +204,11 @@ void UWarpDriveComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 		if (Movement)
 		{
 			Movement->SetWarp(true, CurrentSpeed);
+			// A body ahead has throttled the warp field below impulse speed: drop out rather than crawl at warp.
+			if (Movement->bProximityLimited && Movement->ProximityCap < Movement->FullImpulseSpeed)
+			{
+				DisengageWarp();
+			}
 		}
 		break;
 	}

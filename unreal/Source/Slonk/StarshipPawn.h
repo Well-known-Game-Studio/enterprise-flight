@@ -316,6 +316,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Starship")
 	void JumpToActor(AActor* Target, double TargetRadiusCm, float StandoffRadii = 3.f);
 
+	/** Standoff for jumps to a star, in star radii: close enough that the photosphere fills most of the view. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Starship")
+	float StarJumpStandoffRadii = 1.5f;
+
 	/** Jump to the HUD's nav target (cycling to the next body first if none is set). */
 	UFUNCTION(BlueprintCallable, Category = "Starship")
 	void JumpToNavTarget();

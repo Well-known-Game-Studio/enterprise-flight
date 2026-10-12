@@ -9,6 +9,7 @@
 #include "StarBody.generated.h"
 
 class UStaticMeshComponent;
+class USphereComponent;
 class UMaterialInstanceDynamic;
 
 UCLASS()
@@ -33,6 +34,10 @@ public:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> Body;
+
+	/** Analytic collision at the body's radius (the render spheres carry no usable collision). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<USphereComponent> CollisionSphere;
 
 	/** Camera-facing glow / ray sprite. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")

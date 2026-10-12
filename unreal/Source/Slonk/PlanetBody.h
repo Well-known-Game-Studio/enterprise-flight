@@ -9,6 +9,7 @@
 #include "PlanetBody.generated.h"
 
 class UStaticMeshComponent;
+class USphereComponent;
 class UDynamicMeshComponent;
 class UMaterialInstanceDynamic;
 
@@ -46,7 +47,7 @@ struct FPlanetStyle
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float LandRoughness = 0.9f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") FLinearColor ShallowColor = FLinearColor(0.1f, 0.35f, 0.5f);
 	/** Strength of the procedural normal detail. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float NormalStrength = 0.12f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float NormalStrength = 0.25f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float DetailNormalScale = 5.f;
 	/** Night-side city lights on land (0 = none). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float NightLightIntensity = 0.f;
@@ -58,7 +59,7 @@ struct FPlanetStyle
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float BandScale = 14.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float BandWarp = 0.6f;
 	/** Vertex displacement of land above sea level as a fraction of the radius (heightmap relief). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface", meta = (ClampMin = "0", ClampMax = "0.2")) float ReliefFraction = 0.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface", meta = (ClampMin = "0", ClampMax = "0.2")) float ReliefFraction = 0.006f;
 
 	// Clouds
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Clouds") bool bClouds = true;
@@ -112,6 +113,10 @@ public:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> Body;
+
+	/** Analytic collision at the body's radius (the render spheres carry no usable collision). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<USphereComponent> CollisionSphere;
 
 	/** Dense cube-sphere used when the camera is close (built on demand with GeometryScript). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
@@ -179,7 +184,7 @@ public:
 
 	/** Steps per cube face of the dense sphere (triangles = 12 * steps^2). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|LOD", meta = (ClampMin = "8", ClampMax = "200"))
-	int32 DetailSphereSteps = 80;
+	int32 DetailSphereSteps = 200;
 
 	/** True while the world's Sky Atmosphere is parked on this planet (the shell atmosphere is hidden). */
 	UFUNCTION(BlueprintCallable, Category = "Planet")

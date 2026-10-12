@@ -1,5 +1,6 @@
 #include "StarBody.h"
 
+#include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
@@ -18,7 +19,17 @@ AStarBody::AStarBody()
 	SetRootComponent(Body);
 	Body->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	Body->SetCollisionObjectType(ECC_WorldStatic);
-	Body->SetCollisionResponseToAllChannels(ECR_Block);
+	Body->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	CollisionSphere = CreateDefaultSubobject<USphereComponent>(TEXT("CollisionSphere"));
+	CollisionSphere->SetupAttachment(Body);
+	CollisionSphere->SetUsingAbsoluteScale(true);
+	CollisionSphere->SetMobility(EComponentMobility::Movable);
+	CollisionSphere->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	CollisionSphere->SetCollisionObjectType(ECC_WorldStatic);
+	CollisionSphere->SetCollisionResponseToAllChannels(ECR_Block);
+	CollisionSphere->SetGenerateOverlapEvents(false);
+	CollisionSphere->SetHiddenInGame(true);
 	Body->SetMobility(EComponentMobility::Movable);
 	Body->CastShadow = false;
 	Body->bCastDynamicShadow = false;
@@ -57,6 +68,7 @@ void AStarBody::ApplyAppearance()
 		CoronaMID = nullptr;
 	}
 	Body->SetWorldScale3D(FVector(GetRadiusCm() / MeshUnitRadius));
+	if (CollisionSphere) { CollisionSphere->SetSphereRadius((float)GetRadiusCm(), false); }
 	// The plane is 100 cm wide in local units; the glow spans (1 + CoronaDepth) radii each side of the centre.
 	Corona->SetWorldScale3D(FVector(GetRadiusCm() * 2.0 * (1.0 + CoronaDepth) / 100.0));
 

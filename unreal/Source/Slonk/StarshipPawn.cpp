@@ -4,6 +4,7 @@
 #include "GameFramework/PlayerController.h"
 #include "StarshipHUD.h"
 #include "PlanetBody.h"
+#include "StarBody.h"
 #include "SlonkGameMode.h"
 #include "FloatingOriginComponent.h"
 #include "Engine/BlendableInterface.h"
@@ -742,6 +743,10 @@ void AStarshipPawn::JumpToActor(AActor* Target, double TargetRadiusCm, float Sta
 	if (Approach.IsNearlyZero())
 	{
 		Approach = FVector::ForwardVector;
+	}
+	if (Target->IsA<AStarBody>())
+	{
+		StandoffRadii = StarJumpStandoffRadii;
 	}
 	const double Standoff = FMath::Max(TargetRadiusCm * StandoffRadii, GetShipLengthCm() * 20.0);
 	const FVector NewLoc = TargetLoc + Approach * Standoff;

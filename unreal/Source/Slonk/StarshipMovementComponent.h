@@ -63,6 +63,42 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Attitude", meta = (ClampMin = "0", ClampMax = "1"))
 	float WarpSteeringScale = 0.35f;
 
+	// ---- Proximity governor -------------------------------------------------------------------
+
+	/**
+	 * Near a planet or star, closing speed is capped so the body fills the view over seconds instead of
+	 * being crossed in a frame: cap = max(distance to surface / ApproachSeconds, MinApproachSpeed).
+	 * At warp the cap slows the ship; once it falls below full impulse the warp drive drops out.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Proximity")
+	bool bProximityGovernor = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Proximity", meta = (ClampMin = "0.5", ClampMax = "30"))
+	float ApproachSeconds = 3.f;
+
+	/** The governor only acts when the current heading would pass within this many radii of the body. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Proximity", meta = (ClampMin = "1", ClampMax = "5"))
+	float ThreatRadii = 1.3f;
+
+	/** Floor for the closing-speed cap (cm/s), so the surface can still be reached. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Proximity")
+	double MinApproachSpeed = 2.0e5;
+
+	/** True while the governor is holding the ship below what the throttle or warp factor asks for. */
+	UPROPERTY(BlueprintReadOnly, Category = "Proximity")
+	bool bProximityLimited = false;
+
+	/** Current closing-speed cap toward the nearest body (cm/s), or 0 when no body is near. */
+	UPROPERTY(BlueprintReadOnly, Category = "Proximity")
+	double ProximityCap = 0.0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Proximity")
+	FString ProximityBodyName;
+
+	/** Body currently governing the speed, if any. */
+	UPROPERTY(BlueprintReadOnly, Category = "Proximity")
+	TObjectPtr<AActor> ProximityBody;
+
 	// ---- Runtime state ------------------------------------------------------------------------
 
 	/** Current throttle in [-ReverseThrottleLimit, 1]. */
@@ -118,6 +154,12 @@ public:
 	FVector GetNormalizedAngularVelocity() const;
 
 private:
+	/** Evaluate every body against the heading; returns the unit direction to the governing body (zero if none threatens). */
+	FVector UpdateProximity(const FVector& Here, const FVector& Dir);
+
 	/** (Pitch, Yaw, Roll) in [-1, 1], consumed each tick. */
 	FVector SteeringInput = FVector::ZeroVector;
+	float ProximityScanTimer = 0.f;
+	struct FProximityCandidate { TWeakObjectPtr<AActor> Body; double Radius = 0.0; };
+	TArray<FProximityCandidate> ProximityCandidates;
 };

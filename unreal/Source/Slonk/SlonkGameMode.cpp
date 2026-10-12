@@ -186,7 +186,7 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 	const float RadiusKm = AtmospherePlanet->RadiusKm;
 	// The style's AtmosphereDepth sizes the far glow shell; the real scattering layer is much thinner
 	// (Earth: 1% of the radius), otherwise the limb from orbit becomes a thick white ring.
-	const float HeightKm = FMath::Clamp(S.AtmosphereDepth * RadiusKm * 0.25f, 6.f, 80.f);
+	const float HeightKm = FMath::Clamp(S.AtmosphereDepth * RadiusKm * 0.3f, 8.f, 120.f);
 	SkyAtmosphere->SetBottomRadius(RadiusKm);
 	SkyAtmosphere->SetAtmosphereHeight(HeightKm);
 	// Scale heights proportional to the atmosphere thickness (Earth: 60 km / 8 km / 1.2 km).
@@ -209,7 +209,7 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 	const float Blend = FMath::Clamp((float)(AltitudeKm / (HeightKm * 8.0)), 0.f, 1.f);
 	const float Boost = FMath::Lerp(SkyLuminanceBoost, FMath::Max(SkyLuminanceBoost * 0.3f, 1.f), Blend);
 	// Aerial perspective washes the surface out from orbit at anything above 1x; only boost it when inside.
-	const float ApBoost = FMath::Lerp(SkyLuminanceBoost, 1.f, Blend);
+	const float ApBoost = FMath::Lerp(FMath::Max(SkyLuminanceBoost * 0.5f, 1.f), 1.f, Blend);
 	SkyAtmosphere->SetSkyLuminanceFactor(FLinearColor(Boost, Boost, Boost));
 	SkyAtmosphere->SetSkyAndAerialPerspectiveLuminanceFactor(FLinearColor(ApBoost, ApBoost, ApBoost));
 	SkyAtmosphere->SetMultiScatteringFactor(1.f);
