@@ -23,7 +23,19 @@ enum class EPlanetArchetype : uint8
 	Ice,
 	Lava,
 	GasGiant,
-	Moon
+	Moon,
+	/** Thick yellow cloud deck, no surface visible. */
+	Venus,
+	/** Red deserts, polar caps, thin pink sky, a little water. */
+	Mars
+};
+
+UENUM(BlueprintType)
+enum class EMoonKind : uint8
+{
+	Rocky,
+	Icy,
+	Lava
 };
 
 /** Everything that drives the planet look. Exposed so PCG / designers can override any field. */
@@ -161,6 +173,10 @@ public:
 	/** The archetype actually in use (after Auto resolution). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Planet")
 	EPlanetArchetype ResolvedArchetype = EPlanetArchetype::Terrestrial;
+
+	/** For Moon archetypes: which kind of moon the location hash produced. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Planet")
+	EMoonKind ResolvedMoonKind = EMoonKind::Rocky;
 
 	UFUNCTION(BlueprintPure, Category = "Planet")
 	bool IsMoon() const { return ResolvedArchetype == EPlanetArchetype::Moon; }

@@ -121,12 +121,15 @@ EPlanetArchetype APlanetBody::PickArchetype(FRandomStream& Rng) const
 {
 	const float T = ArchetypeSelector >= 0.f ? ArchetypeSelector : Rng.FRand();
 	// Weighted: plenty of rocky worlds, a few gas giants, the odd lava world.
-	if (T < 0.22f) return EPlanetArchetype::Terrestrial;
-	if (T < 0.38f) return EPlanetArchetype::Ocean;
-	if (T < 0.54f) return EPlanetArchetype::Desert;
-	if (T < 0.68f) return EPlanetArchetype::Ice;
-	if (T < 0.76f) return EPlanetArchetype::Lava;
-	if (T < 0.92f) return EPlanetArchetype::GasGiant;
+	// Selector values >= 0.92 stay "Moon" so the PCG moon spawner keeps working.
+	if (T < 0.16f) return EPlanetArchetype::Terrestrial;
+	if (T < 0.28f) return EPlanetArchetype::Ocean;
+	if (T < 0.40f) return EPlanetArchetype::Desert;
+	if (T < 0.50f) return EPlanetArchetype::Ice;
+	if (T < 0.57f) return EPlanetArchetype::Lava;
+	if (T < 0.68f) return EPlanetArchetype::GasGiant;
+	if (T < 0.80f) return EPlanetArchetype::Venus;
+	if (T < 0.92f) return EPlanetArchetype::Mars;
 	return EPlanetArchetype::Moon;
 }
 
@@ -147,15 +150,16 @@ void APlanetBody::ResolveStyleFromArchetype()
 		S.SeaLevel = Rng.FRandRange(0.45f, 0.6f);
 		S.LandColor = Jitter(FLinearColor(0.36f, 0.46f, 0.20f), 0.25f);
 		S.CraterStrength = 0.1f;
-		S.LandColor2 = Jitter(FLinearColor(0.66f, 0.54f, 0.34f), 0.25f);
+		S.LandColor2 = Jitter(FLinearColor(0.48f, 0.47f, 0.26f), 0.25f);
 		S.CloudCoverage = Rng.FRandRange(0.35f, 0.55f);
 		S.AtmosphereColor = Jitter(FLinearColor(0.35f, 0.6f, 1.0f), 0.15f);
+		S.IceCapStart = Rng.FRandRange(0.72f, 0.8f);
 		S.NightLightIntensity = Rng.FRand() < 0.6f ? 6.f : 0.f;
 		S.ReliefFraction = 0.006f;
 		break;
 	case EPlanetArchetype::Ocean:
 		S.SeaLevel = Rng.FRandRange(0.7f, 0.85f);
-		S.OceanColor = Jitter(FLinearColor(0.04f, 0.26f, 0.52f), 0.3f);
+		S.OceanColor = Jitter(FLinearColor(0.05f, 0.30f, 0.60f), 0.3f);
 		S.LandColor = FLinearColor(0.44f, 0.48f, 0.30f);
 		S.CloudCoverage = Rng.FRandRange(0.5f, 0.7f);
 		S.AtmosphereColor = Jitter(FLinearColor(0.3f, 0.65f, 1.0f), 0.15f);
@@ -163,11 +167,11 @@ void APlanetBody::ResolveStyleFromArchetype()
 		break;
 	case EPlanetArchetype::Desert:
 		S.SeaLevel = Rng.FRandRange(-0.05f, 0.1f);
-		S.OceanColor = FLinearColor(0.35f, 0.25f, 0.15f); // dry basins
-		S.LandColor = Jitter(FLinearColor(0.62f, 0.40f, 0.20f), 0.25f);
+		S.OceanColor = FLinearColor(0.28f, 0.20f, 0.12f); // dry basins
+		S.LandColor = Jitter(FLinearColor(0.50f, 0.31f, 0.15f), 0.25f);
 		S.CraterStrength = 0.45f;
 		S.MariaStrength = 0.2f;
-		S.LandColor2 = Jitter(FLinearColor(0.85f, 0.7f, 0.45f), 0.2f);
+		S.LandColor2 = Jitter(FLinearColor(0.68f, 0.53f, 0.32f), 0.2f);
 		S.MountainColor = FLinearColor(0.38f, 0.26f, 0.2f);
 		S.NoiseScale = 2.2f;
 		S.IceCapStart = Rng.FRand() < 0.5f ? 0.92f : 2.f;
@@ -242,23 +246,104 @@ void APlanetBody::ResolveStyleFromArchetype()
 		S.Intensity = 1.6f;
 		break;
 	}
+	case EPlanetArchetype::Venus:
+		// A yellow-white cloud deck hides everything; the surface only matters for the odd gap.
+		S.SeaLevel = -0.3f;
+		S.LandColor = FLinearColor(0.55f, 0.42f, 0.22f);
+		S.LandColor2 = FLinearColor(0.7f, 0.55f, 0.3f);
+		S.MountainColor = FLinearColor(0.45f, 0.35f, 0.22f);
+		S.IceCapStart = 2.f;
+		S.CraterStrength = 0.2f;
+		S.bClouds = true;
+		S.CloudCoverage = Rng.FRandRange(0.9f, 1.0f);
+		S.CloudScale = 3.f;
+		S.CloudColor = Jitter(FLinearColor(1.0f, 0.88f, 0.55f), 0.1f);
+		S.CloudSpinDegPerSec = 1.2f;
+		S.CloudDrift = 0.08f;
+		S.CloudHeightFraction = 0.012f;
+		S.AtmosphereColor = Jitter(FLinearColor(1.0f, 0.8f, 0.45f), 0.1f);
+		S.SunsetColor = FLinearColor(1.0f, 0.5f, 0.2f);
+		S.AtmosphereDepth = 0.11f;
+		S.Haze = 0.25f;
+		S.Intensity = 2.6f;
+		S.ReliefFraction = 0.004f;
+		break;
+	case EPlanetArchetype::Mars:
+		S.SeaLevel = Rng.FRandRange(-0.05f, 0.12f);
+		S.OceanColor = FLinearColor(0.08f, 0.16f, 0.28f);
+		S.ShallowColor = FLinearColor(0.2f, 0.25f, 0.3f);
+		S.LandColor = Jitter(FLinearColor(0.50f, 0.24f, 0.11f), 0.2f);
+		S.LandColor2 = Jitter(FLinearColor(0.64f, 0.36f, 0.18f), 0.2f);
+		S.MountainColor = FLinearColor(0.42f, 0.24f, 0.16f);
+		S.IceCapStart = Rng.FRandRange(0.8f, 0.88f);
+		S.IceColor = FLinearColor(0.95f, 0.95f, 0.95f);
+		S.NoiseScale = 2.6f;
+		S.CraterStrength = 0.55f;
+		S.MariaStrength = 0.25f;
+		S.CloudCoverage = Rng.FRandRange(0.12f, 0.3f);
+		S.CloudColor = FLinearColor(1.0f, 0.98f, 0.95f);
+		S.AtmosphereColor = Jitter(FLinearColor(0.95f, 0.62f, 0.42f), 0.15f);
+		S.SunsetColor = FLinearColor(0.6f, 0.7f, 1.0f); // Martian sunsets go blue
+		S.AtmosphereDepth = 0.035f;
+		S.Haze = 0.08f;
+		S.Intensity = 1.2f;
+		S.ReliefFraction = 0.012f;
+		break;
 	case EPlanetArchetype::Moon:
 	default:
+	{
 		S.SeaLevel = -0.3f; // no "ocean" pits: everything is land (fBm can dip a little below 0)
-		S.LandColor = Jitter(FLinearColor(0.42f, 0.41f, 0.40f), 0.2f);
-		S.CraterStrength = 1.f;
-		S.MariaStrength = 0.8f;
-		S.LandColor2 = Jitter(FLinearColor(0.30f, 0.30f, 0.30f), 0.2f);
-		S.MountainColor = FLinearColor(0.58f, 0.57f, 0.56f);
 		S.IceCapStart = 2.f;
 		S.NoiseScale = 5.f;
-		S.LandRoughness = 0.95f;
-		S.NormalStrength = 0.3f;
-		S.DetailNormalScale = 6.f;
 		S.bClouds = false;
 		S.bAtmosphere = false;
-		S.ReliefFraction = 0.010f;
+		const float K = Rng.FRand();
+		ResolvedMoonKind = K < 0.55f ? EMoonKind::Rocky : (K < 0.85f ? EMoonKind::Icy : EMoonKind::Lava);
+		switch (ResolvedMoonKind)
+		{
+		case EMoonKind::Icy:
+			// Bright, smooth ice with sparse craters and a faint blue cast.
+			S.LandColor = Jitter(FLinearColor(0.62f, 0.70f, 0.78f), 0.1f);
+			S.LandColor2 = Jitter(FLinearColor(0.62f, 0.70f, 0.80f), 0.1f);
+			S.MountainColor = FLinearColor(0.78f, 0.82f, 0.88f);
+			S.CraterStrength = 0.35f;
+			S.MariaStrength = 0.5f;
+			S.LandRoughness = 0.55f;
+			S.NormalStrength = 0.15f;
+			S.DetailNormalScale = 4.f;
+			S.ReliefFraction = 0.005f;
+			break;
+		case EMoonKind::Lava:
+			// Dark basalt with molten basins glowing through.
+			S.SeaLevel = Rng.FRandRange(0.18f, 0.3f);
+			S.OceanColor = FLinearColor(0.9f, 0.18f, 0.02f);
+			S.ShallowColor = FLinearColor(1.0f, 0.55f, 0.1f);
+			S.LavaEmissive = 3.f;
+			S.OceanRoughness = 0.7f;
+			S.LandColor = FLinearColor(0.12f, 0.10f, 0.09f);
+			S.LandColor2 = FLinearColor(0.22f, 0.15f, 0.11f);
+			S.MountainColor = FLinearColor(0.3f, 0.24f, 0.2f);
+			S.CraterStrength = 0.4f;
+			S.MariaStrength = 0.f;
+			S.LandRoughness = 0.9f;
+			S.NormalStrength = 0.3f;
+			S.DetailNormalScale = 6.f;
+			S.ReliefFraction = 0.012f;
+			break;
+		default:
+			S.LandColor = Jitter(FLinearColor(0.20f, 0.20f, 0.19f), 0.2f);
+			S.CraterStrength = 1.f;
+			S.MariaStrength = 0.8f;
+			S.LandColor2 = Jitter(FLinearColor(0.13f, 0.13f, 0.13f), 0.2f);
+			S.MountainColor = FLinearColor(0.30f, 0.30f, 0.29f);
+			S.LandRoughness = 0.95f;
+			S.NormalStrength = 0.3f;
+			S.DetailNormalScale = 6.f;
+			S.ReliefFraction = 0.010f;
+			break;
+		}
 		break;
+	}
 	}
 
 	if (Rng.FRand() < 0.25f)

@@ -183,6 +183,14 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 			{
 				LightComp->SetAtmosphereSunLight(true);
 			}
+			// Without this the engine applies one global transmittance, evaluated at ground level with the
+			// atmosphere's +Z as "up". Our sun lies in the orbital plane, so that is a permanent sunset: every
+			// lit surface came out dark maroon. Per pixel, each point gets its own sun elevation.
+			if (!LightComp->bPerPixelAtmosphereTransmittance)
+			{
+				LightComp->bPerPixelAtmosphereTransmittance = true;
+				LightComp->MarkRenderStateDirty();
+			}
 		}
 	}
 
