@@ -93,6 +93,22 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Orbit")
 	double OrbitBodyRadius = 0.0;
 
+	/** True when the held body is a vessel (ship / station): station-keeping on a moving target. */
+	UPROPERTY(BlueprintReadOnly, Category = "Orbit")
+	bool bFollowingVessel = false;
+
+	/** Closest station-keeping range to a vessel, in multiples of its bounding radius. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Orbit")
+	float FollowMinRadii = 2.5f;
+
+	/** Range the hold eases in to when it engages on a vessel, in bounding radii (so the ship is actually visible). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Orbit")
+	float FollowEngageRadii = 6.f;
+
+	/** Range the hold is easing toward (cm); PgUp/PgDn move it. */
+	UPROPERTY(BlueprintReadOnly, Category = "Orbit")
+	double OrbitRadiusTarget = 0.0;
+
 	/** While holding orbit and not steering, the nose turns to keep the body ahead (orbit plane level). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Orbit")
 	bool bOrbitFaceBody = true;
@@ -110,9 +126,15 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Starship|Movement")
 	void ClearOrbitHold();
+	double GetOrbitMinRadius() const;
 
 	UFUNCTION(BlueprintPure, Category = "Starship|Movement")
-	double GetOrbitSpeed() const { return FMath::Clamp(GetImpulseTargetSpeed(), -OrbitMaxSpeed, OrbitMaxSpeed); }
+	double GetOrbitSpeed() const
+	{
+		// Around a vessel the throttle circles at most a quarter turn per second, whatever the range.
+		const double Cap = bFollowingVessel ? FMath::Max(OrbitRadius * 1.5, 1.0) : OrbitMaxSpeed;
+		return FMath::Clamp(GetImpulseTargetSpeed(), -Cap, Cap);
+	}
 
 	/** Orbital period at the current throttle (s), 0 when stationary. */
 	UFUNCTION(BlueprintPure, Category = "Starship|Movement")

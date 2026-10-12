@@ -3,6 +3,7 @@
 #include "EngineUtils.h"
 #include "PlanetBody.h"
 #include "StarBody.h"
+#include "SpaceVessel.h"
 
 #include "Components/SceneComponent.h"
 
@@ -106,8 +107,12 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 			const double Dist = R.Size();
 			const FVector Radial = Dist > 1.0 ? R / Dist : FVector::UpVector;
 			// Vertical thrust raises or lowers the orbit.
-			const double MinRadius = OrbitBodyRadius * 1.01 + 5.0e5;
-			OrbitRadius = FMath::Max(OrbitRadius + VerticalInput * VerticalThrustFraction * FullImpulseSpeed * DeltaTime, MinRadius);
+			const double MinRadius = GetOrbitMinRadius();
+			// Range changes scale with the range itself, so a 5 km formation and a 50,000 km orbit both adjust sensibly.
+			const double RangeRate = bFollowingVessel ? OrbitRadiusTarget * 0.5 : VerticalThrustFraction * FullImpulseSpeed;
+			OrbitRadiusTarget = FMath::Max(OrbitRadiusTarget + VerticalInput * RangeRate * DeltaTime, MinRadius);
+			// Ease toward the wanted range (a few seconds) instead of snapping.
+			OrbitRadius = FMath::Max(FMath::Lerp(OrbitRadius, OrbitRadiusTarget, 1.0 - FMath::Exp(-1.2 * DeltaTime)), MinRadius);
 			const double Speed = GetOrbitSpeed();
 			const double Angle = Speed * DeltaTime / FMath::Max(OrbitRadius, 1.0);
 			const FVector NewRadial = Radial.RotateAngleAxisRad(Angle, OrbitAxis).GetSafeNormal();
@@ -206,13 +211,22 @@ void UStarshipMovementComponent::SetOrbitHold(AActor* Body, double BodyRadiusCm,
 	OrbitBody = Body;
 	OrbitBodyRadius = BodyRadiusCm;
 	OrbitBodyName = BodyName;
-	OrbitRadius = FMath::Max(Dist, BodyRadiusCm * 1.01 + 5.0e5);
+	bFollowingVessel = Body->IsA<ASpaceVessel>();
+	OrbitRadius = FMath::Max(Dist, GetOrbitMinRadius());
+	// Planets: hold the current altitude. Vessels: close to a range where the ship fills some of the view.
+	OrbitRadiusTarget = bFollowingVessel ? FMath::Clamp(OrbitRadius, GetOrbitMinRadius(), BodyRadiusCm * FMath::Max(FollowEngageRadii, FollowMinRadii)) : OrbitRadius;
 	bOrbitHold = true;
+}
+
+double UStarshipMovementComponent::GetOrbitMinRadius() const
+{
+	return bFollowingVessel ? OrbitBodyRadius * FMath::Max(FollowMinRadii, 1.2f) : OrbitBodyRadius * 1.01 + 5.0e5;
 }
 
 void UStarshipMovementComponent::ClearOrbitHold()
 {
 	bOrbitHold = false;
+	bFollowingVessel = false;
 	OrbitBody = nullptr;
 	OrbitBodyName.Empty();
 }

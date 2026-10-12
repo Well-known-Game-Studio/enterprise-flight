@@ -67,6 +67,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "HUD|Nav") void ToggleNavMarkers() { bShowNavMarkers = !bShowNavMarkers; }
 	UFUNCTION(BlueprintCallable, Category = "HUD|Nav") void ToggleMinimap() { bShowMinimap = !bShowMinimap; }
 	UFUNCTION(BlueprintCallable, Category = "HUD|Nav") void CycleNavTarget();
+	/** Select a specific nav object; false if it is not in the gathered list. */
+	UFUNCTION(BlueprintCallable, Category = "HUD|Nav") bool SetNavTargetActor(AActor* Actor);
+	/** Select by actor name or label substring. */
+	UFUNCTION(BlueprintCallable, Category = "HUD|Nav") bool SetNavTargetByName(const FString& Name);
 	UFUNCTION(BlueprintCallable, Category = "HUD|Nav") void ClearNavTarget() { NavTarget = nullptr; }
 
 	/** The current nav target's gathered record, if any. */

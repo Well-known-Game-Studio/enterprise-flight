@@ -157,7 +157,15 @@ void AStarshipHUD::DrawHUD()
 			const double Alt = Movement->OrbitRadius - Movement->OrbitBodyRadius;
 			const double Period = Movement->GetOrbitPeriod();
 			const FString PeriodText = Period <= 0.0 ? TEXT("holding position") : (Period < 120.0 ? FString::Printf(TEXT("period %.0f s"), Period) : FString::Printf(TEXT("period %.1f min"), Period / 60.0));
-			DrawText(FString::Printf(TEXT("ORBIT HOLD  %s   alt %s   %s   (O releases, PgUp/PgDn alt)"), *Movement->OrbitBodyName.ToUpper(), *FormatDistance(Alt), *PeriodText), Accent, X, Y, Font, UIScale); Y += Line;
+			if (Movement->bFollowingVessel)
+			{
+				const double TargetSpeed = Movement->OrbitBody ? Movement->OrbitBody->GetVelocity().Size() : 0.0;
+				DrawText(FString::Printf(TEXT("FOLLOWING  %s   range %s   target %s/s   (O releases, throttle circles, PgUp/PgDn range)"), *Movement->OrbitBodyName.ToUpper(), *FormatDistance(Movement->OrbitRadius), *FormatDistance(TargetSpeed)), Accent, X, Y, Font, UIScale); Y += Line;
+			}
+			else
+			{
+				DrawText(FString::Printf(TEXT("ORBIT HOLD  %s   alt %s   %s   (O releases, PgUp/PgDn alt)"), *Movement->OrbitBodyName.ToUpper(), *FormatDistance(Alt), *PeriodText), Accent, X, Y, Font, UIScale); Y += Line;
+			}
 		}
 
 		const FRotator Rot = Ship->GetActorRotation();
@@ -250,7 +258,7 @@ void AStarshipHUD::DrawHUD()
 			TEXT("1 2 3 4              1/4 .. full impulse"),
 			TEXT("X or 0  all stop     Z  reverse"),
 			TEXT("PgUp PgDn            vertical thrusters"),
-			TEXT("O  orbit hold around nav target / nearest body"),
+			TEXT("O  orbit hold around nav target / nearest body (follows ships)"),
 			TEXT("J / Y button         engage / disengage warp"),
 			TEXT("[ ]  or  - +         warp factor"),
 			TEXT("LMB / F / RT         phasers (hold)"),
@@ -441,6 +449,34 @@ void AStarshipHUD::GatherNavObjects(bool bForce)
 		O.RadiusCm = NearestRock->Radius;
 		NavObjects.Add(O);
 	}
+}
+
+bool AStarshipHUD::SetNavTargetActor(AActor* Actor)
+{
+	GatherNavObjects(true);
+	for (const FNavObject& O : NavObjects)
+	{
+		if (O.Actor == Actor)
+		{
+			NavTarget = Actor;
+			return true;
+		}
+	}
+	return false;
+}
+
+bool AStarshipHUD::SetNavTargetByName(const FString& Name)
+{
+	GatherNavObjects(true);
+	for (const FNavObject& O : NavObjects)
+	{
+		if (O.Actor && (O.Actor->GetName().Contains(Name) || O.Label.Contains(Name)))
+		{
+			NavTarget = O.Actor;
+			return true;
+		}
+	}
+	return false;
 }
 
 void AStarshipHUD::CycleNavTarget()

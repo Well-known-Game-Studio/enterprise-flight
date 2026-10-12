@@ -5,6 +5,7 @@
 #include "StarshipHUD.h"
 #include "PlanetBody.h"
 #include "StarBody.h"
+#include "SpaceVessel.h"
 #include "EngineUtils.h"
 #include "SlonkGameMode.h"
 #include "FloatingOriginComponent.h"
@@ -721,6 +722,7 @@ void AStarshipPawn::ProcessDebugCommand()
 				else if (What == TEXT("clear")) { H->ClearNavTarget(); }
 				else if (What == TEXT("markers")) { H->ToggleNavMarkers(); }
 				else if (What == TEXT("map")) { H->ToggleMinimap(); }
+				else if (What == TEXT("target")) { H->SetNavTargetByName(ArgStr(2)); }
 			}
 		}
 	}
@@ -766,7 +768,12 @@ void AStarshipPawn::JumpToActor(AActor* Target, double TargetRadiusCm, float Sta
 	{
 		StandoffRadii = StarJumpStandoffRadii;
 	}
-	const double Standoff = FMath::Max(TargetRadiusCm * StandoffRadii, GetShipLengthCm() * 20.0);
+	double Standoff = FMath::Max(TargetRadiusCm * StandoffRadii, GetShipLengthCm() * 20.0);
+	if (Target->IsA<ASpaceVessel>())
+	{
+		// Ships and stations are small: arrive close enough to see them.
+		Standoff = FMath::Max(TargetRadiusCm * 5.0, GetShipLengthCm() * 3.0);
+	}
 	const FVector NewLoc = TargetLoc + Approach * Standoff;
 	const FRotator NewRot = (-Approach).Rotation();
 
@@ -824,6 +831,11 @@ void AStarshipPawn::SetOrbitHold(bool bEnable)
 	}
 	if (!bEnable)
 	{
+		if (AActor* Old = Movement->OrbitBody)
+		{
+			RemoveTickPrerequisiteActor(Old);
+			Movement->RemoveTickPrerequisiteActor(Old);
+		}
 		Movement->ClearOrbitHold();
 		return;
 	}
@@ -864,5 +876,8 @@ void AStarshipPawn::SetOrbitHold(bool bEnable)
 			WarpDrive->DisengageWarp();
 		}
 		Movement->SetOrbitHold(Body, Radius, Name);
+		// A moving target must have moved for this frame before we station-keep on it, or we trail a frame behind.
+		AddTickPrerequisiteActor(Body);
+		Movement->AddTickPrerequisiteActor(Body);
 	}
 }

@@ -294,6 +294,8 @@ void AProceduralStarship::Tick(float DeltaTime)
 	const double MaxDv = Acceleration * DeltaTime;
 	Velocity += DeltaV.Size() > MaxDv ? DeltaV.GetSafeNormal() * MaxDv : DeltaV;
 	SetActorLocation(Here + Velocity * DeltaTime);
+	if (Root) { Root->ComponentVelocity = Velocity; }
+	if (Hull) { Hull->ComponentVelocity = Velocity; }
 	if (!Velocity.IsNearlyZero())
 	{
 		const FQuat Want = FRotationMatrix::MakeFromXZ(Velocity.GetSafeNormal(), FVector::UpVector).ToQuat();
