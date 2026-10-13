@@ -6,6 +6,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "FarBody.h"
+#include "RunningLightsComponent.h"
 #include "SpaceVessel.generated.h"
 
 class UDynamicMeshComponent;
@@ -60,6 +61,7 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UDynamicMeshComponent> Hull;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UDynamicMeshComponent> Glow;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UShieldComponent> Shield;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<URunningLightsComponent> RunningLights;
 
 	/** Held by a tractor beam: the AI stops moving itself. */
 	UFUNCTION(BlueprintCallable, Category = "Vessel")
@@ -92,6 +94,9 @@ public:
 protected:
 	virtual void BuildMeshes(UDynamicMesh* HullMesh, UDynamicMesh* GlowMesh, FRandomStream& Rng) {}
 	void ApplyMaterials();
+
+	/** Filled by BuildMeshes (local positions); handed to RunningLights when the hull is done. */
+	TArray<FRunningLight> PendingLights;
 
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> HullMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> GlowMID;

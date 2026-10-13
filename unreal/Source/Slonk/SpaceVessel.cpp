@@ -10,6 +10,7 @@
 #include "SlonkMaterials.h"
 #include "SpaceTarget.h"
 #include "ShieldComponent.h"
+#include "RunningLightsComponent.h"
 #include "Engine/DamageEvents.h"
 #include "UDynamicMesh.h"
 
@@ -93,6 +94,8 @@ ASpaceVessel::ASpaceVessel()
 	Glow = MakePart(this, TEXT("Glow"), Root, false);
 	Shield = CreateDefaultSubobject<UShieldComponent>(TEXT("Shield"));
 	Shield->SetupAttachment(Root);
+	RunningLights = CreateDefaultSubobject<URunningLightsComponent>(TEXT("RunningLights"));
+	RunningLights->SetupAttachment(Root);
 	HullMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(SlonkMaterials::HullPath));
 	GlowMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(SlonkMaterials::GlowPath));
 	Tags.Add(ASpaceTarget::TargetableTag);
@@ -104,6 +107,7 @@ void ASpaceVessel::SetBeyondHorizon(bool bBeyond)
 	SetActorHiddenInGame(bBeyond);
 	if (Hull) { Hull->SetVisibility(!bBeyond); }
 	if (Glow) { Glow->SetVisibility(!bBeyond); }
+	if (RunningLights) { RunningLights->SetVisibility(!bBeyond); }
 }
 
 void ASpaceVessel::PreRegisterAllComponents()
@@ -165,11 +169,17 @@ void ASpaceVessel::Rebuild()
 	HM->Reset();
 	GM->Reset();
 	FRandomStream Rng(Seed);
+	PendingLights.Reset();
 	BuildMeshes(HM, GM, Rng);
 	Finish(Hull);
 	Finish(Glow);
 	bBuilt = true;
 	ApplyMaterials();
+	if (RunningLights)
+	{
+		RunningLights->MaxRadiusCm = SizeCm * 0.03f;
+		RunningLights->SetLights(PendingLights);
+	}
 	if (Shield)
 	{
 		Shield->SetShellExtent(FVector(GetBoundingRadiusCm() * 1.15f));
@@ -321,6 +331,44 @@ void AProceduralStarship::BuildMeshes(UDynamicMesh* HM, UDynamicMesh* GM, FRando
 	}
 	// Impulse engines at the saucer's rear.
 	Box(GM, SaucerC + FVector(-SaucerR * 0.98f, 0.f, 0.f), FVector(SaucerR * 0.08f, SaucerR * 0.35f, SaucerT * 0.5f));
+
+	// Running lights. Red to port (-Y), green to starboard (+Y), white strobes top, bottom and nose, steady amber
+	// formation lights along the saucer rim and the nacelle tails. Every ship gets its own blink phase so a fleet
+	// never flashes in unison.
+	using RL = URunningLightsComponent;
+	const float Bulb = L * 0.004f;
+	const float Ph = Rng.FRand();
+	const float Strobe = Rng.FRandRange(1.6f, 2.2f);
+	const float Blink = Rng.FRandRange(1.1f, 1.5f);
+	PendingLights.Add(FRunningLight(SaucerC + FVector(0.f, -SaucerR * 1.01f, 0.f), RL::PortRed(), ERunningLightMode::Blink, Blink, Ph, Bulb * 1.3f));
+	PendingLights.Add(FRunningLight(SaucerC + FVector(0.f, SaucerR * 1.01f, 0.f), RL::StarboardGreen(), ERunningLightMode::Blink, Blink, Ph, Bulb * 1.3f));
+	PendingLights.Add(FRunningLight(SaucerC + FVector(SaucerR * 1.01f, 0.f, 0.f), RL::StrobeWhite(), ERunningLightMode::Strobe, Strobe, Ph, Bulb * 1.2f));
+	PendingLights.Add(FRunningLight(SaucerC + FVector(0.f, 0.f, SaucerT * 0.85f + SaucerT * 0.5f + Bulb), RL::StrobeWhite(), ERunningLightMode::Strobe, Strobe, Ph + 0.5f, Bulb * 1.2f));
+	PendingLights.Add(FRunningLight(SaucerC - FVector(0.f, 0.f, SaucerT * 0.8f + SaucerT * 0.4f + Bulb), RL::StrobeWhite(), ERunningLightMode::Strobe, Strobe, Ph + 0.5f, Bulb * 1.2f));
+	{
+		// Formation lights at 35, 70, 110 and 145 degrees either side of the nose, alternating slow blinks.
+		const float Angles[4] = { 35.f, 70.f, 110.f, 145.f };
+		for (int32 k = 0; k < 8; ++k)
+		{
+			const float A = FMath::DegreesToRadians(Angles[k % 4] * (k < 4 ? 1.f : -1.f));
+			const FVector P = SaucerC + FVector(FMath::Cos(A), FMath::Sin(A), 0.f) * SaucerR * 1.005f;
+			PendingLights.Add(FRunningLight(P, RL::FormationAmber(), ERunningLightMode::Blink, Blink * 2.f, Ph + 0.5f * (k % 2), Bulb * 0.6f, 0.45f));
+		}
+	}
+	// Engineering hull: a white strobe under the belly and an amber tail light.
+	PendingLights.Add(FRunningLight(HullStart + FVector(HullLen * 0.5f, 0.f, -HullR * 1.02f), RL::StrobeWhite(), ERunningLightMode::Strobe, Strobe, Ph + 0.25f, Bulb));
+	PendingLights.Add(FRunningLight(HullStart + FVector(-HullR * 1.02f, 0.f, 0.f), RL::FormationAmber(), ERunningLightMode::Steady, 1.f, 0.f, Bulb, 0.7f));
+	for (int32 Pair = 0; Pair < Pairs; ++Pair)
+	{
+		const float Z = Pair == 0 ? Lift : -Lift * 0.9f;
+		for (int32 Side = -1; Side <= 1; Side += 2)
+		{
+			const FVector NacStart(NacX, Side * Spread, HullStart.Z + Z);
+			// Tail of each nacelle: red/green by side, plus an outboard strobe at mid-length.
+			PendingLights.Add(FRunningLight(NacStart + FVector(-NacR * 1.02f, 0.f, 0.f), Side < 0 ? RL::PortRed() : RL::StarboardGreen(), ERunningLightMode::Blink, Blink, Ph, Bulb));
+			PendingLights.Add(FRunningLight(NacStart + FVector(NacLen * 0.5f, Side * NacR * 1.02f, 0.f), RL::StrobeWhite(), ERunningLightMode::Strobe, Strobe, Ph + 0.5f * Pair + 0.25f, Bulb * 0.9f));
+		}
+	}
 }
 
 void AProceduralStarship::PickWaypoint()
@@ -421,6 +469,27 @@ void ASpaceStation::BuildMeshes(UDynamicMesh* HM, UDynamicMesh* GM, FRandomStrea
 	{
 		const float Z = -HubH * 0.4f + HubH * 0.8f * k / 3.f;
 		TorusZ(GM, FVector(0.f, 0.f, Z), HubR * 1.0f, HubR * 0.04f, 28, 6);
+	}
+
+	// Running lights: red obstruction beacons on the mast top and keel, and a chase of white strobes around the
+	// outer ring (each one a little later than the last) with steady amber docking markers between them.
+	using RL = URunningLightsComponent;
+	const float Bulb = D * 0.003f;
+	const float TopZ = HubH * 0.5f + D * 0.08f + D * 0.04f;
+	PendingLights.Add(FRunningLight(FVector(0.f, 0.f, TopZ + Bulb), RL::PortRed(), ERunningLightMode::Blink, 1.4f, 0.f, Bulb * 1.6f));
+	PendingLights.Add(FRunningLight(FVector(0.f, 0.f, -HubH * 0.5f - D * 0.06f - Bulb), RL::PortRed(), ERunningLightMode::Blink, 1.4f, 0.5f, Bulb * 1.6f));
+	{
+		const float Major = D * 0.5f;
+		const float Minor = D * 0.034f;
+		const int32 Count = Spokes * 2;
+		for (int32 b = 0; b < Count; ++b)
+		{
+			const float A = FMath::DegreesToRadians(360.f * b / Count + 180.f / Count);
+			const FVector Dir(FMath::Cos(A), FMath::Sin(A), 0.f);
+			PendingLights.Add(FRunningLight(Dir * (Major + Minor * 1.02f), RL::StrobeWhite(), ERunningLightMode::Strobe, 2.4f, (float)b / Count, Bulb));
+			PendingLights.Add(FRunningLight(Dir * Major + FVector(0.f, 0.f, Minor * 1.02f), RL::FormationAmber(), ERunningLightMode::Steady, 1.f, 0.f, Bulb * 0.55f, 0.45f));
+			PendingLights.Add(FRunningLight(Dir * Major - FVector(0.f, 0.f, Minor * 1.02f), RL::FormationAmber(), ERunningLightMode::Steady, 1.f, 0.f, Bulb * 0.55f, 0.45f));
+		}
 	}
 }
 

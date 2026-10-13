@@ -15,6 +15,9 @@
 #include "Components/PostProcessComponent.h"
 #include "ShieldComponent.h"
 #include "TractorBeamComponent.h"
+#include "RunningLightsComponent.h"
+#include "Rendering/PositionVertexBuffer.h"
+#include "StaticMeshResources.h"
 #include "Engine/DamageEvents.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
@@ -66,6 +69,8 @@ AStarshipPawn::AStarshipPawn()
 	Shield = CreateDefaultSubobject<UShieldComponent>(TEXT("Shield"));
 	Shield->SetupAttachment(CollisionBox);
 	TractorBeam = CreateDefaultSubobject<UTractorBeamComponent>(TEXT("TractorBeam"));
+	RunningLights = CreateDefaultSubobject<URunningLightsComponent>(TEXT("RunningLights"));
+	RunningLights->SetupAttachment(CollisionBox);
 
 	WarpDrive = CreateDefaultSubobject<UWarpDriveComponent>(TEXT("WarpDrive"));
 	Weapons = CreateDefaultSubobject<UStarshipWeaponsComponent>(TEXT("Weapons"));
@@ -163,6 +168,91 @@ AStarshipPawn::AStarshipPawn()
 	AddLight(TEXT("ImpulseEngines"), FVector(-800.0, 0.0, 1500.0), ImpulseOrange, 30000.f, 10000.f, false, true);
 }
 
+void AStarshipPawn::SetupRunningLights()
+{
+	if (!RunningLights)
+	{
+		return;
+	}
+	const float L = GetShipLengthCm();
+	const float W = ShipWidthMeters * 100.f;
+	const float H = ShipHeightMeters * 100.f;
+
+	// Hull surface points come from the mesh itself: the vertex furthest along a direction inside a region of the
+	// ship, so the bulbs sit on the skin whatever mesh is fitted. Falls back to proportions of the hull box when
+	// the vertex data is not CPU-readable (cooked builds without CPU access).
+	TArray<FVector> Verts;
+	if (ShipMesh && ShipMesh->GetStaticMesh() && ShipMesh->GetStaticMesh()->GetRenderData() && ShipMesh->GetStaticMesh()->GetRenderData()->LODResources.Num() > 0)
+	{
+		const FPositionVertexBuffer& PB = ShipMesh->GetStaticMesh()->GetRenderData()->LODResources[0].VertexBuffers.PositionVertexBuffer;
+		if (PB.GetVertexData() != nullptr && PB.GetNumVertices() > 0)
+		{
+			const FTransform MeshToPawn = ShipMesh->GetRelativeTransform();
+			Verts.Reserve(PB.GetNumVertices());
+			for (uint32 i = 0; i < PB.GetNumVertices(); ++i)
+			{
+				Verts.Add(MeshToPawn.TransformPosition(FVector(PB.VertexPosition(i))));
+			}
+		}
+	}
+	auto Probe = [&](const FVector& Dir, const FBox& Region, const FVector& Fallback) -> FVector
+	{
+		double Best = -1e30;
+		FVector BestP = Fallback;
+		for (const FVector& V : Verts)
+		{
+			if (!Region.IsInsideOrOn(V))
+			{
+				continue;
+			}
+			const double D = FVector::DotProduct(V, Dir);
+			if (D > Best)
+			{
+				Best = D;
+				BestP = V;
+			}
+		}
+		// A hair outside the skin so the bulb is not buried.
+		return BestP + Dir * (L * 0.001f);
+	};
+	const FBox All(FVector(-L, -W, -H), FVector(L, W, H));
+	const FBox Saucer(FVector(L * 0.1f, -W, -H), FVector(L, W, H));
+	const FBox PortNacelle(FVector(-L, -W, H * 0.12f), FVector(L, -W * 0.14f, H));
+	const FBox StarboardNacelle(FVector(-L, W * 0.14f, H * 0.12f), FVector(L, W, H));
+	const FBox PortNacelleMid(FVector(-L * 0.32f, -W, H * 0.12f), FVector(-L * 0.16f, -W * 0.14f, H));
+	const FBox StarboardNacelleMid(FVector(-L * 0.32f, W * 0.14f, H * 0.12f), FVector(-L * 0.16f, W, H));
+	const FBox Secondary(FVector(-L * 0.45f, -W * 0.13f, -H), FVector(L * 0.05f, W * 0.13f, H * 0.05f));
+
+	using RL = URunningLightsComponent;
+	const float Bulb = L * 0.004f;
+	const float Strobe = 1.9f;
+	const float Blink = 1.3f;
+	TArray<FRunningLight> Lights;
+	Lights.Add(FRunningLight(Probe(FVector(0, -1, 0), Saucer, FVector(L * 0.2f, -W * 0.5f, H * 0.1f)), RL::PortRed(), ERunningLightMode::Blink, Blink, 0.f, Bulb * 1.3f));
+	Lights.Add(FRunningLight(Probe(FVector(0, 1, 0), Saucer, FVector(L * 0.2f, W * 0.5f, H * 0.1f)), RL::StarboardGreen(), ERunningLightMode::Blink, Blink, 0.f, Bulb * 1.3f));
+	Lights.Add(FRunningLight(Probe(FVector(1, 0, 0), All, FVector(L * 0.5f, 0.f, H * 0.1f)), RL::StrobeWhite(), ERunningLightMode::Strobe, Strobe, 0.f, Bulb * 1.2f));
+	Lights.Add(FRunningLight(Probe(FVector(0, 0, 1), Saucer, FVector(L * 0.2f, 0.f, H * 0.5f)), RL::StrobeWhite(), ERunningLightMode::Strobe, Strobe, 0.5f, Bulb * 1.2f));
+	Lights.Add(FRunningLight(Probe(FVector(0, 0, -1), Saucer, FVector(L * 0.2f, 0.f, -H * 0.1f)), RL::StrobeWhite(), ERunningLightMode::Strobe, Strobe, 0.5f, Bulb * 1.2f));
+	{
+		const float Angles[4] = { 35.f, 70.f, 110.f, 145.f };
+		for (int32 k = 0; k < 8; ++k)
+		{
+			const float A = FMath::DegreesToRadians(Angles[k % 4] * (k < 4 ? 1.f : -1.f));
+			const FVector Dir(FMath::Cos(A), FMath::Sin(A), 0.f);
+			Lights.Add(FRunningLight(Probe(Dir, Saucer, FVector(L * 0.2f, 0.f, H * 0.1f) + Dir * W * 0.5f), RL::FormationAmber(), ERunningLightMode::Blink, Blink * 2.f, 0.5f * (k % 2), Bulb * 0.6f, 0.45f));
+		}
+	}
+	Lights.Add(FRunningLight(Probe(FVector(-1, 0, 0), PortNacelle, FVector(-L * 0.45f, -W * 0.26f, H * 0.37f)), RL::PortRed(), ERunningLightMode::Blink, Blink, 0.f, Bulb));
+	Lights.Add(FRunningLight(Probe(FVector(-1, 0, 0), StarboardNacelle, FVector(-L * 0.45f, W * 0.26f, H * 0.37f)), RL::StarboardGreen(), ERunningLightMode::Blink, Blink, 0.f, Bulb));
+	Lights.Add(FRunningLight(Probe(FVector(0, -1, 0), PortNacelleMid, FVector(-L * 0.25f, -W * 0.3f, H * 0.37f)), RL::StrobeWhite(), ERunningLightMode::Strobe, Strobe, 0.25f, Bulb * 0.9f));
+	Lights.Add(FRunningLight(Probe(FVector(0, 1, 0), StarboardNacelleMid, FVector(-L * 0.25f, W * 0.3f, H * 0.37f)), RL::StrobeWhite(), ERunningLightMode::Strobe, Strobe, 0.25f, Bulb * 0.9f));
+	Lights.Add(FRunningLight(Probe(FVector(0, 0, -1), Secondary, FVector(-L * 0.2f, 0.f, -H * 0.4f)), RL::StrobeWhite(), ERunningLightMode::Strobe, Strobe, 0.75f, Bulb));
+	Lights.Add(FRunningLight(Probe(FVector(-1, 0, 0), Secondary, FVector(-L * 0.42f, 0.f, -H * 0.2f)), RL::FormationAmber(), ERunningLightMode::Steady, 1.f, 0.f, Bulb, 0.7f));
+
+	RunningLights->MaxRadiusCm = L * 0.03f;
+	RunningLights->SetLights(Lights);
+}
+
 UPawnMovementComponent* AStarshipPawn::GetMovementComponent() const
 {
 	// Our movement component is a UMovementComponent, not a pawn movement component.
@@ -236,6 +326,7 @@ void AStarshipPawn::BeginPlay()
 	ApplyHullDimensions();
 	SetupHullMaterials();
 	SetupHullLights();
+	SetupRunningLights();
 	SetCameraMode(CameraMode);
 
 	if (Movement)
@@ -501,6 +592,7 @@ void AStarshipPawn::SetCameraMode(EStarshipCameraMode Mode)
 	// Hide the hull from the bridge so the saucer doesn't fill the lens.
 	ShipMesh->SetOwnerNoSee(false);
 	ShipMesh->SetVisibility(Mode != EStarshipCameraMode::Bridge);
+	if (RunningLights) { RunningLights->SetVisibility(Mode != EStarshipCameraMode::Bridge); }
 	BridgeInterior->SetVisibility(Mode == EStarshipCameraMode::Bridge, true);
 	AttachStreaksToActiveCamera();
 }

@@ -21,6 +21,7 @@ class UBridgeInteriorComponent;
 class UDistantStarsComponent;
 class UShieldComponent;
 class UTractorBeamComponent;
+class URunningLightsComponent;
 
 UENUM(BlueprintType)
 enum class EWarpVisualMode : uint8
@@ -88,6 +89,10 @@ public:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|Defence")
 	TObjectPtr<UTractorBeamComponent> TractorBeam;
+
+	/** Blinking navigation and formation lights on the hull. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|FX")
+	TObjectPtr<URunningLightsComponent> RunningLights;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Defence") float MaxShieldStrength = 100.f;
 	UPROPERTY(BlueprintReadOnly, Category = "Defence") float ShieldStrength = 100.f;
@@ -374,6 +379,7 @@ private:
 	void ApplyHullDimensions();
 	void SetupHullMaterials();
 	void SetupHullLights();
+	void SetupRunningLights();
 	void UpdateCameras(float DeltaTime);
 	void UpdateWarpEffects(float DeltaTime);
 	void UpdateHullGlow(float DeltaTime);
