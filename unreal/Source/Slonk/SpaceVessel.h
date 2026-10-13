@@ -97,6 +97,21 @@ protected:
 
 	/** Filled by BuildMeshes (local positions); handed to RunningLights when the hull is done. */
 	TArray<FRunningLight> PendingLights;
+	TArray<FHullFloodlight> PendingFloods;
+
+	/** Called at the end of Rebuild once the meshes and materials are in place. */
+	virtual void OnMeshesBuilt() {}
+
+	/** Where the vessel appears to be; the horizon test uses this (a warping ship's images are not at its true position). */
+	virtual FVector GetVisualLocation() const { return GetActorLocation(); }
+
+	/** Floating-origin helpers: positions kept across rebases live in universe space. */
+	FVector ToUniverse(const FVector& World) const;
+	FVector ToWorld(const FVector& Universe) const;
+
+	/** Emissive strength of the glow parts (dish, bussards, nacelle grilles, windows). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vessel")
+	float GlowIntensity = 150.f;
 
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> HullMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> GlowMID;
@@ -112,7 +127,21 @@ protected:
 	float HorizonTimer = 0.f;
 };
 
-/** Saucer, neck, engineering hull, pylons and two or four nacelles. Patrols around HomeLocation. */
+UENUM(BlueprintType)
+enum class EShipWarpPhase : uint8
+{
+	None,
+	/** Spooling up: in the show-style view the hull stretches before it goes. */
+	Spooling,
+	/** Between the departure and arrival points at superluminal speed. */
+	Travelling,
+	/** Just dropped out: the show-style view relaxes the stretch. */
+	Arriving,
+	/** Back to patrolling, but light from the trip is still arriving: the relativistic view keeps drawing images. */
+	Afterimages,
+};
+
+/** Saucer, neck, engineering hull, pylons and two or four nacelles. Patrols around HomeLocation and now and then warps to another station. */
 UCLASS()
 class SLONK_API AProceduralStarship : public ASpaceVessel
 {
@@ -121,6 +150,40 @@ class SLONK_API AProceduralStarship : public ASpaceVessel
 public:
 	AProceduralStarship();
 	virtual void Tick(float DeltaTime) override;
+	virtual FVector GetVisualLocation() const override;
+
+	/** Jump to warp towards a world-space destination; the ship patrols there afterwards. */
+	UFUNCTION(BlueprintCallable, Category = "Ship|Warp")
+	void WarpTo(const FVector& DestinationWorld);
+
+	/** Pick another station in the system and warp there. Returns false when there is nowhere to go. */
+	UFUNCTION(BlueprintCallable, Category = "Ship|Warp")
+	bool WarpToRandomStation();
+
+	UFUNCTION(BlueprintPure, Category = "Ship|Warp")
+	bool IsInWarp() const { return WarpPhase == EShipWarpPhase::Spooling || WarpPhase == EShipWarpPhase::Travelling; }
+
+	UFUNCTION(BlueprintPure, Category = "Ship|Warp")
+	EShipWarpPhase GetWarpPhase() const { return WarpPhase; }
+
+	/** Ships warp between stations on their own; off for a ship that should stay put. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ship|Warp")
+	bool bCanWarp = true;
+
+	/** Seconds of patrol between warp trips (random in this range). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ship|Warp")
+	float WarpIntervalMin = 50.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ship|Warp")
+	float WarpIntervalMax = 150.f;
+
+	/** Trips are timed to take about this long whatever the distance (sets the warp factor). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ship|Warp")
+	float TargetTripSeconds = 22.f;
+
+	/** Seconds the show-style stretch takes going in and coming out. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ship|Warp")
+	float StretchSeconds = 0.6f;
 
 	/** Centre of the patrol volume (world). Set by the spawner; defaults to the spawn point. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ship")
@@ -143,13 +206,54 @@ public:
 
 protected:
 	virtual void BuildMeshes(UDynamicMesh* HullMesh, UDynamicMesh* GlowMesh, FRandomStream& Rng) override;
+	virtual void OnMeshesBuilt() override;
 
 private:
 	void PickWaypoint();
-	FVector Waypoint = FVector::ZeroVector;
+	/** Patrol centre and current waypoint in universe space (they survive floating-origin rebases). */
+	FVector HomeUniverse = FVector::ZeroVector;
+	FVector WaypointUniverse = FVector::ZeroVector;
 	bool bHasWaypoint = false;
 	bool bHomeSet = false;
 	FRandomStream NavRng;
+
+	// ---- Warp ----
+	/** One apparent image of the ship: where it is seen and how its light is shifted. */
+	struct FShipImage
+	{
+		FVector Position = FVector::ZeroVector;
+		float Doppler = 1.f;
+		bool bVisible = false;
+	};
+	void TickWarp(float DeltaTime);
+	void BeginTravel();
+	void EndTravel();
+	void FinishWarp();
+	void UpdateWarpVisuals();
+	bool IsRelativisticView() const;
+	void ComputeImages(const FVector& Observer, double Now, FShipImage Out[4]) const;
+	void ApplyImage(int32 Slot, const FShipImage& Image);
+	void SetMainVisible(bool bVisible);
+	void SetMainStretch(float Stretch, float GlowBoost);
+	void ResetImages();
+
+	UPROPERTY(VisibleAnywhere, Category = "Ship|Warp") EShipWarpPhase WarpPhase = EShipWarpPhase::None;
+	UPROPERTY(VisibleAnywhere, Category = "Ship|Warp") float WarpTimer = 0.f;
+	float PhaseTimer = 0.f;
+	FVector WarpStartUniverse = FVector::ZeroVector;
+	FVector WarpEndUniverse = FVector::ZeroVector;
+	FVector WarpDirection = FVector::ForwardVector;
+	double WarpSpeed = 0.0;
+	double WarpDepartTime = 0.0;
+	double WarpArriveTime = 0.0;
+	double AfterimageDeadline = 0.0;
+	bool bWarpVisualsDirty = false;
+
+	/** Extra hull/glow copies for the relativistic view: a superluminal ship can be seen in up to three places at once. */
+	UPROPERTY() TArray<TObjectPtr<UDynamicMeshComponent>> EchoHulls;
+	UPROPERTY() TArray<TObjectPtr<UDynamicMeshComponent>> EchoGlows;
+	UPROPERTY() TArray<TObjectPtr<UMaterialInstanceDynamic>> EchoHullMIDs;
+	UPROPERTY() TArray<TObjectPtr<UMaterialInstanceDynamic>> EchoGlowMIDs;
 };
 
 /** Hub, ring(s), spokes and a cap; spins slowly. */

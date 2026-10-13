@@ -188,7 +188,7 @@ public:
 	FName GlowParameterName = TEXT("EmissiveColorMapWeight");
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull")
-	float BaseGlowWeight = 1.0f;
+	float BaseGlowWeight = 2.5f;
 
 	/** Material slot whose emissive is driven by impulse throttle (the impulse exhaust grille). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull")
@@ -284,6 +284,18 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Starship|Warp")
 	EWarpVisualMode GetWarpVisualMode() const { return WarpVisualMode; }
+
+	/**
+	 * Scale on the speed of light used by the relativistic view of other ships' warp trips (1 = real). At the real
+	 * value the retarded images of a nearby trip fly off at about c and are gone within a frame; around 1e-5 the
+	 * splitting and time-reversed images can be watched. Other ships' warp speeds scale with it so the trips stay
+	 * superluminal in the same ratio.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Warp")
+	float WarpVisualLightSpeedScale = 1.f;
+
+	UFUNCTION(BlueprintPure, Category = "Starship|Warp")
+	float GetWarpVisualLightSpeedScale() const { return WarpVisualLightSpeedScale; }
 
 	/** Ship position in universe space (world space plus the floating-origin offset). */
 	UFUNCTION(BlueprintPure, Category = "Starship")

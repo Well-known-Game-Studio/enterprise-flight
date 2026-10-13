@@ -13,6 +13,13 @@
 #include "RunningLightsComponent.h"
 #include "Engine/DamageEvents.h"
 #include "UDynamicMesh.h"
+#include "StarshipPawn.h"
+#include "WarpFlash.h"
+#include "SlonkGameMode.h"
+#include "FloatingOriginComponent.h"
+#include "EngineUtils.h"
+#include "GameFramework/PlayerController.h"
+#include "Camera/PlayerCameraManager.h"
 
 namespace
 {
@@ -107,7 +114,25 @@ void ASpaceVessel::SetBeyondHorizon(bool bBeyond)
 	SetActorHiddenInGame(bBeyond);
 	if (Hull) { Hull->SetVisibility(!bBeyond); }
 	if (Glow) { Glow->SetVisibility(!bBeyond); }
-	if (RunningLights) { RunningLights->SetVisibility(!bBeyond); }
+	if (RunningLights) { RunningLights->SetVisibility(!bBeyond, true); }
+}
+
+FVector ASpaceVessel::ToUniverse(const FVector& World) const
+{
+	if (const UFloatingOriginComponent* Origin = ASlonkGameMode::FindFloatingOrigin(GetWorld()))
+	{
+		return Origin->WorldToUniverse(World);
+	}
+	return World;
+}
+
+FVector ASpaceVessel::ToWorld(const FVector& Universe) const
+{
+	if (const UFloatingOriginComponent* Origin = ASlonkGameMode::FindFloatingOrigin(GetWorld()))
+	{
+		return Origin->UniverseToWorld(Universe);
+	}
+	return Universe;
 }
 
 void ASpaceVessel::PreRegisterAllComponents()
@@ -149,6 +174,7 @@ void ASpaceVessel::ApplyMaterials()
 	if (GlowMID)
 	{
 		GlowMID->SetVectorParameterValue(TEXT("GlowColor"), GlowColor);
+		GlowMID->SetScalarParameterValue(TEXT("Intensity"), GlowIntensity);
 		Glow->ConfigureMaterialSet({ GlowMID.Get() });
 	}
 }
@@ -170,6 +196,7 @@ void ASpaceVessel::Rebuild()
 	GM->Reset();
 	FRandomStream Rng(Seed);
 	PendingLights.Reset();
+	PendingFloods.Reset();
 	BuildMeshes(HM, GM, Rng);
 	Finish(Hull);
 	Finish(Glow);
@@ -179,7 +206,9 @@ void ASpaceVessel::Rebuild()
 	{
 		RunningLights->MaxRadiusCm = SizeCm * 0.03f;
 		RunningLights->SetLights(PendingLights);
+		RunningLights->SetFloodlights(PendingFloods);
 	}
+	OnMeshesBuilt();
 	if (Shield)
 	{
 		Shield->SetShellExtent(FVector(GetBoundingRadiusCm() * 1.15f));
@@ -198,7 +227,7 @@ void ASpaceVessel::Tick(float DeltaTime)
 	if (HorizonTimer <= 0.f)
 	{
 		HorizonTimer = 0.5f;
-		SetBeyondHorizon(IsLocationBeyondHorizon(GetActorLocation()));
+		SetBeyondHorizon(IsLocationBeyondHorizon(GetVisualLocation()));
 	}
 }
 
@@ -275,6 +304,17 @@ void ASpaceVessel::TickDying(float DeltaTime)
 AProceduralStarship::AProceduralStarship()
 {
 	MaxHealth = 400.f;
+	static const TCHAR* HullNames[3] = { TEXT("EchoHull0"), TEXT("EchoHull1"), TEXT("EchoHull2") };
+	static const TCHAR* GlowNames[3] = { TEXT("EchoGlow0"), TEXT("EchoGlow1"), TEXT("EchoGlow2") };
+	for (int32 i = 0; i < 3; ++i)
+	{
+		UDynamicMeshComponent* H = MakePart(this, HullNames[i], Root, false);
+		UDynamicMeshComponent* G = MakePart(this, GlowNames[i], Root, false);
+		H->SetVisibility(false);
+		G->SetVisibility(false);
+		EchoHulls.Add(H);
+		EchoGlows.Add(G);
+	}
 }
 
 void AProceduralStarship::BuildMeshes(UDynamicMesh* HM, UDynamicMesh* GM, FRandomStream& Rng)
@@ -367,14 +407,69 @@ void AProceduralStarship::BuildMeshes(UDynamicMesh* HM, UDynamicMesh* GM, FRando
 			// Tail of each nacelle: red/green by side, plus an outboard strobe at mid-length.
 			PendingLights.Add(FRunningLight(NacStart + FVector(-NacR * 1.02f, 0.f, 0.f), Side < 0 ? RL::PortRed() : RL::StarboardGreen(), ERunningLightMode::Blink, Blink, Ph, Bulb));
 			PendingLights.Add(FRunningLight(NacStart + FVector(NacLen * 0.5f, Side * NacR * 1.02f, 0.f), RL::StrobeWhite(), ERunningLightMode::Strobe, Strobe, Ph + 0.5f * Pair + 0.25f, Bulb * 0.9f));
+			if (Pair == 0)
+			{
+				// Floodlight on the nacelle's shoulder lighting its name on the outboard side.
+				PendingFloods.Add(FHullFloodlight(NacStart + FVector(NacLen * 0.8f, Side * NacR * 1.15f, NacR * 1.35f), NacStart + FVector(NacLen * 0.45f, Side * NacR * 1.0f, 0.f), NacR * 1.3f));
+			}
 		}
+	}
+	// Floodlights: lamps on the impulse deck wash the registry on the saucer top and underside, and lamps on the
+	// pylon roots light the name on the engineering hull's flanks.
+	for (int32 Side = -1; Side <= 1; Side += 2)
+	{
+		PendingFloods.Add(FHullFloodlight(SaucerC + FVector(-SaucerR * 0.86f, Side * SaucerR * 0.12f, SaucerT * 1.0f), SaucerC + FVector(SaucerR * 0.35f, Side * SaucerR * 0.3f, SaucerT * 0.92f), SaucerR * 0.3f));
+		PendingFloods.Add(FHullFloodlight(SaucerC + FVector(-SaucerR * 0.86f, Side * SaucerR * 0.12f, -SaucerT * 0.95f), SaucerC + FVector(SaucerR * 0.35f, Side * SaucerR * 0.3f, -SaucerT * 0.9f), SaucerR * 0.3f));
+		PendingFloods.Add(FHullFloodlight(HullStart + FVector(HullLen * 0.95f, Side * HullR * 1.5f, HullR * 0.9f), HullStart + FVector(HullLen * 0.5f, Side * HullR * 1.0f, 0.f), HullR * 0.9f));
+	}
+}
+
+void AProceduralStarship::OnMeshesBuilt()
+{
+	// Copies of the hull for the relativistic warp view, each with its own material instance so it can be tinted.
+	UMaterialInterface* HullMat = SlonkMaterials::LoadOrFallback(HullMaterial, TEXT("Hull"), true);
+	UMaterialInterface* GlowMat = SlonkMaterials::LoadOrFallback(GlowMaterial, TEXT("Glow"), false);
+	EchoHullMIDs.SetNum(EchoHulls.Num());
+	EchoGlowMIDs.SetNum(EchoGlows.Num());
+	for (int32 i = 0; i < EchoHulls.Num(); ++i)
+	{
+		if (!EchoHulls[i] || !EchoGlows[i] || !Hull || !Glow)
+		{
+			continue;
+		}
+		EchoHulls[i]->GetDynamicMesh()->SetMesh(Hull->GetDynamicMesh()->GetMeshRef());
+		EchoGlows[i]->GetDynamicMesh()->SetMesh(Glow->GetDynamicMesh()->GetMeshRef());
+		EchoHulls[i]->NotifyMeshUpdated();
+		EchoGlows[i]->NotifyMeshUpdated();
+		if (HullMat && !EchoHullMIDs[i])
+		{
+			EchoHullMIDs[i] = UMaterialInstanceDynamic::Create(HullMat, this);
+		}
+		if (GlowMat && !EchoGlowMIDs[i])
+		{
+			EchoGlowMIDs[i] = UMaterialInstanceDynamic::Create(GlowMat, this);
+		}
+		if (EchoHullMIDs[i])
+		{
+			EchoHullMIDs[i]->SetVectorParameterValue(TEXT("HullColor"), HullColor);
+			EchoHullMIDs[i]->SetScalarParameterValue(TEXT("PanelScale"), 400.f / FMath::Max(SizeCm, 1.f));
+			EchoHulls[i]->ConfigureMaterialSet({ EchoHullMIDs[i].Get() });
+		}
+		if (EchoGlowMIDs[i])
+		{
+			EchoGlowMIDs[i]->SetVectorParameterValue(TEXT("GlowColor"), GlowColor);
+			EchoGlowMIDs[i]->SetScalarParameterValue(TEXT("Intensity"), GlowIntensity);
+			EchoGlows[i]->ConfigureMaterialSet({ EchoGlowMIDs[i].Get() });
+		}
+		EchoHulls[i]->SetVisibility(false);
+		EchoGlows[i]->SetVisibility(false);
 	}
 }
 
 void AProceduralStarship::PickWaypoint()
 {
 	const FVector Dir = NavRng.GetUnitVector();
-	Waypoint = HomeLocation + FVector(Dir.X, Dir.Y, Dir.Z * 0.25f) * PatrolRadiusCm * NavRng.FRandRange(0.4f, 1.f);
+	WaypointUniverse = HomeUniverse + FVector(Dir.X, Dir.Y, Dir.Z * 0.25f) * PatrolRadiusCm * NavRng.FRandRange(0.4f, 1.f);
 	bHasWaypoint = true;
 }
 
@@ -387,22 +482,49 @@ void AProceduralStarship::Tick(float DeltaTime)
 		{
 			HomeLocation = GetActorLocation();
 		}
+		HomeUniverse = ToUniverse(HomeLocation);
 		NavRng.Initialize(Seed * 31 + 7);
+		WarpTimer = NavRng.FRandRange(WarpIntervalMin, WarpIntervalMax);
 		bHomeSet = true;
 	}
-	if (bBeyondHorizon || bTractored || bDying)
+	if (bDying)
+	{
+		return;
+	}
+	if (WarpPhase != EShipWarpPhase::None)
+	{
+		TickWarp(DeltaTime);
+		if (WarpPhase != EShipWarpPhase::Afterimages && WarpPhase != EShipWarpPhase::None)
+		{
+			return;
+		}
+	}
+	if (bBeyondHorizon || bTractored)
 	{
 		Velocity = FVector::ZeroVector;
 		return;
 	}
+	if (bCanWarp && WarpPhase == EShipWarpPhase::None)
+	{
+		WarpTimer -= DeltaTime;
+		if (WarpTimer <= 0.f)
+		{
+			WarpTimer = NavRng.FRandRange(WarpIntervalMin, WarpIntervalMax);
+			if (WarpToRandomStation())
+			{
+				return;
+			}
+		}
+	}
 	const FVector Here = GetActorLocation();
+	const FVector Waypoint = ToWorld(WaypointUniverse);
 	if (!bHasWaypoint || FVector::Dist(Here, Waypoint) < SizeCm * 4.0)
 	{
 		PickWaypoint();
 	}
-	const FVector ToWp = (Waypoint - Here).GetSafeNormal();
+	const FVector ToWp = (ToWorld(WaypointUniverse) - Here).GetSafeNormal();
 	// Slow into the waypoint so the turn there is not a snap.
-	const double Remaining = FVector::Dist(Here, Waypoint);
+	const double Remaining = FVector::Dist(Here, ToWorld(WaypointUniverse));
 	const double TargetSpeed = FMath::Min(CruiseSpeed, FMath::Max(Remaining / 20.0, CruiseSpeed * 0.15));
 	const FVector DesiredV = ToWp * TargetSpeed;
 	const FVector DeltaV = DesiredV - Velocity;
@@ -416,6 +538,440 @@ void AProceduralStarship::Tick(float DeltaTime)
 	{
 		const FQuat Want = FRotationMatrix::MakeFromXZ(Velocity.GetSafeNormal(), FVector::UpVector).ToQuat();
 		SetActorRotation(FQuat::Slerp(GetActorQuat(), Want, FMath::Clamp(TurnRate * DeltaTime, 0.f, 1.f)));
+	}
+}
+
+// ---- Warp -----------------------------------------------------------------------------------------------------
+
+namespace
+{
+	constexpr double LightSpeedCmPerSec = 2.99792458e10;
+
+	/** The speed of light the warp visuals use: real, or scaled down by the player's visualisation setting. */
+	double VisualLightSpeed(const UWorld* World)
+	{
+		const APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+		const AStarshipPawn* Pawn = PC ? Cast<AStarshipPawn>(PC->GetPawn()) : nullptr;
+		return LightSpeedCmPerSec * (Pawn ? FMath::Clamp((double)Pawn->GetWarpVisualLightSpeedScale(), 1e-7, 1.0) : 1.0);
+	}
+}
+
+bool AProceduralStarship::WarpToRandomStation()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return false;
+	}
+	const FVector Home = ToWorld(HomeUniverse);
+	TArray<ASpaceStation*> Candidates;
+	for (TActorIterator<ASpaceStation> It(World); It; ++It)
+	{
+		if (It->IsDying())
+		{
+			continue;
+		}
+		// Not the station we are already patrolling around.
+		if (FVector::Dist(It->GetActorLocation(), Home) < It->SizeCm * 40.0)
+		{
+			continue;
+		}
+		Candidates.Add(*It);
+	}
+	if (Candidates.Num() == 0)
+	{
+		return false;
+	}
+	ASpaceStation* Dest = Candidates[NavRng.RandRange(0, Candidates.Num() - 1)];
+	const FVector Offset = NavRng.GetUnitVector() * Dest->SizeCm * NavRng.FRandRange(4.f, 8.f);
+	PatrolRadiusCm = Dest->SizeCm * 10.0;
+	HomeLocation = Dest->GetActorLocation();
+	HomeUniverse = ToUniverse(HomeLocation);
+	WarpTo(Dest->GetActorLocation() + Offset);
+	return true;
+}
+
+void AProceduralStarship::WarpTo(const FVector& DestinationWorld)
+{
+	UWorld* World = GetWorld();
+	if (!World || WarpPhase == EShipWarpPhase::Spooling || WarpPhase == EShipWarpPhase::Travelling || bDying)
+	{
+		return;
+	}
+	if (WarpPhase == EShipWarpPhase::Afterimages)
+	{
+		FinishWarp();
+	}
+	const FVector Here = GetActorLocation();
+	const FVector Delta = DestinationWorld - Here;
+	const double Dist = Delta.Size();
+	if (Dist < SizeCm * 20.0)
+	{
+		return;
+	}
+	WarpDirection = Delta / Dist;
+	WarpStartUniverse = ToUniverse(Here);
+	WarpEndUniverse = ToUniverse(DestinationWorld);
+	// Warp factor chosen so the trip takes about TargetTripSeconds (TNG curve: speed = c * w^(10/3)).
+	const double c = VisualLightSpeed(World);
+	const double Factor = FMath::Clamp(FMath::Pow(Dist / (c * FMath::Max(TargetTripSeconds, 1.f)), 0.3), 1.5, 8.0);
+	WarpSpeed = c * FMath::Pow(Factor, 10.0 / 3.0);
+	WarpDepartTime = World->GetTimeSeconds() + StretchSeconds;
+	WarpArriveTime = WarpDepartTime + Dist / WarpSpeed;
+	WarpPhase = EShipWarpPhase::Spooling;
+	PhaseTimer = 0.f;
+	Velocity = FVector::ZeroVector;
+	// Point down the track first; the stretch reads wrong otherwise.
+	SetActorRotation(FRotationMatrix::MakeFromXZ(WarpDirection, FVector::UpVector).ToQuat());
+	HomeUniverse = ToUniverse(DestinationWorld);
+	bHasWaypoint = false;
+}
+
+bool AProceduralStarship::IsRelativisticView() const
+{
+	const UWorld* World = GetWorld();
+	const APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+	const AStarshipPawn* Pawn = PC ? Cast<AStarshipPawn>(PC->GetPawn()) : nullptr;
+	return Pawn && Pawn->GetWarpVisualMode() == EWarpVisualMode::Relativistic;
+}
+
+void AProceduralStarship::BeginTravel()
+{
+	WarpPhase = EShipWarpPhase::Travelling;
+	PhaseTimer = 0.f;
+	SetMainStretch(1.f, 1.f);
+	if (!IsRelativisticView())
+	{
+		AWarpStreakFlash::Spawn(GetWorld(), GetActorLocation(), WarpDirection, SizeCm, false, FLinearColor(0.7f, 0.85f, 1.f));
+		SetMainVisible(false);
+	}
+}
+
+void AProceduralStarship::EndTravel()
+{
+	SetActorLocation(ToWorld(WarpEndUniverse));
+	WarpPhase = EShipWarpPhase::Arriving;
+	PhaseTimer = 0.f;
+	Velocity = FVector::ZeroVector;
+	if (!IsRelativisticView())
+	{
+		AWarpStreakFlash::Spawn(GetWorld(), GetActorLocation(), WarpDirection, SizeCm, true, FLinearColor(0.7f, 0.85f, 1.f));
+		SetMainVisible(true);
+	}
+	// Light from the trip keeps arriving for a long time for a distant observer; give up after ten minutes.
+	AfterimageDeadline = GetWorld()->GetTimeSeconds() + 600.0;
+}
+
+void AProceduralStarship::FinishWarp()
+{
+	WarpPhase = EShipWarpPhase::None;
+	ResetImages();
+	SetMainStretch(1.f, 1.f);
+	SetMainVisible(!bBeyondHorizon);
+}
+
+void AProceduralStarship::TickWarp(float DeltaTime)
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+	const double Now = World->GetTimeSeconds();
+	PhaseTimer += DeltaTime;
+	switch (WarpPhase)
+	{
+	case EShipWarpPhase::Spooling:
+		if (Now >= WarpDepartTime)
+		{
+			BeginTravel();
+		}
+		break;
+	case EShipWarpPhase::Travelling:
+	{
+		const double S = FMath::Clamp(Now - WarpDepartTime, 0.0, WarpArriveTime - WarpDepartTime);
+		SetActorLocation(ToWorld(WarpStartUniverse) + WarpDirection * (WarpSpeed * S));
+		Velocity = WarpDirection * WarpSpeed;
+		if (Root) { Root->ComponentVelocity = Velocity; }
+		if (Hull) { Hull->ComponentVelocity = Velocity; }
+		if (Now >= WarpArriveTime)
+		{
+			EndTravel();
+		}
+		break;
+	}
+	case EShipWarpPhase::Arriving:
+		if (PhaseTimer >= StretchSeconds || IsRelativisticView())
+		{
+			WarpPhase = EShipWarpPhase::Afterimages;
+			PhaseTimer = 0.f;
+			SetMainStretch(1.f, 1.f);
+		}
+		break;
+	default:
+		break;
+	}
+	UpdateWarpVisuals();
+}
+
+FVector AProceduralStarship::GetVisualLocation() const
+{
+	if (WarpPhase == EShipWarpPhase::Travelling || WarpPhase == EShipWarpPhase::Afterimages)
+	{
+		const UWorld* World = GetWorld();
+		const APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+		if (PC && PC->PlayerCameraManager && IsRelativisticView())
+		{
+			FShipImage Images[4];
+			ComputeImages(PC->PlayerCameraManager->GetCameraLocation(), World->GetTimeSeconds(), Images);
+			// The nearest visible image decides whether the actor renders at all.
+			double Best = 1e300;
+			FVector BestPos = GetActorLocation();
+			for (const FShipImage& I : Images)
+			{
+				if (!I.bVisible) { continue; }
+				const double D = I.Position.SizeSquared();
+				if (D < Best) { Best = D; BestPos = I.Position; }
+			}
+			return BestPos;
+		}
+	}
+	return GetActorLocation();
+}
+
+void AProceduralStarship::ComputeImages(const FVector& Observer, double Now, FShipImage Out[4]) const
+{
+	// Slots: 0 = the live ship (after arrival, once its light has had time to get here), 1 = the forward image,
+	// 2 = the backward (time-reversed) image, 3 = the ship still sitting at the departure point as seen before the
+	// light of its departure arrives. For a superluminal trip the observer sees nothing of the trip until the
+	// light front from the closest point sweeps past, then the ship appears at once and splits into an image
+	// running on to the destination and another running back to the start.
+	for (int32 i = 0; i < 4; ++i) { Out[i] = FShipImage(); }
+	const double c = VisualLightSpeed(GetWorld());
+	const FVector P0 = ToWorld(WarpStartUniverse);
+	const FVector P1 = ToWorld(WarpEndUniverse);
+	const double Tau = Now - WarpDepartTime;        // time since departure
+	const double SEnd = WarpArriveTime - WarpDepartTime;
+	if (Tau < 0.0)
+	{
+		Out[3].Position = P0; Out[3].bVisible = true; Out[3].Doppler = 1.f;
+		return;
+	}
+	// Departure-point image until the light of the departure gets here.
+	if (Tau < FVector::Dist(P0, Observer) / c)
+	{
+		Out[3].Position = P0; Out[3].bVisible = true; Out[3].Doppler = 1.f;
+	}
+	// Live ship once the light of its arrival gets here.
+	if (Now >= WarpArriveTime && (Now - WarpArriveTime) >= FVector::Dist(P1, Observer) / c)
+	{
+		Out[0].Position = GetActorLocation(); Out[0].bVisible = true; Out[0].Doppler = 1.f;
+	}
+	// Retarded positions along the track: |P0 + v s - O| = c (Tau - s).
+	const FVector A = P0 - Observer;
+	const FVector B = WarpDirection * WarpSpeed;
+	const double qa = FVector::DotProduct(B, B) - c * c;
+	const double qb = 2.0 * (FVector::DotProduct(A, B) + c * c * Tau);
+	const double qc = FVector::DotProduct(A, A) - c * c * Tau * Tau;
+	const double Disc = qb * qb - 4.0 * qa * qc;
+	if (Disc >= 0.0 && FMath::Abs(qa) > 1e-6)
+	{
+		const double Root = FMath::Sqrt(Disc);
+		const double S1 = (-qb + Root) / (2.0 * qa);
+		const double S2 = (-qb - Root) / (2.0 * qa);
+		const double Beta = WarpSpeed / c;
+		auto Fill = [&](FShipImage& Img, double S)
+		{
+			if (S < 0.0 || S > SEnd || S > Tau)
+			{
+				return;
+			}
+			Img.Position = P0 + B * S;
+			const FVector ToObs = (Observer - Img.Position).GetSafeNormal();
+			const double CosTheta = FVector::DotProduct(WarpDirection, ToObs);
+			Img.Doppler = (float)FMath::Clamp(1.0 / FMath::Max(FMath::Abs(1.0 - Beta * CosTheta), 1e-3), 0.02, 12.0);
+			Img.bVisible = true;
+		};
+		// The larger s is the image further along the track (the forward one).
+		Fill(Out[1], FMath::Max(S1, S2));
+		Fill(Out[2], FMath::Min(S1, S2));
+	}
+}
+
+void AProceduralStarship::SetMainVisible(bool bVisible)
+{
+	if (Hull) { Hull->SetVisibility(bVisible); }
+	if (Glow) { Glow->SetVisibility(bVisible); }
+	if (RunningLights) { RunningLights->SetVisibility(bVisible, true); }
+}
+
+void AProceduralStarship::SetMainStretch(float Stretch, float GlowBoost)
+{
+	const FVector Scale(Stretch, 1.f, 1.f);
+	// Stretch forward from the tail so the ship seems to leap ahead.
+	const FVector Offset(SizeCm * 0.5f * (Stretch - 1.f), 0.f, 0.f);
+	for (USceneComponent* C : { static_cast<USceneComponent*>(Hull.Get()), static_cast<USceneComponent*>(Glow.Get()), static_cast<USceneComponent*>(RunningLights.Get()) })
+	{
+		if (C)
+		{
+			C->SetRelativeScale3D(Scale);
+			C->SetRelativeLocation(Offset);
+		}
+	}
+	if (GlowMID)
+	{
+		GlowMID->SetScalarParameterValue(TEXT("Intensity"), GlowIntensity * GlowBoost);
+	}
+}
+
+void AProceduralStarship::ApplyImage(int32 Slot, const FShipImage& Image)
+{
+	UDynamicMeshComponent* H = Slot == 0 ? Hull.Get() : (EchoHulls.IsValidIndex(Slot - 1) ? EchoHulls[Slot - 1].Get() : nullptr);
+	UDynamicMeshComponent* G = Slot == 0 ? Glow.Get() : (EchoGlows.IsValidIndex(Slot - 1) ? EchoGlows[Slot - 1].Get() : nullptr);
+	UMaterialInstanceDynamic* HM = Slot == 0 ? HullMID.Get() : (EchoHullMIDs.IsValidIndex(Slot - 1) ? EchoHullMIDs[Slot - 1].Get() : nullptr);
+	UMaterialInstanceDynamic* GM = Slot == 0 ? GlowMID.Get() : (EchoGlowMIDs.IsValidIndex(Slot - 1) ? EchoGlowMIDs[Slot - 1].Get() : nullptr);
+	if (!H || !G)
+	{
+		return;
+	}
+	const bool bShow = Image.bVisible && !IsLocationBeyondHorizon(Image.Position);
+	H->SetVisibility(bShow);
+	G->SetVisibility(bShow);
+	if (Slot == 0 && RunningLights)
+	{
+		RunningLights->SetVisibility(bShow, true);
+	}
+	if (!bShow)
+	{
+		return;
+	}
+	H->SetWorldLocation(Image.Position);
+	G->SetWorldLocation(Image.Position);
+	if (Slot == 0 && RunningLights)
+	{
+		RunningLights->SetWorldLocation(Image.Position);
+	}
+	// Doppler: blue and brighter when the light is compressed, red and dim when it is stretched. The factor
+	// diverges where the two images are born, which reads as the flash of the ship appearing.
+	const float X = FMath::Clamp(FMath::Log2(Image.Doppler), -3.f, 3.f);
+	FLinearColor Tint = FLinearColor::White;
+	float Bright = 1.f;
+	// Brightness is eased rather than the full Doppler power law: a receding image at a fifth of the frequency
+	// would otherwise be black on black, and the point is to be able to see where the images are.
+	if (X > 0.f)
+	{
+		Tint = FMath::Lerp(FLinearColor::White, FLinearColor(0.5f, 0.7f, 2.0f), FMath::Min(X / 2.f, 1.f));
+		Bright = 1.f + X * 1.2f;
+	}
+	else
+	{
+		Tint = FMath::Lerp(FLinearColor::White, FLinearColor(2.0f, 0.45f, 0.2f), FMath::Min(-X / 2.f, 1.f));
+		Bright = FMath::Pow(2.f, X * 0.5f);
+	}
+	if (HM)
+	{
+		HM->SetVectorParameterValue(TEXT("HullColor"), HullColor * Tint * FMath::Clamp(Bright, 0.6f, 1.6f));
+	}
+	if (GM)
+	{
+		GM->SetVectorParameterValue(TEXT("GlowColor"), GlowColor * Tint);
+		GM->SetScalarParameterValue(TEXT("Intensity"), GlowIntensity * FMath::Clamp(Bright, 0.4f, 6.f));
+	}
+}
+
+void AProceduralStarship::ResetImages()
+{
+	for (int32 i = 0; i < EchoHulls.Num(); ++i)
+	{
+		if (EchoHulls[i]) { EchoHulls[i]->SetVisibility(false); }
+		if (EchoGlows[i]) { EchoGlows[i]->SetVisibility(false); }
+	}
+	for (USceneComponent* C : { static_cast<USceneComponent*>(Hull.Get()), static_cast<USceneComponent*>(Glow.Get()), static_cast<USceneComponent*>(RunningLights.Get()) })
+	{
+		if (C)
+		{
+			C->SetRelativeLocation(FVector::ZeroVector);
+			C->SetRelativeScale3D(FVector::OneVector);
+		}
+	}
+	if (HullMID) { HullMID->SetVectorParameterValue(TEXT("HullColor"), HullColor); }
+	if (GlowMID)
+	{
+		GlowMID->SetVectorParameterValue(TEXT("GlowColor"), GlowColor);
+		GlowMID->SetScalarParameterValue(TEXT("Intensity"), GlowIntensity);
+	}
+}
+
+void AProceduralStarship::UpdateWarpVisuals()
+{
+	UWorld* World = GetWorld();
+	if (!World || WarpPhase == EShipWarpPhase::None)
+	{
+		return;
+	}
+	const bool bRel = IsRelativisticView();
+	const double Now = World->GetTimeSeconds();
+	if (!bRel)
+	{
+		// Show style: stretch going in, hidden in transit (a streak marks the departure), stretched then relaxing on arrival.
+		ResetImages();
+		switch (WarpPhase)
+		{
+		case EShipWarpPhase::Spooling:
+		{
+			const float T = FMath::Clamp(PhaseTimer / FMath::Max(StretchSeconds, 0.01f), 0.f, 1.f);
+			const float E = T * T * T;
+			SetMainStretch(1.f + 9.f * E, 1.f + 4.f * E);
+			SetMainVisible(!bBeyondHorizon);
+			break;
+		}
+		case EShipWarpPhase::Travelling:
+			SetMainVisible(false);
+			break;
+		case EShipWarpPhase::Arriving:
+		{
+			const float T = FMath::Clamp(PhaseTimer / FMath::Max(StretchSeconds, 0.01f), 0.f, 1.f);
+			const float E = (1.f - T) * (1.f - T);
+			SetMainStretch(1.f + 9.f * E, 1.f + 4.f * E);
+			SetMainVisible(!bBeyondHorizon);
+			break;
+		}
+		case EShipWarpPhase::Afterimages:
+			FinishWarp();
+			break;
+		default:
+			break;
+		}
+		return;
+	}
+
+	// Relativistic: draw the ship where its light says it is, as many times as the light says it is there.
+	const APlayerController* PC = World->GetFirstPlayerController();
+	if (!PC || !PC->PlayerCameraManager)
+	{
+		return;
+	}
+	if (WarpPhase == EShipWarpPhase::Spooling)
+	{
+		// Nothing to see yet: the ship is still where it was.
+		ResetImages();
+		SetMainVisible(!bBeyondHorizon);
+		return;
+	}
+	FShipImage Images[4];
+	ComputeImages(PC->PlayerCameraManager->GetCameraLocation(), Now, Images);
+	// Slot 3 (the departure-point image) borrows the third echo copy.
+	ApplyImage(0, Images[0]);
+	ApplyImage(1, Images[1]);
+	ApplyImage(2, Images[2]);
+	ApplyImage(3, Images[3]);
+	if (WarpPhase == EShipWarpPhase::Afterimages)
+	{
+		const bool bAnyEcho = Images[1].bVisible || Images[2].bVisible || Images[3].bVisible;
+		if ((!bAnyEcho && Images[0].bVisible) || Now > AfterimageDeadline)
+		{
+			FinishWarp();
+		}
 	}
 }
 

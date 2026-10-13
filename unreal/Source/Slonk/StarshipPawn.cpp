@@ -160,11 +160,11 @@ AStarshipPawn::AStarshipPawn()
 	const FLinearColor WarpBlue(0.35f, 0.6f, 1.f);
 	const FLinearColor BussardRed(1.f, 0.25f, 0.08f);
 	const FLinearColor ImpulseOrange(1.f, 0.45f, 0.15f);
-	AddLight(TEXT("NacelleGrillePort"), FVector(-7500.0, -3700.0, 2700.0), WarpBlue, 60000.f, 16000.f, true, false);
-	AddLight(TEXT("NacelleGrilleStarboard"), FVector(-7500.0, 3700.0, 2700.0), WarpBlue, 60000.f, 16000.f, true, false);
-	AddLight(TEXT("BussardPort"), FVector(-2600.0, -3700.0, 2700.0), BussardRed, 40000.f, 9000.f, true, false);
-	AddLight(TEXT("BussardStarboard"), FVector(-2600.0, 3700.0, 2700.0), BussardRed, 40000.f, 9000.f, true, false);
-	AddLight(TEXT("Deflector"), FVector(1500.0, 0.0, -1700.0), WarpBlue, 50000.f, 12000.f, true, false);
+	AddLight(TEXT("NacelleGrillePort"), FVector(-7500.0, -3700.0, 2700.0), WarpBlue, 140000.f, 20000.f, true, false);
+	AddLight(TEXT("NacelleGrilleStarboard"), FVector(-7500.0, 3700.0, 2700.0), WarpBlue, 140000.f, 20000.f, true, false);
+	AddLight(TEXT("BussardPort"), FVector(-2600.0, -3700.0, 2700.0), BussardRed, 100000.f, 12000.f, true, false);
+	AddLight(TEXT("BussardStarboard"), FVector(-2600.0, 3700.0, 2700.0), BussardRed, 100000.f, 12000.f, true, false);
+	AddLight(TEXT("Deflector"), FVector(1500.0, 0.0, -1700.0), WarpBlue, 120000.f, 16000.f, true, false);
 	AddLight(TEXT("ImpulseEngines"), FVector(-800.0, 0.0, 1500.0), ImpulseOrange, 30000.f, 10000.f, false, true);
 }
 
@@ -251,6 +251,32 @@ void AStarshipPawn::SetupRunningLights()
 
 	RunningLights->MaxRadiusCm = L * 0.03f;
 	RunningLights->SetLights(Lights);
+
+	// Floodlights: lamps on the impulse deck wash the registry on the saucer top and underside, lamps on the
+	// nacelle shoulders light the nacelle names, and lamps at the pylon roots light the name on the hull flanks.
+	TArray<FHullFloodlight> Floods;
+	const FBox SaucerTopRear(FVector(-L * 0.06f, -W * 0.12f, 0.f), FVector(L * 0.14f, W * 0.12f, H));
+	const FBox SaucerBottom(FVector(L * 0.1f, -W, -H * 0.14f), FVector(L, W, H * 0.1f));
+	const FVector DeckTop = Probe(FVector(0, 0, 1), SaucerTopRear, FVector(L * 0.04f, 0.f, H * 0.25f));
+	for (int32 Side = -1; Side <= 1; Side += 2)
+	{
+		const FBox TopPatch(FVector(L * 0.2f, Side < 0 ? -W * 0.32f : W * 0.08f, -H * 0.14f), FVector(L * 0.32f, Side < 0 ? -W * 0.08f : W * 0.32f, H));
+		const FVector TopTarget = Probe(FVector(0, 0, 1), TopPatch, FVector(L * 0.26f, Side * W * 0.2f, H * 0.15f));
+		Floods.Add(FHullFloodlight(DeckTop + FVector(0.f, Side * W * 0.05f, H * 0.02f), TopTarget, W * 0.14f));
+		const FBox BottomPatch(FVector(L * 0.2f, Side < 0 ? -W * 0.32f : W * 0.08f, -H * 0.14f), FVector(L * 0.32f, Side < 0 ? -W * 0.08f : W * 0.32f, H * 0.1f));
+		const FVector BottomTarget = Probe(FVector(0, 0, -1), BottomPatch, FVector(L * 0.26f, Side * W * 0.2f, -H * 0.05f));
+		const FVector BottomLamp = Probe(FVector(0, 0, -1), FBox(FVector(L * 0.1f, Side < 0 ? -W * 0.2f : W * 0.08f, -H * 0.14f), FVector(L * 0.16f, Side < 0 ? -W * 0.08f : W * 0.2f, H * 0.1f)), FVector(L * 0.12f, Side * W * 0.12f, -H * 0.08f));
+		Floods.Add(FHullFloodlight(BottomLamp - FVector(0.f, 0.f, H * 0.02f), BottomTarget, W * 0.14f));
+		// Nacelle name: outboard flank, lit from a lamp on the nacelle's shoulder a little aft of the bussard.
+		const FBox NacelleFlank(FVector(-L * 0.22f, Side < 0 ? -W : W * 0.14f, H * 0.12f), FVector(-L * 0.1f, Side < 0 ? -W * 0.14f : W, H));
+		const FVector NacSide = Probe(FVector(0, Side, 0), NacelleFlank, FVector(-L * 0.16f, Side * W * 0.3f, H * 0.37f));
+		Floods.Add(FHullFloodlight(NacSide + FVector(L * 0.07f, Side * W * 0.025f, H * 0.07f), NacSide + FVector(-L * 0.03f, 0.f, 0.f), H * 0.12f));
+		// Hull name on the engineering section's flank.
+		const FBox HullFlank(FVector(-L * 0.32f, Side < 0 ? -W * 0.13f : 0.f, -H), FVector(-L * 0.1f, Side < 0 ? 0.f : W * 0.13f, H * 0.05f));
+		const FVector HullSide = Probe(FVector(0, Side, 0), HullFlank, FVector(-L * 0.2f, Side * W * 0.1f, -H * 0.2f));
+		Floods.Add(FHullFloodlight(HullSide + FVector(L * 0.1f, Side * W * 0.03f, H * 0.1f), HullSide, H * 0.12f));
+	}
+	RunningLights->SetFloodlights(Floods);
 }
 
 UPawnMovementComponent* AStarshipPawn::GetMovementComponent() const
@@ -871,6 +897,30 @@ void AStarshipPawn::ProcessDebugCommand()
 	}
 	else if (Op == TEXT("shake")) { AddCameraShake(Arg(1, 1.f)); }
 	else if (Op == TEXT("tractor")) { ToggleTractorBeam(); }
+	else if (Op == TEXT("shipwarp"))
+	{
+		// shipwarp [km] [far]: send the nearest (or farthest) patrolling ship to warp, to another station or, with a
+		// distance, to a point that far ahead of this ship and two lengths to starboard (debug / demo).
+		const bool bFar = ArgStr(2) == TEXT("far") || ArgStr(1) == TEXT("far");
+		AProceduralStarship* Best = nullptr;
+		double BestD = bFar ? -1.0 : 1e300;
+		for (TActorIterator<AProceduralStarship> It(GetWorld()); It; ++It)
+		{
+			if (It->IsInWarp() || It->IsDying()) { continue; }
+			const double D = FVector::DistSquared(It->GetActorLocation(), GetActorLocation());
+			if (bFar ? D > BestD : D < BestD) { BestD = D; Best = *It; }
+		}
+		const float Km = Arg(1, 0.f);
+		if (Best && Km > 0.f)
+		{
+			Best->WarpTo(GetActorLocation() + GetActorForwardVector() * Km * 1.0e5 + GetActorRightVector() * GetShipLengthCm() * 2.f);
+		}
+		else if (Best)
+		{
+			Best->WarpToRandomStation();
+		}
+	}
+	else if (Op == TEXT("cscale")) { WarpVisualLightSpeedScale = FMath::Clamp(Arg(1, 1.f), 1e-7f, 1.f); }
 	else if (Op == TEXT("hit"))
 	{
 		// Test: flare the shields as if struck from the left.

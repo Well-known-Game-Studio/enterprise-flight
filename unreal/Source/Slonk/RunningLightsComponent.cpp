@@ -1,6 +1,7 @@
 #include "RunningLightsComponent.h"
 
 #include "Camera/PlayerCameraManager.h"
+#include "Components/SpotLightComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
@@ -90,6 +91,49 @@ void URunningLightsComponent::SetLights(const TArray<FRunningLight>& InLights)
 	EnsureMaterial();
 }
 
+void URunningLightsComponent::SetFloodlights(const TArray<FHullFloodlight>& InFloods)
+{
+	for (USpotLightComponent* S : Floods)
+	{
+		if (S) { S->DestroyComponent(); }
+	}
+	Floods.Reset();
+	AActor* Owner = GetOwner();
+	if (!Owner)
+	{
+		return;
+	}
+	for (const FHullFloodlight& F : InFloods)
+	{
+		const FVector ToTarget = F.TargetPosition - F.LampPosition;
+		const float Dist = FMath::Max((float)ToTarget.Size(), 100.f);
+		USpotLightComponent* S = NewObject<USpotLightComponent>(Owner);
+		if (!S)
+		{
+			continue;
+		}
+		S->SetupAttachment(this);
+		S->SetMobility(EComponentMobility::Movable);
+		S->SetRelativeLocation(F.LampPosition);
+		S->SetRelativeRotation(ToTarget.Rotation());
+		S->SetIntensityUnits(ELightUnits::Candelas);
+		// Candela = lux at the patch times the lamp-to-patch distance in metres squared.
+		const float Metres = Dist / 100.f;
+		S->SetIntensity(F.Lux * Metres * Metres);
+		S->SetLightColor(F.Color);
+		S->SetAttenuationRadius(Dist * 1.8f);
+		const float Outer = FMath::Clamp(FMath::RadiansToDegrees(FMath::Atan(F.PatchRadiusCm / Dist)), 4.f, 60.f);
+		S->SetOuterConeAngle(Outer);
+		S->SetInnerConeAngle(Outer * 0.45f);
+		S->CastShadows = false;
+		S->SetCastShadows(false);
+		S->bAffectsWorld = true;
+		S->SetVisibility(IsVisible());
+		S->RegisterComponent();
+		Floods.Add(S);
+	}
+}
+
 void URunningLightsComponent::ApplyScale(float DistanceRadiusCm)
 {
 	// Scale relative to the largest bulb so small formation lights stay smaller than the main beacons.
@@ -132,6 +176,15 @@ void URunningLightsComponent::TickComponent(float DeltaTime, ELevelTick TickType
 		return;
 	}
 	const double Distance = FVector::Dist(PC->PlayerCameraManager->GetCameraLocation(), GetComponentLocation());
+	// Floodlights only matter when the hull is big on screen; switch them off beyond that to spare the lighting pass.
+	const bool bFloodsOn = Distance < FloodlightRangeCm;
+	for (USpotLightComponent* S : Floods)
+	{
+		if (S && S->IsVisible() != bFloodsOn)
+		{
+			S->SetVisibility(bFloodsOn);
+		}
+	}
 	const float Wanted = FMath::Clamp((float)(Distance * MinAngularRadius), 0.f, MaxRadiusCm);
 	if (LastScale < 0.f || FMath::Abs(Wanted - LastScale) > FMath::Max(LastScale, 1.f) * 0.05f)
 	{

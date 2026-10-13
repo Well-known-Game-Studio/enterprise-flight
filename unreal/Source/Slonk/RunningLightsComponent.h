@@ -46,6 +46,29 @@ struct FRunningLight
 		: LocalPosition(InPos), Color(InColor), Mode(InMode), Period(InPeriod), Phase(InPhase), RadiusCm(InRadius), Brightness(InBrightness) {}
 };
 
+/** A hull floodlight: a lamp on the skin aimed at a patch of hull (registry, name, pennant). */
+USTRUCT(BlueprintType)
+struct FHullFloodlight
+{
+	GENERATED_BODY()
+
+	/** Lamp position in the owning component's local space (cm). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) FVector LampPosition = FVector::ZeroVector;
+	/** Centre of the lit patch, local space (cm). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) FVector TargetPosition = FVector::ZeroVector;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) FLinearColor Color = FLinearColor(1.f, 0.96f, 0.88f);
+	/** Illuminance at the patch centre (lux). The sun here is about 140 lux. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) float Lux = 45.f;
+	/** Radius of the lit patch (cm). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) float PatchRadiusCm = 1500.f;
+
+	FHullFloodlight() {}
+	FHullFloodlight(const FVector& InLamp, const FVector& InTarget, float InPatch, float InLux = 45.f)
+		: LampPosition(InLamp), TargetPosition(InTarget), Lux(InLux), PatchRadiusCm(InPatch) {}
+};
+
+class USpotLightComponent;
+
 UCLASS(ClassGroup = (Starship), meta = (BlueprintSpawnableComponent))
 class SLONK_API URunningLightsComponent : public UInstancedStaticMeshComponent
 {
@@ -63,6 +86,10 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Running Lights")
 	void ClearLights();
+
+	/** Replace the hull floodlights (spot lights attached under this component, so visibility follows it). */
+	UFUNCTION(BlueprintCallable, Category = "Running Lights")
+	void SetFloodlights(const TArray<FHullFloodlight>& InFloods);
 
 	/** Emissive strength of a fully lit bulb; high enough to bloom. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Running Lights")
@@ -82,6 +109,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Running Lights")
 	TSoftObjectPtr<UMaterialInterface> LightMaterial;
 
+	/** Floodlights are switched off beyond this camera distance (cm). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Running Lights")
+	float FloodlightRangeCm = 3.0e6f;
+
 	/** Convenience colours in the aviation / Starfleet convention. */
 	static FLinearColor PortRed() { return FLinearColor(1.f, 0.08f, 0.04f); }
 	static FLinearColor StarboardGreen() { return FLinearColor(0.1f, 1.f, 0.25f); }
@@ -93,6 +124,7 @@ private:
 	void ApplyScale(float Scale);
 
 	UPROPERTY() TArray<FRunningLight> Lights;
+	UPROPERTY() TArray<TObjectPtr<USpotLightComponent>> Floods;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> MID;
 	float LastScale = -1.f;
 	float ScaleTimer = 0.f;
