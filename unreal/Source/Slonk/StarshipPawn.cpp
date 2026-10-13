@@ -166,6 +166,12 @@ AStarshipPawn::AStarshipPawn()
 	AddLight(TEXT("BussardStarboard"), FVector(-2600.0, 3700.0, 2700.0), BussardRed, 100000.f, 12000.f, true, false);
 	AddLight(TEXT("Deflector"), FVector(1500.0, 0.0, -1700.0), WarpBlue, 120000.f, 16000.f, true, false);
 	AddLight(TEXT("ImpulseEngines"), FVector(-800.0, 0.0, 1500.0), ImpulseOrange, 30000.f, 10000.f, false, true);
+
+	// Saucer (slots 1 and 2) and engineering hull (slot 3) plating: no emissive. Nacelles (slot 4): hot.
+	SlotGlowWeights.Add(TEXT("Constitution_1"), 0.f);
+	SlotGlowWeights.Add(TEXT("Constitution_2"), 0.f);
+	SlotGlowWeights.Add(TEXT("Constitution_3"), 0.f);
+	SlotGlowWeights.Add(TEXT("Constitution_4"), 2.5f);
 }
 
 void AStarshipPawn::SetupRunningLights()
@@ -252,29 +258,62 @@ void AStarshipPawn::SetupRunningLights()
 	RunningLights->MaxRadiusCm = L * 0.03f;
 	RunningLights->SetLights(Lights);
 
-	// Floodlights: lamps on the impulse deck wash the registry on the saucer top and underside, lamps on the
-	// nacelle shoulders light the nacelle names, and lamps at the pylon roots light the name on the hull flanks.
+	// Floodlights (refit convention). Saucer: lamps near the middle of the top and underside, facing radially out
+	// across the plating to the rim. Flanks: lamps at the stern of the engineering hull shining forward along the
+	// name. Pylons: lamps at the pylon roots pointing up at the nacelles. Nacelles: lamps on top shining aft.
 	TArray<FHullFloodlight> Floods;
-	const FBox SaucerTopRear(FVector(-L * 0.06f, -W * 0.12f, 0.f), FVector(L * 0.14f, W * 0.12f, H));
-	const FBox SaucerBottom(FVector(L * 0.1f, -W, -H * 0.14f), FVector(L, W, H * 0.1f));
-	const FVector DeckTop = Probe(FVector(0, 0, 1), SaucerTopRear, FVector(L * 0.04f, 0.f, H * 0.25f));
+	// Hull section bounds (pawn space): saucer X -637..15240, Y +-7190; engineering hull X -7316..5776, Y +-1649,
+	// Z -3640..1716; nacelles+pylons X -15221..177, Y +-5333, Z -678..3551; impulse deck X 620..893, Z 1731..2128.
+	const FVector SaucerCentre(8050.f, 0.f, 0.f);
+	const float SaucerR = 7190.f;
+	auto SurfaceAt = [&](const FVector& XY, bool bTop) -> FVector
+	{
+		// The hull skin straight above (or below) a point on the saucer plan, from the mesh.
+		const FBox Column(FVector(XY.X - 250.f, XY.Y - 250.f, bTop ? 0.f : -H), FVector(XY.X + 250.f, XY.Y + 250.f, bTop ? H : 400.f));
+		return Probe(FVector(0, 0, bTop ? 1.f : -1.f), Column, FVector(XY.X, XY.Y, bTop ? 1800.f : -300.f));
+	};
+	{
+		const float Angles[6] = { 35.f, 90.f, 145.f, -35.f, -90.f, -145.f };
+		for (float Deg : Angles)
+		{
+			const float A = FMath::DegreesToRadians(Deg);
+			const FVector Dir(FMath::Cos(A), FMath::Sin(A), 0.f);
+			for (int32 Side = 0; Side < 2; ++Side)
+			{
+				const bool bTop = Side == 0;
+				// Lamp base a little out from the centre superstructure, patch two thirds of the way to the rim.
+				const FVector LampSkin = SurfaceAt(SaucerCentre + Dir * SaucerR * 0.24f, bTop);
+				const FVector Patch = SurfaceAt(SaucerCentre + Dir * SaucerR * 0.68f, bTop);
+				Floods.Add(FHullFloodlight(LampSkin + FVector(0.f, 0.f, bTop ? 120.f : -120.f), Patch, SaucerR * 0.26f, 40.f));
+			}
+		}
+	}
 	for (int32 Side = -1; Side <= 1; Side += 2)
 	{
-		const FBox TopPatch(FVector(L * 0.2f, Side < 0 ? -W * 0.32f : W * 0.08f, -H * 0.14f), FVector(L * 0.32f, Side < 0 ? -W * 0.08f : W * 0.32f, H));
-		const FVector TopTarget = Probe(FVector(0, 0, 1), TopPatch, FVector(L * 0.26f, Side * W * 0.2f, H * 0.15f));
-		Floods.Add(FHullFloodlight(DeckTop + FVector(0.f, Side * W * 0.05f, H * 0.02f), TopTarget, W * 0.14f));
-		const FBox BottomPatch(FVector(L * 0.2f, Side < 0 ? -W * 0.32f : W * 0.08f, -H * 0.14f), FVector(L * 0.32f, Side < 0 ? -W * 0.08f : W * 0.32f, H * 0.1f));
-		const FVector BottomTarget = Probe(FVector(0, 0, -1), BottomPatch, FVector(L * 0.26f, Side * W * 0.2f, -H * 0.05f));
-		const FVector BottomLamp = Probe(FVector(0, 0, -1), FBox(FVector(L * 0.1f, Side < 0 ? -W * 0.2f : W * 0.08f, -H * 0.14f), FVector(L * 0.16f, Side < 0 ? -W * 0.08f : W * 0.2f, H * 0.1f)), FVector(L * 0.12f, Side * W * 0.12f, -H * 0.08f));
-		Floods.Add(FHullFloodlight(BottomLamp - FVector(0.f, 0.f, H * 0.02f), BottomTarget, W * 0.14f));
-		// Nacelle name: outboard flank, lit from a lamp on the nacelle's shoulder a little aft of the bussard.
-		const FBox NacelleFlank(FVector(-L * 0.22f, Side < 0 ? -W : W * 0.14f, H * 0.12f), FVector(-L * 0.1f, Side < 0 ? -W * 0.14f : W, H));
-		const FVector NacSide = Probe(FVector(0, Side, 0), NacelleFlank, FVector(-L * 0.16f, Side * W * 0.3f, H * 0.37f));
-		Floods.Add(FHullFloodlight(NacSide + FVector(L * 0.07f, Side * W * 0.025f, H * 0.07f), NacSide + FVector(-L * 0.03f, 0.f, 0.f), H * 0.12f));
-		// Hull name on the engineering section's flank.
-		const FBox HullFlank(FVector(-L * 0.32f, Side < 0 ? -W * 0.13f : 0.f, -H), FVector(-L * 0.1f, Side < 0 ? 0.f : W * 0.13f, H * 0.05f));
-		const FVector HullSide = Probe(FVector(0, Side, 0), HullFlank, FVector(-L * 0.2f, Side * W * 0.1f, -H * 0.2f));
-		Floods.Add(FHullFloodlight(HullSide + FVector(L * 0.1f, Side * W * 0.03f, H * 0.1f), HullSide, H * 0.12f));
+		// Engineering hull flank: from the stern, forward along the side where the name is painted.
+		const FBox FlankAft(FVector(-6500.f, Side < 0 ? -2500.f : 0.f, -2600.f), FVector(-4500.f, Side < 0 ? 0.f : 2500.f, 800.f));
+		const FBox FlankFore(FVector(500.f, Side < 0 ? -2500.f : 0.f, -2600.f), FVector(3000.f, Side < 0 ? 0.f : 2500.f, 800.f));
+		const FVector Stern = Probe(FVector(0, Side, 0), FlankAft, FVector(-5500.f, Side * 1500.f, -900.f));
+		const FVector Fore = Probe(FVector(0, Side, 0), FlankFore, FVector(1700.f, Side * 1600.f, -900.f));
+		Floods.Add(FHullFloodlight(Stern + FVector(0.f, Side * 130.f, 0.f), Fore, 1400.f, 45.f));
+		// Pylon root on the hull's top shoulder, pointing up the pylon at the nacelle's inboard underside.
+		const FBox Shoulder(FVector(-6200.f, Side < 0 ? -1700.f : 300.f, 600.f), FVector(-4200.f, Side < 0 ? -300.f : 1700.f, 2200.f));
+		const FVector Root = Probe(FVector(0, 0, 1), Shoulder, FVector(-5200.f, Side * 1000.f, 1600.f));
+		const FBox NacelleBelly(FVector(-8500.f, Side < 0 ? -4500.f : 2800.f, 1200.f), FVector(-5500.f, Side < 0 ? -2800.f : 4500.f, 3000.f));
+		const FVector Belly = Probe(FVector(0, 0, -1), NacelleBelly, FVector(-7000.f, Side * 3600.f, 2200.f));
+		Floods.Add(FHullFloodlight(Root + FVector(0.f, 0.f, 120.f), Belly, 1300.f, 45.f));
+		// On the nacelle: a lamp on its top shoulder near the front, shining aft along the top where the registry is.
+		const FBox NacelleTopFore(FVector(-5000.f, Side < 0 ? -4500.f : 2800.f, 2200.f), FVector(-3200.f, Side < 0 ? -2800.f : 4500.f, H));
+		const FBox NacelleTopAft(FVector(-11500.f, Side < 0 ? -4500.f : 2800.f, 2200.f), FVector(-9000.f, Side < 0 ? -2800.f : 4500.f, H));
+		const FVector TopFore = Probe(FVector(0, 0, 1), NacelleTopFore, FVector(-4000.f, Side * 3700.f, 3300.f));
+		const FVector TopAft = Probe(FVector(0, 0, 1), NacelleTopAft, FVector(-10000.f, Side * 3700.f, 3300.f));
+		Floods.Add(FHullFloodlight(TopFore + FVector(0.f, 0.f, 110.f), TopAft, 1200.f, 40.f));
+		// And one on the nacelle's outboard shoulder lighting the outboard flank.
+		const FBox NacelleOutFore(FVector(-5000.f, Side < 0 ? -6000.f : 2800.f, 1500.f), FVector(-3200.f, Side < 0 ? -2800.f : 6000.f, H));
+		const FBox NacelleOutAft(FVector(-11500.f, Side < 0 ? -6000.f : 2800.f, 1500.f), FVector(-9000.f, Side < 0 ? -2800.f : 6000.f, H));
+		const FVector OutFore = Probe(FVector(0, Side, 0), NacelleOutFore, FVector(-4000.f, Side * 4300.f, 2700.f));
+		const FVector OutAft = Probe(FVector(0, Side, 0), NacelleOutAft, FVector(-10000.f, Side * 4300.f, 2700.f));
+		Floods.Add(FHullFloodlight(OutFore + FVector(0.f, Side * 110.f, 0.f), OutAft, 1100.f, 40.f));
 	}
 	RunningLights->SetFloodlights(Floods);
 }
@@ -739,11 +778,14 @@ void AStarshipPawn::UpdateHullGlow(float DeltaTime)
 	const float Throttle = Movement ? FMath::Abs((float)Movement->Throttle) : 0.f;
 	const float ImpulseGlow = 0.35f + 3.f * Throttle;
 
+	const TArray<FName> SlotNames = ShipMesh ? ShipMesh->GetMaterialSlotNames() : TArray<FName>();
 	for (int32 i = 0; i < HullMaterials.Num(); ++i)
 	{
 		if (UMaterialInstanceDynamic* Mid = HullMaterials[i])
 		{
-			const float Weight = (i == ThrusterMaterialIndex) ? BaseGlowWeight * ImpulseGlow : BaseGlowWeight * Glow;
+			const float* SlotWeight = SlotNames.IsValidIndex(i) ? SlotGlowWeights.Find(SlotNames[i]) : nullptr;
+			const float Slot = SlotWeight ? *SlotWeight : 1.f;
+			const float Weight = (i == ThrusterMaterialIndex) ? BaseGlowWeight * ImpulseGlow : BaseGlowWeight * Slot * Glow;
 			Mid->SetScalarParameterValue(GlowParameterName, Weight);
 		}
 	}

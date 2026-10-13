@@ -188,7 +188,14 @@ public:
 	FName GlowParameterName = TEXT("EmissiveColorMapWeight");
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull")
-	float BaseGlowWeight = 2.5f;
+	float BaseGlowWeight = 1.0f;
+
+	/**
+	 * Per material slot multiplier on BaseGlowWeight. The hull plating is not emissive at all; the nacelle slot
+	 * (bussards and grilles) runs hot. Slots not listed use 1.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull")
+	TMap<FName, float> SlotGlowWeights;
 
 	/** Material slot whose emissive is driven by impulse throttle (the impulse exhaust grille). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull")

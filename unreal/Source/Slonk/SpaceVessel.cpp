@@ -409,18 +409,35 @@ void AProceduralStarship::BuildMeshes(UDynamicMesh* HM, UDynamicMesh* GM, FRando
 			PendingLights.Add(FRunningLight(NacStart + FVector(NacLen * 0.5f, Side * NacR * 1.02f, 0.f), RL::StrobeWhite(), ERunningLightMode::Strobe, Strobe, Ph + 0.5f * Pair + 0.25f, Bulb * 0.9f));
 			if (Pair == 0)
 			{
-				// Floodlight on the nacelle's shoulder lighting its name on the outboard side.
-				PendingFloods.Add(FHullFloodlight(NacStart + FVector(NacLen * 0.8f, Side * NacR * 1.15f, NacR * 1.35f), NacStart + FVector(NacLen * 0.45f, Side * NacR * 1.0f, 0.f), NacR * 1.3f));
+				// Pylon root lamp pointing up at the nacelle's inboard underside, a lamp on the nacelle's top shoulder
+				// shining aft along the registry, and one on its outboard shoulder for the flank.
+				const FVector PylonRoot = HullStart + FVector(HullLen * 0.45f, Side * HullR * 0.5f, HullR * 0.5f);
+				PendingFloods.Add(FHullFloodlight(PylonRoot + FVector(0.f, 0.f, HullR * 0.3f), NacStart + FVector(NacLen * 0.5f, -Side * NacR * 0.6f, -NacR * 0.75f), NacR * 1.6f, 45.f));
+				PendingFloods.Add(FHullFloodlight(NacStart + FVector(NacLen * 0.85f, 0.f, NacR * 1.1f), NacStart + FVector(NacLen * 0.3f, 0.f, NacR * 0.9f), NacR * 1.3f, 40.f));
+				PendingFloods.Add(FHullFloodlight(NacStart + FVector(NacLen * 0.85f, Side * NacR * 1.1f, NacR * 0.2f), NacStart + FVector(NacLen * 0.3f, Side * NacR * 0.95f, 0.f), NacR * 1.3f, 40.f));
 			}
 		}
 	}
-	// Floodlights: lamps on the impulse deck wash the registry on the saucer top and underside, and lamps on the
-	// pylon roots light the name on the engineering hull's flanks.
+	// Saucer floodlights: lamps near the middle of the top and underside facing radially out across the plating.
+	{
+		const float Angles[6] = { 35.f, 90.f, 145.f, -35.f, -90.f, -145.f };
+		for (float Deg : Angles)
+		{
+			const float A = FMath::DegreesToRadians(Deg);
+			const FVector Dir(FMath::Cos(A), FMath::Sin(A), 0.f);
+			for (int32 Up = -1; Up <= 1; Up += 2)
+			{
+				// Ellipsoid skin height at a fraction r of the radius is T * sqrt(1 - r^2).
+				const FVector Lamp = SaucerC + Dir * SaucerR * 0.24f + FVector(0.f, 0.f, Up * (SaucerT * 0.97f + L * 0.004f));
+				const FVector Patch = SaucerC + Dir * SaucerR * 0.68f + FVector(0.f, 0.f, Up * SaucerT * 0.73f);
+				PendingFloods.Add(FHullFloodlight(Lamp, Patch, SaucerR * 0.26f, 40.f));
+			}
+		}
+	}
+	// Engineering hull flanks: from the stern forward along the name.
 	for (int32 Side = -1; Side <= 1; Side += 2)
 	{
-		PendingFloods.Add(FHullFloodlight(SaucerC + FVector(-SaucerR * 0.86f, Side * SaucerR * 0.12f, SaucerT * 1.0f), SaucerC + FVector(SaucerR * 0.35f, Side * SaucerR * 0.3f, SaucerT * 0.92f), SaucerR * 0.3f));
-		PendingFloods.Add(FHullFloodlight(SaucerC + FVector(-SaucerR * 0.86f, Side * SaucerR * 0.12f, -SaucerT * 0.95f), SaucerC + FVector(SaucerR * 0.35f, Side * SaucerR * 0.3f, -SaucerT * 0.9f), SaucerR * 0.3f));
-		PendingFloods.Add(FHullFloodlight(HullStart + FVector(HullLen * 0.95f, Side * HullR * 1.5f, HullR * 0.9f), HullStart + FVector(HullLen * 0.5f, Side * HullR * 1.0f, 0.f), HullR * 0.9f));
+		PendingFloods.Add(FHullFloodlight(HullStart + FVector(HullLen * 0.08f, Side * HullR * 1.1f, HullR * 0.1f), HullStart + FVector(HullLen * 0.75f, Side * HullR * 1.0f, 0.f), HullR * 0.9f, 45.f));
 	}
 }
 
