@@ -1,5 +1,7 @@
 # slonk-the-game
 
+<img width="100%" alt="Approaching the ringed gas giant" src="https://github.com/user-attachments/assets/ef7e43e8-1f14-4487-a923-1a5c9cd51bac" />
+
 A flyable, life-size Star Trek solar system in Unreal Engine 5.8. You fly a kinematic Enterprise with impulse and warp drive through a procedurally generated star system at real scale: planets with terrain, atmospheres, clouds and rings, an asteroid belt, spinning space stations, patrolling starships that warp between them, a Borg cube, and combat with shields, phasers, torpedoes and a tractor beam. A floating origin keeps AU-scale distances precise, and an original-series bridge set gives a first-person view.
 
 The project lives in `unreal/` (open `Slonk.uproject` in UE 5.8, build the `SlonkEditor` target, open the `SpaceTest` map and press Play). C++ is in `unreal/Source/Slonk`; materials and the map are generated assets under `unreal/Content/Slonk`.
@@ -7,6 +9,15 @@ The project lives in `unreal/` (open `Slonk.uproject` in UE 5.8, build the `Slon
 ## Flight
 
 https://github.com/user-attachments/assets/80bc381e-5d8e-4249-b6ed-9dcae36ad8f8
+
+## Planets
+
+Every world is generated at real scale from a seed: Perlin and fBm height and biome noise, Earth-size relief, clipmap terrain that stays sharp down to the surface, volumetric atmospheres and cloud decks, rings from a generated profile, lava emissive and ocean sun glint.
+
+<img width="49%" alt="An Earth-like world from three radii out" src="https://github.com/user-attachments/assets/42d6cd62-72c5-4062-8516-d1e837b71ad9" /> <img width="49%" alt="Low orbit over the Earth-like world: ocean, coast and terrain" src="https://github.com/user-attachments/assets/c009fe6d-9786-43b7-af09-f8cceb31af4e" />
+<img width="49%" alt="Night side of the Earth-like world with its terminator" src="https://github.com/user-attachments/assets/5d5dcfbd-dbcd-4764-bb0a-a9618feb1355" /> <img width="49%" alt="An ocean world under cloud" src="https://github.com/user-attachments/assets/cb9d117b-40a4-45d1-a7de-e977e17f2306" />
+<img width="49%" alt="Sunrise over the ocean world from low orbit" src="https://github.com/user-attachments/assets/468df791-4dfd-4ce7-9a3e-53fdeefb1297" /> <img width="49%" alt="The ringed gas giant with the ring shadow across it" src="https://github.com/user-attachments/assets/3c48e414-9391-438a-a735-2e00a7918409" />
+<img width="49%" alt="A lava world glowing through its crust" src="https://github.com/user-attachments/assets/5ff6c174-db00-460d-ae95-16fe0cceaa0d" /> <img width="49%" alt="The star up close, photosphere and corona" src="https://github.com/user-attachments/assets/3d069559-7eeb-43a1-a4a9-e001e798e566" />
 
 ## Gallery
 
