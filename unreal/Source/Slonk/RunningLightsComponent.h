@@ -57,13 +57,13 @@ struct FHullFloodlight
 	/** Centre of the lit patch, local space (cm). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) FVector TargetPosition = FVector::ZeroVector;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) FLinearColor Color = FLinearColor(1.f, 0.96f, 0.88f);
-	/** Illuminance at the patch centre (lux). The sun here is about 140 lux. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite) float Lux = 45.f;
+	/** Illuminance at the patch centre (lux). The sun here is about 140 lux; a hull lamp is a small fraction of that. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) float Lux = 14.f;
 	/** Radius of the lit patch (cm). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) float PatchRadiusCm = 1500.f;
 
 	FHullFloodlight() {}
-	FHullFloodlight(const FVector& InLamp, const FVector& InTarget, float InPatch, float InLux = 45.f)
+	FHullFloodlight(const FVector& InLamp, const FVector& InTarget, float InPatch, float InLux = 14.f)
 		: LampPosition(InLamp), TargetPosition(InTarget), Lux(InLux), PatchRadiusCm(InPatch) {}
 };
 

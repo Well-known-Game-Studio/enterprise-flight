@@ -168,9 +168,10 @@ AStarshipPawn::AStarshipPawn()
 	AddLight(TEXT("ImpulseEngines"), FVector(-800.0, 0.0, 1500.0), ImpulseOrange, 30000.f, 10000.f, false, true);
 
 	// Saucer (slots 1 and 2) and engineering hull (slot 3) plating: no emissive. Nacelles (slot 4): hot.
-	SlotGlowWeights.Add(TEXT("Constitution_1"), 0.f);
-	SlotGlowWeights.Add(TEXT("Constitution_2"), 0.f);
-	SlotGlowWeights.Add(TEXT("Constitution_3"), 0.f);
+	// The glow maps carry the lit windows; this weight shows them without the plating reading as self-lit.
+	SlotGlowWeights.Add(TEXT("Constitution_1"), 1.3f);
+	SlotGlowWeights.Add(TEXT("Constitution_2"), 1.3f);
+	SlotGlowWeights.Add(TEXT("Constitution_3"), 1.3f);
 	SlotGlowWeights.Add(TEXT("Constitution_4"), 2.5f);
 }
 
@@ -281,10 +282,12 @@ void AStarshipPawn::SetupRunningLights()
 			for (int32 Side = 0; Side < 2; ++Side)
 			{
 				const bool bTop = Side == 0;
+				// No aft-facing lamps under the saucer: they would wash the neck and engineering hull.
+				if (!bTop && FMath::Abs(Deg) > 100.f) { continue; }
 				// Lamp base a little out from the centre superstructure, patch two thirds of the way to the rim.
 				const FVector LampSkin = SurfaceAt(SaucerCentre + Dir * SaucerR * 0.24f, bTop);
 				const FVector Patch = SurfaceAt(SaucerCentre + Dir * SaucerR * 0.68f, bTop);
-				Floods.Add(FHullFloodlight(LampSkin + FVector(0.f, 0.f, bTop ? 120.f : -120.f), Patch, SaucerR * 0.26f, 40.f));
+				Floods.Add(FHullFloodlight(LampSkin + FVector(0.f, 0.f, bTop ? 120.f : -120.f), Patch, SaucerR * 0.16f, 14.f));
 			}
 		}
 	}
@@ -295,25 +298,25 @@ void AStarshipPawn::SetupRunningLights()
 		const FBox FlankFore(FVector(500.f, Side < 0 ? -2500.f : 0.f, -2600.f), FVector(3000.f, Side < 0 ? 0.f : 2500.f, 800.f));
 		const FVector Stern = Probe(FVector(0, Side, 0), FlankAft, FVector(-5500.f, Side * 1500.f, -900.f));
 		const FVector Fore = Probe(FVector(0, Side, 0), FlankFore, FVector(1700.f, Side * 1600.f, -900.f));
-		Floods.Add(FHullFloodlight(Stern + FVector(0.f, Side * 130.f, 0.f), Fore, 1400.f, 45.f));
+		Floods.Add(FHullFloodlight(Stern + FVector(0.f, Side * 130.f, 0.f), Fore, 1000.f, 14.f));
 		// Pylon root on the hull's top shoulder, pointing up the pylon at the nacelle's inboard underside.
 		const FBox Shoulder(FVector(-6200.f, Side < 0 ? -1700.f : 300.f, 600.f), FVector(-4200.f, Side < 0 ? -300.f : 1700.f, 2200.f));
 		const FVector Root = Probe(FVector(0, 0, 1), Shoulder, FVector(-5200.f, Side * 1000.f, 1600.f));
 		const FBox NacelleBelly(FVector(-8500.f, Side < 0 ? -4500.f : 2800.f, 1200.f), FVector(-5500.f, Side < 0 ? -2800.f : 4500.f, 3000.f));
 		const FVector Belly = Probe(FVector(0, 0, -1), NacelleBelly, FVector(-7000.f, Side * 3600.f, 2200.f));
-		Floods.Add(FHullFloodlight(Root + FVector(0.f, 0.f, 120.f), Belly, 1300.f, 45.f));
+		Floods.Add(FHullFloodlight(Root + FVector(0.f, 0.f, 120.f), Belly, 900.f, 14.f));
 		// On the nacelle: a lamp on its top shoulder near the front, shining aft along the top where the registry is.
 		const FBox NacelleTopFore(FVector(-5000.f, Side < 0 ? -4500.f : 2800.f, 2200.f), FVector(-3200.f, Side < 0 ? -2800.f : 4500.f, H));
 		const FBox NacelleTopAft(FVector(-11500.f, Side < 0 ? -4500.f : 2800.f, 2200.f), FVector(-9000.f, Side < 0 ? -2800.f : 4500.f, H));
 		const FVector TopFore = Probe(FVector(0, 0, 1), NacelleTopFore, FVector(-4000.f, Side * 3700.f, 3300.f));
 		const FVector TopAft = Probe(FVector(0, 0, 1), NacelleTopAft, FVector(-10000.f, Side * 3700.f, 3300.f));
-		Floods.Add(FHullFloodlight(TopFore + FVector(0.f, 0.f, 110.f), TopAft, 1200.f, 40.f));
+		Floods.Add(FHullFloodlight(TopFore + FVector(0.f, 0.f, 110.f), TopAft, 800.f, 12.f));
 		// And one on the nacelle's outboard shoulder lighting the outboard flank.
 		const FBox NacelleOutFore(FVector(-5000.f, Side < 0 ? -6000.f : 2800.f, 1500.f), FVector(-3200.f, Side < 0 ? -2800.f : 6000.f, H));
 		const FBox NacelleOutAft(FVector(-11500.f, Side < 0 ? -6000.f : 2800.f, 1500.f), FVector(-9000.f, Side < 0 ? -2800.f : 6000.f, H));
 		const FVector OutFore = Probe(FVector(0, Side, 0), NacelleOutFore, FVector(-4000.f, Side * 4300.f, 2700.f));
 		const FVector OutAft = Probe(FVector(0, Side, 0), NacelleOutAft, FVector(-10000.f, Side * 4300.f, 2700.f));
-		Floods.Add(FHullFloodlight(OutFore + FVector(0.f, Side * 110.f, 0.f), OutAft, 1100.f, 40.f));
+		Floods.Add(FHullFloodlight(OutFore + FVector(0.f, Side * 110.f, 0.f), OutAft, 800.f, 12.f));
 	}
 	RunningLights->SetFloodlights(Floods);
 }

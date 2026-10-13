@@ -113,6 +113,18 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vessel")
 	float GlowIntensity = 150.f;
 
+	/** Window zones for M_Hull, set by BuildMeshes (local space). Radius 0 = no saucer windows; MaxY 0 = no hull windows. */
+	FVector WindowSaucerCenter = FVector::ZeroVector;
+	float WindowSaucerRadius = 0.f;
+	float WindowSaucerThickness = 1.f;
+	float WindowHullMaxY = 0.f;
+	float WindowHullMaxZ = 0.f;
+	float WindowPitch = 600.f;
+	float WindowDeck = 400.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vessel")
+	float WindowGlow = 25.f;
+	void ApplyWindowParams(UMaterialInstanceDynamic* MID) const;
+
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> HullMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> GlowMID;
 	bool bBuilt = false;

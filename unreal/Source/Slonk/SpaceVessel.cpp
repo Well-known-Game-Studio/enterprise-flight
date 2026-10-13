@@ -169,6 +169,7 @@ void ASpaceVessel::ApplyMaterials()
 	{
 		HullMID->SetVectorParameterValue(TEXT("HullColor"), HullColor);
 		HullMID->SetScalarParameterValue(TEXT("PanelScale"), 400.f / FMath::Max(SizeCm, 1.f));
+		ApplyWindowParams(HullMID);
 		Hull->ConfigureMaterialSet({ HullMID.Get() });
 	}
 	if (GlowMID)
@@ -177,6 +178,22 @@ void ASpaceVessel::ApplyMaterials()
 		GlowMID->SetScalarParameterValue(TEXT("Intensity"), GlowIntensity);
 		Glow->ConfigureMaterialSet({ GlowMID.Get() });
 	}
+}
+
+void ASpaceVessel::ApplyWindowParams(UMaterialInstanceDynamic* MID) const
+{
+	if (!MID)
+	{
+		return;
+	}
+	MID->SetVectorParameterValue(TEXT("WindowSaucerCenter"), FLinearColor(WindowSaucerCenter.X, WindowSaucerCenter.Y, WindowSaucerCenter.Z, 1.f));
+	MID->SetScalarParameterValue(TEXT("WindowSaucerRadius"), WindowSaucerRadius);
+	MID->SetScalarParameterValue(TEXT("WindowSaucerThickness"), WindowSaucerThickness);
+	MID->SetScalarParameterValue(TEXT("WindowHullMaxY"), WindowHullMaxY);
+	MID->SetScalarParameterValue(TEXT("WindowHullMaxZ"), WindowHullMaxZ);
+	MID->SetScalarParameterValue(TEXT("WindowPitch"), WindowPitch);
+	MID->SetScalarParameterValue(TEXT("WindowDeck"), WindowDeck);
+	MID->SetScalarParameterValue(TEXT("WindowGlow"), WindowGlow);
 }
 
 void ASpaceVessel::Rebuild()
@@ -334,6 +351,14 @@ void AProceduralStarship::BuildMeshes(UDynamicMesh* HM, UDynamicMesh* GM, FRando
 	const float HullLen = L * Rng.FRandRange(0.36f, 0.48f);
 	const FVector HullStart(-L * 0.5f + L * 0.05f, 0.f, -L * Rng.FRandRange(0.02f, 0.06f));
 	CapsuleX(HM, HullStart, HullLen, HullR);
+	// Window zones for the hull material: the saucer rim and the engineering hull's flanks.
+	WindowSaucerCenter = SaucerC;
+	WindowSaucerRadius = SaucerR;
+	WindowSaucerThickness = SaucerT;
+	WindowHullMaxY = HullR * 1.05f;
+	WindowHullMaxZ = HullStart.Z + HullR * 0.9f;
+	WindowPitch = L * 0.018f;
+	WindowDeck = L * 0.012f;
 	// Deflector dish at the hull's nose (glows).
 	const FVector DishC = HullStart + FVector(HullLen + HullR * 1.9f, 0.f, 0.f);
 	PF::AppendCone(GM, Opts(), FTransform(FRotator(-90.f, 0.f, 0.f), DishC - FVector(HullR * 0.25f, 0.f, 0.f)), HullR * 0.75f, HullR * 0.35f, HullR * 0.3f, 20, 1, true, EGeometryScriptPrimitiveOriginMode::Base);
@@ -412,9 +437,9 @@ void AProceduralStarship::BuildMeshes(UDynamicMesh* HM, UDynamicMesh* GM, FRando
 				// Pylon root lamp pointing up at the nacelle's inboard underside, a lamp on the nacelle's top shoulder
 				// shining aft along the registry, and one on its outboard shoulder for the flank.
 				const FVector PylonRoot = HullStart + FVector(HullLen * 0.45f, Side * HullR * 0.5f, HullR * 0.5f);
-				PendingFloods.Add(FHullFloodlight(PylonRoot + FVector(0.f, 0.f, HullR * 0.3f), NacStart + FVector(NacLen * 0.5f, -Side * NacR * 0.6f, -NacR * 0.75f), NacR * 1.6f, 45.f));
-				PendingFloods.Add(FHullFloodlight(NacStart + FVector(NacLen * 0.85f, 0.f, NacR * 1.1f), NacStart + FVector(NacLen * 0.3f, 0.f, NacR * 0.9f), NacR * 1.3f, 40.f));
-				PendingFloods.Add(FHullFloodlight(NacStart + FVector(NacLen * 0.85f, Side * NacR * 1.1f, NacR * 0.2f), NacStart + FVector(NacLen * 0.3f, Side * NacR * 0.95f, 0.f), NacR * 1.3f, 40.f));
+				PendingFloods.Add(FHullFloodlight(PylonRoot + FVector(0.f, 0.f, HullR * 0.3f), NacStart + FVector(NacLen * 0.5f, -Side * NacR * 0.6f, -NacR * 0.75f), NacR * 1.1f, 14.f));
+				PendingFloods.Add(FHullFloodlight(NacStart + FVector(NacLen * 0.85f, 0.f, NacR * 1.1f), NacStart + FVector(NacLen * 0.3f, 0.f, NacR * 0.9f), NacR * 0.9f, 12.f));
+				PendingFloods.Add(FHullFloodlight(NacStart + FVector(NacLen * 0.85f, Side * NacR * 1.1f, NacR * 0.2f), NacStart + FVector(NacLen * 0.3f, Side * NacR * 0.95f, 0.f), NacR * 0.9f, 12.f));
 			}
 		}
 	}
@@ -427,17 +452,19 @@ void AProceduralStarship::BuildMeshes(UDynamicMesh* HM, UDynamicMesh* GM, FRando
 			const FVector Dir(FMath::Cos(A), FMath::Sin(A), 0.f);
 			for (int32 Up = -1; Up <= 1; Up += 2)
 			{
+				// No aft-facing lamps under the saucer: they would wash the neck and engineering hull.
+				if (Up < 0 && FMath::Abs(Deg) > 100.f) { continue; }
 				// Ellipsoid skin height at a fraction r of the radius is T * sqrt(1 - r^2).
 				const FVector Lamp = SaucerC + Dir * SaucerR * 0.24f + FVector(0.f, 0.f, Up * (SaucerT * 0.97f + L * 0.004f));
 				const FVector Patch = SaucerC + Dir * SaucerR * 0.68f + FVector(0.f, 0.f, Up * SaucerT * 0.73f);
-				PendingFloods.Add(FHullFloodlight(Lamp, Patch, SaucerR * 0.26f, 40.f));
+				PendingFloods.Add(FHullFloodlight(Lamp, Patch, SaucerR * 0.16f, 14.f));
 			}
 		}
 	}
 	// Engineering hull flanks: from the stern forward along the name.
 	for (int32 Side = -1; Side <= 1; Side += 2)
 	{
-		PendingFloods.Add(FHullFloodlight(HullStart + FVector(HullLen * 0.08f, Side * HullR * 1.1f, HullR * 0.1f), HullStart + FVector(HullLen * 0.75f, Side * HullR * 1.0f, 0.f), HullR * 0.9f, 45.f));
+		PendingFloods.Add(FHullFloodlight(HullStart + FVector(HullLen * 0.08f, Side * HullR * 1.1f, HullR * 0.1f), HullStart + FVector(HullLen * 0.75f, Side * HullR * 1.0f, 0.f), HullR * 0.7f, 14.f));
 	}
 }
 
@@ -470,6 +497,7 @@ void AProceduralStarship::OnMeshesBuilt()
 		{
 			EchoHullMIDs[i]->SetVectorParameterValue(TEXT("HullColor"), HullColor);
 			EchoHullMIDs[i]->SetScalarParameterValue(TEXT("PanelScale"), 400.f / FMath::Max(SizeCm, 1.f));
+			ApplyWindowParams(EchoHullMIDs[i]);
 			EchoHulls[i]->ConfigureMaterialSet({ EchoHullMIDs[i].Get() });
 		}
 		if (EchoGlowMIDs[i])
@@ -1007,6 +1035,12 @@ void ASpaceStation::BuildMeshes(UDynamicMesh* HM, UDynamicMesh* GM, FRandomStrea
 	const float HubR = D * Rng.FRandRange(0.06f, 0.09f);
 	const float HubH = D * Rng.FRandRange(0.55f, 0.8f);
 	CylinderZ(HM, FVector(0.f, 0.f, -HubH * 0.5f), HubR, HubH, 28);
+	// Windows round the hub: treat it as a tall "saucer" so the arc coordinate wraps round it.
+	WindowSaucerCenter = FVector::ZeroVector;
+	WindowSaucerRadius = HubR;
+	WindowSaucerThickness = HubH * 0.5f;
+	WindowPitch = D * 0.012f;
+	WindowDeck = D * 0.01f;
 	// Mushroom cap and a lower cone.
 	ConeZ(HM, FVector(0.f, 0.f, HubH * 0.5f), HubR * 1.1f, D * Rng.FRandRange(0.14f, 0.2f), D * 0.08f, 28);
 	CylinderZ(HM, FVector(0.f, 0.f, HubH * 0.5f + D * 0.08f), D * Rng.FRandRange(0.14f, 0.2f), D * 0.04f, 28);
