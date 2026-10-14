@@ -518,20 +518,34 @@ void AProceduralStarship::PickWaypoint()
 	bHasWaypoint = true;
 }
 
+void AProceduralStarship::BeginPlay()
+{
+	Super::BeginPlay();
+	// Traffic spawns ships deferred, so HomeLocation is already set here: convert it to universe space in the
+	// frame it was given, before a floating-origin rebase can move the world frame under it.
+	EnsureHome();
+}
+
+void AProceduralStarship::EnsureHome()
+{
+	if (bHomeSet)
+	{
+		return;
+	}
+	if (HomeLocation.IsNearlyZero())
+	{
+		HomeLocation = GetActorLocation();
+	}
+	HomeUniverse = ToUniverse(HomeLocation);
+	NavRng.Initialize(Seed * 31 + 7);
+	WarpTimer = NavRng.FRandRange(WarpIntervalMin, WarpIntervalMax);
+	bHomeSet = true;
+}
+
 void AProceduralStarship::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
-	if (!bHomeSet)
-	{
-		if (HomeLocation.IsNearlyZero())
-		{
-			HomeLocation = GetActorLocation();
-		}
-		HomeUniverse = ToUniverse(HomeLocation);
-		NavRng.Initialize(Seed * 31 + 7);
-		WarpTimer = NavRng.FRandRange(WarpIntervalMin, WarpIntervalMax);
-		bHomeSet = true;
-	}
+	EnsureHome();
 	if (bDying)
 	{
 		return;

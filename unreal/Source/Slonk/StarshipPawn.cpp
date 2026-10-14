@@ -31,6 +31,7 @@
 #include "WarpStreaksComponent.h"
 #include "BridgeInteriorComponent.h"
 #include "DistantStarsComponent.h"
+#include "WarpViewComponent.h"
 
 AStarshipPawn::AStarshipPawn()
 {
@@ -120,6 +121,7 @@ AStarshipPawn::AStarshipPawn()
 	WarpStreaks = CreateDefaultSubobject<UWarpStreaksComponent>(TEXT("WarpStreaks"));
 	WarpStreaks->SetupAttachment(ChaseCamera);
 
+	WarpView = CreateDefaultSubobject<UWarpViewComponent>(TEXT("WarpView"));
 	PostProcess = CreateDefaultSubobject<UPostProcessComponent>(TEXT("PostProcess"));
 	PostProcess->SetupAttachment(CollisionBox);
 	PostProcess->bUnbound = true;
@@ -391,6 +393,16 @@ void AStarshipPawn::ApplyHullDimensions()
 void AStarshipPawn::BeginPlay()
 {
 	Super::BeginPlay();
+	// The warp view parameters must see this frame's camera: the spring arm applies its lag in its own tick
+	// (post-physics) and the camera manager reads the camera components after every tick group, so push them
+	// from a post-update tick that waits for the arm and cameras.
+	if (WarpView)
+	{
+		WarpView->AddTickPrerequisiteComponent(ChaseArm);
+		WarpView->AddTickPrerequisiteComponent(ChaseCamera);
+		WarpView->AddTickPrerequisiteComponent(BridgeCamera);
+		WarpView->AddTickPrerequisiteComponent(CinematicCamera);
+	}
 	ApplyHullDimensions();
 	SetupHullMaterials();
 	SetupHullLights();
@@ -436,12 +448,14 @@ FVector AStarshipPawn::GetUniversePosition() const
 	return GetActorLocation();
 }
 
-void AStarshipPawn::UpdateWarpPostProcess(float Streak, float Flash)
+void AStarshipPawn::UpdateWarpPostProcess()
 {
 	if (!WarpPPMID)
 	{
 		return;
 	}
+	const float Streak = LastStreak;
+	const float Flash = LastFlash;
 	FPostProcessSettings& S = PostProcess->Settings;
 	for (FWeightedBlendable& B : S.WeightedBlendables.Array)
 	{
@@ -458,42 +472,41 @@ void AStarshipPawn::UpdateWarpPostProcess(float Streak, float Flash)
 	const bool bRelativistic = WarpVisualMode == EWarpVisualMode::Relativistic;
 	const FVector Travel = (Movement && Movement->Velocity.SizeSquared() > 1.0) ? Movement->Velocity.GetSafeNormal() : GetActorForwardVector();
 
-	// Camera frame. The classic look wants the direction of travel as a screen point; the relativistic look works
-	// per pixel in view space (x right, y up, z forward) and also needs the camera basis to get back to world
-	// space for the sky it synthesises where the frame has no light to sample.
-	FVector CamLoc = GetActorLocation();
-	FRotator CamRot = GetActorRotation();
-	float ForwardU = 0.5f, ForwardV = 0.5f, Behind = 0.f;
+	// Camera frame, taken from the active camera component itself (this runs after the spring arm and the
+	// cameras have ticked, and the camera manager will read the same transform for this frame). The classic
+	// look wants the direction of travel as a screen point; the relativistic look works per pixel in view
+	// space (x right, y up, z forward) and also needs the camera basis to get back to world space for the sky
+	// it synthesises where the frame has no light to sample.
+	UCameraComponent* Cam = GetActiveCamera();
+	const FTransform CamXf = Cam ? Cam->GetComponentTransform() : GetActorTransform();
+	const FVector CamLoc = CamXf.GetLocation();
+	const FVector CamFwd = CamXf.GetUnitAxis(EAxis::X);
+	const FVector CamRight = CamXf.GetUnitAxis(EAxis::Y);
+	const FVector CamUp = CamXf.GetUnitAxis(EAxis::Z);
+	auto ToView = [&](const FVector& W) { return FVector(W | CamRight, W | CamUp, W | CamFwd); };
+	auto AsColor = [](const FVector& W) { return FLinearColor((float)W.X, (float)W.Y, (float)W.Z, 0.f); };
+
+	// Classic: where the direction of travel lands on screen (viewport UV), projected with the camera's own
+	// field of view. If it is behind the camera, use the anti-direction and flag it so the shader pushes outward
+	// instead of pulling inward.
+	float Aspect = 16.f / 9.f;
 	if (APlayerController* PC = Cast<APlayerController>(GetController()))
 	{
-		PC->GetPlayerViewPoint(CamLoc, CamRot);
-		// Where the direction of travel lands on screen (viewport UV). If it is behind the camera, use the
-		// anti-direction and flag it so the classic shader pushes outward instead of pulling inward.
-		const float Facing = FVector::DotProduct(CamRot.Vector(), Travel);
-		const FVector Dir = Facing >= 0.f ? Travel : -Travel;
-		Behind = Facing >= 0.f ? 0.f : 1.f;
-		FVector2D Screen;
 		int32 SizeX = 0, SizeY = 0;
 		PC->GetViewportSize(SizeX, SizeY);
-		if (SizeX > 0 && SizeY > 0 && PC->ProjectWorldLocationToScreen(CamLoc + Dir * 1.0e9, Screen, true))
+		if (SizeX > 0 && SizeY > 0)
 		{
-			ForwardU = Screen.X / SizeX;
-			ForwardV = Screen.Y / SizeY;
-		}
-		else
-		{
-			// Exactly sideways: pick the edge the travel direction points to.
-			const FVector Right = CamRot.RotateVector(FVector::RightVector);
-			const FVector Up = CamRot.RotateVector(FVector::UpVector);
-			ForwardU = 0.5f + 0.5f * FVector::DotProduct(Right, Dir) * 3.f;
-			ForwardV = 0.5f - 0.5f * FVector::DotProduct(Up, Dir) * 3.f;
+			Aspect = (float)SizeX / (float)SizeY;
 		}
 	}
-	const FVector CamFwd = CamRot.Vector();
-	const FVector CamRight = CamRot.RotateVector(FVector::RightVector);
-	const FVector CamUp = CamRot.RotateVector(FVector::UpVector);
-	auto ToView = [&](const FVector& W) { return FLinearColor((float)(W | CamRight), (float)(W | CamUp), (float)(W | CamFwd), 0.f); };
-	auto AsColor = [](const FVector& W) { return FLinearColor((float)W.X, (float)W.Y, (float)W.Z, 0.f); };
+	const FVector TravelView = ToView(Travel);
+	const float Behind = TravelView.Z >= 0.0 ? 0.f : 1.f;
+	const FVector Dir = TravelView.Z >= 0.0 ? TravelView : -TravelView;
+	const float TanHalfX = FMath::Tan(FMath::DegreesToRadians((Cam ? Cam->FieldOfView : 90.f) * 0.5f));
+	const float TanHalfY = TanHalfX / FMath::Max(Aspect, 0.1f);
+	const float Z = FMath::Max((float)Dir.Z, 0.05f);
+	const float ForwardU = FMath::Clamp(0.5f + 0.5f * (float)Dir.X / Z / TanHalfX, -3.f, 4.f);
+	const float ForwardV = FMath::Clamp(0.5f - 0.5f * (float)Dir.Y / Z / TanHalfY, -3.f, 4.f);
 
 	// Effective beta for the relativistic look; see RelativisticMaxBeta.
 	const double Speed = Movement ? Movement->GetSpeed() : 0.0;
@@ -502,7 +515,7 @@ void AStarshipPawn::UpdateWarpPostProcess(float Streak, float Flash)
 
 	// The nearest star, so the shader can draw the sun where aberration puts it when its true bearing is outside
 	// the frame and there is nothing to sample.
-	FLinearColor SunView(0.f, 0.f, 1.f, 0.f);
+	FVector SunView(0.0, 0.0, 1.0);
 	float SunAngle = 0.f;
 	{
 		double Best = 1e300;
@@ -519,7 +532,8 @@ void AStarshipPawn::UpdateWarpPostProcess(float Streak, float Flash)
 			if (Dist > 1.0)
 			{
 				SunView = ToView(To / Dist);
-				SunAngle = (float)FMath::Atan(BestStar->GetRadiusCm() / Dist);
+				// Angular radius of the limb of a sphere is asin(R / d), not atan: they only agree far away.
+				SunAngle = (float)FMath::Asin(FMath::Min(BestStar->GetRadiusCm() / Dist, 1.0));
 			}
 		}
 	}
@@ -535,8 +549,8 @@ void AStarshipPawn::UpdateWarpPostProcess(float Streak, float Flash)
 	WarpPPMID->SetScalarParameterValue(TEXT("SkyDepthCm"), (float)(StarSphereRadius * 0.5));
 	WarpPPMID->SetScalarParameterValue(TEXT("SunAngle"), SunAngle);
 	WarpPPMID->SetVectorParameterValue(TEXT("ForwardUV"), FLinearColor(ForwardU, ForwardV, 0.f, 0.f));
-	WarpPPMID->SetVectorParameterValue(TEXT("TravelView"), ToView(Travel));
-	WarpPPMID->SetVectorParameterValue(TEXT("SunView"), SunView);
+	WarpPPMID->SetVectorParameterValue(TEXT("TravelView"), AsColor(TravelView));
+	WarpPPMID->SetVectorParameterValue(TEXT("SunView"), AsColor(SunView));
 	WarpPPMID->SetVectorParameterValue(TEXT("CamRight"), AsColor(CamRight));
 	WarpPPMID->SetVectorParameterValue(TEXT("CamUp"), AsColor(CamUp));
 	WarpPPMID->SetVectorParameterValue(TEXT("CamFwd"), AsColor(CamFwd));
@@ -790,7 +804,10 @@ void AStarshipPawn::UpdateWarpEffects(float DeltaTime)
 
 	// Relativistic mode has no cartoon star streaks; the scene itself does the work.
 	WarpStreaks->SetIntensity(WarpVisualMode == EWarpVisualMode::Relativistic ? Streak * 0.15f : Streak);
-	UpdateWarpPostProcess(Streak, Flash);
+	// The post-process parameters depend on the final camera transform, so WarpView pushes them after the
+	// cameras have updated (see UpdateWarpPostProcess).
+	LastStreak = Streak;
+	LastFlash = Flash;
 	// Streaks fly past along the real direction of travel, whatever the camera is doing.
 	const FVector Travel = (Movement && Movement->Velocity.SizeSquared() > 1.0) ? Movement->Velocity.GetSafeNormal() : GetActorForwardVector();
 	WarpStreaks->SetTravelDirection(Travel);

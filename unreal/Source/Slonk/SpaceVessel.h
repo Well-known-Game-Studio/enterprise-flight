@@ -161,6 +161,7 @@ class SLONK_API AProceduralStarship : public ASpaceVessel
 
 public:
 	AProceduralStarship();
+	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
 	virtual FVector GetVisualLocation() const override;
 
@@ -227,6 +228,8 @@ private:
 	FVector WaypointUniverse = FVector::ZeroVector;
 	bool bHasWaypoint = false;
 	bool bHomeSet = false;
+	/** Converts HomeLocation (world space when given) to universe space once; harmless to call again. */
+	void EnsureHome();
 	FRandomStream NavRng;
 
 	// ---- Warp ----

@@ -18,6 +18,7 @@ class UWarpDriveComponent;
 class UStarshipWeaponsComponent;
 class UWarpStreaksComponent;
 class UBridgeInteriorComponent;
+class UWarpViewComponent;
 class UDistantStarsComponent;
 class UShieldComponent;
 class UTractorBeamComponent;
@@ -420,7 +421,16 @@ private:
 	UPROPERTY()
 	TObjectPtr<UMaterialInstanceDynamic> WarpPPMID;
 
-	void UpdateWarpPostProcess(float Streak, float Flash);
+	float LastStreak = 0.f;
+	float LastFlash = 0.f;
+	/** Ticks after the cameras have settled (TG_PostUpdateWork) and calls UpdateWarpPostProcess. */
+	UPROPERTY() TObjectPtr<UWarpViewComponent> WarpView;
+
+public:
+	/** Pushes the camera-dependent warp post-process parameters; runs from WarpView once the camera transforms are final for the frame. */
+	void UpdateWarpPostProcess();
+
+private:
 	float ShieldRechargeTimer = 0.f;
 
 	int32 ThrusterMaterialIndex = INDEX_NONE;
