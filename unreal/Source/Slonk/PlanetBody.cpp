@@ -273,6 +273,8 @@ void APlanetBody::ResolveStyleFromArchetype()
 	const FVector L = GetSeedLocation();
 	const uint32 Hash = HashCombine(HashCombine(GetTypeHash(FMath::RoundToInt64(L.X / 1000.0)), GetTypeHash(FMath::RoundToInt64(L.Y / 1000.0))), GetTypeHash(FMath::RoundToInt64(L.Z / 1000.0)));
 	FRandomStream Rng(static_cast<int32>(Hash));
+	// Draws added later use their own stream so the rolls below (rings, spin, ice caps) stay as they were.
+	FRandomStream Extra(static_cast<int32>(Hash) * 31 + 7);
 
 	EPlanetArchetype Type = Archetype == EPlanetArchetype::Auto ? PickArchetype(Rng) : Archetype;
 	ResolvedArchetype = Type;
@@ -487,8 +489,49 @@ void APlanetBody::ResolveStyleFromArchetype()
 			S.ReliefFraction = 0.010f;
 			break;
 		}
+		// A big moon now and then keeps a deep orange haze (Titan): overcast top to bottom, thick layer.
+		if (RadiusKm > 1800.f && ResolvedMoonKind != EMoonKind::Lava && Extra.FRand() < 0.3f)
+		{
+			bHazyMoon = true;
+			S.bAtmosphere = true;
+			S.AtmosphereColor = Jitter(FLinearColor(1.0f, 0.62f, 0.25f), 0.1f);
+			S.SunsetColor = FLinearColor(1.0f, 0.45f, 0.15f);
+			S.AtmosphereDepth = 0.1f;
+			S.Haze = 0.6f;
+			S.Intensity = 2.2f;
+			S.bClouds = true;
+			S.CloudCoverage = 1.0f;
+			S.CloudColor = Jitter(FLinearColor(0.95f, 0.72f, 0.38f), 0.08f);
+			S.LandColor = FLinearColor(0.35f, 0.24f, 0.14f);
+			S.LandColor2 = FLinearColor(0.28f, 0.20f, 0.12f);
+			S.MountainColor = FLinearColor(0.42f, 0.30f, 0.20f);
+			S.CraterStrength = 0.2f;
+		}
 		break;
 	}
+	}
+
+	// Volumetric layer per world: a Rayleigh scale height as a fraction of the radius by archetype, jittered, with
+	// the layer top five scale heights up. Stylised thick (Earth's is 0.13% of its radius) so the limb reads from a
+	// few radii out; the clouds and relief sit inside the dense part instead of on top of it.
+	if (S.bAtmosphere)
+	{
+		float ScaleFrac = 0.012f;
+		switch (Type)
+		{
+		case EPlanetArchetype::Ocean: ScaleFrac = 0.014f; break;
+		case EPlanetArchetype::Desert: ScaleFrac = 0.008f; break;
+		case EPlanetArchetype::Ice: ScaleFrac = 0.009f; break;
+		case EPlanetArchetype::Lava: ScaleFrac = 0.010f; break;
+		case EPlanetArchetype::Venus: ScaleFrac = 0.020f; break;
+		case EPlanetArchetype::Mars: ScaleFrac = 0.007f; break;
+		case EPlanetArchetype::GasGiant: ScaleFrac = 0.020f; break;
+		case EPlanetArchetype::Moon: ScaleFrac = 0.030f; break;
+		default: break;
+		}
+		ScaleFrac *= Extra.FRandRange(0.8f, 1.25f);
+		S.AtmosphereScaleHeightKm = FMath::Max(ScaleFrac * RadiusKm, 6.f);
+		S.AtmosphereHeightKm = FMath::Min(S.AtmosphereScaleHeightKm * 5.f, RadiusKm * 0.15f);
 	}
 
 	if (Rng.FRand() < 0.25f)
@@ -681,7 +724,7 @@ void APlanetBody::ApplyMaterials()
 		AtmosphereMID->SetScalarParameterValue(TEXT("Falloff"), S.Falloff);
 		AtmosphereMID->SetScalarParameterValue(TEXT("HazePower"), S.HazePower);
 		AtmosphereMID->SetScalarParameterValue(TEXT("Intensity"), S.Intensity);
-		AtmosphereMID->SetScalarParameterValue(TEXT("Opacity"), S.Opacity * ShellFade);
+		AtmosphereMID->SetScalarParameterValue(TEXT("Opacity"), S.Opacity);
 		AtmosphereMID->SetScalarParameterValue(TEXT("Haze"), S.Haze);
 		AtmosphereMID->SetScalarParameterValue(TEXT("SunsetStrength"), S.SunsetStrength);
 		AtmosphereMID->SetScalarParameterValue(TEXT("NightFactor"), S.NightFactor);
@@ -796,7 +839,7 @@ void APlanetBody::UpdateShellVisibility()
 		Clouds->SetVisibility(bShow && Style.bClouds);
 	}
 	if (DetailBody) { DetailBody->SetVisibility(bShow && bDetailActive); }
-	if (Atmosphere) { Atmosphere->SetVisibility(bShow && Style.bAtmosphere && ShellFade > 0.001f); }
+	if (Atmosphere) { Atmosphere->SetVisibility(bShow && Style.bAtmosphere && !bUsingSkyAtmosphere); }
 }
 
 void APlanetBody::BuildRings()
@@ -985,11 +1028,6 @@ void APlanetBody::SetUsingSkyAtmosphere(bool bEnabled)
 	if (bUsingSkyAtmosphere != bEnabled)
 	{
 		bUsingSkyAtmosphere = bEnabled;
-		if (!bEnabled)
-		{
-			ShellFade = 1.f;
-			if (AtmosphereMID) { AtmosphereMID->SetScalarParameterValue(TEXT("Opacity"), Style.Opacity); }
-		}
 		UpdateShellVisibility();
 	}
 }
@@ -1039,21 +1077,6 @@ void APlanetBody::UpdateLOD()
 	const double RadiusCm = GetRadiusCm();
 	const double Dist = FVector::Dist(ViewLoc, GetActorLocation()) / RadiusCm;
 
-	// The volumetric atmosphere carries the sky from inside and the limb up close, but its scattering layer is
-	// only a couple of percent of the radius, so from orbit it is a hairline: keep the shell's soft glow on top
-	// of it and fade the shell out as the camera descends into the atmosphere.
-	float NewFade = 1.f;
-	if (bUsingSkyAtmosphere)
-	{
-		const double Depth = FMath::Max((double)Style.AtmosphereDepth, 0.01);
-		NewFade = (float)FMath::Clamp((Dist - 1.0 - Depth * 0.6) / (Depth * 0.6), 0.0, 1.0);
-	}
-	if (!FMath::IsNearlyEqual(NewFade, ShellFade, 0.002f))
-	{
-		ShellFade = NewFade;
-		if (AtmosphereMID) { AtmosphereMID->SetScalarParameterValue(TEXT("Opacity"), Style.Opacity * ShellFade); }
-		if (Atmosphere) { Atmosphere->SetVisibility(!bBeyondHorizon && Style.bAtmosphere && ShellFade > 0.001f); }
-	}
 	// Hysteresis so the swap never flickers at the boundary.
 	const bool bWantDetail = bDetailActive ? Dist < DetailMeshRadii * 1.15 : Dist < DetailMeshRadii;
 	if (bWantDetail != bDetailActive)

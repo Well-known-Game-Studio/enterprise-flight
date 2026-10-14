@@ -401,7 +401,15 @@ void AStarshipPlayerController::OnThrottleWheel(const FInputActionValue& Value)
 {
 	if (AStarshipPawn* Ship = GetStarship())
 	{
-		Ship->Movement->AdjustThrottle(Value.Get<float>() * ThrottleWheelStep);
+		// While free-looking the wheel frames the shot instead of changing speed.
+		if (bFreeLookHeld)
+		{
+			Ship->AdjustChaseZoom(Value.Get<float>());
+		}
+		else
+		{
+			Ship->Movement->AdjustThrottle(Value.Get<float>() * ThrottleWheelStep);
+		}
 	}
 }
 

@@ -162,12 +162,14 @@ AStarshipPawn::AStarshipPawn()
 	const FLinearColor WarpBlue(0.35f, 0.6f, 1.f);
 	const FLinearColor BussardRed(1.f, 0.25f, 0.08f);
 	const FLinearColor ImpulseOrange(1.f, 0.45f, 0.15f);
-	AddLight(TEXT("NacelleGrillePort"), FVector(-7500.0, -3700.0, 2700.0), WarpBlue, 140000.f, 20000.f, true, false);
-	AddLight(TEXT("NacelleGrilleStarboard"), FVector(-7500.0, 3700.0, 2700.0), WarpBlue, 140000.f, 20000.f, true, false);
-	AddLight(TEXT("BussardPort"), FVector(-2600.0, -3700.0, 2700.0), BussardRed, 100000.f, 12000.f, true, false);
-	AddLight(TEXT("BussardStarboard"), FVector(-2600.0, 3700.0, 2700.0), BussardRed, 100000.f, 12000.f, true, false);
-	AddLight(TEXT("Deflector"), FVector(1500.0, 0.0, -1700.0), WarpBlue, 120000.f, 16000.f, true, false);
-	AddLight(TEXT("ImpulseEngines"), FVector(-800.0, 0.0, 1500.0), ImpulseOrange, 30000.f, 10000.f, false, true);
+	// These only tint the hull next to the glowing parts (a few lux at 50 m); the parts themselves are emissive.
+	// At the old 100-140 kcd they lit the whole 300 m hull from inside, so the ship never had a dark side.
+	AddLight(TEXT("NacelleGrillePort"), FVector(-7500.0, -3700.0, 2700.0), WarpBlue, 12000.f, 9000.f, true, false);
+	AddLight(TEXT("NacelleGrilleStarboard"), FVector(-7500.0, 3700.0, 2700.0), WarpBlue, 12000.f, 9000.f, true, false);
+	AddLight(TEXT("BussardPort"), FVector(-2600.0, -3700.0, 2700.0), BussardRed, 8000.f, 6000.f, true, false);
+	AddLight(TEXT("BussardStarboard"), FVector(-2600.0, 3700.0, 2700.0), BussardRed, 8000.f, 6000.f, true, false);
+	AddLight(TEXT("Deflector"), FVector(1500.0, 0.0, -1700.0), WarpBlue, 10000.f, 8000.f, true, false);
+	AddLight(TEXT("ImpulseEngines"), FVector(-800.0, 0.0, 1500.0), ImpulseOrange, 4000.f, 5000.f, false, true);
 
 	// Saucer (slots 1 and 2) and engineering hull (slot 3) plating: no emissive. Nacelles (slot 4): hot.
 	// The glow maps carry the lit windows; this weight shows them without the plating reading as self-lit.
@@ -745,9 +747,16 @@ void AStarshipPawn::AddLookInput(float YawDegrees, float PitchDegrees)
 	FreeLookAngles.Y = FMath::Clamp(FreeLookAngles.Y + PitchDegrees, -80.f, 80.f);
 }
 
+void AStarshipPawn::AdjustChaseZoom(float Steps)
+{
+	// Each wheel notch moves the chase distance by ~15%; the zoom sticks until R resets it.
+	ChaseZoom = FMath::Clamp(ChaseZoom * FMath::Pow(0.85f, Steps), MinChaseZoom, MaxChaseZoom);
+}
+
 void AStarshipPawn::ResetCamera()
 {
 	FreeLookAngles = FVector2D::ZeroVector;
+	ChaseZoom = 1.f;
 	SetCameraMode(EStarshipCameraMode::Chase);
 }
 
@@ -906,8 +915,8 @@ void AStarshipPawn::UpdateCameras(float DeltaTime)
 	case EStarshipCameraMode::Chase:
 	{
 		ChaseArm->SetRelativeRotation(FRotator(FreeLookAngles.Y, FreeLookAngles.X, 0.f));
-		ChaseArm->TargetArmLength = ChaseArmBaseLength * (1.f + WarpArmLengthBoost * Streak);
-		ChaseArm->SocketOffset = ChaseArmBaseSocketOffset + ShakeOffset * Amp * LengthCm * 0.01f;
+		ChaseArm->TargetArmLength = ChaseArmBaseLength * ChaseZoom * (1.f + WarpArmLengthBoost * Streak);
+		ChaseArm->SocketOffset = ChaseArmBaseSocketOffset * ChaseZoom + ShakeOffset * Amp * LengthCm * 0.01f;
 		ChaseCamera->SetRelativeRotation(FRotator(0.f, 0.f, ShakeRoll));
 		ChaseCamera->SetFieldOfView(ChaseFOV + WarpFovBoost * Streak + 8.f * Flash);
 		break;
@@ -968,6 +977,7 @@ void AStarshipPawn::ProcessDebugCommand()
 	else if (Op == TEXT("phasers") && Weapons) { if (ArgStr(1) == TEXT("off")) { Weapons->StopPhasers(); } else { Weapons->StartPhasers(); } }
 	else if (Op == TEXT("torpedo") && Weapons) { Weapons->FireTorpedo(); }
 	else if (Op == TEXT("target") && Weapons) { if (ArgStr(1) == TEXT("clear")) { Weapons->ClearTarget(); } else { Weapons->CycleTarget(); } }
+	else if (Op == TEXT("zoom")) { ChaseZoom = FMath::Clamp(Arg(1, 1.f), MinChaseZoom, MaxChaseZoom); }
 	else if (Op == TEXT("camera"))
 	{
 		const FString Mode = ArgStr(1);

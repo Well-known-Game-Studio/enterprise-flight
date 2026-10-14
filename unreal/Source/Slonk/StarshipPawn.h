@@ -213,6 +213,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cameras")
 	float ChaseHeightFactor = 0.22f;
 
+	/** Multiplier on the chase distance set with the mouse wheel while free-looking; R resets it to 1. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera", meta = (ClampMin = "0.1", ClampMax = "6.0"))
+	float ChaseZoom = 1.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera") float MinChaseZoom = 0.3f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera") float MaxChaseZoom = 4.f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cameras")
 	float ChaseFOV = 80.f;
 
@@ -362,6 +368,10 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Starship|Camera")
 	void ResetCamera();
+
+	/** Wheel zoom for the chase camera: positive steps bring it closer. */
+	UFUNCTION(BlueprintCallable, Category = "Starship|Camera")
+	void AdjustChaseZoom(float Steps);
 
 	UFUNCTION(BlueprintPure, Category = "Starship|Camera")
 	UCameraComponent* GetActiveCamera() const;

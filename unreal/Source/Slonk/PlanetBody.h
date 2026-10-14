@@ -121,6 +121,10 @@ struct FPlanetStyle
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Atmosphere", meta = (ClampMin = "0", ClampMax = "1")) float SunsetStrength = 0.8f;
 	/** Glow left on the night side (0 = pitch black). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Atmosphere", meta = (ClampMin = "0", ClampMax = "1")) float NightFactor = 0.04f;
+	/** Volumetric (Sky Atmosphere) layer: Rayleigh scale height in km. 0 = derive from AtmosphereDepth. Set per world by the archetype. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Atmosphere") float AtmosphereScaleHeightKm = 0.f;
+	/** Volumetric layer top in km. 0 = a few scale heights. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Atmosphere") float AtmosphereHeightKm = 0.f;
 };
 
 UCLASS()
@@ -219,6 +223,8 @@ public:
 	/** For Moon archetypes: which kind of moon the location hash produced. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Planet")
 	EMoonKind ResolvedMoonKind = EMoonKind::Rocky;
+	/** Moon with a thick haze layer (Titan-like). */
+	bool bHazyMoon = false;
 
 	UFUNCTION(BlueprintPure, Category = "Planet")
 	bool IsMoon() const { return ResolvedArchetype == EPlanetArchetype::Moon; }
@@ -388,8 +394,6 @@ private:
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> SurfaceMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> DetailSurfaceMID;
 	bool bUsingSkyAtmosphere = false;
-	/** Opacity of the shell glow while the volumetric atmosphere is parked here: 1 in orbit, 0 once inside it. */
-	float ShellFade = 1.f;
 	bool bDetailActive = false;
 	bool bBeyondHorizon = false;
 	bool bDetailBuilt = false;

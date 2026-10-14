@@ -1053,8 +1053,10 @@ void ASpaceStation::BuildMeshes(UDynamicMesh* HM, UDynamicMesh* GM, FRandomStrea
 	WindowSaucerCenter = FVector::ZeroVector;
 	WindowSaucerRadius = HubR;
 	WindowSaucerThickness = HubH * 0.5f;
-	WindowPitch = D * 0.012f;
-	WindowDeck = D * 0.01f;
+	// Panes the size of a ship's, not scaled with the station: at D * 0.012 a 4 km station had 50 m windows.
+	// The bands on the ring and hub below are the big observation galleries.
+	WindowPitch = 550.f;
+	WindowDeck = 380.f;
 	// Mushroom cap and a lower cone.
 	ConeZ(HM, FVector(0.f, 0.f, HubH * 0.5f), HubR * 1.1f, D * Rng.FRandRange(0.14f, 0.2f), D * 0.08f, 28);
 	CylinderZ(HM, FVector(0.f, 0.f, HubH * 0.5f + D * 0.08f), D * Rng.FRandRange(0.14f, 0.2f), D * 0.04f, 28);
@@ -1075,8 +1077,8 @@ void ASpaceStation::BuildMeshes(UDynamicMesh* HM, UDynamicMesh* GM, FRandomStrea
 			Box(HM, Dir * (HubR + Major) * 0.5f + FVector(0.f, 0.f, Z), FVector(Major - HubR + Minor, Minor * 0.6f, Minor * 0.6f), FRotator(0.f, A, 0.f));
 		}
 		// Window band and docking beacons around the ring.
-		TorusZ(GM, FVector(0.f, 0.f, Z + Minor * 0.35f), Major, Minor * 0.12f, 64, 6);
-		TorusZ(GM, FVector(0.f, 0.f, Z - Minor * 0.35f), Major, Minor * 0.12f, 64, 6);
+		TorusZ(GM, FVector(0.f, 0.f, Z + Minor * 0.35f), Major, Minor * 0.045f, 64, 6);
+		TorusZ(GM, FVector(0.f, 0.f, Z - Minor * 0.35f), Major, Minor * 0.045f, 64, 6);
 		const int32 Beacons = Spokes * 2;
 		for (int32 b = 0; b < Beacons; ++b)
 		{
@@ -1089,7 +1091,7 @@ void ASpaceStation::BuildMeshes(UDynamicMesh* HM, UDynamicMesh* GM, FRandomStrea
 	for (int32 k = 0; k < 4; ++k)
 	{
 		const float Z = -HubH * 0.4f + HubH * 0.8f * k / 3.f;
-		TorusZ(GM, FVector(0.f, 0.f, Z), HubR * 1.0f, HubR * 0.04f, 28, 6);
+		TorusZ(GM, FVector(0.f, 0.f, Z), HubR * 1.0f, HubR * 0.015f, 28, 6);
 	}
 
 	// Running lights: red obstruction beacons on the mast top and keel, and a chase of white strobes around the
