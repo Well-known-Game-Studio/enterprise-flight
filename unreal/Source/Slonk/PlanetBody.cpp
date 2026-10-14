@@ -357,6 +357,7 @@ void APlanetBody::ResolveStyleFromArchetype()
 		S.ReliefFraction = 0.010f;
 		break;
 	case EPlanetArchetype::GasGiant:
+	case EPlanetArchetype::IceGiant:
 	{
 		// Banded: ocean = band colour A, land = band colour B, very high noise scale squashed later by spin.
 		const FLinearColor A = Jitter(FLinearColor(0.78f, 0.62f, 0.42f), 0.3f);
@@ -391,7 +392,8 @@ void APlanetBody::ResolveStyleFromArchetype()
 		// for height, so "ocean" is the belt colour, "shallow" its warm edge, "land"/"land2" the darker belts
 		// and "mountain" the bright zones. Finer bands and a lighter cloud deck add the layering.
 		{
-			const float Family = Extra.FRand();
+			const bool bIce = Type == EPlanetArchetype::IceGiant;
+			const float Family = bIce ? 0.95f : Extra.FRand();
 			FLinearColor Belt, Edge, Dark, Dark2, Zone, Cloud, Atmo, Sunset;
 			if (Family < 0.45f)      // Jovian: cream, rust and orange belts, white zones
 			{
@@ -407,12 +409,12 @@ void APlanetBody::ResolveStyleFromArchetype()
 				Zone = FLinearColor(0.98f, 0.95f, 0.86f); Cloud = FLinearColor(0.97f, 0.93f, 0.82f);
 				Atmo = FLinearColor(0.95f, 0.82f, 0.55f); Sunset = FLinearColor(1.0f, 0.6f, 0.25f);
 			}
-			else                     // Neptunian: azure belts, white streaks
+			else                     // Neptunian: azure and violet belts, white streaks
 			{
-				Belt = FLinearColor(0.22f, 0.40f, 0.85f); Edge = FLinearColor(0.35f, 0.55f, 0.95f);
-				Dark = FLinearColor(0.14f, 0.24f, 0.62f); Dark2 = FLinearColor(0.30f, 0.50f, 0.90f);
-				Zone = FLinearColor(0.88f, 0.92f, 1.0f); Cloud = FLinearColor(0.90f, 0.94f, 1.0f);
-				Atmo = FLinearColor(0.45f, 0.6f, 1.0f); Sunset = FLinearColor(0.6f, 0.7f, 1.0f);
+				Belt = FLinearColor(0.16f, 0.38f, 0.98f); Edge = FLinearColor(0.38f, 0.58f, 1.0f);
+				Dark = FLinearColor(0.08f, 0.12f, 0.58f); Dark2 = FLinearColor(0.40f, 0.24f, 0.88f);
+				Zone = FLinearColor(0.86f, 0.90f, 1.0f); Cloud = FLinearColor(0.94f, 0.96f, 1.0f);
+				Atmo = FLinearColor(0.35f, 0.55f, 1.0f); Sunset = FLinearColor(0.70f, 0.55f, 1.0f);
 			}
 			auto J = [&](const FLinearColor& C) { return FLinearColor(C.R * Extra.FRandRange(0.92f, 1.08f), C.G * Extra.FRandRange(0.92f, 1.08f), C.B * Extra.FRandRange(0.92f, 1.08f), 1.f); };
 			S.OceanColor = J(Belt); S.ShallowColor = J(Edge); S.LandColor = J(Dark); S.LandColor2 = J(Dark2);
@@ -422,6 +424,15 @@ void APlanetBody::ResolveStyleFromArchetype()
 			// Sparse, small storms: a blotchy deck hides the banding.
 			S.CloudCoverage = Extra.FRandRange(0.10f, 0.18f);
 			S.CloudScale = 4.0f;
+			if (bIce)
+			{
+				// Colder and crisper than a gas giant: little white haze, a deep blue limb, a darker base.
+				S.Haze = 0.04f;
+				S.Intensity = 2.2f;
+				S.CloudCoverage = 0.12f;
+				S.OceanRoughness = 0.85f;
+				S.LandRoughness = 0.85f;
+			}
 		}
 		break;
 	}
@@ -563,6 +574,7 @@ void APlanetBody::ResolveStyleFromArchetype()
 		case EPlanetArchetype::Venus: ScaleFrac = 0.014f; break;
 		case EPlanetArchetype::Mars: ScaleFrac = 0.005f; break;
 		case EPlanetArchetype::GasGiant: ScaleFrac = 0.018f; break;   // deep, hazy
+		case EPlanetArchetype::IceGiant: ScaleFrac = 0.014f; break;
 		case EPlanetArchetype::Moon: ScaleFrac = 0.022f; break;       // Titan-like haze
 		default: break;
 		}
@@ -577,14 +589,14 @@ void APlanetBody::ResolveStyleFromArchetype()
 	}
 	Style = S;
 	SpinDegPerSec = Rng.FRandRange(0.1f, 0.8f) * (Rng.FRand() < 0.2f ? -1.f : 1.f);
-	if (Type == EPlanetArchetype::GasGiant)
+	if (Type == EPlanetArchetype::GasGiant || Type == EPlanetArchetype::IceGiant)
 	{
 		SpinDegPerSec *= 2.f;
 	}
 	// Weather moves against or well ahead of the ground so the deck visibly slides over the surface.
 	Style.CloudSpinDegPerSec = (Rng.FRand() < 0.5f ? -1.f : 1.f) * Rng.FRandRange(0.6f, 1.4f) * FMath::Max(FMath::Abs(SpinDegPerSec), 0.3f);
 	Style.CloudDrift = Rng.FRandRange(0.02f, 0.05f);
-	if (Type == EPlanetArchetype::GasGiant)
+	if (Type == EPlanetArchetype::GasGiant || Type == EPlanetArchetype::IceGiant)
 	{
 		Style.CloudSpinDegPerSec *= 1.5f;
 	}
@@ -594,6 +606,7 @@ void APlanetBody::ResolveStyleFromArchetype()
 	switch (Type)
 	{
 	case EPlanetArchetype::GasGiant: RingChance = 0.7f; break;
+	case EPlanetArchetype::IceGiant: RingChance = 1.f; break;
 	case EPlanetArchetype::Ice: RingChance = 0.35f; break;
 	case EPlanetArchetype::Ocean: case EPlanetArchetype::Terrestrial: case EPlanetArchetype::Desert: RingChance = 0.1f; break;
 	default: break;
@@ -607,6 +620,15 @@ void APlanetBody::ResolveStyleFromArchetype()
 		Style.RingDetail = Rng.FRandRange(0.7f, 1.4f);
 		Style.RingOpacity = Rng.FRandRange(0.6f, 1.f);
 		Style.RingColor = Type == EPlanetArchetype::GasGiant ? Jitter(FLinearColor(0.82f, 0.76f, 0.64f), 0.15f) : Jitter(FLinearColor(0.78f, 0.82f, 0.9f), 0.1f);
+		if (Type == EPlanetArchetype::IceGiant)
+		{
+			// A light, narrow ring of comet ice: a thin bright band, translucent and clumpy.
+			Style.RingInner = Rng.FRandRange(1.85f, 2.0f);
+			Style.RingOuter = Style.RingInner + Rng.FRandRange(0.28f, 0.42f);
+			Style.RingOpacity = Rng.FRandRange(0.25f, 0.35f);
+			Style.RingDetail = 1.8f;
+			Style.RingColor = Jitter(FLinearColor(0.90f, 0.95f, 1.0f), 0.04f);
+		}
 	}
 }
 
@@ -1174,6 +1196,15 @@ void APlanetBody::UpdateRingParticles(const FVector& ViewLoc)
 	if (RingRocks.Num() == 0)
 	{
 		UMaterialInterface* Mat = SlonkMaterials::LoadOrFallback(RingRockMaterial, TEXT("RingRock"), true);
+		if (Mat && ResolvedArchetype == EPlanetArchetype::IceGiant)
+		{
+			// Comet ice rather than rock.
+			UMaterialInstanceDynamic* Ice = UMaterialInstanceDynamic::Create(Mat, this);
+			Ice->SetVectorParameterValue(TEXT("RockColorA"), FLinearColor(0.66f, 0.76f, 0.88f));
+			Ice->SetVectorParameterValue(TEXT("RockColorB"), FLinearColor(0.80f, 0.87f, 0.95f));
+			Ice->SetVectorParameterValue(TEXT("RockColorC"), FLinearColor(0.92f, 0.95f, 1.0f));
+			Mat = Ice;
+		}
 		for (int32 V = 0; V < SlonkRocks::NumVariants; ++V)
 		{
 			UHierarchicalInstancedStaticMeshComponent* H = NewObject<UHierarchicalInstancedStaticMeshComponent>(this, *FString::Printf(TEXT("RingRocks%d"), V));

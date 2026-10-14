@@ -29,7 +29,9 @@ enum class EPlanetArchetype : uint8
 	/** Thick yellow cloud deck, no surface visible. */
 	Venus,
 	/** Red deserts, polar caps, thin pink sky, a little water. */
-	Mars
+	Mars,
+	/** Neptune-like: azure and violet bands, white streaks, a cold deep haze, and a light ring of comet ice. Never rolled; placed by hand. */
+	IceGiant
 };
 
 UENUM(BlueprintType)
