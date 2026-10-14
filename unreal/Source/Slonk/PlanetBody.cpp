@@ -382,10 +382,47 @@ void APlanetBody::ResolveStyleFromArchetype()
 		S.CloudSpinDegPerSec = 0.4f;
 		S.AtmosphereColor = A;
 		S.SunsetColor = B;
-		S.AtmosphereDepth = 0.08f;
-		S.Intensity = 2.4f;
+		S.AtmosphereDepth = 0.1f;
+		S.Intensity = 2.6f;
+		S.Haze = 0.2f;
 		// A gas giant has no terrain: relief would put bumps on its limb.
 		S.ReliefFraction = 0.f;
+		// Palette families (drawn from the extra stream so the rolls above stay put): the band noise stands in
+		// for height, so "ocean" is the belt colour, "shallow" its warm edge, "land"/"land2" the darker belts
+		// and "mountain" the bright zones. Finer bands and a lighter cloud deck add the layering.
+		{
+			const float Family = Extra.FRand();
+			FLinearColor Belt, Edge, Dark, Dark2, Zone, Cloud, Atmo, Sunset;
+			if (Family < 0.45f)      // Jovian: cream, rust and orange belts, white zones
+			{
+				Belt = FLinearColor(0.88f, 0.76f, 0.52f); Edge = FLinearColor(0.96f, 0.90f, 0.74f);
+				Dark = FLinearColor(0.58f, 0.32f, 0.18f); Dark2 = FLinearColor(0.84f, 0.50f, 0.26f);
+				Zone = FLinearColor(0.96f, 0.94f, 0.88f); Cloud = FLinearColor(0.98f, 0.95f, 0.88f);
+				Atmo = FLinearColor(0.95f, 0.75f, 0.50f); Sunset = FLinearColor(1.0f, 0.5f, 0.2f);
+			}
+			else if (Family < 0.8f)  // Saturnian: pale gold and tan, soft zones
+			{
+				Belt = FLinearColor(0.90f, 0.80f, 0.52f); Edge = FLinearColor(0.97f, 0.92f, 0.74f);
+				Dark = FLinearColor(0.58f, 0.38f, 0.24f); Dark2 = FLinearColor(0.84f, 0.60f, 0.34f);
+				Zone = FLinearColor(0.98f, 0.95f, 0.86f); Cloud = FLinearColor(0.97f, 0.93f, 0.82f);
+				Atmo = FLinearColor(0.95f, 0.82f, 0.55f); Sunset = FLinearColor(1.0f, 0.6f, 0.25f);
+			}
+			else                     // Neptunian: azure belts, white streaks
+			{
+				Belt = FLinearColor(0.22f, 0.40f, 0.85f); Edge = FLinearColor(0.35f, 0.55f, 0.95f);
+				Dark = FLinearColor(0.14f, 0.24f, 0.62f); Dark2 = FLinearColor(0.30f, 0.50f, 0.90f);
+				Zone = FLinearColor(0.88f, 0.92f, 1.0f); Cloud = FLinearColor(0.90f, 0.94f, 1.0f);
+				Atmo = FLinearColor(0.45f, 0.6f, 1.0f); Sunset = FLinearColor(0.6f, 0.7f, 1.0f);
+			}
+			auto J = [&](const FLinearColor& C) { return FLinearColor(C.R * Extra.FRandRange(0.92f, 1.08f), C.G * Extra.FRandRange(0.92f, 1.08f), C.B * Extra.FRandRange(0.92f, 1.08f), 1.f); };
+			S.OceanColor = J(Belt); S.ShallowColor = J(Edge); S.LandColor = J(Dark); S.LandColor2 = J(Dark2);
+			S.MountainColor = J(Zone); S.CloudColor = J(Cloud); S.AtmosphereColor = J(Atmo); S.SunsetColor = Sunset;
+			S.SeaLevel = Extra.FRandRange(0.42f, 0.56f);
+			S.BandScale *= Extra.FRandRange(1.2f, 1.8f);
+			// Sparse, small storms: a blotchy deck hides the banding.
+			S.CloudCoverage = Extra.FRandRange(0.10f, 0.18f);
+			S.CloudScale = 4.0f;
+		}
 		break;
 	}
 	case EPlanetArchetype::Venus:
@@ -516,17 +553,17 @@ void APlanetBody::ResolveStyleFromArchetype()
 	// few radii out; the clouds and relief sit inside the dense part instead of on top of it.
 	if (S.bAtmosphere)
 	{
-		float ScaleFrac = 0.012f;
+		float ScaleFrac = 0.008f;
 		switch (Type)
 		{
-		case EPlanetArchetype::Ocean: ScaleFrac = 0.014f; break;
-		case EPlanetArchetype::Desert: ScaleFrac = 0.008f; break;
-		case EPlanetArchetype::Ice: ScaleFrac = 0.009f; break;
-		case EPlanetArchetype::Lava: ScaleFrac = 0.010f; break;
-		case EPlanetArchetype::Venus: ScaleFrac = 0.020f; break;
-		case EPlanetArchetype::Mars: ScaleFrac = 0.007f; break;
-		case EPlanetArchetype::GasGiant: ScaleFrac = 0.020f; break;
-		case EPlanetArchetype::Moon: ScaleFrac = 0.030f; break;
+		case EPlanetArchetype::Ocean: ScaleFrac = 0.009f; break;
+		case EPlanetArchetype::Desert: ScaleFrac = 0.0055f; break;
+		case EPlanetArchetype::Ice: ScaleFrac = 0.006f; break;
+		case EPlanetArchetype::Lava: ScaleFrac = 0.007f; break;
+		case EPlanetArchetype::Venus: ScaleFrac = 0.014f; break;
+		case EPlanetArchetype::Mars: ScaleFrac = 0.005f; break;
+		case EPlanetArchetype::GasGiant: ScaleFrac = 0.018f; break;   // deep, hazy
+		case EPlanetArchetype::Moon: ScaleFrac = 0.022f; break;       // Titan-like haze
 		default: break;
 		}
 		ScaleFrac *= Extra.FRandRange(0.8f, 1.25f);
