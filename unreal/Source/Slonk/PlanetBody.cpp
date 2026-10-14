@@ -381,7 +381,9 @@ void APlanetBody::ResolveStyleFromArchetype()
 		S.AtmosphereColor = A;
 		S.SunsetColor = B;
 		S.AtmosphereDepth = 0.08f;
-		S.Intensity = 1.6f;
+		S.Intensity = 2.4f;
+		// A gas giant has no terrain: relief would put bumps on its limb.
+		S.ReliefFraction = 0.f;
 		break;
 	}
 	case EPlanetArchetype::Venus:
@@ -679,7 +681,7 @@ void APlanetBody::ApplyMaterials()
 		AtmosphereMID->SetScalarParameterValue(TEXT("Falloff"), S.Falloff);
 		AtmosphereMID->SetScalarParameterValue(TEXT("HazePower"), S.HazePower);
 		AtmosphereMID->SetScalarParameterValue(TEXT("Intensity"), S.Intensity);
-		AtmosphereMID->SetScalarParameterValue(TEXT("Opacity"), S.Opacity);
+		AtmosphereMID->SetScalarParameterValue(TEXT("Opacity"), S.Opacity * ShellFade);
 		AtmosphereMID->SetScalarParameterValue(TEXT("Haze"), S.Haze);
 		AtmosphereMID->SetScalarParameterValue(TEXT("SunsetStrength"), S.SunsetStrength);
 		AtmosphereMID->SetScalarParameterValue(TEXT("NightFactor"), S.NightFactor);
@@ -794,7 +796,7 @@ void APlanetBody::UpdateShellVisibility()
 		Clouds->SetVisibility(bShow && Style.bClouds);
 	}
 	if (DetailBody) { DetailBody->SetVisibility(bShow && bDetailActive); }
-	if (Atmosphere) { Atmosphere->SetVisibility(bShow && Style.bAtmosphere && !bUsingSkyAtmosphere); }
+	if (Atmosphere) { Atmosphere->SetVisibility(bShow && Style.bAtmosphere && ShellFade > 0.001f); }
 }
 
 void APlanetBody::BuildRings()
@@ -983,6 +985,11 @@ void APlanetBody::SetUsingSkyAtmosphere(bool bEnabled)
 	if (bUsingSkyAtmosphere != bEnabled)
 	{
 		bUsingSkyAtmosphere = bEnabled;
+		if (!bEnabled)
+		{
+			ShellFade = 1.f;
+			if (AtmosphereMID) { AtmosphereMID->SetScalarParameterValue(TEXT("Opacity"), Style.Opacity); }
+		}
 		UpdateShellVisibility();
 	}
 }
@@ -1031,6 +1038,22 @@ void APlanetBody::UpdateLOD()
 	PC->GetPlayerViewPoint(ViewLoc, ViewRot);
 	const double RadiusCm = GetRadiusCm();
 	const double Dist = FVector::Dist(ViewLoc, GetActorLocation()) / RadiusCm;
+
+	// The volumetric atmosphere carries the sky from inside and the limb up close, but its scattering layer is
+	// only a couple of percent of the radius, so from orbit it is a hairline: keep the shell's soft glow on top
+	// of it and fade the shell out as the camera descends into the atmosphere.
+	float NewFade = 1.f;
+	if (bUsingSkyAtmosphere)
+	{
+		const double Depth = FMath::Max((double)Style.AtmosphereDepth, 0.01);
+		NewFade = (float)FMath::Clamp((Dist - 1.0 - Depth * 0.6) / (Depth * 0.6), 0.0, 1.0);
+	}
+	if (!FMath::IsNearlyEqual(NewFade, ShellFade, 0.002f))
+	{
+		ShellFade = NewFade;
+		if (AtmosphereMID) { AtmosphereMID->SetScalarParameterValue(TEXT("Opacity"), Style.Opacity * ShellFade); }
+		if (Atmosphere) { Atmosphere->SetVisibility(!bBeyondHorizon && Style.bAtmosphere && ShellFade > 0.001f); }
+	}
 	// Hysteresis so the swap never flickers at the boundary.
 	const bool bWantDetail = bDetailActive ? Dist < DetailMeshRadii * 1.15 : Dist < DetailMeshRadii;
 	if (bWantDetail != bDetailActive)

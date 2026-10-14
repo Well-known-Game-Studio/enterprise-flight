@@ -388,6 +388,8 @@ private:
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> SurfaceMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> DetailSurfaceMID;
 	bool bUsingSkyAtmosphere = false;
+	/** Opacity of the shell glow while the volumetric atmosphere is parked here: 1 in orbit, 0 once inside it. */
+	float ShellFade = 1.f;
 	bool bDetailActive = false;
 	bool bBeyondHorizon = false;
 	bool bDetailBuilt = false;
