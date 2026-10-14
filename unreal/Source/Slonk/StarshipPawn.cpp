@@ -458,14 +458,17 @@ void AStarshipPawn::UpdateWarpPostProcess(float Streak, float Flash)
 	const bool bRelativistic = WarpVisualMode == EWarpVisualMode::Relativistic;
 	const FVector Travel = (Movement && Movement->Velocity.SizeSquared() > 1.0) ? Movement->Velocity.GetSafeNormal() : GetActorForwardVector();
 
-	// Where the direction of travel lands on screen (viewport UV). If it is behind the camera, use the
-	// anti-direction and flag it so the shader pushes outward instead of pulling inward.
+	// Camera frame. The classic look wants the direction of travel as a screen point; the relativistic look works
+	// per pixel in view space (x right, y up, z forward) and also needs the camera basis to get back to world
+	// space for the sky it synthesises where the frame has no light to sample.
+	FVector CamLoc = GetActorLocation();
+	FRotator CamRot = GetActorRotation();
 	float ForwardU = 0.5f, ForwardV = 0.5f, Behind = 0.f;
 	if (APlayerController* PC = Cast<APlayerController>(GetController()))
 	{
-		FVector CamLoc;
-		FRotator CamRot;
 		PC->GetPlayerViewPoint(CamLoc, CamRot);
+		// Where the direction of travel lands on screen (viewport UV). If it is behind the camera, use the
+		// anti-direction and flag it so the classic shader pushes outward instead of pulling inward.
 		const float Facing = FVector::DotProduct(CamRot.Vector(), Travel);
 		const FVector Dir = Facing >= 0.f ? Travel : -Travel;
 		Behind = Facing >= 0.f ? 0.f : 1.f;
@@ -486,19 +489,57 @@ void AStarshipPawn::UpdateWarpPostProcess(float Streak, float Flash)
 			ForwardV = 0.5f - 0.5f * FVector::DotProduct(Up, Dir) * 3.f;
 		}
 	}
+	const FVector CamFwd = CamRot.Vector();
+	const FVector CamRight = CamRot.RotateVector(FVector::RightVector);
+	const FVector CamUp = CamRot.RotateVector(FVector::UpVector);
+	auto ToView = [&](const FVector& W) { return FLinearColor((float)(W | CamRight), (float)(W | CamUp), (float)(W | CamFwd), 0.f); };
+	auto AsColor = [](const FVector& W) { return FLinearColor((float)W.X, (float)W.Y, (float)W.Z, 0.f); };
 
+	// Effective beta for the relativistic look; see RelativisticMaxBeta.
 	const double Speed = Movement ? Movement->GetSpeed() : 0.0;
-	const float Beta = (float)FMath::Clamp(Speed / 2.99792458e10, 0.0, 1.0);
+	const double BetaV = Speed / 2.99792458e10;
+	const float BetaEff = (float)FMath::Clamp(BetaV / (1.0 + BetaV), 0.0, (double)RelativisticMaxBeta);
+
+	// The nearest star, so the shader can draw the sun where aberration puts it when its true bearing is outside
+	// the frame and there is nothing to sample.
+	FLinearColor SunView(0.f, 0.f, 1.f, 0.f);
+	float SunAngle = 0.f;
+	{
+		double Best = 1e300;
+		const AStarBody* BestStar = nullptr;
+		for (TActorIterator<AStarBody> It(GetWorld()); It; ++It)
+		{
+			const double D = FVector::DistSquared(It->GetActorLocation(), CamLoc);
+			if (D < Best) { Best = D; BestStar = *It; }
+		}
+		if (BestStar)
+		{
+			const FVector To = BestStar->GetActorLocation() - CamLoc;
+			const double Dist = To.Size();
+			if (Dist > 1.0)
+			{
+				SunView = ToView(To / Dist);
+				SunAngle = (float)FMath::Atan(BestStar->GetRadiusCm() / Dist);
+			}
+		}
+	}
 
 	WarpPPMID->SetScalarParameterValue(TEXT("Mode"), bRelativistic ? 1.f : 0.f);
 	WarpPPMID->SetScalarParameterValue(TEXT("Strength"), Streak);
 	WarpPPMID->SetScalarParameterValue(TEXT("Flash"), Flash);
 	WarpPPMID->SetScalarParameterValue(TEXT("Behind"), Behind);
-	WarpPPMID->SetScalarParameterValue(TEXT("Beta"), FMath::Max(Beta, Streak * 0.9f));
+	WarpPPMID->SetScalarParameterValue(TEXT("Beta"), BetaEff);
 	WarpPPMID->SetScalarParameterValue(TEXT("BlurStrength"), ClassicStreakStrength);
 	WarpPPMID->SetScalarParameterValue(TEXT("ContractStrength"), RelativisticContraction);
 	WarpPPMID->SetScalarParameterValue(TEXT("DopplerStrength"), RelativisticDoppler);
+	WarpPPMID->SetScalarParameterValue(TEXT("SkyDepthCm"), (float)(StarSphereRadius * 0.5));
+	WarpPPMID->SetScalarParameterValue(TEXT("SunAngle"), SunAngle);
 	WarpPPMID->SetVectorParameterValue(TEXT("ForwardUV"), FLinearColor(ForwardU, ForwardV, 0.f, 0.f));
+	WarpPPMID->SetVectorParameterValue(TEXT("TravelView"), ToView(Travel));
+	WarpPPMID->SetVectorParameterValue(TEXT("SunView"), SunView);
+	WarpPPMID->SetVectorParameterValue(TEXT("CamRight"), AsColor(CamRight));
+	WarpPPMID->SetVectorParameterValue(TEXT("CamUp"), AsColor(CamUp));
+	WarpPPMID->SetVectorParameterValue(TEXT("CamFwd"), AsColor(CamFwd));
 }
 
 void AStarshipPawn::ApplyExposure()

@@ -275,13 +275,21 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Warp FX")
 	float ClassicStreakStrength = 0.6f;
 
-	/** Relativistic aberration / contraction amount (0..1). */
+	/** Relativistic aberration amount (0..1; 1 = the physical mapping for the effective beta). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Warp FX")
-	float RelativisticContraction = 0.8f;
+	float RelativisticContraction = 1.0f;
 
 	/** Relativistic Doppler tint amount (0..1). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Warp FX")
 	float RelativisticDoppler = 0.85f;
+
+	/**
+	 * Above c there is no rest frame to transform into, so the relativistic look uses an effective speed
+	 * beta = v / (v + c): 0.5 at warp 1, 0.79 at warp 1.5, 0.91 at warp 2, then on towards 1. This caps it so
+	 * the sky does not collapse into a dot at high factors.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Warp FX", meta = (ClampMin = "0.0", ClampMax = "0.995"))
+	float RelativisticMaxBeta = 0.93f;
 
 	UFUNCTION(BlueprintCallable, Category = "Starship|Warp")
 	void SetWarpVisualMode(EWarpVisualMode Mode) { WarpVisualMode = Mode; }
