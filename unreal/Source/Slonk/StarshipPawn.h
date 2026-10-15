@@ -202,6 +202,35 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull")
 	FName ThrusterSlotName = TEXT("Thruster");
 
+	/**
+	 * Overlay material that draws procedural lit windows on the hull (saucer rim and engineering hull flanks).
+	 * The zones below are in pawn space; the mesh's own transform is passed to the material.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows")
+	TSoftObjectPtr<UMaterialInterface> HullWindowMaterial;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") FVector WindowSaucerCenter = FVector(8050.0, 0.0, 250.0);
+	/** Measure the saucer rim's height and thickness from the mesh (overrides the Z and thickness below). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") bool bAutoSaucerRim = true;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowSaucerRadius = 7190.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowSaucerThickness = 450.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowHullMaxY = 1750.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowHullMaxZ = 400.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowHullMinZ = -1700.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowHullMinX = -7000.f;
+	/** Forward limit of the engineering-hull window zone: stops short of the deflector housing and dish. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowHullMaxX = 2200.f;
+	/** Keep-out boxes in pawn space: no windows on the deflector housing and dish, nor on the torpedo bay. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") FVector WindowExcludeDeflectorMin = FVector(2000.0, -1900.0, -3700.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") FVector WindowExcludeDeflectorMax = FVector(6500.0, 1900.0, 900.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") FVector WindowExcludeTorpedoMin = FVector(1700.0, -900.0, 150.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") FVector WindowExcludeTorpedoMax = FVector(3700.0, 900.0, 1350.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowPitch = 700.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowDeck = 460.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowGlow = 22.f;
+	/** Fraction of windows lit at any moment, and how long a window keeps its state before re-rolling (s). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowOnFraction = 0.4f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowPeriod = 30.f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull")
 	TArray<FStarshipLightSpec> LightSpecs;
 
@@ -430,6 +459,8 @@ private:
 
 	UPROPERTY()
 	TObjectPtr<UMaterialInstanceDynamic> WarpPPMID;
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> HullWindowsMID;
+	void ApplyHullWindows(float Scale, const FQuat& Rot, const FVector& RelLoc);
 
 	float LastStreak = 0.f;
 	float LastFlash = 0.f;

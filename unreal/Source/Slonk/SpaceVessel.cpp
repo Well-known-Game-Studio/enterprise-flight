@@ -194,6 +194,7 @@ void ASpaceVessel::ApplyWindowParams(UMaterialInstanceDynamic* MID) const
 	MID->SetScalarParameterValue(TEXT("WindowPitch"), WindowPitch);
 	MID->SetScalarParameterValue(TEXT("WindowDeck"), WindowDeck);
 	MID->SetScalarParameterValue(TEXT("WindowGlow"), WindowGlow);
+	MID->SetScalarParameterValue(TEXT("WindowOnFraction"), WindowOnFraction);
 }
 
 void ASpaceVessel::Rebuild()
@@ -221,7 +222,8 @@ void ASpaceVessel::Rebuild()
 	ApplyMaterials();
 	if (RunningLights)
 	{
-		RunningLights->MaxRadiusCm = SizeCm * 0.03f;
+		RunningLights->MaxRadiusCm = SizeCm * 0.012f;
+		RunningLights->MinAngularRadius = 0.002f;
 		RunningLights->SetLights(PendingLights);
 		RunningLights->SetFloodlights(PendingFloods);
 	}
@@ -401,7 +403,7 @@ void AProceduralStarship::BuildMeshes(UDynamicMesh* HM, UDynamicMesh* GM, FRando
 	// formation lights along the saucer rim and the nacelle tails. Every ship gets its own blink phase so a fleet
 	// never flashes in unison.
 	using RL = URunningLightsComponent;
-	const float Bulb = L * 0.004f;
+	const float Bulb = L * 0.0012f;
 	const float Ph = Rng.FRand();
 	const float Strobe = Rng.FRandRange(1.6f, 2.2f);
 	const float Blink = Rng.FRandRange(1.1f, 1.5f);
@@ -1057,6 +1059,7 @@ void ASpaceStation::BuildMeshes(UDynamicMesh* HM, UDynamicMesh* GM, FRandomStrea
 	// The bands on the ring and hub below are the big observation galleries.
 	WindowPitch = 550.f;
 	WindowDeck = 380.f;
+	WindowOnFraction = 0.4f;
 	// Mushroom cap and a lower cone.
 	ConeZ(HM, FVector(0.f, 0.f, HubH * 0.5f), HubR * 1.1f, D * Rng.FRandRange(0.14f, 0.2f), D * 0.08f, 28);
 	CylinderZ(HM, FVector(0.f, 0.f, HubH * 0.5f + D * 0.08f), D * Rng.FRandRange(0.14f, 0.2f), D * 0.04f, 28);
@@ -1097,7 +1100,7 @@ void ASpaceStation::BuildMeshes(UDynamicMesh* HM, UDynamicMesh* GM, FRandomStrea
 	// Running lights: red obstruction beacons on the mast top and keel, and a chase of white strobes around the
 	// outer ring (each one a little later than the last) with steady amber docking markers between them.
 	using RL = URunningLightsComponent;
-	const float Bulb = D * 0.003f;
+	const float Bulb = D * 0.0007f;
 	const float TopZ = HubH * 0.5f + D * 0.08f + D * 0.04f;
 	PendingLights.Add(FRunningLight(FVector(0.f, 0.f, TopZ + Bulb), RL::PortRed(), ERunningLightMode::Blink, 1.4f, 0.f, Bulb * 1.6f));
 	PendingLights.Add(FRunningLight(FVector(0.f, 0.f, -HubH * 0.5f - D * 0.06f - Bulb), RL::PortRed(), ERunningLightMode::Blink, 1.4f, 0.5f, Bulb * 1.6f));

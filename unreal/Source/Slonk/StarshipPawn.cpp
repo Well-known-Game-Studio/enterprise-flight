@@ -145,6 +145,7 @@ AStarshipPawn::AStarshipPawn()
 	}
 	StarMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_Stars.M_Stars")));
 	WarpPostProcessMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_PP_Warp.M_PP_Warp")));
+	HullWindowMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_HullWindows.M_HullWindows")));
 
 	// Default hull lights for the Constitution refit, relative to the hull centre. Tune in the editor.
 	auto AddLight = [this](const TCHAR* Name, FVector Offset, FLinearColor Color, float Intensity, float Radius, bool bWarp, bool bImpulse)
@@ -235,7 +236,8 @@ void AStarshipPawn::SetupRunningLights()
 	const FBox Secondary(FVector(-L * 0.45f, -W * 0.13f, -H), FVector(L * 0.05f, W * 0.13f, H * 0.05f));
 
 	using RL = URunningLightsComponent;
-	const float Bulb = L * 0.004f;
+	// Bulbs are small fittings, not spheres stuck on the hull: 37 cm on a 305 m ship. They still grow with distance so they read from afar.
+	const float Bulb = L * 0.0012f;
 	const float Strobe = 1.9f;
 	const float Blink = 1.3f;
 	TArray<FRunningLight> Lights;
@@ -260,7 +262,8 @@ void AStarshipPawn::SetupRunningLights()
 	Lights.Add(FRunningLight(Probe(FVector(0, 0, -1), Secondary, FVector(-L * 0.2f, 0.f, -H * 0.4f)), RL::StrobeWhite(), ERunningLightMode::Strobe, Strobe, 0.75f, Bulb));
 	Lights.Add(FRunningLight(Probe(FVector(-1, 0, 0), Secondary, FVector(-L * 0.42f, 0.f, -H * 0.2f)), RL::FormationAmber(), ERunningLightMode::Steady, 1.f, 0.f, Bulb, 0.7f));
 
-	RunningLights->MaxRadiusCm = L * 0.03f;
+	RunningLights->MaxRadiusCm = L * 0.012f;
+	RunningLights->MinAngularRadius = 0.002f;
 	RunningLights->SetLights(Lights);
 
 	// Floodlights (refit convention). Saucer: lamps near the middle of the top and underside, facing radially out
@@ -367,6 +370,7 @@ void AStarshipPawn::ApplyHullDimensions()
 		ShipMesh->SetRelativeScale3D(FVector(Scale));
 		ShipMesh->SetRelativeRotation(Rot);
 		ShipMesh->SetRelativeLocation(-Rot.RotateVector(Bounds.Origin) * Scale + MeshCenterOffset);
+		ApplyHullWindows(Scale, Rot, ShipMesh->GetRelativeLocation());
 	}
 
 	// Cameras scale with the hull so the framing is the same whatever the real length is.
@@ -566,6 +570,77 @@ void AStarshipPawn::ApplyExposure()
 	S.bOverride_AutoExposureMaxBrightness = bLock;
 	S.AutoExposureMinBrightness = LockedExposureEV;
 	S.AutoExposureMaxBrightness = LockedExposureEV;
+}
+
+void AStarshipPawn::ApplyHullWindows(float Scale, const FQuat& Rot, const FVector& RelLoc)
+{
+	if (!ShipMesh)
+	{
+		return;
+	}
+	if (!HullWindowsMID)
+	{
+		UMaterialInterface* Mat = HullWindowMaterial.LoadSynchronous();
+		if (!Mat)
+		{
+			return;
+		}
+		HullWindowsMID = UMaterialInstanceDynamic::Create(Mat, this);
+		ShipMesh->SetOverlayMaterial(HullWindowsMID);
+	}
+	auto V = [](const FVector& X) { return FLinearColor((float)X.X, (float)X.Y, (float)X.Z, 0.f); };
+	// Where the saucer rim actually is: the mesh vertices on the outer 4% of the saucer radius give its height
+	// and thickness, so the window band lands on the rim whatever the mesh's vertical layout.
+	FVector SaucerCenter = WindowSaucerCenter;
+	float SaucerThickness = WindowSaucerThickness;
+	if (bAutoSaucerRim && ShipMesh->GetStaticMesh() && ShipMesh->GetStaticMesh()->GetRenderData() && ShipMesh->GetStaticMesh()->GetRenderData()->LODResources.Num() > 0)
+	{
+		const FPositionVertexBuffer& PB = ShipMesh->GetStaticMesh()->GetRenderData()->LODResources[0].VertexBuffers.PositionVertexBuffer;
+		if (PB.GetVertexData() != nullptr && PB.GetNumVertices() > 0)
+		{
+			const FTransform MeshToPawn(Rot, RelLoc, FVector(Scale));
+			double SumZ = 0.0, MinZ = 1e30, MaxZ = -1e30;
+			int32 Count = 0;
+			for (uint32 i = 0; i < PB.GetNumVertices(); ++i)
+			{
+				const FVector P = MeshToPawn.TransformPosition(FVector(PB.VertexPosition(i)));
+				const double R = FVector2D(P.X - SaucerCenter.X, P.Y - SaucerCenter.Y).Size();
+				if (R > WindowSaucerRadius * 0.96 && R < WindowSaucerRadius * 1.01 && FMath::Abs(P.Y) > WindowSaucerRadius * 0.3)
+				{
+					SumZ += P.Z; MinZ = FMath::Min(MinZ, P.Z); MaxZ = FMath::Max(MaxZ, P.Z); ++Count;
+				}
+			}
+			if (Count >= 8)
+			{
+				SaucerCenter.Z = SumZ / Count;
+				SaucerThickness = FMath::Max((float)(MaxZ - MinZ) * 0.5f, 300.f);
+			}
+			UE_LOG(LogTemp, Log, TEXT("Starship windows: saucer rim verts %d, z %.0f, thickness %.0f (mesh scale %.3f)"), Count, SaucerCenter.Z, SaucerThickness, Scale);
+		}
+	}
+	// Mesh space -> pawn space, so the window zones can be stated in the same frame as the lights and floods.
+	HullWindowsMID->SetScalarParameterValue(TEXT("MeshScale"), Scale);
+	HullWindowsMID->SetVectorParameterValue(TEXT("MeshRelLoc"), V(RelLoc));
+	HullWindowsMID->SetVectorParameterValue(TEXT("AxisX"), V(Rot.RotateVector(FVector::XAxisVector)));
+	HullWindowsMID->SetVectorParameterValue(TEXT("AxisY"), V(Rot.RotateVector(FVector::YAxisVector)));
+	HullWindowsMID->SetVectorParameterValue(TEXT("AxisZ"), V(Rot.RotateVector(FVector::ZAxisVector)));
+	HullWindowsMID->SetVectorParameterValue(TEXT("WindowSaucerCenter"), V(SaucerCenter));
+	HullWindowsMID->SetScalarParameterValue(TEXT("WindowSaucerRadius"), WindowSaucerRadius);
+	HullWindowsMID->SetScalarParameterValue(TEXT("WindowSaucerThickness"), SaucerThickness);
+	HullWindowsMID->SetScalarParameterValue(TEXT("WindowHullMaxY"), WindowHullMaxY);
+	HullWindowsMID->SetScalarParameterValue(TEXT("WindowHullMaxZ"), WindowHullMaxZ);
+	HullWindowsMID->SetScalarParameterValue(TEXT("WindowHullMinZ"), WindowHullMinZ);
+	HullWindowsMID->SetScalarParameterValue(TEXT("WindowHullMinX"), WindowHullMinX);
+	HullWindowsMID->SetScalarParameterValue(TEXT("WindowHullMaxX"), WindowHullMaxX);
+	HullWindowsMID->SetVectorParameterValue(TEXT("WindowExcludeAMin"), V(WindowExcludeDeflectorMin));
+	HullWindowsMID->SetVectorParameterValue(TEXT("WindowExcludeAMax"), V(WindowExcludeDeflectorMax));
+	HullWindowsMID->SetVectorParameterValue(TEXT("WindowExcludeBMin"), V(WindowExcludeTorpedoMin));
+	HullWindowsMID->SetVectorParameterValue(TEXT("WindowExcludeBMax"), V(WindowExcludeTorpedoMax));
+	HullWindowsMID->SetScalarParameterValue(TEXT("WindowPitch"), WindowPitch);
+	HullWindowsMID->SetScalarParameterValue(TEXT("WindowDeck"), WindowDeck);
+	HullWindowsMID->SetScalarParameterValue(TEXT("WindowGlow"), WindowGlow);
+	HullWindowsMID->SetScalarParameterValue(TEXT("WindowOnFraction"), WindowOnFraction);
+	HullWindowsMID->SetScalarParameterValue(TEXT("WindowPeriod"), WindowPeriod);
 }
 
 void AStarshipPawn::SetupHullMaterials()

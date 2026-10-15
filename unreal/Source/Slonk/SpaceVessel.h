@@ -123,6 +123,8 @@ protected:
 	float WindowDeck = 400.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vessel")
 	float WindowGlow = 25.f;
+	/** Fraction of windows lit at any moment (each is on or off; the pattern re-rolls slowly over time). */
+	float WindowOnFraction = 0.45f;
 	void ApplyWindowParams(UMaterialInstanceDynamic* MID) const;
 
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> HullMID;
