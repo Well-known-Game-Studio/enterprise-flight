@@ -547,6 +547,15 @@ void AStarshipPawn::UpdateWarpPostProcess()
 		}
 	}
 
+	// Our own hull is drawn straight and must never be sampled as part of the universe. The hull lies within
+	// half a ship length of the actor origin, so the exclusion follows the camera's distance from it rather
+	// than a fixed depth, which the chase camera's zoom-out would otherwise exceed.
+	{
+		const float CamDist = (float)FVector::Dist(CamLoc, GetActorLocation());
+		const float L = GetShipLengthCm();
+		WarpPPMID->SetScalarParameterValue(TEXT("NearExcludeCm"), CamDist + 0.6f * L);
+		WarpPPMID->SetScalarParameterValue(TEXT("FarIncludeCm"), CamDist + 1.1f * L);
+	}
 	WarpPPMID->SetScalarParameterValue(TEXT("Mode"), bRelativistic ? 1.f : 0.f);
 	WarpPPMID->SetScalarParameterValue(TEXT("Strength"), Streak);
 	WarpPPMID->SetScalarParameterValue(TEXT("Flash"), Flash);
@@ -962,8 +971,10 @@ void AStarshipPawn::UpdateWarpEffects(float DeltaTime)
 	const float Streak = WarpDrive->GetStreakIntensity();
 	const float Flash = WarpDrive->GetFlashIntensity();
 
-	// Relativistic mode has no cartoon star streaks; the scene itself does the work.
-	WarpStreaks->SetIntensity(WarpVisualMode == EWarpVisualMode::Relativistic ? Streak * 0.15f : Streak);
+	// Relativistic mode has no cartoon star streaks; the scene itself does the work. They must be fully off,
+	// not merely faint: the streak cylinders write colour but no depth, so the relativistic view would take
+	// them for the universe and draw a contracted copy of the whole tunnel in front of the ship.
+	WarpStreaks->SetIntensity(WarpVisualMode == EWarpVisualMode::Relativistic ? 0.f : Streak);
 	// The post-process parameters depend on the final camera transform, so WarpView pushes them after the
 	// cameras have updated (see UpdateWarpPostProcess).
 	LastStreak = Streak;
