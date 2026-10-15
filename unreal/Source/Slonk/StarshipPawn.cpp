@@ -147,37 +147,15 @@ AStarshipPawn::AStarshipPawn()
 	WarpPostProcessMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_PP_Warp.M_PP_Warp")));
 	HullWindowMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_HullWindows.M_HullWindows")));
 
-	// Default hull lights for the Constitution refit, relative to the hull centre. Tune in the editor.
-	auto AddLight = [this](const TCHAR* Name, FVector Offset, FLinearColor Color, float Intensity, float Radius, bool bWarp, bool bImpulse)
-	{
-		FStarshipLightSpec Spec;
-		Spec.Name = Name;
-		Spec.Offset = Offset;
-		Spec.Color = Color;
-		Spec.Intensity = Intensity;
-		Spec.AttenuationRadius = Radius;
-		Spec.bWarpLight = bWarp;
-		Spec.bImpulseLight = bImpulse;
-		LightSpecs.Add(Spec);
-	};
-	const FLinearColor WarpBlue(0.35f, 0.6f, 1.f);
-	const FLinearColor BussardRed(1.f, 0.25f, 0.08f);
-	const FLinearColor ImpulseOrange(1.f, 0.45f, 0.15f);
-	// These only tint the hull next to the glowing parts (a few lux at 50 m); the parts themselves are emissive.
-	// At the old 100-140 kcd they lit the whole 300 m hull from inside, so the ship never had a dark side.
-	AddLight(TEXT("NacelleGrillePort"), FVector(-7500.0, -3700.0, 2700.0), WarpBlue, 12000.f, 9000.f, true, false);
-	AddLight(TEXT("NacelleGrilleStarboard"), FVector(-7500.0, 3700.0, 2700.0), WarpBlue, 12000.f, 9000.f, true, false);
-	AddLight(TEXT("BussardPort"), FVector(-2600.0, -3700.0, 2700.0), BussardRed, 8000.f, 6000.f, true, false);
-	AddLight(TEXT("BussardStarboard"), FVector(-2600.0, 3700.0, 2700.0), BussardRed, 8000.f, 6000.f, true, false);
-	AddLight(TEXT("Deflector"), FVector(1500.0, 0.0, -1700.0), WarpBlue, 10000.f, 8000.f, true, false);
-	AddLight(TEXT("ImpulseEngines"), FVector(-800.0, 0.0, 1500.0), ImpulseOrange, 4000.f, 5000.f, false, true);
-
+	// No hull point lights by default: the nacelle grilles, bussards, deflector and impulse deck glow through the
+	// mesh's emissive maps (scaled by the warp drive below), which lights more honestly than point lights placed
+	// inside the hull. LightSpecs can still be filled in the editor for a one-off.
 	// Saucer (slots 1 and 2) and engineering hull (slot 3) plating: no emissive. Nacelles (slot 4): hot.
 	// The glow maps carry the lit windows; this weight shows them without the plating reading as self-lit.
 	SlotGlowWeights.Add(TEXT("Constitution_1"), 1.3f);
 	SlotGlowWeights.Add(TEXT("Constitution_2"), 1.3f);
 	SlotGlowWeights.Add(TEXT("Constitution_3"), 1.3f);
-	SlotGlowWeights.Add(TEXT("Constitution_4"), 2.5f);
+	SlotGlowWeights.Add(TEXT("Constitution_4"), 5.0f);
 }
 
 void AStarshipPawn::SetupRunningLights()
@@ -636,6 +614,12 @@ void AStarshipPawn::ApplyHullWindows(float Scale, const FQuat& Rot, const FVecto
 	HullWindowsMID->SetVectorParameterValue(TEXT("WindowExcludeAMax"), V(WindowExcludeDeflectorMax));
 	HullWindowsMID->SetVectorParameterValue(TEXT("WindowExcludeBMin"), V(WindowExcludeTorpedoMin));
 	HullWindowsMID->SetVectorParameterValue(TEXT("WindowExcludeBMax"), V(WindowExcludeTorpedoMax));
+	HullWindowsMID->SetVectorParameterValue(TEXT("PatchAMin"), V(DeflectorPatchMin)); HullWindowsMID->SetVectorParameterValue(TEXT("PatchAMax"), V(DeflectorPatchMax));
+	HullWindowsMID->SetVectorParameterValue(TEXT("PatchADir"), FLinearColor(1.f, 0.f, 0.f, 0.f));
+	HullWindowsMID->SetVectorParameterValue(TEXT("PatchBMin"), V(TorpedoPatchMin)); HullWindowsMID->SetVectorParameterValue(TEXT("PatchBMax"), V(TorpedoPatchMax));
+	HullWindowsMID->SetVectorParameterValue(TEXT("PatchBDir"), FLinearColor(1.f, 0.f, 0.f, 0.f));
+	HullWindowsMID->SetVectorParameterValue(TEXT("PatchCMin"), V(ImpulsePatchMin)); HullWindowsMID->SetVectorParameterValue(TEXT("PatchCMax"), V(ImpulsePatchMax));
+	HullWindowsMID->SetVectorParameterValue(TEXT("PatchCDir"), FLinearColor(-1.f, 0.f, 0.f, 0.f));
 	HullWindowsMID->SetScalarParameterValue(TEXT("WindowPitch"), WindowPitch);
 	HullWindowsMID->SetScalarParameterValue(TEXT("WindowDeck"), WindowDeck);
 	HullWindowsMID->SetScalarParameterValue(TEXT("WindowGlow"), WindowGlow);
@@ -920,8 +904,22 @@ void AStarshipPawn::UpdateWarpEffects(float DeltaTime)
 void AStarshipPawn::UpdateHullGlow(float DeltaTime)
 {
 	const float Glow = WarpDrive ? WarpDrive->GetGlowMultiplier() : 1.f;
-	const float Throttle = Movement ? FMath::Abs((float)Movement->Throttle) : 0.f;
-	const float ImpulseGlow = 0.35f + 3.f * Throttle;
+	const float ThrottleSigned = Movement ? (float)Movement->Throttle : 0.f;
+	const float Throttle = FMath::Abs(ThrottleSigned);
+	const bool bReverse = ThrottleSigned < -0.01f;
+	// The impulse grille's own (orange) emissive follows the forward throttle; in reverse it idles and the
+	// overlay patch below lights the exhaust blue instead.
+	const float ImpulseGlow = bReverse ? 0.1f : 0.15f + 4.5f * Throttle;
+	if (HullWindowsMID)
+	{
+		const float Ready = Weapons ? Weapons->GetTorpedoReadiness() : 1.f;
+		HullWindowsMID->SetVectorParameterValue(TEXT("PatchAColor"), DeflectorGlowColor);
+		HullWindowsMID->SetScalarParameterValue(TEXT("PatchAIntensity"), DeflectorGlow * (0.7f + 0.3f * Glow));
+		HullWindowsMID->SetVectorParameterValue(TEXT("PatchBColor"), TorpedoBayGlowColor);
+		HullWindowsMID->SetScalarParameterValue(TEXT("PatchBIntensity"), TorpedoBayGlow * (0.3f + 0.7f * FMath::Clamp(Ready, 0.f, 1.f)));
+		HullWindowsMID->SetVectorParameterValue(TEXT("PatchCColor"), ReverseGlowColor);
+		HullWindowsMID->SetScalarParameterValue(TEXT("PatchCIntensity"), bReverse ? ReverseGlow * Throttle : 0.f);
+	}
 
 	const TArray<FName> SlotNames = ShipMesh ? ShipMesh->GetMaterialSlotNames() : TArray<FName>();
 	for (int32 i = 0; i < HullMaterials.Num(); ++i)

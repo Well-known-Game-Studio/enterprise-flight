@@ -224,6 +224,19 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") FVector WindowExcludeDeflectorMax = FVector(6500.0, 1900.0, 900.0);
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") FVector WindowExcludeTorpedoMin = FVector(1700.0, -900.0, 150.0);
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") FVector WindowExcludeTorpedoMax = FVector(3700.0, 900.0, 1350.0);
+	/** Emissive patches drawn by the overlay (pawn space): deflector dish, torpedo bay, and the impulse exhaust when reversing. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector DeflectorPatchMin = FVector(4600.0, -1300.0, -2900.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector DeflectorPatchMax = FVector(6900.0, 1300.0, -500.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FLinearColor DeflectorGlowColor = FLinearColor(0.45f, 0.8f, 1.0f);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") float DeflectorGlow = 7.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector TorpedoPatchMin = FVector(1200.0, -700.0, 1000.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector TorpedoPatchMax = FVector(2700.0, 700.0, 1650.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FLinearColor TorpedoBayGlowColor = FLinearColor(1.0f, 0.12f, 0.05f);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") float TorpedoBayGlow = 16.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector ImpulsePatchMin = FVector(300.0, -900.0, 1550.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector ImpulsePatchMax = FVector(1100.0, 900.0, 2300.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FLinearColor ReverseGlowColor = FLinearColor(0.5f, 0.75f, 1.0f);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") float ReverseGlow = 18.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowPitch = 700.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowDeck = 460.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowGlow = 22.f;
