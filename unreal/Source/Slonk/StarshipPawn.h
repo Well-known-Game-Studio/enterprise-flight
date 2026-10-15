@@ -552,7 +552,7 @@ private:
 	float OrbitAngle = 0.f;
 	float ChaseArmBaseLength = 0.f;
 	FVector ChaseArmBaseSocketOffset = FVector::ZeroVector;
-	float LastTorpedoReadiness = 1.f;
+	int32 LastTorpedoesFired = 0;
 	FVector DebugSteer = FVector::ZeroVector;
 	float DebugSteerTime = 0.f;
 	FVector2D DebugLook = FVector2D::ZeroVector;

@@ -206,33 +206,65 @@ void UStarshipWeaponsComponent::UpdatePhasers(float DeltaTime)
 	}
 }
 
+float UStarshipWeaponsComponent::GetTorpedoReadiness() const
+{
+	float Best = TorpedoTubeOffsets.Num() > 0 ? 0.f : 1.f;
+	for (int32 i = 0; i < TorpedoTubeOffsets.Num(); ++i)
+	{
+		Best = FMath::Max(Best, GetTubeReadiness(i));
+	}
+	return Best;
+}
+
+float UStarshipWeaponsComponent::GetTubeReadiness(int32 Tube) const
+{
+	if (!TubeTimers.IsValidIndex(Tube) || TorpedoCooldown <= 0.f)
+	{
+		return 1.f;
+	}
+	return FMath::Clamp(1.f - TubeTimers[Tube] / TorpedoCooldown, 0.f, 1.f);
+}
+
 bool UStarshipWeaponsComponent::FireTorpedo()
 {
 	AActor* Owner = GetOwner();
 	UWorld* World = GetWorld();
-	if (!Owner || !World || TorpedoTimer > 0.f || TorpedoTubeOffsets.Num() == 0)
+	if (!Owner || !World || TorpedoTubeOffsets.Num() == 0)
 	{
 		return false;
 	}
+	if (TubeTimers.Num() != TorpedoTubeOffsets.Num())
+	{
+		TubeTimers.Init(0.f, TorpedoTubeOffsets.Num());
+	}
+	// Tubes alternate; a tube still reloading is skipped, so with two tubes a pair goes out back to back.
+	int32 TubeIndex = INDEX_NONE;
+	for (int32 k = 0; k < TorpedoTubeOffsets.Num(); ++k)
+	{
+		const int32 Candidate = (NextTube + k) % TorpedoTubeOffsets.Num();
+		if (TubeTimers[Candidate] <= 0.f)
+		{
+			TubeIndex = Candidate;
+			break;
+		}
+	}
+	if (TubeIndex == INDEX_NONE)
+	{
+		return false;
+	}
+	NextTube = (TubeIndex + 1) % TorpedoTubeOffsets.Num();
 
 	const FTransform ShipTransform = Owner->GetActorTransform();
-	const FVector Tube = ShipTransform.TransformPosition(TorpedoTubeOffsets[NextTube % TorpedoTubeOffsets.Num()]);
-	NextTube = (NextTube + 1) % TorpedoTubeOffsets.Num();
-
-	const FVector AimPoint = GetAimPoint();
-	FVector Dir = (AimPoint - Tube).GetSafeNormal();
+	const FVector Tube = ShipTransform.TransformPosition(TorpedoTubeOffsets[TubeIndex]);
+	// Straight out of the tube along the hull's axis; the torpedo itself banks toward the target once clear.
 	const FVector ShipForward = ShipTransform.GetUnitAxis(EAxis::X);
-	// Torpedoes leave the tube roughly forward and then home; don't let them fire backwards.
-	if (FVector::DotProduct(Dir, ShipForward) < 0.3)
-	{
-		Dir = ShipForward;
-	}
+	const FVector AimDir = (GetAimPoint() - Tube).GetSafeNormal();
 
 	FActorSpawnParameters Params;
 	Params.Owner = Owner;
 	Params.Instigator = Cast<APawn>(Owner);
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	APhotonTorpedo* Torpedo = World->SpawnActor<APhotonTorpedo>(TorpedoClass ? *TorpedoClass : APhotonTorpedo::StaticClass(), Tube, Dir.Rotation(), Params);
+	APhotonTorpedo* Torpedo = World->SpawnActor<APhotonTorpedo>(TorpedoClass ? *TorpedoClass : APhotonTorpedo::StaticClass(), Tube, ShipForward.Rotation(), Params);
 	if (!Torpedo)
 	{
 		return false;
@@ -241,15 +273,16 @@ bool UStarshipWeaponsComponent::FireTorpedo()
 	double ShipSpeed = 0.0;
 	if (const UStarshipMovementComponent* Movement = Owner->FindComponentByClass<UStarshipMovementComponent>())
 	{
-		ShipSpeed = FVector::DotProduct(Movement->Velocity, Dir);
+		ShipSpeed = FVector::DotProduct(Movement->Velocity, ShipForward);
 	}
-	Torpedo->Launch(Dir, ShipSpeed, LockedTarget);
+	Torpedo->Launch(ShipForward, ShipSpeed, LockedTarget, AimDir);
 	// The tube is inside our own hull volume: make sure our sweep never treats the torpedo as a wall.
 	if (UPrimitiveComponent* Root = Cast<UPrimitiveComponent>(Owner->GetRootComponent()))
 	{
 		Root->IgnoreActorWhenMoving(Torpedo, true);
 	}
-	TorpedoTimer = TorpedoCooldown;
+	TubeTimers[TubeIndex] = TorpedoCooldown;
+	++TorpedoesFired;
 	return true;
 }
 
@@ -345,6 +378,13 @@ void UStarshipWeaponsComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	{
 		LockedTarget = nullptr;
 	}
-	TorpedoTimer = FMath::Max(0.f, TorpedoTimer - DeltaTime);
+	if (TubeTimers.Num() != TorpedoTubeOffsets.Num())
+	{
+		TubeTimers.Init(0.f, TorpedoTubeOffsets.Num());
+	}
+	for (float& Timer : TubeTimers)
+	{
+		Timer = FMath::Max(0.f, Timer - DeltaTime);
+	}
 	UpdatePhasers(DeltaTime);
 }

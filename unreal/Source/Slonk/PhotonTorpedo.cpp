@@ -96,20 +96,19 @@ void APhotonTorpedo::BeginPlay()
 	SetLifeSpan(LifeSeconds);
 }
 
-void APhotonTorpedo::Launch(const FVector& Direction, double InheritedSpeed, AActor* HomingTarget)
+void APhotonTorpedo::Launch(const FVector& Direction, double InheritedSpeed, AActor* HomingTarget, const FVector& AimDirection)
 {
 	const FVector Dir = Direction.GetSafeNormal();
 	const double LaunchSpeed = Speed + FMath::Max(0.0, InheritedSpeed);
 	Movement->InitialSpeed = LaunchSpeed;
 	Movement->Velocity = Dir * LaunchSpeed;
 	SetActorRotation(Dir.Rotation());
-
-	if (HomingTarget && HomingTarget->GetRootComponent())
-	{
-		Movement->bIsHomingProjectile = true;
-		Movement->HomingTargetComponent = HomingTarget->GetRootComponent();
-		Movement->HomingAccelerationMagnitude = HomingAcceleration;
-	}
+	// Straight out of the tube first; the turn toward the target is our own, in Tick, so it is a clean bank
+	// at a set rate rather than the engine's homing acceleration bending the track from the first frame.
+	Movement->bIsHomingProjectile = false;
+	SeekTarget = HomingTarget;
+	SeekDirection = AimDirection.GetSafeNormal();
+	bSeeking = (HomingTarget != nullptr) || !SeekDirection.IsNearlyZero();
 
 	if (AActor* MyOwner = GetOwner())
 	{
@@ -122,6 +121,29 @@ void APhotonTorpedo::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 	Age += DeltaTime;
+	if (bSeeking && Age > StraightRunSeconds && Movement && !bDetonated)
+	{
+		FVector Want = SeekDirection;
+		if (SeekTarget.IsValid())
+		{
+			Want = (SeekTarget->GetActorLocation() - GetActorLocation()).GetSafeNormal();
+		}
+		const double CurSpeed = Movement->Velocity.Size();
+		if (!Want.IsNearlyZero() && CurSpeed > 1.0)
+		{
+			const FVector Cur = Movement->Velocity / CurSpeed;
+			const float MaxStep = FMath::DegreesToRadians(TurnRateDegPerSecond) * DeltaTime;
+			const float Angle = FMath::Acos(FMath::Clamp((float)FVector::DotProduct(Cur, Want), -1.f, 1.f));
+			FVector NewDir = Want;
+			if (Angle > MaxStep)
+			{
+				const FVector Axis = FVector::CrossProduct(Cur, Want).GetSafeNormal();
+				NewDir = Axis.IsNearlyZero() ? Cur : Cur.RotateAngleAxisRad(MaxStep, Axis);
+			}
+			Movement->Velocity = NewDir * CurSpeed;
+			SetActorRotation(NewDir.Rotation());
+		}
+	}
 	// Pulsing halo.
 	const float Pulse = 1.f + 0.25f * FMath::Sin(Age * 30.f);
 	Halo->SetRelativeScale3D(FVector(VisualRadius * 1.8f * Pulse / 50.f));

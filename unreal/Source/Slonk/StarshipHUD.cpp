@@ -208,9 +208,19 @@ void AStarshipHUD::DrawHUD()
 	{
 		DrawText(TEXT("PHASERS"), Dim, X, Y, Font, UIScale);
 		DrawBar(X + 110.f * UIScale, Y + 3.f * UIScale, 160.f * UIScale, 8.f * UIScale, Weapons->GetPhaserEnergy(), Weapons->IsFiringPhasers() ? Warning : FLinearColor(1.f, 0.65f, 0.25f)); Y += Line;
-		DrawText(TEXT("TORPEDO"), Dim, X, Y, Font, UIScale);
-		const float Ready = Weapons->GetTorpedoReadiness();
-		DrawBar(X + 110.f * UIScale, Y + 3.f * UIScale, 160.f * UIScale, 8.f * UIScale, Ready, Ready >= 1.f ? FLinearColor(1.f, 0.3f, 0.1f) : Dim); Y += Line;
+		// One bar per torpedo tube: each reloads on its own.
+		DrawText(Weapons->GetNumTubes() > 1 ? TEXT("TUBES") : TEXT("TORPEDO"), Dim, X, Y, Font, UIScale);
+		{
+			const int32 Tubes = FMath::Max(Weapons->GetNumTubes(), 1);
+			const float Gap = 6.f * UIScale;
+			const float BarW = (160.f * UIScale - Gap * (Tubes - 1)) / Tubes;
+			for (int32 t = 0; t < Tubes; ++t)
+			{
+				const float Ready = Weapons->GetTubeReadiness(t);
+				DrawBar(X + 110.f * UIScale + t * (BarW + Gap), Y + 3.f * UIScale, BarW, 8.f * UIScale, Ready, Ready >= 1.f ? FLinearColor(1.f, 0.3f, 0.1f) : Dim);
+			}
+			Y += Line;
+		}
 
 		if (const AActor* Target = Weapons->LockedTarget)
 		{

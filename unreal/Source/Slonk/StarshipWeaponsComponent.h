@@ -82,8 +82,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Torpedoes")
 	TSubclassOf<APhotonTorpedo> TorpedoClass;
 
+	/** Reload time of one tube (s). With two tubes a pair can go out back to back. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Torpedoes")
-	float TorpedoCooldown = 0.9f;
+	float TorpedoCooldown = 2.5f;
 
 	// ---- Targeting ----
 
@@ -122,9 +123,20 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Starship|Weapons")
 	float GetPhaserEnergy() const { return PhaserEnergy; }
 
-	/** 1 when a torpedo can be fired, counting up from 0 after each shot. */
+	/** Readiness of the readiest tube: 1 when a torpedo can be fired, counting up from 0 as it reloads. */
 	UFUNCTION(BlueprintPure, Category = "Starship|Weapons")
-	float GetTorpedoReadiness() const { return TorpedoCooldown > 0.f ? FMath::Clamp(1.f - TorpedoTimer / TorpedoCooldown, 0.f, 1.f) : 1.f; }
+	float GetTorpedoReadiness() const;
+
+	/** Readiness of one tube (0..1). Each tube reloads on its own, so both can fire back to back. */
+	UFUNCTION(BlueprintPure, Category = "Starship|Weapons")
+	float GetTubeReadiness(int32 Tube) const;
+
+	UFUNCTION(BlueprintPure, Category = "Starship|Weapons")
+	int32 GetNumTubes() const { return TorpedoTubeOffsets.Num(); }
+
+	/** Count of torpedoes fired, for launch effects. */
+	UFUNCTION(BlueprintPure, Category = "Starship|Weapons")
+	int32 GetTorpedoesFired() const { return TorpedoesFired; }
 
 	/** World-space point the weapons are aiming at (locked target, or the view direction out to range). */
 	UFUNCTION(BlueprintPure, Category = "Starship|Weapons")
@@ -140,6 +152,8 @@ private:
 
 	bool bPhasersFiring = false;
 	float PhaserEnergy = 1.f;
-	float TorpedoTimer = 0.f;
+	/** Seconds of reload left per tube. */
+	TArray<float> TubeTimers;
 	int32 NextTube = 0;
+	int32 TorpedoesFired = 0;
 };

@@ -232,9 +232,11 @@ void AStarshipPawn::SetupRunningLights()
 	const float SaucerR = 7190.f;
 	auto SurfaceAt = [&](const FVector& XY, bool bTop) -> FVector
 	{
-		// The hull skin straight above (or below) a point on the saucer plan, from the mesh.
-		const FBox Column(FVector(XY.X - 250.f, XY.Y - 250.f, bTop ? 0.f : -H), FVector(XY.X + 250.f, XY.Y + 250.f, bTop ? H : 400.f));
-		return Probe(FVector(0, 0, bTop ? 1.f : -1.f), Column, FVector(XY.X, XY.Y, bTop ? 1800.f : -300.f));
+		// The hull skin straight above (or below) a point on the saucer plan, from the mesh: the highest (or
+		// lowest) vertex in a full-height column there. The saucer's underside sits above z 500, so the column
+		// must not be cut off at the nominal centre height or the underside fittings fall back into empty space.
+		const FBox Column(FVector(XY.X - 250.f, XY.Y - 250.f, -H), FVector(XY.X + 250.f, XY.Y + 250.f, H));
+		return Probe(FVector(0, 0, bTop ? 1.f : -1.f), Column, FVector(XY.X, XY.Y, bTop ? 1800.f : 600.f));
 	};
 	{
 		// Three wide lamps on each face of the saucer, as on the refit: one forward and one out to each side. The
@@ -470,8 +472,10 @@ void AStarshipPawn::SetupWeaponBanks()
 	const float SaucerR = 7190.f;
 	auto Skin = [&](const FVector& XY, bool bTop) -> FVector
 	{
-		const FBox Column(FVector(XY.X - 250.f, XY.Y - 250.f, bTop ? 0.f : -H), FVector(XY.X + 250.f, XY.Y + 250.f, bTop ? H : 400.f));
-		return ProbeHull(FVector(0, 0, bTop ? 1.f : -1.f), Column, FVector(XY.X, XY.Y, bTop ? 1800.f : -300.f));
+		// Full-height column: the saucer's underside is above z 500, so a column cut off at the nominal centre
+		// height finds nothing there and the ventral banks would fall back into empty space.
+		const FBox Column(FVector(XY.X - 250.f, XY.Y - 250.f, -H), FVector(XY.X + 250.f, XY.Y + 250.f, H));
+		return ProbeHull(FVector(0, 0, bTop ? 1.f : -1.f), Column, FVector(XY.X, XY.Y, bTop ? 1800.f : 600.f));
 	};
 	auto AtAngle = [&](float Deg, float Frac) -> FVector
 	{
@@ -506,7 +510,22 @@ void AStarshipPawn::SetupWeaponBanks()
 		const FVector P = ProbeHull(Normal, Flank, FVector(-7200.f, Side * 1100.f, -800.f));
 		Banks.Add(FPhaserBank(Side < 0 ? TEXT("SternPort") : TEXT("SternStbd"), P, Normal));
 	}
+	// Bed every bank on the nearest plating that faces its way (the column probes can land on a vertex a few
+	// metres off the skin where the mesh is sparse), then stand the emitter a little proud of it.
+	for (FPhaserBank& B : Banks)
+	{
+		FVector Plating = B.Normal.Z > 0.3f ? FVector::UpVector : (B.Normal.Z < -0.3f ? FVector::DownVector : B.Normal);
+		FVector P = B.Offset;
+		if (SnapToHull(P, Plating, 900.f))
+		{
+			B.Offset = P + Plating * 30.f;
+		}
+	}
 	Weapons->PhaserBanks = Banks;
+	for (const FPhaserBank& B : Banks)
+	{
+		UE_LOG(LogTemp, Log, TEXT("Phaser bank %-14s pos %7.0f %7.0f %7.0f  field %5.2f %5.2f %5.2f"), *B.Name.ToString(), B.Offset.X, B.Offset.Y, B.Offset.Z, B.Normal.X, B.Normal.Y, B.Normal.Z);
+	}
 }
 
 void AStarshipPawn::UpdateThrusters()
@@ -1169,12 +1188,12 @@ void AStarshipPawn::Tick(float DeltaTime)
 	// Torpedo launch kick.
 	if (Weapons)
 	{
-		const float Ready = Weapons->GetTorpedoReadiness();
-		if (Ready < LastTorpedoReadiness - 0.5f)
+		const int32 Fired = Weapons->GetTorpedoesFired();
+		if (Fired != LastTorpedoesFired)
 		{
 			AddCameraShake(0.25f);
 		}
-		LastTorpedoReadiness = Ready;
+		LastTorpedoesFired = Fired;
 	}
 }
 
