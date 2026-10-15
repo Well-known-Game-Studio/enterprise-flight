@@ -122,7 +122,7 @@ void URunningLightsComponent::SetFloodlights(const TArray<FHullFloodlight>& InFl
 		S->SetIntensity(F.Lux * Metres * Metres);
 		S->SetLightColor(F.Color);
 		S->SetAttenuationRadius(Dist * 1.5f);
-		const float Outer = FMath::Clamp(FMath::RadiansToDegrees(FMath::Atan(F.PatchRadiusCm / Dist)), 4.f, 32.f);
+		const float Outer = FMath::Clamp(FMath::RadiansToDegrees(FMath::Atan(F.PatchRadiusCm / Dist)), 4.f, 48.f);
 		S->SetOuterConeAngle(Outer);
 		S->SetInnerConeAngle(Outer * 0.35f);
 		S->CastShadows = false;

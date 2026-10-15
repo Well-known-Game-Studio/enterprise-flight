@@ -32,6 +32,8 @@
 #include "BridgeInteriorComponent.h"
 #include "DistantStarsComponent.h"
 #include "WarpViewComponent.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 
 AStarshipPawn::AStarshipPawn()
 {
@@ -146,6 +148,7 @@ AStarshipPawn::AStarshipPawn()
 	StarMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_Stars.M_Stars")));
 	WarpPostProcessMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_PP_Warp.M_PP_Warp")));
 	HullWindowMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_HullWindows.M_HullWindows")));
+	HullSkinMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_Constitution.M_Constitution")));
 
 	// No hull point lights by default: the nacelle grilles, bussards, deflector and impulse deck glow through the
 	// mesh's emissive maps (scaled by the warp drive below), which lights more honestly than point lights placed
@@ -240,6 +243,12 @@ void AStarshipPawn::SetupRunningLights()
 	Lights.Add(FRunningLight(Probe(FVector(0, 0, -1), Secondary, FVector(-L * 0.2f, 0.f, -H * 0.4f)), RL::StrobeWhite(), ERunningLightMode::Strobe, Strobe, 0.75f, Bulb));
 	Lights.Add(FRunningLight(Probe(FVector(-1, 0, 0), Secondary, FVector(-L * 0.42f, 0.f, -H * 0.2f)), RL::FormationAmber(), ERunningLightMode::Steady, 1.f, 0.f, Bulb, 0.7f));
 
+	// Bridge module: a small white lamp on each flank of its lower tier.
+	const FBox BridgePort(FVector(7200.f, -1000.f, 3150.f), FVector(8900.f, -300.f, 3400.f));
+	const FBox BridgeStbd(FVector(7200.f, 300.f, 3150.f), FVector(8900.f, 1000.f, 3400.f));
+	Lights.Add(FRunningLight(Probe(FVector(0, -1, 0), BridgePort, FVector(8050.f, -600.f, 3250.f)), RL::StrobeWhite(), ERunningLightMode::Steady, 1.f, 0.f, Bulb * 0.7f, 0.6f));
+	Lights.Add(FRunningLight(Probe(FVector(0, 1, 0), BridgeStbd, FVector(8050.f, 600.f, 3250.f)), RL::StrobeWhite(), ERunningLightMode::Steady, 1.f, 0.f, Bulb * 0.7f, 0.6f));
+
 	RunningLights->MaxRadiusCm = L * 0.012f;
 	RunningLights->MinAngularRadius = 0.002f;
 	RunningLights->SetLights(Lights);
@@ -259,7 +268,8 @@ void AStarshipPawn::SetupRunningLights()
 		return Probe(FVector(0, 0, bTop ? 1.f : -1.f), Column, FVector(XY.X, XY.Y, bTop ? 1800.f : -300.f));
 	};
 	{
-		const float Angles[6] = { 35.f, 90.f, 145.f, -35.f, -90.f, -145.f };
+		// Three wide lamps on each face of the saucer, as on the refit: one forward and one out to each side.
+		const float Angles[3] = { 0.f, 90.f, -90.f };
 		for (float Deg : Angles)
 		{
 			const float A = FMath::DegreesToRadians(Deg);
@@ -267,23 +277,22 @@ void AStarshipPawn::SetupRunningLights()
 			for (int32 Side = 0; Side < 2; ++Side)
 			{
 				const bool bTop = Side == 0;
-				// No aft-facing lamps under the saucer: they would wash the neck and engineering hull.
-				if (!bTop && FMath::Abs(Deg) > 100.f) { continue; }
-				// Lamp base a little out from the centre superstructure, patch two thirds of the way to the rim.
-				const FVector LampSkin = SurfaceAt(SaucerCentre + Dir * SaucerR * 0.24f, bTop);
-				const FVector Patch = SurfaceAt(SaucerCentre + Dir * SaucerR * 0.68f, bTop);
-				Floods.Add(FHullFloodlight(LampSkin + FVector(0.f, 0.f, bTop ? 120.f : -120.f), Patch, SaucerR * 0.16f, 14.f));
+				// Lamp base at the foot of the centre superstructure, patch most of the way to the rim and wide.
+				const FVector LampSkin = SurfaceAt(SaucerCentre + Dir * SaucerR * 0.22f, bTop);
+				const FVector Patch = SurfaceAt(SaucerCentre + Dir * SaucerR * 0.62f, bTop);
+				Floods.Add(FHullFloodlight(LampSkin + FVector(0.f, 0.f, bTop ? 120.f : -120.f), Patch, SaucerR * 0.32f, 16.f));
 			}
 		}
 	}
 	for (int32 Side = -1; Side <= 1; Side += 2)
 	{
-		// Engineering hull flank: from the stern, forward along the side where the name is painted.
+		// Engineering hull flank: from the stern, forward along the side to the Starfleet pennant and insignia
+		// painted toward the front of the hull.
 		const FBox FlankAft(FVector(-6500.f, Side < 0 ? -2500.f : 0.f, -2600.f), FVector(-4500.f, Side < 0 ? 0.f : 2500.f, 800.f));
-		const FBox FlankFore(FVector(500.f, Side < 0 ? -2500.f : 0.f, -2600.f), FVector(3000.f, Side < 0 ? 0.f : 2500.f, 800.f));
+		const FBox FlankFore(FVector(1800.f, Side < 0 ? -2500.f : 0.f, -2600.f), FVector(3800.f, Side < 0 ? 0.f : 2500.f, 600.f));
 		const FVector Stern = Probe(FVector(0, Side, 0), FlankAft, FVector(-5500.f, Side * 1500.f, -900.f));
-		const FVector Fore = Probe(FVector(0, Side, 0), FlankFore, FVector(1700.f, Side * 1600.f, -900.f));
-		Floods.Add(FHullFloodlight(Stern + FVector(0.f, Side * 130.f, 0.f), Fore, 1000.f, 14.f));
+		const FVector Fore = Probe(FVector(0, Side, 0), FlankFore, FVector(2800.f, Side * 1600.f, -1000.f));
+		Floods.Add(FHullFloodlight(Stern + FVector(0.f, Side * 130.f, 0.f), Fore, 1100.f, 14.f));
 		// Pylon root on the hull's top shoulder, pointing up the pylon at the nacelle's inboard underside.
 		const FBox Shoulder(FVector(-6200.f, Side < 0 ? -1700.f : 300.f, 600.f), FVector(-4200.f, Side < 0 ? -300.f : 1700.f, 2200.f));
 		const FVector Root = Probe(FVector(0, 0, 1), Shoulder, FVector(-5200.f, Side * 1000.f, 1600.f));
@@ -500,7 +509,8 @@ void AStarshipPawn::UpdateWarpPostProcess()
 	// The nearest star, so the shader can draw the sun where aberration puts it when its true bearing is outside
 	// the frame and there is nothing to sample.
 	FVector SunView(0.0, 0.0, 1.0);
-	float SunAngle = 0.f;
+	float SunAngle = 0.f, SunGlowAngle = 0.f;
+	FLinearColor SunColor(0.f, 0.f, 0.f), SunGlowColor(0.f, 0.f, 0.f);
 	{
 		double Best = 1e300;
 		const AStarBody* BestStar = nullptr;
@@ -517,7 +527,22 @@ void AStarshipPawn::UpdateWarpPostProcess()
 			{
 				SunView = ToView(To / Dist);
 				// Angular radius of the limb of a sphere is asin(R / d), not atan: they only agree far away.
-				SunAngle = (float)FMath::Asin(FMath::Min(BestStar->GetRadiusCm() / Dist, 1.0));
+				const double R = BestStar->GetRadiusCm();
+				double Disc = FMath::Asin(FMath::Min(R / Dist, 1.0));
+				double GlowR = Disc * 2.5;
+				if (Dist > AStarBody::FarSpriteDistanceCm && DistantStars)
+				{
+					// Beyond the mesh hand-over the sun on screen is the distant-star sprite, which is enlarged for
+					// legibility; draw the synthesised one the same size so it does not shrink when aberration
+					// carries its true bearing out of the frame.
+					const double Blend = FMath::Clamp((Dist - AStarBody::FarSpriteDistanceCm) / FMath::Max(DistantStars->ScaleFullDistance - AStarBody::FarSpriteDistanceCm, 1.0), 0.0, 1.0);
+					Disc = R / Dist * FMath::Lerp(1.0, (double)DistantStars->ApparentSizeScale, Blend);
+					GlowR = FMath::Max(Disc * (1.0 + DistantStars->GlowRadii), (double)DistantStars->MinAngularSize * 0.5);
+				}
+				SunAngle = (float)Disc;
+				SunGlowAngle = (float)GlowR;
+				SunColor = BestStar->StarColor * BestStar->Intensity;
+				SunGlowColor = BestStar->CoronaColor * BestStar->CoronaIntensity * 8.f;
 			}
 		}
 	}
@@ -532,6 +557,9 @@ void AStarshipPawn::UpdateWarpPostProcess()
 	WarpPPMID->SetScalarParameterValue(TEXT("DopplerStrength"), RelativisticDoppler);
 	WarpPPMID->SetScalarParameterValue(TEXT("SkyDepthCm"), (float)(StarSphereRadius * 0.5));
 	WarpPPMID->SetScalarParameterValue(TEXT("SunAngle"), SunAngle);
+	WarpPPMID->SetScalarParameterValue(TEXT("SunGlowAngle"), SunGlowAngle);
+	WarpPPMID->SetVectorParameterValue(TEXT("SunColor"), SunColor);
+	WarpPPMID->SetVectorParameterValue(TEXT("SunGlowColor"), SunGlowColor);
 	WarpPPMID->SetVectorParameterValue(TEXT("ForwardUV"), FLinearColor(ForwardU, ForwardV, 0.f, 0.f));
 	WarpPPMID->SetVectorParameterValue(TEXT("TravelView"), AsColor(TravelView));
 	WarpPPMID->SetVectorParameterValue(TEXT("SunView"), AsColor(SunView));
@@ -616,15 +644,51 @@ void AStarshipPawn::ApplyHullWindows(float Scale, const FQuat& Rot, const FVecto
 	HullWindowsMID->SetVectorParameterValue(TEXT("WindowExcludeBMax"), V(WindowExcludeTorpedoMax));
 	HullWindowsMID->SetVectorParameterValue(TEXT("PatchAMin"), V(DeflectorPatchMin)); HullWindowsMID->SetVectorParameterValue(TEXT("PatchAMax"), V(DeflectorPatchMax));
 	HullWindowsMID->SetVectorParameterValue(TEXT("PatchADir"), FLinearColor(1.f, 0.f, 0.f, 0.f));
-	HullWindowsMID->SetVectorParameterValue(TEXT("PatchBMin"), V(TorpedoPatchMin)); HullWindowsMID->SetVectorParameterValue(TEXT("PatchBMax"), V(TorpedoPatchMax));
-	HullWindowsMID->SetVectorParameterValue(TEXT("PatchBDir"), FLinearColor(1.f, 0.f, 0.f, 0.f));
-	HullWindowsMID->SetVectorParameterValue(TEXT("PatchCMin"), V(ImpulsePatchMin)); HullWindowsMID->SetVectorParameterValue(TEXT("PatchCMax"), V(ImpulsePatchMax));
-	HullWindowsMID->SetVectorParameterValue(TEXT("PatchCDir"), FLinearColor(-1.f, 0.f, 0.f, 0.f));
+	HullWindowsMID->SetScalarParameterValue(TEXT("PatchAFacing"), DeflectorFacing);
+	HullWindowsMID->SetScalarParameterValue(TEXT("BridgeRadius"), BridgeWindowRadius);
+	HullWindowsMID->SetScalarParameterValue(TEXT("BridgeMinZ"), BridgeWindowMinZ);
+	HullWindowsMID->SetScalarParameterValue(TEXT("BridgeMaxZ"), BridgeWindowMaxZ);
 	HullWindowsMID->SetScalarParameterValue(TEXT("WindowPitch"), WindowPitch);
 	HullWindowsMID->SetScalarParameterValue(TEXT("WindowDeck"), WindowDeck);
 	HullWindowsMID->SetScalarParameterValue(TEXT("WindowGlow"), WindowGlow);
 	HullWindowsMID->SetScalarParameterValue(TEXT("WindowOnFraction"), WindowOnFraction);
 	HullWindowsMID->SetScalarParameterValue(TEXT("WindowPeriod"), WindowPeriod);
+}
+
+
+void AStarshipPawn::ApplyHullSkinParams()
+{
+	if (!ShipMesh)
+	{
+		return;
+	}
+	auto V = [](const FVector& X) { return FLinearColor((float)X.X, (float)X.Y, (float)X.Z, 0.f); };
+	const float Scale = (float)ShipMesh->GetRelativeScale3D().X;
+	const FQuat Rot = ShipMesh->GetRelativeRotation().Quaternion();
+	const FVector RelLoc = ShipMesh->GetRelativeLocation();
+	// The skin material keys lamps off the diffuse map; it needs the same mesh->pawn transform as the overlay for its boxes.
+	for (int32 i = 0; i < HullMaterials.Num(); ++i)
+	{
+		UMaterialInstanceDynamic* Mid = HullMaterials[i];
+		if (!Mid)
+		{
+			continue;
+		}
+		Mid->SetScalarParameterValue(TEXT("MeshScale"), Scale);
+		Mid->SetVectorParameterValue(TEXT("MeshRelLoc"), V(RelLoc));
+		Mid->SetVectorParameterValue(TEXT("AxisX"), V(Rot.RotateVector(FVector::XAxisVector)));
+		Mid->SetVectorParameterValue(TEXT("AxisY"), V(Rot.RotateVector(FVector::YAxisVector)));
+		Mid->SetVectorParameterValue(TEXT("AxisZ"), V(Rot.RotateVector(FVector::ZAxisVector)));
+		if (i != ThrusterMaterialIndex)
+		{
+			Mid->SetScalarParameterValue(TEXT("BlueKeyGlow"), BlueKeyGlow);
+			Mid->SetScalarParameterValue(TEXT("RedKeyGlow"), RedKeyGlow);
+		}
+		Mid->SetVectorParameterValue(TEXT("RedKeyAMin"), V(RedKeyTailMin)); Mid->SetVectorParameterValue(TEXT("RedKeyAMax"), V(RedKeyTailMax));
+		Mid->SetVectorParameterValue(TEXT("RedKeyBMin"), V(TorpedoPatchMin)); Mid->SetVectorParameterValue(TEXT("RedKeyBMax"), V(TorpedoPatchMax));
+		Mid->SetVectorParameterValue(TEXT("SlotBoxMin"), V(TorpedoPatchMin)); Mid->SetVectorParameterValue(TEXT("SlotBoxMax"), V(TorpedoPatchMax));
+		Mid->SetVectorParameterValue(TEXT("SlotColor"), TorpedoBayGlowColor);
+	}
 }
 
 void AStarshipPawn::SetupHullMaterials()
@@ -644,12 +708,40 @@ void AStarshipPawn::SetupHullMaterials()
 		return;
 	}
 	const int32 NumMaterials = ShipMesh->GetNumMaterials();
+	UMaterialInterface* Skin = HullSkinMaterial.LoadSynchronous();
 	for (int32 i = 0; i < NumMaterials; ++i)
 	{
-		UMaterialInstanceDynamic* Mid = ShipMesh->CreateAndSetMaterialInstanceDynamic(i);
+		UMaterialInterface* Orig = ShipMesh->GetMaterial(i);
+		UMaterialInstanceDynamic* Mid = nullptr;
+		if (Skin && Orig)
+		{
+			// Our own skin material, fed the imported slot's textures.
+			Mid = UMaterialInstanceDynamic::Create(Skin, this);
+			static const TPair<FName, FName> TexParams[] = { { TEXT("DiffuseColorMap"), TEXT("Diffuse") }, { TEXT("EmissiveColorMap"), TEXT("Glow") }, { TEXT("NormalMap"), TEXT("Normal") } };
+			for (const auto& Pair : TexParams)
+			{
+				UTexture* Tex = nullptr;
+				if (Orig->GetTextureParameterValue(FHashedMaterialParameterInfo(Pair.Key), Tex) && Tex)
+				{
+					Mid->SetTextureParameterValue(Pair.Value, Tex);
+				}
+			}
+			ShipMesh->SetMaterial(i, Mid);
+		}
+		else
+		{
+			Mid = ShipMesh->CreateAndSetMaterialInstanceDynamic(i);
+		}
 		HullMaterials.Add(Mid);
 	}
 	ThrusterMaterialIndex = ShipMesh->GetMaterialIndex(ThrusterSlotName);
+	if (HullMaterials.IsValidIndex(ThrusterMaterialIndex) && HullMaterials[ThrusterMaterialIndex])
+	{
+		// The grille's plating is red paint, not a lamp: no colour keying there, its glow map is the lamp.
+		HullMaterials[ThrusterMaterialIndex]->SetScalarParameterValue(TEXT("BlueKeyGlow"), 0.f);
+		HullMaterials[ThrusterMaterialIndex]->SetScalarParameterValue(TEXT("RedKeyGlow"), 0.f);
+	}
+	ApplyHullSkinParams();
 }
 
 void AStarshipPawn::SetupHullLights()
@@ -907,18 +999,27 @@ void AStarshipPawn::UpdateHullGlow(float DeltaTime)
 	const float ThrottleSigned = Movement ? (float)Movement->Throttle : 0.f;
 	const float Throttle = FMath::Abs(ThrottleSigned);
 	const bool bReverse = ThrottleSigned < -0.01f;
-	// The impulse grille's own (orange) emissive follows the forward throttle; in reverse it idles and the
-	// overlay patch below lights the exhaust blue instead.
-	const float ImpulseGlow = bReverse ? 0.1f : 0.15f + 4.5f * Throttle;
+	// The impulse grille's own emissive follows the throttle either way; in reverse its glow map and plating
+	// are recoloured blue, so the exhaust reads blue whether it is in shadow or in sunlight.
+	const float ImpulseGlow = ImpulseGlowIdle + ImpulseGlowFull * Throttle;
+	const float Reverse = bReverse ? FMath::Clamp(Throttle / 0.1f, 0.f, 1.f) : 0.f;
+	if (HullMaterials.IsValidIndex(ThrusterMaterialIndex) && HullMaterials[ThrusterMaterialIndex])
+	{
+		UMaterialInstanceDynamic* Mid = HullMaterials[ThrusterMaterialIndex];
+		Mid->SetScalarParameterValue(TEXT("GlowRecolor"), Reverse);
+		Mid->SetVectorParameterValue(TEXT("GlowTint"), ReverseGlowColor);
+		Mid->SetScalarParameterValue(TEXT("BaseRecolor"), Reverse);
+		Mid->SetVectorParameterValue(TEXT("BaseTint"), ReverseBaseTint);
+	}
 	if (HullWindowsMID)
 	{
 		const float Ready = Weapons ? Weapons->GetTorpedoReadiness() : 1.f;
 		HullWindowsMID->SetVectorParameterValue(TEXT("PatchAColor"), DeflectorGlowColor);
 		HullWindowsMID->SetScalarParameterValue(TEXT("PatchAIntensity"), DeflectorGlow * (0.7f + 0.3f * Glow));
-		HullWindowsMID->SetVectorParameterValue(TEXT("PatchBColor"), TorpedoBayGlowColor);
-		HullWindowsMID->SetScalarParameterValue(TEXT("PatchBIntensity"), TorpedoBayGlow * (0.3f + 0.7f * FMath::Clamp(Ready, 0.f, 1.f)));
-		HullWindowsMID->SetVectorParameterValue(TEXT("PatchCColor"), ReverseGlowColor);
-		HullWindowsMID->SetScalarParameterValue(TEXT("PatchCIntensity"), bReverse ? ReverseGlow * Throttle : 0.f);
+		for (UMaterialInstanceDynamic* Mid : HullMaterials)
+		{
+			if (Mid) { Mid->SetScalarParameterValue(TEXT("SlotGlow"), TorpedoBayGlow * (0.3f + 0.7f * FMath::Clamp(Ready, 0.f, 1.f))); }
+		}
 	}
 
 	const TArray<FName> SlotNames = ShipMesh ? ShipMesh->GetMaterialSlotNames() : TArray<FName>();
@@ -1051,6 +1152,14 @@ void AStarshipPawn::ProcessDebugCommand()
 	else if (Op == TEXT("torpedo") && Weapons) { Weapons->FireTorpedo(); }
 	else if (Op == TEXT("target") && Weapons) { if (ArgStr(1) == TEXT("clear")) { Weapons->ClearTarget(); } else { Weapons->CycleTarget(); } }
 	else if (Op == TEXT("zoom")) { ChaseZoom = FMath::Clamp(Arg(1, 1.f), MinChaseZoom, MaxChaseZoom); }
+	else if (Op == TEXT("meshdump")) { DumpHullMesh(); }
+	else if (Op == TEXT("slotbox") && Args.Num() >= 7)
+	{
+		// Debug: move the torpedo launcher box (pawn space) and re-apply the skin parameters.
+		TorpedoPatchMin = FVector(Arg(1, 0.f), Arg(2, 0.f), Arg(3, 0.f));
+		TorpedoPatchMax = FVector(Arg(4, 0.f), Arg(5, 0.f), Arg(6, 0.f));
+		ApplyHullSkinParams();
+	}
 	else if (Op == TEXT("camera"))
 	{
 		const FString Mode = ArgStr(1);
@@ -1301,4 +1410,48 @@ void AStarshipPawn::SetOrbitHold(bool bEnable)
 		AddTickPrerequisiteActor(Body);
 		Movement->AddTickPrerequisiteActor(Body);
 	}
+}
+
+void AStarshipPawn::DumpHullMesh() const
+{
+	if (!ShipMesh || !ShipMesh->GetStaticMesh() || !ShipMesh->GetStaticMesh()->GetRenderData() || ShipMesh->GetStaticMesh()->GetRenderData()->LODResources.Num() == 0)
+	{
+		return;
+	}
+	const FStaticMeshLODResources& LOD = ShipMesh->GetStaticMesh()->GetRenderData()->LODResources[0];
+	const FPositionVertexBuffer& PB = LOD.VertexBuffers.PositionVertexBuffer;
+	if (PB.GetVertexData() == nullptr || PB.GetNumVertices() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("meshdump: vertex data not CPU accessible"));
+		return;
+	}
+	TArray<int32> Section;
+	Section.Init(-1, PB.GetNumVertices());
+	const FRawStaticIndexBuffer& IB = LOD.IndexBuffer;
+	if (IB.GetNumIndices() > 0 && IB.GetAllowCPUAccess())
+	{
+		for (const FStaticMeshSection& Sec : LOD.Sections)
+		{
+			for (uint32 i = Sec.FirstIndex; i < Sec.FirstIndex + Sec.NumTriangles * 3 && i < (uint32)IB.GetNumIndices(); ++i)
+			{
+				const uint32 Vi = IB.GetIndex(i);
+				if (Section.IsValidIndex(Vi)) { Section[Vi] = Sec.MaterialIndex; }
+			}
+		}
+	}
+	const FTransform MeshToPawn = ShipMesh->GetRelativeTransform();
+	FString Out;
+	Out.Reserve(PB.GetNumVertices() * 28);
+	const TArray<FName> Slots = ShipMesh->GetMaterialSlotNames();
+	Out += TEXT("# slots:");
+	for (int32 i = 0; i < Slots.Num(); ++i) { Out += FString::Printf(TEXT(" %d=%s"), i, *Slots[i].ToString()); }
+	Out += TEXT("\n");
+	for (uint32 i = 0; i < PB.GetNumVertices(); ++i)
+	{
+		const FVector P = MeshToPawn.TransformPosition(FVector(PB.VertexPosition(i)));
+		Out += FString::Printf(TEXT("%.0f,%.0f,%.0f,%d\n"), P.X, P.Y, P.Z, Section[i]);
+	}
+	const FString Path = FPaths::ProjectSavedDir() / TEXT("meshdump.csv");
+	FFileHelper::SaveStringToFile(Out, *Path);
+	UE_LOG(LogTemp, Log, TEXT("meshdump: %u vertices -> %s"), PB.GetNumVertices(), *Path);
 }

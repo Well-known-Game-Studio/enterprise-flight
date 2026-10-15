@@ -222,21 +222,47 @@ public:
 	/** Keep-out boxes in pawn space: no windows on the deflector housing and dish, nor on the torpedo bay. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") FVector WindowExcludeDeflectorMin = FVector(2000.0, -1900.0, -3700.0);
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") FVector WindowExcludeDeflectorMax = FVector(6500.0, 1900.0, 900.0);
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") FVector WindowExcludeTorpedoMin = FVector(1700.0, -900.0, 150.0);
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") FVector WindowExcludeTorpedoMax = FVector(3700.0, 900.0, 1350.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") FVector WindowExcludeTorpedoMin = FVector(8800.0, -700.0, 300.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") FVector WindowExcludeTorpedoMax = FVector(9700.0, 700.0, 1100.0);
 	/** Emissive patches drawn by the overlay (pawn space): deflector dish, torpedo bay, and the impulse exhaust when reversing. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector DeflectorPatchMin = FVector(4600.0, -1300.0, -2900.0);
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector DeflectorPatchMax = FVector(6900.0, 1300.0, -500.0);
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FLinearColor DeflectorGlowColor = FLinearColor(0.45f, 0.8f, 1.0f);
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") float DeflectorGlow = 7.f;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector TorpedoPatchMin = FVector(1200.0, -700.0, 1000.0);
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector TorpedoPatchMax = FVector(2700.0, 700.0, 1650.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") float DeflectorGlow = 28.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector TorpedoPatchMin = FVector(9000.0, -400.0, 570.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector TorpedoPatchMax = FVector(9500.0, 400.0, 665.0);
+	/**
+	 * The torpedo launcher doors: the two dark panes of the diffuse map on the launcher face, which sits under the
+	 * saucer just forward of its centre (pawn space x 9000..9500, z 570..665; the dark frame round the window above
+	 * them starts at z ~670). Found by bisecting with the `slotbox` debug command; the LOD0 vertex dump is too coarse.
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FLinearColor TorpedoBayGlowColor = FLinearColor(1.0f, 0.12f, 0.05f);
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") float TorpedoBayGlow = 16.f;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector ImpulsePatchMin = FVector(300.0, -900.0, 1550.0);
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector ImpulsePatchMax = FVector(1100.0, 900.0, 2300.0);
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FLinearColor ReverseGlowColor = FLinearColor(0.5f, 0.75f, 1.0f);
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") float ReverseGlow = 18.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") float TorpedoBayGlow = 30.f;
+	/** Impulse grille emissive: idle, plus this much at full throttle (sunlit white plating is about 40 in these units). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") float ImpulseGlowIdle = 1.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") float ImpulseGlowFull = 30.f;
+	/** Patches only light faces turned toward their direction at least this much (cosine): keeps the torpedo glow off the neck and saucer underside. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") float DeflectorFacing = 0.35f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") float TorpedoFacing = 0.7f;
+	/**
+	 * The hull's own material: the imported diffuse / glow / normal maps, plus the saturated blue and red details
+	 * of the diffuse map (dome, dish, blue window strips, red lamps at the shuttle bay) made emissive. The imported
+	 * slot materials only provide the textures.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow")
+	TSoftObjectPtr<UMaterialInterface> HullSkinMaterial;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") float BlueKeyGlow = 12.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") float RedKeyGlow = 10.f;
+	/** Red in the diffuse map is only a lamp in these pawn-space boxes (the stern by the shuttle bay, the torpedo bay); elsewhere it is paint. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector RedKeyTailMin = FVector(-8000.0, -2000.0, -4000.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector RedKeyTailMax = FVector(-4800.0, 2000.0, 1800.0);
+	/** In reverse the impulse grille's glow and plating are recoloured from orange-red to these. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FLinearColor ReverseGlowColor = FLinearColor(0.4f, 0.7f, 1.0f);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FLinearColor ReverseBaseTint = FLinearColor(0.4f, 0.55f, 0.9f);
+	/** Bridge module windows: a ring of small panes round the bridge, radius and height band in pawn space (radius 0 = none). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float BridgeWindowRadius = 900.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float BridgeWindowMinZ = 3150.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float BridgeWindowMaxZ = 3330.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowPitch = 700.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowDeck = 460.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowGlow = 22.f;
@@ -474,6 +500,10 @@ private:
 	TObjectPtr<UMaterialInstanceDynamic> WarpPPMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> HullWindowsMID;
 	void ApplyHullWindows(float Scale, const FQuat& Rot, const FVector& RelLoc);
+	/** Mesh->pawn transform, key glows and boxes on the skin material instances (needs the instances, so after SetupHullMaterials). */
+	void ApplyHullSkinParams();
+	/** Debug: write the hull mesh's LOD0 vertices (pawn space, with material slot) to Saved/meshdump.csv. */
+	void DumpHullMesh() const;
 
 	float LastStreak = 0.f;
 	float LastFlash = 0.f;
