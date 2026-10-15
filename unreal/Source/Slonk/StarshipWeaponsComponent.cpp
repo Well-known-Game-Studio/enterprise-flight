@@ -21,9 +21,11 @@ UStarshipWeaponsComponent::UStarshipWeaponsComponent()
 	PhaserBeamClass = APhaserBeam::StaticClass();
 	TorpedoClass = APhotonTorpedo::StaticClass();
 
-	// Sensible defaults for a 305 m Constitution-refit hull centred on the root: tweak in the pawn.
-	PhaserEmitterOffsets = { FVector(9000.0, -2500.0, -900.0), FVector(9000.0, 2500.0, -900.0) };
-	TorpedoTubeOffsets = { FVector(3000.0, -250.0, 700.0), FVector(3000.0, 250.0, 700.0) };
+	// Defaults for a 305 m Constitution-refit hull centred on the root; the pawn lays the banks out on its mesh.
+	PhaserBanks = { FPhaserBank(TEXT("DorsalFwd"), FVector(10600.0, 0.0, 2000.0), FVector::UpVector), FPhaserBank(TEXT("VentralFwd"), FVector(10600.0, 0.0, -600.0), FVector::DownVector) };
+	// One launcher with two tubes side by side, at the foot of the neck directly above the deflector dish, facing
+	// forward (pawn space x ~2850..3250, z -450..-50 on the refit mesh).
+	TorpedoTubeOffsets = { FVector(3250.0, -150.0, -250.0), FVector(3250.0, 150.0, -250.0) };
 }
 
 void UStarshipWeaponsComponent::BeginPlay()
@@ -117,6 +119,7 @@ void UStarshipWeaponsComponent::UpdatePhasers(float DeltaTime)
 	const bool bWantFire = bPhasersFiring && PhaserEnergy > 0.f;
 	if (!bWantFire)
 	{
+		FiringBanks.Reset();
 		if (ActiveBeams.Num() > 0)
 		{
 			DestroyBeams();
@@ -128,10 +131,28 @@ void UStarshipWeaponsComponent::UpdatePhasers(float DeltaTime)
 
 	const FVector AimPoint = GetAimPoint();
 	const FTransform ShipTransform = Owner->GetActorTransform();
-	const FVector ShipForward = ShipTransform.GetUnitAxis(EAxis::X);
 
-	// Spawn beams lazily, one per emitter.
-	while (ActiveBeams.Num() < PhaserEmitterOffsets.Num())
+	// Rank the banks by how squarely they face the aim point. A bank looking the other way cannot bear at all,
+	// so a target astern is engaged from the stern banks and one below from the ventral saucer banks.
+	struct FChoice { int32 Bank; double Cos; FVector Start; FVector Dir; };
+	TArray<FChoice> Choices;
+	const double MinCos = FMath::Cos(FMath::DegreesToRadians(FMath::Clamp(PhaserBankArc, 1.f, 179.f)));
+	for (int32 i = 0; i < PhaserBanks.Num(); ++i)
+	{
+		const FVector Start = ShipTransform.TransformPosition(PhaserBanks[i].Offset);
+		const FVector Dir = (AimPoint - Start).GetSafeNormal();
+		const FVector Normal = ShipTransform.TransformVectorNoScale(PhaserBanks[i].Normal).GetSafeNormal();
+		const double Cos = FVector::DotProduct(Dir, Normal);
+		if (Cos >= MinCos)
+		{
+			Choices.Add({ i, Cos, Start, Dir });
+		}
+	}
+	Choices.Sort([](const FChoice& A, const FChoice& B) { return A.Cos > B.Cos; });
+	const int32 NumFiring = FMath::Min(Choices.Num(), FMath::Max(MaxFiringBanks, 1));
+
+	// Spawn beams lazily, one per firing slot.
+	while (ActiveBeams.Num() < NumFiring)
 	{
 		FActorSpawnParameters Params;
 		Params.Owner = Owner;
@@ -144,36 +165,37 @@ void UStarshipWeaponsComponent::UpdatePhasers(float DeltaTime)
 		ActiveBeams.Add(Beam);
 	}
 
+	FiringBanks.Reset();
 	bool bAnyFired = false;
-	for (int32 i = 0; i < ActiveBeams.Num() && i < PhaserEmitterOffsets.Num(); ++i)
+	for (int32 Slot = 0; Slot < ActiveBeams.Num(); ++Slot)
 	{
-		APhaserBeam* Beam = ActiveBeams[i];
+		APhaserBeam* Beam = ActiveBeams[Slot];
 		if (!Beam)
 		{
 			continue;
 		}
-		const FVector Start = ShipTransform.TransformPosition(PhaserEmitterOffsets[i]);
-		FVector Dir = (AimPoint - Start).GetSafeNormal();
-		const float AngleDeg = FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(FVector::DotProduct(Dir, ShipForward), -1.0, 1.0)));
-		if (AngleDeg > PhaserFiringArc)
+		if (Slot >= NumFiring)
 		{
 			Beam->SetActorHiddenInGame(true);
 			continue;
 		}
+		const FChoice& C = Choices[Slot];
+		Beam->SetActorHiddenInGame(false);
 
 		FHitResult Hit;
 		FCollisionQueryParams Params(SCENE_QUERY_STAT(PhaserBeam), false);
 		Params.AddIgnoredActor(Owner);
-		const FVector TraceEnd = Start + Dir * PhaserRange;
-		const bool bHit = World->LineTraceSingleByChannel(Hit, Start, TraceEnd, ECC_Visibility, Params);
+		const FVector TraceEnd = C.Start + C.Dir * PhaserRange;
+		const bool bHit = World->LineTraceSingleByChannel(Hit, C.Start, TraceEnd, ECC_Visibility, Params);
 		const FVector End = bHit ? Hit.ImpactPoint : TraceEnd;
-		Beam->SetBeam(Start, End, bHit);
+		Beam->SetBeam(C.Start, End, bHit);
+		FiringBanks.Add(C.Bank);
 		bAnyFired = true;
 
 		if (bHit && Hit.GetActor())
 		{
 			AController* Instigator = Cast<APawn>(Owner) ? Cast<APawn>(Owner)->GetController() : nullptr;
-			UGameplayStatics::ApplyPointDamage(Hit.GetActor(), PhaserDamagePerSecond * DeltaTime, Dir, Hit, Instigator, Owner, nullptr);
+			UGameplayStatics::ApplyPointDamage(Hit.GetActor(), PhaserDamagePerSecond * DeltaTime, C.Dir, Hit, Instigator, Owner, nullptr);
 		}
 	}
 
@@ -285,6 +307,34 @@ void UStarshipWeaponsComponent::CycleTarget()
 void UStarshipWeaponsComponent::ClearTarget()
 {
 	LockedTarget = nullptr;
+}
+
+void UStarshipWeaponsComponent::LockNearest()
+{
+	AActor* Owner = GetOwner();
+	UWorld* World = GetWorld();
+	if (!Owner || !World)
+	{
+		return;
+	}
+	const FVector ShipLoc = Owner->GetActorLocation();
+	AActor* Best = nullptr;
+	double BestDist = TargetScanRange;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		AActor* A = *It;
+		if (A == Owner || !IsValid(A) || !A->ActorHasTag(ASpaceTarget::TargetableTag))
+		{
+			continue;
+		}
+		const double Dist = FVector::Dist(A->GetActorLocation(), ShipLoc);
+		if (Dist < BestDist)
+		{
+			BestDist = Dist;
+			Best = A;
+		}
+	}
+	LockedTarget = Best;
 }
 
 void UStarshipWeaponsComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)

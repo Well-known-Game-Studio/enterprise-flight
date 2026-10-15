@@ -23,6 +23,7 @@ class UDistantStarsComponent;
 class UShieldComponent;
 class UTractorBeamComponent;
 class URunningLightsComponent;
+class URcsThrusterComponent;
 
 UENUM(BlueprintType)
 enum class EWarpVisualMode : uint8
@@ -94,6 +95,10 @@ public:
 	/** Blinking navigation and formation lights on the hull. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|FX")
 	TObjectPtr<URunningLightsComponent> RunningLights;
+
+	/** Reaction control thrusters: nozzle packages on the saucer rim, round the deflector and on the nacelle caps. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|FX")
+	TObjectPtr<URcsThrusterComponent> Thrusters;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Defence") float MaxShieldStrength = 100.f;
 	UPROPERTY(BlueprintReadOnly, Category = "Defence") float ShieldStrength = 100.f;
@@ -222,20 +227,22 @@ public:
 	/** Keep-out boxes in pawn space: no windows on the deflector housing and dish, nor on the torpedo bay. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") FVector WindowExcludeDeflectorMin = FVector(2000.0, -1900.0, -3700.0);
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") FVector WindowExcludeDeflectorMax = FVector(6500.0, 1900.0, 900.0);
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") FVector WindowExcludeTorpedoMin = FVector(8800.0, -700.0, 300.0);
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") FVector WindowExcludeTorpedoMax = FVector(9700.0, 700.0, 1100.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") FVector WindowExcludeTorpedoMin = FVector(2600.0, -700.0, -700.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") FVector WindowExcludeTorpedoMax = FVector(3500.0, 700.0, 200.0);
 	/** Emissive patches drawn by the overlay (pawn space): deflector dish, torpedo bay, and the impulse exhaust when reversing. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector DeflectorPatchMin = FVector(4600.0, -1300.0, -2900.0);
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector DeflectorPatchMax = FVector(6900.0, 1300.0, -500.0);
+	/** The dish face: x ~3500..3800, radius ~950 about z -1950 (pawn space, from the mesh). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector DeflectorPatchMin = FVector(3300.0, -1100.0, -3000.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector DeflectorPatchMax = FVector(3950.0, 1100.0, -850.0);
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FLinearColor DeflectorGlowColor = FLinearColor(0.45f, 0.8f, 1.0f);
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") float DeflectorGlow = 28.f;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector TorpedoPatchMin = FVector(9000.0, -400.0, 570.0);
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector TorpedoPatchMax = FVector(9500.0, 400.0, 665.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") float DeflectorGlow = 12.f;
 	/**
-	 * The torpedo launcher doors: the two dark panes of the diffuse map on the launcher face, which sits under the
-	 * saucer just forward of its centre (pawn space x 9000..9500, z 570..665; the dark frame round the window above
-	 * them starts at z ~670). Found by bisecting with the `slotbox` debug command; the LOD0 vertex dump is too coarse.
+	 * The torpedo launcher: the small housing at the foot of the neck directly above the deflector dish, facing
+	 * forward (pawn space x ~2850..3250, |y| < 350, z -450..-50, from the mesh and confirmed with `slotbox`). The
+	 * dark tube mouths inside the box glow red. (An earlier box under the saucer centre had lit panes on the lower
+	 * sensor dome instead.)
 	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector TorpedoPatchMin = FVector(2850.0, -350.0, -450.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector TorpedoPatchMax = FVector(3250.0, 350.0, -50.0);
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FLinearColor TorpedoBayGlowColor = FLinearColor(1.0f, 0.12f, 0.05f);
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") float TorpedoBayGlow = 30.f;
 	/** Impulse grille emissive: idle, plus this much at full throttle (sunlit white plating is about 40 in these units). */
@@ -333,6 +340,7 @@ public:
 	 *   throttle <-0.25..1> | impulse <1-4> | stop | warp | warp on | warp off | warpfactor <f>
 	 *   phasers on|off | torpedo | target | camera chase|bridge|cinematic | steer <pitch> <yaw> <roll> <seconds>
 	 *   look <yaw> <pitch> <seconds> (free-look the active camera) | vert <up -1..1> <seconds> | orbit [on|off]
+	 *   rcs <fwd> <right> <up> <seconds> (manoeuvring thrusters)
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
 	FString DebugCommand;
@@ -477,6 +485,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Starship")
 	bool IsDebugVertical() const { return DebugVerticalTime > 0.f; }
 
+	UFUNCTION(BlueprintPure, Category = "Starship")
+	bool IsDebugThrusting() const { return DebugThrustTime > 0.f; }
+
 protected:
 	UFUNCTION()
 	void HandleCollision(const FHitResult& Hit);
@@ -486,6 +497,21 @@ private:
 	void SetupHullMaterials();
 	void SetupHullLights();
 	void SetupRunningLights();
+	/** Lay the reaction control nozzles out on the hull mesh. */
+	void SetupThrusters();
+	/** Lay the phaser banks out on the hull mesh. */
+	void SetupWeaponBanks();
+	/** Feed this frame's steering and translation to the thruster FX. */
+	void UpdateThrusters();
+	/** Cache the hull's LOD0 vertices in pawn space for the probes below. */
+	void GatherHullVerts();
+	/** The hull vertex furthest along Dir inside Region (pawn space), a hair outside the skin; Fallback when the mesh is not CPU-readable. */
+	FVector ProbeHull(const FVector& Dir, const FBox& Region, const FVector& Fallback) const;
+	/**
+	 * Move a fitting onto the nearest hull vertex within Radius whose plating faces roughly along Dir, and cant Dir
+	 * out of that plating so a nozzle never fires into or along the skin. False (inputs untouched) when no vertex is near.
+	 */
+	bool SnapToHull(FVector& Pos, FVector& Dir, float Radius) const;
 	void UpdateCameras(float DeltaTime);
 	void UpdateWarpEffects(float DeltaTime);
 	void UpdateHullGlow(float DeltaTime);
@@ -533,4 +559,8 @@ private:
 	float DebugLookTime = 0.f;
 	float DebugVertical = 0.f;
 	float DebugVerticalTime = 0.f;
+	FVector DebugThrust = FVector::ZeroVector;
+	float DebugThrustTime = 0.f;
+	TArray<FVector> HullVerts;
+	TArray<FVector> HullNormals;
 };

@@ -269,6 +269,7 @@ void AStarshipHUD::DrawHUD()
 			TEXT("1 2 3 4              1/4 .. full impulse"),
 			TEXT("X or 0  all stop     Z  reverse"),
 			TEXT("PgUp PgDn            vertical thrusters"),
+			TEXT("Arrows               RCS thrusters: fore/aft, port/stbd"),
 			TEXT("O  orbit hold around nav target / nearest body (follows ships)"),
 			TEXT("B  tractor beam on the locked target (else the nav target)"),
 			TEXT("J / Y button         engage / disengage warp"),

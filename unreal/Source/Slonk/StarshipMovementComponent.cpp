@@ -62,6 +62,7 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 	if (!UpdatedComponent || ShouldSkipUpdate(DeltaTime) || DeltaTime <= 0.f)
 	{
 		SteeringInput = FVector::ZeroVector;
+		ThrusterInput = FVector::ZeroVector;
 		return;
 	}
 
@@ -91,6 +92,8 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 	const FVector Up = NewQuat.GetUpVector();
 	const FVector Here = UpdatedComponent->GetComponentLocation();
 	LastVerticalInput = VerticalInput;
+	LastThrusterInput = ThrusterInput;
+	LastSteeringInput = SteeringInput;
 	bProximityLimited = false;
 
 	// Orbit hold: station-keeping around a body. Attitude stays free; translation follows the circle.
@@ -130,6 +133,7 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 			UpdateComponentVelocity();
 			SteeringInput = FVector::ZeroVector;
 			VerticalInput = 0.f;
+			ThrusterInput = FVector::ZeroVector;
 			return;
 		}
 	}
@@ -141,7 +145,11 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 	}
 	else
 	{
-		const FVector TargetVelocity = Forward * GetImpulseTargetSpeed() + Up * (VerticalInput * VerticalThrustFraction * FullImpulseSpeed);
+		// Manoeuvring thrusters add a small body-frame velocity on top of the impulse drive: enough to translate
+		// alongside a station or back out of a dock, nothing like the drive itself.
+		const FVector Right = NewQuat.GetRightVector();
+		const FVector Thrusters = (Forward * ThrusterInput.X + Right * ThrusterInput.Y + Up * ThrusterInput.Z) * ThrusterMaxSpeed;
+		const FVector TargetVelocity = Forward * GetImpulseTargetSpeed() + Up * (VerticalInput * VerticalThrustFraction * FullImpulseSpeed) + Thrusters;
 		const FVector DeltaV = TargetVelocity - Velocity;
 		Velocity += DeltaV.GetClampedToMaxSize(ImpulseAcceleration * DeltaTime);
 	}
@@ -185,6 +193,7 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 	UpdateComponentVelocity();
 	SteeringInput = FVector::ZeroVector;
 	VerticalInput = 0.f;
+	ThrusterInput = FVector::ZeroVector;
 }
 
 void UStarshipMovementComponent::SetOrbitHold(AActor* Body, double BodyRadiusCm, const FString& BodyName)

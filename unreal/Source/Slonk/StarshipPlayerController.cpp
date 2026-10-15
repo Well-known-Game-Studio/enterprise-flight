@@ -110,6 +110,8 @@ void AStarshipPlayerController::CreateDefaultInputAssets()
 	Ensure(IA_Vertical, TEXT("IA_Vertical"), EInputActionValueType::Axis1D);
 	Ensure(IA_OrbitHold, TEXT("IA_OrbitHold"), EInputActionValueType::Boolean);
 	Ensure(IA_TractorBeam, TEXT("IA_TractorBeam"), EInputActionValueType::Boolean);
+	Ensure(IA_ThrusterFore, TEXT("IA_ThrusterFore"), EInputActionValueType::Axis1D);
+	Ensure(IA_ThrusterSide, TEXT("IA_ThrusterSide"), EInputActionValueType::Axis1D);
 
 	if (MappingContext)
 	{
@@ -197,6 +199,11 @@ void AStarshipPlayerController::CreateDefaultInputAssets()
 	MapNegated(Ctx, IA_Vertical, EKeys::PageDown);
 	Map(Ctx, IA_OrbitHold, EKeys::O);
 	Map(Ctx, IA_TractorBeam, EKeys::B);
+	// Reaction control thrusters: arrow keys translate the hull (hold), fore/aft and port/starboard.
+	Map(Ctx, IA_ThrusterFore, EKeys::Up);
+	MapNegated(Ctx, IA_ThrusterFore, EKeys::Down);
+	Map(Ctx, IA_ThrusterSide, EKeys::Right);
+	MapNegated(Ctx, IA_ThrusterSide, EKeys::Left);
 
 	MappingContext = Ctx;
 }
@@ -271,6 +278,10 @@ void AStarshipPlayerController::SetupInputComponent()
 	EIC->BindAction(IA_JumpToNavTarget, ETriggerEvent::Started, this, &AStarshipPlayerController::OnJumpToNavTarget);
 	EIC->BindAction(IA_Vertical, ETriggerEvent::Triggered, this, &AStarshipPlayerController::OnVertical);
 	EIC->BindAction(IA_Vertical, ETriggerEvent::Completed, this, &AStarshipPlayerController::OnVerticalReleased);
+	EIC->BindAction(IA_ThrusterFore, ETriggerEvent::Triggered, this, &AStarshipPlayerController::OnThrusterFore);
+	EIC->BindAction(IA_ThrusterFore, ETriggerEvent::Completed, this, &AStarshipPlayerController::OnThrusterForeReleased);
+	EIC->BindAction(IA_ThrusterSide, ETriggerEvent::Triggered, this, &AStarshipPlayerController::OnThrusterSide);
+	EIC->BindAction(IA_ThrusterSide, ETriggerEvent::Completed, this, &AStarshipPlayerController::OnThrusterSideReleased);
 	EIC->BindAction(IA_OrbitHold, ETriggerEvent::Started, this, &AStarshipPlayerController::OnOrbitHold);
 	EIC->BindAction(IA_TractorBeam, ETriggerEvent::Started, this, &AStarshipPlayerController::OnTractorBeam);
 	EIC->BindAction(IA_ToggleWarpVisuals, ETriggerEvent::Started, this, &AStarshipPlayerController::OnToggleWarpVisuals);
@@ -344,6 +355,10 @@ void AStarshipPlayerController::PlayerTick(float DeltaTime)
 	if (!Ship->IsDebugVertical())
 	{
 		Ship->Movement->SetVerticalInput(VerticalInput);
+	}
+	if (!Ship->IsDebugThrusting())
+	{
+		Ship->Movement->SetThrusterInput(FVector(ThrusterFore, ThrusterSide, 0.f));
 	}
 }
 
@@ -613,6 +628,11 @@ void AStarshipPlayerController::OnVerticalReleased(const FInputActionValue& Valu
 {
 	VerticalInput = 0.f;
 }
+
+void AStarshipPlayerController::OnThrusterFore(const FInputActionValue& Value) { ThrusterFore = Value.Get<float>(); }
+void AStarshipPlayerController::OnThrusterForeReleased(const FInputActionValue& Value) { ThrusterFore = 0.f; }
+void AStarshipPlayerController::OnThrusterSide(const FInputActionValue& Value) { ThrusterSide = Value.Get<float>(); }
+void AStarshipPlayerController::OnThrusterSideReleased(const FInputActionValue& Value) { ThrusterSide = 0.f; }
 
 void AStarshipPlayerController::OnOrbitHold()
 {

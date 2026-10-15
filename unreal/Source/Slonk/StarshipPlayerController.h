@@ -100,6 +100,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_Vertical;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_OrbitHold;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_TractorBeam;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_ThrusterFore;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_ThrusterSide;
 
 	UFUNCTION(BlueprintPure, Category = "Starship|Input")
 	FVector2D GetVirtualStick() const { return MouseStick; }
@@ -147,6 +149,10 @@ protected:
 	void OnToggleWarpVisuals();
 	void OnVertical(const FInputActionValue& Value);
 	void OnVerticalReleased(const FInputActionValue& Value);
+	void OnThrusterFore(const FInputActionValue& Value);
+	void OnThrusterForeReleased(const FInputActionValue& Value);
+	void OnThrusterSide(const FInputActionValue& Value);
+	void OnThrusterSideReleased(const FInputActionValue& Value);
 	void OnOrbitHold();
 	void OnTractorBeam();
 
@@ -158,5 +164,7 @@ private:
 	float RollInput = 0.f;
 	float YawKeyInput = 0.f;
 	float VerticalInput = 0.f;
+	float ThrusterFore = 0.f;
+	float ThrusterSide = 0.f;
 	bool bFreeLookHeld = false;
 };

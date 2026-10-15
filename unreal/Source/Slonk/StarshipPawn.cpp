@@ -16,6 +16,7 @@
 #include "ShieldComponent.h"
 #include "TractorBeamComponent.h"
 #include "RunningLightsComponent.h"
+#include "RcsThrusterComponent.h"
 #include "Rendering/PositionVertexBuffer.h"
 #include "StaticMeshResources.h"
 #include "Engine/DamageEvents.h"
@@ -74,6 +75,8 @@ AStarshipPawn::AStarshipPawn()
 	TractorBeam = CreateDefaultSubobject<UTractorBeamComponent>(TEXT("TractorBeam"));
 	RunningLights = CreateDefaultSubobject<URunningLightsComponent>(TEXT("RunningLights"));
 	RunningLights->SetupAttachment(CollisionBox);
+	Thrusters = CreateDefaultSubobject<URcsThrusterComponent>(TEXT("Thrusters"));
+	Thrusters->SetupAttachment(CollisionBox);
 
 	WarpDrive = CreateDefaultSubobject<UWarpDriveComponent>(TEXT("WarpDrive"));
 	Weapons = CreateDefaultSubobject<UStarshipWeaponsComponent>(TEXT("Weapons"));
@@ -171,43 +174,9 @@ void AStarshipPawn::SetupRunningLights()
 	const float W = ShipWidthMeters * 100.f;
 	const float H = ShipHeightMeters * 100.f;
 
-	// Hull surface points come from the mesh itself: the vertex furthest along a direction inside a region of the
-	// ship, so the bulbs sit on the skin whatever mesh is fitted. Falls back to proportions of the hull box when
-	// the vertex data is not CPU-readable (cooked builds without CPU access).
-	TArray<FVector> Verts;
-	if (ShipMesh && ShipMesh->GetStaticMesh() && ShipMesh->GetStaticMesh()->GetRenderData() && ShipMesh->GetStaticMesh()->GetRenderData()->LODResources.Num() > 0)
-	{
-		const FPositionVertexBuffer& PB = ShipMesh->GetStaticMesh()->GetRenderData()->LODResources[0].VertexBuffers.PositionVertexBuffer;
-		if (PB.GetVertexData() != nullptr && PB.GetNumVertices() > 0)
-		{
-			const FTransform MeshToPawn = ShipMesh->GetRelativeTransform();
-			Verts.Reserve(PB.GetNumVertices());
-			for (uint32 i = 0; i < PB.GetNumVertices(); ++i)
-			{
-				Verts.Add(MeshToPawn.TransformPosition(FVector(PB.VertexPosition(i))));
-			}
-		}
-	}
-	auto Probe = [&](const FVector& Dir, const FBox& Region, const FVector& Fallback) -> FVector
-	{
-		double Best = -1e30;
-		FVector BestP = Fallback;
-		for (const FVector& V : Verts)
-		{
-			if (!Region.IsInsideOrOn(V))
-			{
-				continue;
-			}
-			const double D = FVector::DotProduct(V, Dir);
-			if (D > Best)
-			{
-				Best = D;
-				BestP = V;
-			}
-		}
-		// A hair outside the skin so the bulb is not buried.
-		return BestP + Dir * (L * 0.001f);
-	};
+	// Hull surface points come from the mesh itself (see ProbeHull), so the fittings sit on the skin whatever mesh is fitted.
+	GatherHullVerts();
+	auto Probe = [this](const FVector& Dir, const FBox& Region, const FVector& Fallback) -> FVector { return ProbeHull(Dir, Region, Fallback); };
 	const FBox All(FVector(-L, -W, -H), FVector(L, W, H));
 	const FBox Saucer(FVector(L * 0.1f, -W, -H), FVector(L, W, H));
 	const FBox PortNacelle(FVector(-L, -W, H * 0.12f), FVector(L, -W * 0.14f, H));
@@ -268,19 +237,22 @@ void AStarshipPawn::SetupRunningLights()
 		return Probe(FVector(0, 0, bTop ? 1.f : -1.f), Column, FVector(XY.X, XY.Y, bTop ? 1800.f : -300.f));
 	};
 	{
-		// Three wide lamps on each face of the saucer, as on the refit: one forward and one out to each side.
+		// Three wide lamps on each face of the saucer, as on the refit: one forward and one out to each side. The
+		// forward lamp has to light the whole registry, which spans most of the saucer's width ahead of the
+		// superstructure, so it stands a little proud of the skin and throws a patch over half the radius wide.
 		const float Angles[3] = { 0.f, 90.f, -90.f };
 		for (float Deg : Angles)
 		{
 			const float A = FMath::DegreesToRadians(Deg);
 			const FVector Dir(FMath::Cos(A), FMath::Sin(A), 0.f);
+			const bool bForward = Deg == 0.f;
 			for (int32 Side = 0; Side < 2; ++Side)
 			{
 				const bool bTop = Side == 0;
-				// Lamp base at the foot of the centre superstructure, patch most of the way to the rim and wide.
-				const FVector LampSkin = SurfaceAt(SaucerCentre + Dir * SaucerR * 0.22f, bTop);
-				const FVector Patch = SurfaceAt(SaucerCentre + Dir * SaucerR * 0.62f, bTop);
-				Floods.Add(FHullFloodlight(LampSkin + FVector(0.f, 0.f, bTop ? 120.f : -120.f), Patch, SaucerR * 0.32f, 16.f));
+				const FVector LampSkin = SurfaceAt(SaucerCentre + Dir * SaucerR * (bForward ? 0.2f : 0.22f), bTop);
+				const FVector Patch = SurfaceAt(SaucerCentre + Dir * SaucerR * (bForward ? 0.58f : 0.62f), bTop);
+				const float Stand = bForward ? 320.f : 150.f;
+				Floods.Add(FHullFloodlight(LampSkin + FVector(0.f, 0.f, bTop ? Stand : -Stand), Patch, SaucerR * (bForward ? 0.62f : 0.4f), bForward ? 30.f : 16.f));
 			}
 		}
 	}
@@ -313,6 +285,242 @@ void AStarshipPawn::SetupRunningLights()
 		Floods.Add(FHullFloodlight(OutFore + FVector(0.f, Side * 110.f, 0.f), OutAft, 800.f, 12.f));
 	}
 	RunningLights->SetFloodlights(Floods);
+}
+
+void AStarshipPawn::GatherHullVerts()
+{
+	HullVerts.Reset();
+	HullNormals.Reset();
+	if (ShipMesh && ShipMesh->GetStaticMesh() && ShipMesh->GetStaticMesh()->GetRenderData() && ShipMesh->GetStaticMesh()->GetRenderData()->LODResources.Num() > 0)
+	{
+		const FStaticMeshLODResources& LOD = ShipMesh->GetStaticMesh()->GetRenderData()->LODResources[0];
+		const FPositionVertexBuffer& PB = LOD.VertexBuffers.PositionVertexBuffer;
+		const FStaticMeshVertexBuffer& VB = LOD.VertexBuffers.StaticMeshVertexBuffer;
+		if (PB.GetVertexData() != nullptr && PB.GetNumVertices() > 0)
+		{
+			const FTransform MeshToPawn = ShipMesh->GetRelativeTransform();
+			const bool bNormals = VB.GetTangentData() != nullptr && VB.GetNumVertices() == PB.GetNumVertices();
+			HullVerts.Reserve(PB.GetNumVertices());
+			if (bNormals)
+			{
+				HullNormals.Reserve(PB.GetNumVertices());
+			}
+			for (uint32 i = 0; i < PB.GetNumVertices(); ++i)
+			{
+				HullVerts.Add(MeshToPawn.TransformPosition(FVector(PB.VertexPosition(i))));
+				if (bNormals)
+				{
+					const FVector4f N = VB.VertexTangentZ(i);
+					HullNormals.Add(MeshToPawn.TransformVectorNoScale(FVector(N.X, N.Y, N.Z)).GetSafeNormal());
+				}
+			}
+		}
+	}
+}
+
+bool AStarshipPawn::SnapToHull(FVector& Pos, FVector& Dir, float Radius) const
+{
+	double BestD2 = (double)Radius * Radius;
+	int32 Best = INDEX_NONE;
+	for (int32 i = 0; i < HullVerts.Num(); ++i)
+	{
+		// Plating facing away from the exhaust is the wrong face of the hull (the underside when we want the top).
+		if (HullNormals.IsValidIndex(i) && FVector::DotProduct(HullNormals[i], Dir) < -0.15)
+		{
+			continue;
+		}
+		const double D2 = FVector::DistSquared(HullVerts[i], Pos);
+		if (D2 < BestD2)
+		{
+			BestD2 = D2;
+			Best = i;
+		}
+	}
+	if (Best == INDEX_NONE)
+	{
+		return false;
+	}
+	const FVector N = HullNormals.IsValidIndex(Best) ? HullNormals[Best] : Dir;
+	// The nozzle's mouth sits just proud of the plating; the exhaust leaves at least ~30 degrees out of it.
+	Pos = HullVerts[Best] + N * 25.f;
+	Dir = (Dir + N * 0.6f).GetSafeNormal();
+	return true;
+}
+
+FVector AStarshipPawn::ProbeHull(const FVector& Dir, const FBox& Region, const FVector& Fallback) const
+{
+	// The vertex furthest along Dir inside the region: the skin where a fitting would be bolted on. Falls back to
+	// the given proportions of the hull box when the vertex data is not CPU-readable (cooked builds without CPU access).
+	double Best = -1e30;
+	FVector BestP = Fallback;
+	for (const FVector& V : HullVerts)
+	{
+		if (!Region.IsInsideOrOn(V))
+		{
+			continue;
+		}
+		const double D = FVector::DotProduct(V, Dir);
+		if (D > Best)
+		{
+			Best = D;
+			BestP = V;
+		}
+	}
+	return BestP + Dir * (GetShipLengthCm() * 0.001f);
+}
+
+void AStarshipPawn::SetupThrusters()
+{
+	if (!Thrusters)
+	{
+		return;
+	}
+	if (HullVerts.Num() == 0)
+	{
+		GatherHullVerts();
+	}
+	// Pawn-space hull sections (see SetupRunningLights): saucer centre (8050, 0), radius 7190, rim about z 250;
+	// engineering hull x -7316..5776, y +-1649, z -3640..1716 with the deflector dish centred near (5750, 0, -1700);
+	// nacelles x -15221..177, y +-5333, z -678..3551.
+	const FVector SaucerCentre(8050.f, 0.f, 250.f);
+	const float SaucerR = 7190.f;
+	TArray<FRcsNozzle> Nozzles;
+
+	// Saucer rim: four thruster packages, forward and aft of the beam on each side, as on the refit. Each has a
+	// nozzle firing up from the rim's top face, one firing down from the bottom face, and a pair firing along the
+	// rim tangent for yaw and fore-aft translation.
+	{
+		const float Angles[4] = { 41.f, -41.f, 139.f, -139.f };
+		for (float Deg : Angles)
+		{
+			const float A = FMath::DegreesToRadians(Deg);
+			const FVector Radial(FMath::Cos(A), FMath::Sin(A), 0.f);
+			const FVector Tangent(-FMath::Sin(A), FMath::Cos(A), 0.f);
+			const FVector OnRim = SaucerCentre + Radial * SaucerR * 0.985f;
+			const FBox Column(OnRim - FVector(300.f, 300.f, 1500.f), OnRim + FVector(300.f, 300.f, 1500.f));
+			const FVector Top = ProbeHull(FVector::UpVector, Column, OnRim + FVector(0.f, 0.f, 450.f));
+			const FVector Bottom = ProbeHull(FVector::DownVector, Column, OnRim - FVector(0.f, 0.f, 450.f));
+			// The rim band sits between the top and bottom faces just probed (about z 1440..1960 on this mesh, not
+			// at the saucer's nominal centre height), so the tangential pair goes on its outer edge at mid-height.
+			const float RimZ = 0.5f * (Top.Z + Bottom.Z);
+			const FBox Edge(FVector(OnRim.X - 500.f, OnRim.Y - 500.f, RimZ - 400.f), FVector(OnRim.X + 500.f, OnRim.Y + 500.f, RimZ + 400.f));
+			const FVector Rim = ProbeHull(Radial, Edge, FVector(SaucerCentre.X, SaucerCentre.Y, RimZ) + Radial * SaucerR);
+			Nozzles.Add(FRcsNozzle(Top + Radial * 100.f, FVector::UpVector));
+			Nozzles.Add(FRcsNozzle(Bottom + Radial * 100.f, FVector::DownVector));
+			Nozzles.Add(FRcsNozzle(Rim + Tangent * 160.f, Tangent, 0.9f));
+			Nozzles.Add(FRcsNozzle(Rim - Tangent * 160.f, -Tangent, 0.9f));
+		}
+	}
+	// Deflector housing: four packages on the ring round the dish, each firing outward along its diagonal and
+	// straight ahead (the forward-firing pair is what brakes the ship and backs it out of a dock). On this mesh
+	// the dish face is at x ~3500..3800 (radius ~950 about z -1950) and the housing lip round it at x ~2700..3000.
+	{
+		const FVector Dish(2900.f, 0.f, -1900.f);
+		for (int32 k = 0; k < 4; ++k)
+		{
+			const float A = FMath::DegreesToRadians(45.f + 90.f * k);
+			const FVector Radial(0.f, FMath::Cos(A), FMath::Sin(A));
+			const FVector Ring = Dish + Radial * 1350.f;
+			const FBox Face(FVector(2300.f, Ring.Y - 400.f, Ring.Z - 400.f), FVector(3400.f, Ring.Y + 400.f, Ring.Z + 400.f));
+			const FVector Front = ProbeHull(FVector::ForwardVector, Face, FVector(2900.f, Ring.Y, Ring.Z));
+			Nozzles.Add(FRcsNozzle(Front + Radial * 120.f, Radial, 0.9f));
+			Nozzles.Add(FRcsNozzle(Front + FVector(60.f, 0.f, 0.f), FVector::ForwardVector, 0.9f));
+		}
+	}
+	// Nacelle aft caps: a package on the end of each nacelle firing aft (the main forward translation thrusters,
+	// far from the centre so they also help pitch and yaw) and across.
+	for (int32 Side = -1; Side <= 1; Side += 2)
+	{
+		const FBox Cap(FVector(-15600.f, Side < 0 ? -4600.f : 2800.f, 1200.f), FVector(-12500.f, Side < 0 ? -2800.f : 4600.f, 3400.f));
+		const FVector Aft = ProbeHull(FVector::BackwardVector, Cap, FVector(-15100.f, Side * 3650.f, 2300.f));
+		Nozzles.Add(FRcsNozzle(Aft, FVector::BackwardVector, 1.2f));
+		Nozzles.Add(FRcsNozzle(Aft + FVector(400.f, Side * 700.f, 0.f), FVector(0.f, Side, 0.f), 0.9f));
+		Nozzles.Add(FRcsNozzle(Aft + FVector(400.f, 0.f, 700.f), FVector::UpVector, 0.9f));
+		Nozzles.Add(FRcsNozzle(Aft + FVector(400.f, 0.f, -700.f), FVector::DownVector, 0.9f));
+	}
+	// Every nozzle is then bedded on the nearest plating that faces its way, and its exhaust canted out of that
+	// plating, so the plumes start on the skin rather than in the space beside it.
+	int32 Snapped = 0;
+	for (FRcsNozzle& N : Nozzles)
+	{
+		if (SnapToHull(N.Position, N.ExhaustDir, 900.f))
+		{
+			++Snapped;
+		}
+	}
+	// The plumes are small next to the ship: scale with the hull so a different mesh keeps the proportion.
+	Thrusters->PlumeLength = GetShipLengthCm() * 0.045f;
+	Thrusters->PlumeWidth = GetShipLengthCm() * 0.009f;
+	Thrusters->SetNozzles(Nozzles);
+	UE_LOG(LogTemp, Log, TEXT("Starship thrusters: %d nozzles, %d bedded on the mesh (%d verts, %d normals)"), Nozzles.Num(), Snapped, HullVerts.Num(), HullNormals.Num());
+}
+
+void AStarshipPawn::SetupWeaponBanks()
+{
+	if (!Weapons)
+	{
+		return;
+	}
+	if (HullVerts.Num() == 0)
+	{
+		GatherHullVerts();
+	}
+	const float H = ShipHeightMeters * 100.f;
+	const FVector SaucerCentre(8050.f, 0.f, 250.f);
+	const float SaucerR = 7190.f;
+	auto Skin = [&](const FVector& XY, bool bTop) -> FVector
+	{
+		const FBox Column(FVector(XY.X - 250.f, XY.Y - 250.f, bTop ? 0.f : -H), FVector(XY.X + 250.f, XY.Y + 250.f, bTop ? H : 400.f));
+		return ProbeHull(FVector(0, 0, bTop ? 1.f : -1.f), Column, FVector(XY.X, XY.Y, bTop ? 1800.f : -300.f));
+	};
+	auto AtAngle = [&](float Deg, float Frac) -> FVector
+	{
+		const float A = FMath::DegreesToRadians(Deg);
+		return SaucerCentre + FVector(FMath::Cos(A), FMath::Sin(A), 0.f) * SaucerR * Frac;
+	};
+	// A saucer bank's field of fire is centred outward along its radial as much as away from the plating: the
+	// emitters swivel, and what blocks them is the hull inboard, not the plane of the saucer. So a forward
+	// target is taken by the forward banks top and bottom, one abeam by that side's quarter banks.
+	auto Field = [](float Deg, bool bTop) -> FVector
+	{
+		const float A = FMath::DegreesToRadians(Deg);
+		return FVector(FMath::Cos(A) * 0.85f, FMath::Sin(A) * 0.85f, bTop ? 0.5f : -0.5f).GetSafeNormal();
+	};
+	TArray<FPhaserBank> Banks;
+	// Saucer, as on the refit: a bank on the centreline ahead of the superstructure and one on each forward
+	// quarter, top and bottom; the underside also has a pair on the aft quarters, where the top has the impulse
+	// deck instead.
+	Banks.Add(FPhaserBank(TEXT("DorsalFwd"), Skin(AtAngle(0.f, 0.36f), true), Field(0.f, true)));
+	Banks.Add(FPhaserBank(TEXT("DorsalPort"), Skin(AtAngle(-45.f, 0.80f), true), Field(-45.f, true)));
+	Banks.Add(FPhaserBank(TEXT("DorsalStbd"), Skin(AtAngle(45.f, 0.80f), true), Field(45.f, true)));
+	Banks.Add(FPhaserBank(TEXT("VentralFwd"), Skin(AtAngle(0.f, 0.36f), false), Field(0.f, false)));
+	Banks.Add(FPhaserBank(TEXT("VentralPort"), Skin(AtAngle(-45.f, 0.80f), false), Field(-45.f, false)));
+	Banks.Add(FPhaserBank(TEXT("VentralStbd"), Skin(AtAngle(45.f, 0.80f), false), Field(45.f, false)));
+	Banks.Add(FPhaserBank(TEXT("VentralAftPort"), Skin(AtAngle(-135.f, 0.70f), false), Field(-135.f, false)));
+	Banks.Add(FPhaserBank(TEXT("VentralAftStbd"), Skin(AtAngle(135.f, 0.70f), false), Field(135.f, false)));
+	// Engineering hull: a bank on each stern flank beside the shuttlebay, covering astern.
+	for (int32 Side = -1; Side <= 1; Side += 2)
+	{
+		const FBox Flank(FVector(-7600.f, Side < 0 ? -1700.f : 300.f, -1600.f), FVector(-6000.f, Side < 0 ? -300.f : 1700.f, 0.f));
+		const FVector Normal = FVector(-0.75f, Side * 0.66f, 0.f).GetSafeNormal();
+		const FVector P = ProbeHull(Normal, Flank, FVector(-7200.f, Side * 1100.f, -800.f));
+		Banks.Add(FPhaserBank(Side < 0 ? TEXT("SternPort") : TEXT("SternStbd"), P, Normal));
+	}
+	Weapons->PhaserBanks = Banks;
+}
+
+void AStarshipPawn::UpdateThrusters()
+{
+	if (!Thrusters || !Movement)
+	{
+		return;
+	}
+	// Attitude demand is the steering the flight model consumed this frame; at warp the field does the steering
+	// and the thrusters stay quiet. Translation demand is the manoeuvring thrusters plus the vertical thrusters.
+	const FVector Torque = Movement->bWarpActive ? FVector::ZeroVector : Movement->LastSteeringInput;
+	FVector Force = Movement->LastThrusterInput;
+	Force.Z = FMath::Clamp(Force.Z + Movement->LastVerticalInput, -1.f, 1.f);
+	Thrusters->SetDemand(Torque, Force);
 }
 
 UPawnMovementComponent* AStarshipPawn::GetMovementComponent() const
@@ -400,6 +608,8 @@ void AStarshipPawn::BeginPlay()
 	SetupHullMaterials();
 	SetupHullLights();
 	SetupRunningLights();
+	SetupThrusters();
+	SetupWeaponBanks();
 	SetCameraMode(CameraMode);
 
 	if (Movement)
@@ -946,8 +1156,14 @@ void AStarshipPawn::Tick(float DeltaTime)
 		DebugVerticalTime -= DeltaTime;
 		Movement->SetVerticalInput(DebugVertical);
 	}
+	if (DebugThrustTime > 0.f && Movement)
+	{
+		DebugThrustTime -= DeltaTime;
+		Movement->SetThrusterInput(DebugThrust);
+	}
 	UpdateWarpEffects(DeltaTime);
 	UpdateHullGlow(DeltaTime);
+	UpdateThrusters();
 	UpdateCameras(DeltaTime);
 
 	// Torpedo launch kick.
@@ -1149,6 +1365,19 @@ void AStarshipPawn::ProcessDebugCommand()
 	UE_LOG(LogTemp, Log, TEXT("Starship debug command: %s"), *Cmd);
 
 	if (Op == TEXT("throttle") && Movement) { Movement->SetThrottle(Arg(1, 0.f)); }
+	else if (Op == TEXT("rcs"))
+	{
+		if (ArgStr(1) == TEXT("all")) { if (Thrusters) { Thrusters->SetAllOn(Arg(2, 3.f)); } }
+		else if (ArgStr(1) == TEXT("dump") && Thrusters)
+		{
+			int32 i = 0;
+			for (const FRcsNozzle& N : Thrusters->GetNozzles())
+			{
+				UE_LOG(LogTemp, Log, TEXT("RCS nozzle %2d  pos %7.0f %7.0f %7.0f  exhaust %5.2f %5.2f %5.2f"), i++, N.Position.X, N.Position.Y, N.Position.Z, N.ExhaustDir.X, N.ExhaustDir.Y, N.ExhaustDir.Z);
+			}
+		}
+		else { DebugThrust = FVector(Arg(1, 0.f), Arg(2, 0.f), Arg(3, 0.f)); DebugThrustTime = Arg(4, 2.f); }
+	}
 	else if (Op == TEXT("impulse") && Movement) { Movement->SetThrottle(FMath::Clamp(Arg(1, 4.f), 1.f, 4.f) * 0.25f); }
 	else if (Op == TEXT("stop") && Movement) { Movement->SetThrottle(0.0); if (WarpDrive) { WarpDrive->DisengageWarp(); } }
 	else if (Op == TEXT("warp") && WarpDrive)
@@ -1161,7 +1390,7 @@ void AStarshipPawn::ProcessDebugCommand()
 	else if (Op == TEXT("warpfactor") && WarpDrive) { WarpDrive->SetWarpFactor(Arg(1, 2.f)); }
 	else if (Op == TEXT("phasers") && Weapons) { if (ArgStr(1) == TEXT("off")) { Weapons->StopPhasers(); } else { Weapons->StartPhasers(); } }
 	else if (Op == TEXT("torpedo") && Weapons) { Weapons->FireTorpedo(); }
-	else if (Op == TEXT("target") && Weapons) { if (ArgStr(1) == TEXT("clear")) { Weapons->ClearTarget(); } else { Weapons->CycleTarget(); } }
+	else if (Op == TEXT("target") && Weapons) { if (ArgStr(1) == TEXT("clear")) { Weapons->ClearTarget(); } else if (ArgStr(1) == TEXT("nearest")) { Weapons->LockNearest(); } else { Weapons->CycleTarget(); } }
 	else if (Op == TEXT("zoom")) { ChaseZoom = FMath::Clamp(Arg(1, 1.f), MinChaseZoom, MaxChaseZoom); }
 	else if (Op == TEXT("meshdump")) { DumpHullMesh(); }
 	else if (Op == TEXT("slotbox") && Args.Num() >= 7)
