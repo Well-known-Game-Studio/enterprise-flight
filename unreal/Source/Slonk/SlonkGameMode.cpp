@@ -199,22 +199,27 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 	const float RadiusKm = AtmospherePlanet->RadiusKm;
 	// The style's AtmosphereDepth sizes the far glow shell; the real scattering layer is much thinner
 	// (Earth: 1% of the radius), otherwise the limb from orbit becomes a thick white ring.
-	const float HeightKm = FMath::Clamp(S.AtmosphereDepth * RadiusKm * 0.3f, 8.f, 120.f);
+	// Per-world layer from the style; the old formula stays as the fallback for hand-placed planets.
+	const float ScaleKm = S.AtmosphereScaleHeightKm > 0.f ? S.AtmosphereScaleHeightKm : FMath::Clamp(S.AtmosphereDepth * RadiusKm * 0.3f, 8.f, 120.f) * (8.f / 60.f);
+	const float HeightKm = S.AtmosphereHeightKm > 0.f ? S.AtmosphereHeightKm : ScaleKm * 7.5f;
 	// The atmosphere's ground sits a little below the rendered surface: pixels at or under the ground radius get
 	// the full-atmosphere transmittance (black) from the aerial perspective LUT, which blacked out the un-displaced
 	// far sphere and every ocean.
 	SkyAtmosphere->SetBottomRadius(RadiusKm * 0.992f);
 	SkyAtmosphere->SetAtmosphereHeight(HeightKm);
 	// Scale heights proportional to the atmosphere thickness (Earth: 60 km / 8 km / 1.2 km).
-	SkyAtmosphere->SetRayleighExponentialDistribution(HeightKm * (8.f / 60.f));
-	SkyAtmosphere->SetMieExponentialDistribution(HeightKm * (1.2f / 60.f));
+	SkyAtmosphere->SetRayleighExponentialDistribution(ScaleKm);
+	SkyAtmosphere->SetMieExponentialDistribution(ScaleKm * 0.25f);
 	// Artistic Rayleigh: the planet's atmosphere colour decides which wavelengths scatter most.
 	const FLinearColor Col = S.AtmosphereColor / FMath::Max(S.AtmosphereColor.GetMax(), KINDA_SMALL_NUMBER);
 	SkyAtmosphere->SetRayleighScattering(FLinearColor(FMath::Max(Col.R, 0.1f), FMath::Max(Col.G, 0.1f), FMath::Max(Col.B, 0.1f)));
 	// Thinner atmospheres need stronger coefficients to show at all; Earth is 0.0331 at 60 km.
 	// Earth is 0.0331 / 0.004 at 60 km; keep that density regardless of planet size, scaled by the style's intensity.
-	SkyAtmosphere->SetRayleighScatteringScale(0.0331f * (S.Intensity / 2.2f) * 0.7f);
-	SkyAtmosphere->SetMieScatteringScale(0.003996f * (0.5f + S.Haze * 8.f));
+	// A deeper layer gets a proportionally weaker coefficient (optical depth grows only as the 0.4 power of the
+	// scale height), so thickening the atmosphere widens the limb instead of whiting it out.
+	const float DepthScale = FMath::Pow(16.f / FMath::Max(ScaleKm, 1.f), 0.6f);
+	SkyAtmosphere->SetRayleighScatteringScale(0.0331f * (S.Intensity / 2.2f) * 0.7f * DepthScale);
+	SkyAtmosphere->SetMieScatteringScale(0.003996f * (0.5f + S.Haze * 8.f) * DepthScale);
 	SkyAtmosphere->SetMieAnisotropy(0.8f);
 	// Keep distant terrain readable from orbit.
 	SkyAtmosphere->SetAerialPespectiveViewDistanceScale(0.35f);

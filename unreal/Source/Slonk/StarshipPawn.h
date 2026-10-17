@@ -18,10 +18,12 @@ class UWarpDriveComponent;
 class UStarshipWeaponsComponent;
 class UWarpStreaksComponent;
 class UBridgeInteriorComponent;
+class UWarpViewComponent;
 class UDistantStarsComponent;
 class UShieldComponent;
 class UTractorBeamComponent;
 class URunningLightsComponent;
+class URcsThrusterComponent;
 
 UENUM(BlueprintType)
 enum class EWarpVisualMode : uint8
@@ -93,6 +95,10 @@ public:
 	/** Blinking navigation and formation lights on the hull. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|FX")
 	TObjectPtr<URunningLightsComponent> RunningLights;
+
+	/** Reaction control thrusters: nozzle packages on the saucer rim, round the deflector and on the nacelle caps. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|FX")
+	TObjectPtr<URcsThrusterComponent> Thrusters;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Defence") float MaxShieldStrength = 100.f;
 	UPROPERTY(BlueprintReadOnly, Category = "Defence") float ShieldStrength = 100.f;
@@ -201,6 +207,76 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull")
 	FName ThrusterSlotName = TEXT("Thruster");
 
+	/**
+	 * Overlay material that draws procedural lit windows on the hull (saucer rim and engineering hull flanks).
+	 * The zones below are in pawn space; the mesh's own transform is passed to the material.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows")
+	TSoftObjectPtr<UMaterialInterface> HullWindowMaterial;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") FVector WindowSaucerCenter = FVector(8050.0, 0.0, 250.0);
+	/** Measure the saucer rim's height and thickness from the mesh (overrides the Z and thickness below). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") bool bAutoSaucerRim = true;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowSaucerRadius = 7190.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowSaucerThickness = 450.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowHullMaxY = 1750.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowHullMaxZ = 400.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowHullMinZ = -1700.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowHullMinX = -7000.f;
+	/** Forward limit of the engineering-hull window zone: stops short of the deflector housing and dish. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowHullMaxX = 2200.f;
+	/** Keep-out boxes in pawn space: no windows on the deflector housing and dish, nor on the torpedo bay. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") FVector WindowExcludeDeflectorMin = FVector(2000.0, -1900.0, -3700.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") FVector WindowExcludeDeflectorMax = FVector(6500.0, 1900.0, 900.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") FVector WindowExcludeTorpedoMin = FVector(2600.0, -700.0, -700.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") FVector WindowExcludeTorpedoMax = FVector(3500.0, 700.0, 200.0);
+	/** Emissive patches drawn by the overlay (pawn space): deflector dish, torpedo bay, and the impulse exhaust when reversing. */
+	/** The dish face: x ~3500..3800, radius ~950 about z -1950 (pawn space, from the mesh). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector DeflectorPatchMin = FVector(3300.0, -1100.0, -3000.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector DeflectorPatchMax = FVector(3950.0, 1100.0, -850.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FLinearColor DeflectorGlowColor = FLinearColor(0.45f, 0.8f, 1.0f);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") float DeflectorGlow = 12.f;
+	/**
+	 * The torpedo launcher: the small housing at the foot of the neck directly above the deflector dish, facing
+	 * forward (pawn space x ~2850..3250, |y| < 350, z -450..-50, from the mesh and confirmed with `slotbox`). The
+	 * dark tube mouths inside the box glow red. (An earlier box under the saucer centre had lit panes on the lower
+	 * sensor dome instead.)
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector TorpedoPatchMin = FVector(2850.0, -350.0, -450.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector TorpedoPatchMax = FVector(3250.0, 350.0, -50.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FLinearColor TorpedoBayGlowColor = FLinearColor(1.0f, 0.12f, 0.05f);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") float TorpedoBayGlow = 30.f;
+	/** Impulse grille emissive: idle, plus this much at full throttle (sunlit white plating is about 40 in these units). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") float ImpulseGlowIdle = 1.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") float ImpulseGlowFull = 30.f;
+	/** Patches only light faces turned toward their direction at least this much (cosine): keeps the torpedo glow off the neck and saucer underside. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") float DeflectorFacing = 0.35f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") float TorpedoFacing = 0.7f;
+	/**
+	 * The hull's own material: the imported diffuse / glow / normal maps, plus the saturated blue and red details
+	 * of the diffuse map (dome, dish, blue window strips, red lamps at the shuttle bay) made emissive. The imported
+	 * slot materials only provide the textures.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow")
+	TSoftObjectPtr<UMaterialInterface> HullSkinMaterial;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") float BlueKeyGlow = 12.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") float RedKeyGlow = 10.f;
+	/** Red in the diffuse map is only a lamp in these pawn-space boxes (the stern by the shuttle bay, the torpedo bay); elsewhere it is paint. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector RedKeyTailMin = FVector(-8000.0, -2000.0, -4000.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector RedKeyTailMax = FVector(-4800.0, 2000.0, 1800.0);
+	/** In reverse the impulse grille's glow and plating are recoloured from orange-red to these. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FLinearColor ReverseGlowColor = FLinearColor(0.4f, 0.7f, 1.0f);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FLinearColor ReverseBaseTint = FLinearColor(0.4f, 0.55f, 0.9f);
+	/** Bridge module windows: a ring of small panes round the bridge, radius and height band in pawn space (radius 0 = none). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float BridgeWindowRadius = 900.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float BridgeWindowMinZ = 3150.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float BridgeWindowMaxZ = 3330.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowPitch = 700.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowDeck = 460.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowGlow = 22.f;
+	/** Fraction of windows lit at any moment, and how long a window keeps its state before re-rolling (s). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowOnFraction = 0.4f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Windows") float WindowPeriod = 30.f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull")
 	TArray<FStarshipLightSpec> LightSpecs;
 
@@ -211,6 +287,12 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cameras")
 	float ChaseHeightFactor = 0.22f;
+
+	/** Multiplier on the chase distance set with the mouse wheel while free-looking; R resets it to 1. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera", meta = (ClampMin = "0.1", ClampMax = "6.0"))
+	float ChaseZoom = 1.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera") float MinChaseZoom = 0.3f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera") float MaxChaseZoom = 4.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cameras")
 	float ChaseFOV = 80.f;
@@ -258,6 +340,7 @@ public:
 	 *   throttle <-0.25..1> | impulse <1-4> | stop | warp | warp on | warp off | warpfactor <f>
 	 *   phasers on|off | torpedo | target | camera chase|bridge|cinematic | steer <pitch> <yaw> <roll> <seconds>
 	 *   look <yaw> <pitch> <seconds> (free-look the active camera) | vert <up -1..1> <seconds> | orbit [on|off]
+	 *   rcs <fwd> <right> <up> <seconds> (manoeuvring thrusters)
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
 	FString DebugCommand;
@@ -275,13 +358,21 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Warp FX")
 	float ClassicStreakStrength = 0.6f;
 
-	/** Relativistic aberration / contraction amount (0..1). */
+	/** Relativistic aberration amount (0..1; 1 = the physical mapping for the effective beta). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Warp FX")
-	float RelativisticContraction = 0.8f;
+	float RelativisticContraction = 1.0f;
 
 	/** Relativistic Doppler tint amount (0..1). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Warp FX")
 	float RelativisticDoppler = 0.85f;
+
+	/**
+	 * Above c there is no rest frame to transform into, so the relativistic look uses an effective speed
+	 * beta = v / (v + c): 0.5 at warp 1, 0.79 at warp 1.5, 0.91 at warp 2, then on towards 1. This caps it so
+	 * the sky does not collapse into a dot at high factors.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Warp FX", meta = (ClampMin = "0.0", ClampMax = "0.995"))
+	float RelativisticMaxBeta = 0.93f;
 
 	UFUNCTION(BlueprintCallable, Category = "Starship|Warp")
 	void SetWarpVisualMode(EWarpVisualMode Mode) { WarpVisualMode = Mode; }
@@ -354,6 +445,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Starship|Camera")
 	void ResetCamera();
 
+	/** Wheel zoom for the chase camera: positive steps bring it closer. */
+	UFUNCTION(BlueprintCallable, Category = "Starship|Camera")
+	void AdjustChaseZoom(float Steps);
+
 	UFUNCTION(BlueprintPure, Category = "Starship|Camera")
 	UCameraComponent* GetActiveCamera() const;
 
@@ -390,6 +485,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Starship")
 	bool IsDebugVertical() const { return DebugVerticalTime > 0.f; }
 
+	UFUNCTION(BlueprintPure, Category = "Starship")
+	bool IsDebugThrusting() const { return DebugThrustTime > 0.f; }
+
 protected:
 	UFUNCTION()
 	void HandleCollision(const FHitResult& Hit);
@@ -399,6 +497,21 @@ private:
 	void SetupHullMaterials();
 	void SetupHullLights();
 	void SetupRunningLights();
+	/** Lay the reaction control nozzles out on the hull mesh. */
+	void SetupThrusters();
+	/** Lay the phaser banks out on the hull mesh. */
+	void SetupWeaponBanks();
+	/** Feed this frame's steering and translation to the thruster FX. */
+	void UpdateThrusters();
+	/** Cache the hull's LOD0 vertices in pawn space for the probes below. */
+	void GatherHullVerts();
+	/** The hull vertex furthest along Dir inside Region (pawn space), a hair outside the skin; Fallback when the mesh is not CPU-readable. */
+	FVector ProbeHull(const FVector& Dir, const FBox& Region, const FVector& Fallback) const;
+	/**
+	 * Move a fitting onto the nearest hull vertex within Radius whose plating faces roughly along Dir, and cant Dir
+	 * out of that plating so a nozzle never fires into or along the skin. False (inputs untouched) when no vertex is near.
+	 */
+	bool SnapToHull(FVector& Pos, FVector& Dir, float Radius) const;
 	void UpdateCameras(float DeltaTime);
 	void UpdateWarpEffects(float DeltaTime);
 	void UpdateHullGlow(float DeltaTime);
@@ -411,8 +524,23 @@ private:
 
 	UPROPERTY()
 	TObjectPtr<UMaterialInstanceDynamic> WarpPPMID;
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> HullWindowsMID;
+	void ApplyHullWindows(float Scale, const FQuat& Rot, const FVector& RelLoc);
+	/** Mesh->pawn transform, key glows and boxes on the skin material instances (needs the instances, so after SetupHullMaterials). */
+	void ApplyHullSkinParams();
+	/** Debug: write the hull mesh's LOD0 vertices (pawn space, with material slot) to Saved/meshdump.csv. */
+	void DumpHullMesh() const;
 
-	void UpdateWarpPostProcess(float Streak, float Flash);
+	float LastStreak = 0.f;
+	float LastFlash = 0.f;
+	/** Ticks after the cameras have settled (TG_PostUpdateWork) and calls UpdateWarpPostProcess. */
+	UPROPERTY() TObjectPtr<UWarpViewComponent> WarpView;
+
+public:
+	/** Pushes the camera-dependent warp post-process parameters; runs from WarpView once the camera transforms are final for the frame. */
+	void UpdateWarpPostProcess();
+
+private:
 	float ShieldRechargeTimer = 0.f;
 
 	int32 ThrusterMaterialIndex = INDEX_NONE;
@@ -424,11 +552,15 @@ private:
 	float OrbitAngle = 0.f;
 	float ChaseArmBaseLength = 0.f;
 	FVector ChaseArmBaseSocketOffset = FVector::ZeroVector;
-	float LastTorpedoReadiness = 1.f;
+	int32 LastTorpedoesFired = 0;
 	FVector DebugSteer = FVector::ZeroVector;
 	float DebugSteerTime = 0.f;
 	FVector2D DebugLook = FVector2D::ZeroVector;
 	float DebugLookTime = 0.f;
 	float DebugVertical = 0.f;
 	float DebugVerticalTime = 0.f;
+	FVector DebugThrust = FVector::ZeroVector;
+	float DebugThrustTime = 0.f;
+	TArray<FVector> HullVerts;
+	TArray<FVector> HullNormals;
 };

@@ -24,9 +24,20 @@ public:
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
 
-	/** Launch toward a direction with an optional homing target. */
+	/**
+	 * Launch along the tube's direction. The torpedo runs straight for StraightRunSeconds, then turns toward the
+	 * homing target, or failing that toward AimDirection (a heading, so it survives a floating-origin shift).
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Starship|Weapons")
-	void Launch(const FVector& Direction, double InheritedSpeed, AActor* HomingTarget);
+	void Launch(const FVector& Direction, double InheritedSpeed, AActor* HomingTarget, const FVector& AimDirection);
+
+	/** Seconds the torpedo flies straight out of the tube before it starts to turn. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Torpedo")
+	float StraightRunSeconds = 0.6f;
+
+	/** How fast it can turn once it is seeking (deg/s). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Torpedo")
+	float TurnRateDegPerSecond = 150.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Torpedo")
 	double Speed = 60000.0;
@@ -43,8 +54,6 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Torpedo")
 	float ExplosionRadius = 5000.f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Torpedo")
-	float HomingAcceleration = 40000.f;
 
 	/** Visual radius of the glowing casing (cm). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Torpedo")
@@ -87,4 +96,7 @@ protected:
 private:
 	float Age = 0.f;
 	bool bDetonated = false;
+	TWeakObjectPtr<AActor> SeekTarget;
+	FVector SeekDirection = FVector::ZeroVector;
+	bool bSeeking = false;
 };

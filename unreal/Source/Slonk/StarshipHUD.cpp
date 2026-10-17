@@ -208,9 +208,19 @@ void AStarshipHUD::DrawHUD()
 	{
 		DrawText(TEXT("PHASERS"), Dim, X, Y, Font, UIScale);
 		DrawBar(X + 110.f * UIScale, Y + 3.f * UIScale, 160.f * UIScale, 8.f * UIScale, Weapons->GetPhaserEnergy(), Weapons->IsFiringPhasers() ? Warning : FLinearColor(1.f, 0.65f, 0.25f)); Y += Line;
-		DrawText(TEXT("TORPEDO"), Dim, X, Y, Font, UIScale);
-		const float Ready = Weapons->GetTorpedoReadiness();
-		DrawBar(X + 110.f * UIScale, Y + 3.f * UIScale, 160.f * UIScale, 8.f * UIScale, Ready, Ready >= 1.f ? FLinearColor(1.f, 0.3f, 0.1f) : Dim); Y += Line;
+		// One bar per torpedo tube: each reloads on its own.
+		DrawText(Weapons->GetNumTubes() > 1 ? TEXT("TUBES") : TEXT("TORPEDO"), Dim, X, Y, Font, UIScale);
+		{
+			const int32 Tubes = FMath::Max(Weapons->GetNumTubes(), 1);
+			const float Gap = 6.f * UIScale;
+			const float BarW = (160.f * UIScale - Gap * (Tubes - 1)) / Tubes;
+			for (int32 t = 0; t < Tubes; ++t)
+			{
+				const float Ready = Weapons->GetTubeReadiness(t);
+				DrawBar(X + 110.f * UIScale + t * (BarW + Gap), Y + 3.f * UIScale, BarW, 8.f * UIScale, Ready, Ready >= 1.f ? FLinearColor(1.f, 0.3f, 0.1f) : Dim);
+			}
+			Y += Line;
+		}
 
 		if (const AActor* Target = Weapons->LockedTarget)
 		{
@@ -269,6 +279,7 @@ void AStarshipHUD::DrawHUD()
 			TEXT("1 2 3 4              1/4 .. full impulse"),
 			TEXT("X or 0  all stop     Z  reverse"),
 			TEXT("PgUp PgDn            vertical thrusters"),
+			TEXT("Arrows               RCS thrusters: fore/aft, port/stbd"),
 			TEXT("O  orbit hold around nav target / nearest body (follows ships)"),
 			TEXT("B  tractor beam on the locked target (else the nav target)"),
 			TEXT("J / Y button         engage / disengage warp"),
@@ -277,7 +288,8 @@ void AStarshipHUD::DrawHUD()
 			TEXT("Space / G / A        photon torpedo"),
 			TEXT("T  cycle target      Y  clear target"),
 			TEXT("V  camera            RMB hold  free look"),
-			TEXT("R  reset camera      Tab  HUD     H  help"),
+			TEXT("RMB + wheel  zoom    R  reset camera/zoom"),
+			TEXT("Tab  HUD             H  help"),
 			TEXT("N  nav markers       M  minimap"),
 			TEXT("L  next nav target   K  clear nav target"),
 			TEXT("Home  jump to nav target (dev)"),

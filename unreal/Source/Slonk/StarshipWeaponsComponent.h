@@ -9,6 +9,22 @@
 class APhaserBeam;
 class APhotonTorpedo;
 
+/** A phaser bank: an emitter on the hull with the outward normal of the plating it sits on. */
+USTRUCT(BlueprintType)
+struct FPhaserBank
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) FName Name;
+	/** Emitter position relative to the ship root (cm). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) FVector Offset = FVector::ZeroVector;
+	/** Centre of the bank's field of fire: the hull normal where it is mounted. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) FVector Normal = FVector::UpVector;
+
+	FPhaserBank() {}
+	FPhaserBank(FName InName, const FVector& InOffset, const FVector& InNormal) : Name(InName), Offset(InOffset), Normal(InNormal.GetSafeNormal()) {}
+};
+
 UCLASS(ClassGroup = (Starship), meta = (BlueprintSpawnableComponent))
 class SLONK_API UStarshipWeaponsComponent : public UActorComponent
 {
@@ -23,9 +39,21 @@ public:
 
 	// ---- Phasers ----
 
-	/** Phaser emitter positions relative to the ship root (cm). */
+	/** Phaser banks round the hull. The ones with the squarest view of the aim point fire. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phasers")
-	TArray<FVector> PhaserEmitterOffsets;
+	TArray<FPhaserBank> PhaserBanks;
+
+	/** How many banks fire at once. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phasers")
+	int32 MaxFiringBanks = 2;
+
+	/** A bank's field of fire: the largest angle (deg) between its hull normal and the line to the aim point. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phasers")
+	float PhaserBankArc = 88.f;
+
+	/** Indices into PhaserBanks of the banks that fired this tick. */
+	UPROPERTY(BlueprintReadOnly, Category = "Phasers")
+	TArray<int32> FiringBanks;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phasers")
 	TSubclassOf<APhaserBeam> PhaserBeamClass;
@@ -45,21 +73,18 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phasers")
 	float PhaserRechargeSeconds = 8.f;
 
-	/** Max angle (deg) between the ship's forward axis and the aim direction before the emitters refuse to fire. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phasers")
-	float PhaserFiringArc = 75.f;
-
 	// ---- Torpedoes ----
 
-	/** Torpedo tube positions relative to the ship root (cm). Tubes fire alternately. */
+	/** Torpedo tube positions relative to the ship root (cm). Tubes fire alternately. The refit has one launcher, with two tubes side by side, at the top of the neck facing forward. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Torpedoes")
 	TArray<FVector> TorpedoTubeOffsets;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Torpedoes")
 	TSubclassOf<APhotonTorpedo> TorpedoClass;
 
+	/** Reload time of one tube (s). With two tubes a pair can go out back to back. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Torpedoes")
-	float TorpedoCooldown = 0.9f;
+	float TorpedoCooldown = 2.5f;
 
 	// ---- Targeting ----
 
@@ -88,15 +113,30 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Starship|Weapons")
 	void ClearTarget();
 
+	/** Lock the closest targetable actor whatever its bearing (the default cycle prefers what is ahead). */
+	UFUNCTION(BlueprintCallable, Category = "Starship|Weapons")
+	void LockNearest();
+
 	UFUNCTION(BlueprintPure, Category = "Starship|Weapons")
 	bool IsFiringPhasers() const { return bPhasersFiring && PhaserEnergy > 0.f; }
 
 	UFUNCTION(BlueprintPure, Category = "Starship|Weapons")
 	float GetPhaserEnergy() const { return PhaserEnergy; }
 
-	/** 1 when a torpedo can be fired, counting up from 0 after each shot. */
+	/** Readiness of the readiest tube: 1 when a torpedo can be fired, counting up from 0 as it reloads. */
 	UFUNCTION(BlueprintPure, Category = "Starship|Weapons")
-	float GetTorpedoReadiness() const { return TorpedoCooldown > 0.f ? FMath::Clamp(1.f - TorpedoTimer / TorpedoCooldown, 0.f, 1.f) : 1.f; }
+	float GetTorpedoReadiness() const;
+
+	/** Readiness of one tube (0..1). Each tube reloads on its own, so both can fire back to back. */
+	UFUNCTION(BlueprintPure, Category = "Starship|Weapons")
+	float GetTubeReadiness(int32 Tube) const;
+
+	UFUNCTION(BlueprintPure, Category = "Starship|Weapons")
+	int32 GetNumTubes() const { return TorpedoTubeOffsets.Num(); }
+
+	/** Count of torpedoes fired, for launch effects. */
+	UFUNCTION(BlueprintPure, Category = "Starship|Weapons")
+	int32 GetTorpedoesFired() const { return TorpedoesFired; }
 
 	/** World-space point the weapons are aiming at (locked target, or the view direction out to range). */
 	UFUNCTION(BlueprintPure, Category = "Starship|Weapons")
@@ -112,6 +152,8 @@ private:
 
 	bool bPhasersFiring = false;
 	float PhaserEnergy = 1.f;
-	float TorpedoTimer = 0.f;
+	/** Seconds of reload left per tube. */
+	TArray<float> TubeTimers;
 	int32 NextTube = 0;
+	int32 TorpedoesFired = 0;
 };

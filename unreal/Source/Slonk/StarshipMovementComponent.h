@@ -77,6 +77,27 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Starship|Movement")
 	void SetVerticalInput(float Up) { VerticalInput = FMath::Clamp(Up, -1.f, 1.f); }
 
+	// ---- Reaction control thrusters ----------------------------------------------------------
+
+	/** Top speed from the manoeuvring thrusters alone (cm/s): docking speeds, 250 m/s by default. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Thrusters")
+	double ThrusterMaxSpeed = 2.5e4;
+
+	/** Body-frame thruster input (forward, right, up) in [-1, 1] as of the last tick (for FX / HUD). */
+	UPROPERTY(BlueprintReadOnly, Category = "State")
+	FVector LastThrusterInput = FVector::ZeroVector;
+
+	/** Steering input (pitch, yaw, roll) the last tick consumed (for FX). */
+	UPROPERTY(BlueprintReadOnly, Category = "State")
+	FVector LastSteeringInput = FVector::ZeroVector;
+
+	/** Per-frame thruster translation input along (forward, right, up), each in [-1, 1]. Consumed each tick. */
+	UFUNCTION(BlueprintCallable, Category = "Starship|Movement")
+	void SetThrusterInput(const FVector& ForwardRightUp)
+	{
+		ThrusterInput = FVector(FMath::Clamp(ForwardRightUp.X, -1.0, 1.0), FMath::Clamp(ForwardRightUp.Y, -1.0, 1.0), FMath::Clamp(ForwardRightUp.Z, -1.0, 1.0));
+	}
+
 	/** While holding orbit the ship circles OrbitBody at OrbitRadius; the throttle sets the tangential speed. */
 	UPROPERTY(BlueprintReadOnly, Category = "Orbit")
 	bool bOrbitHold = false;
@@ -237,6 +258,7 @@ private:
 	/** (Pitch, Yaw, Roll) in [-1, 1], consumed each tick. */
 	FVector SteeringInput = FVector::ZeroVector;
 	float VerticalInput = 0.f;
+	FVector ThrusterInput = FVector::ZeroVector;
 	FVector OrbitAxis = FVector::UpVector;
 	float ProximityScanTimer = 0.f;
 	struct FProximityCandidate { TWeakObjectPtr<AActor> Body; double Radius = 0.0; };

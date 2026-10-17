@@ -213,7 +213,7 @@ void ABorgCube::Tick(float DeltaTime)
 			T->GlowColor = WeaponColor;
 			T->Damage = 14.f;
 			UGameplayStatics::FinishSpawningActor(T, FTransform(Dir.Rotation(), Tube));
-			T->Launch(Dir, Velocity.Size(), Player);
+			T->Launch(Dir, Velocity.Size(), Player, Dir);
 		}
 	}
 }

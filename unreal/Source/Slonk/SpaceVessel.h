@@ -123,6 +123,8 @@ protected:
 	float WindowDeck = 400.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vessel")
 	float WindowGlow = 25.f;
+	/** Fraction of windows lit at any moment (each is on or off; the pattern re-rolls slowly over time). */
+	float WindowOnFraction = 0.45f;
 	void ApplyWindowParams(UMaterialInstanceDynamic* MID) const;
 
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> HullMID;
@@ -161,6 +163,7 @@ class SLONK_API AProceduralStarship : public ASpaceVessel
 
 public:
 	AProceduralStarship();
+	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
 	virtual FVector GetVisualLocation() const override;
 
@@ -227,6 +230,8 @@ private:
 	FVector WaypointUniverse = FVector::ZeroVector;
 	bool bHasWaypoint = false;
 	bool bHomeSet = false;
+	/** Converts HomeLocation (world space when given) to universe space once; harmless to call again. */
+	void EnsureHome();
 	FRandomStream NavRng;
 
 	// ---- Warp ----
