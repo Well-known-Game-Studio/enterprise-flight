@@ -126,8 +126,12 @@ private:
 	void BuildRefit();
 	/** Refit furniture: a grey upholstered swivel chair on a black pedestal, optionally with a crew member. */
 	void RefitChair(const FVector& FloorPos, float YawDeg, bool bCrew, UMaterialInterface* UniformMat);
-	/** Refit perimeter station: light-grey console body with a white light strip at its foot, a raked teal display bank and a framed monitor above. */
+	/** Refit perimeter station: light-grey cabinet with three light bars at its foot, a black desk and a large raked display bank. */
 	void RefitStation(float AngleDeg, float Chord, float& Seed, bool bConsole);
+	/** A teal-on-black display instance with the refit palette and sparse cells. */
+	UMaterialInstanceDynamic* RefitScreen(const TCHAR* Name, float Seed, float Intensity, float CellScale, float Gap);
+	/** Three stacked white light bars on a vertical face at a bearing (the refit's kick lighting). */
+	void LightBars(float AngleDeg, float Radial, float Z, float Width, int32 Count = 3, float Pitch = 11.f);
 	UMaterialInstanceDynamic* MakeLit(const TCHAR* Name, FLinearColor Base, float Roughness, float Metallic = 0.f, FLinearColor Emissive = FLinearColor::Black, float EmissiveStrength = 0.f);
 	UMaterialInstanceDynamic* MakeScreen(const TSoftObjectPtr<UMaterialInterface>& Parent, const TCHAR* Name, float Seed, float Intensity, float CellScale = 1.f);
 
@@ -176,5 +180,6 @@ private:
 	UMaterialInterface* RailGrey = nullptr;
 	UMaterialInterface* ScreenDark = nullptr;
 	UMaterialInterface* UniformMaroon = nullptr;
+	UMaterialInterface* ClockRed = nullptr;
 	int32 PieceCount = 0;
 };
