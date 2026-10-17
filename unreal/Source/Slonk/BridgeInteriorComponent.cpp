@@ -28,6 +28,7 @@ UBridgeInteriorComponent::UBridgeInteriorComponent()
 	ButtonsMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_BridgeButtons.M_BridgeButtons")));
 	ViewerMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_BridgeViewer.M_BridgeViewer")));
 	OkudagramMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_Okudagram.M_Okudagram")));
+	RefitMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/Slonk/Bridge/SM_BridgeRefit.SM_BridgeRefit")));
 }
 
 void UBridgeInteriorComponent::BeginPlay()
@@ -235,7 +236,11 @@ void UBridgeInteriorComponent::Build()
 	UniformBlue = MakeLit(TEXT("UniformBlue"), FLinearColor(0.08f, 0.22f, 0.55f), 0.85f);
 	UniformRed = MakeLit(TEXT("UniformRed"), FLinearColor(0.50f, 0.05f, 0.07f), 0.85f);
 
-	if (Style == EBridgeStyle::Refit)
+	if (Style == EBridgeStyle::RefitMesh)
+	{
+		BuildRefitMesh();
+	}
+	else if (Style == EBridgeStyle::Refit)
 	{
 		BuildRefit();
 	}
@@ -243,6 +248,80 @@ void UBridgeInteriorComponent::Build()
 	{
 		BuildOriginal();
 	}
+}
+
+void UBridgeInteriorComponent::BuildRefitMesh()
+{
+	UStaticMesh* Mesh = RefitMesh.LoadSynchronous();
+	if (!Mesh)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Bridge: SM_BridgeRefit missing, building the primitive refit instead."));
+		BuildRefit();
+		return;
+	}
+	UStaticMeshComponent* C = NewObject<UStaticMeshComponent>(GetOwner(), TEXT("BridgeMesh"));
+	PrepPrimitive(C, true);
+	C->SetStaticMesh(Mesh);
+	C->SetRelativeLocationAndRotation(FVector::ZeroVector, RefitMeshRotation);
+	C->RegisterComponent();
+	Pieces.Add(C);
+
+	// Bind slots by name: screens to the live Okudagram material, light strips and the clock to emissive instances;
+	// everything else keeps the material the import made from the Blender colours.
+	UMaterialInterface* Strip = MakeLit(TEXT("MeshStrip"), FLinearColor(0.9f, 0.92f, 0.95f), 0.8f, 0.f, FLinearColor(0.95f, 0.97f, 1.0f), LightPanelEmissive * 2.5f);
+	UMaterialInterface* Clock = MakeLit(TEXT("MeshClock"), FLinearColor(0.1f, 0.0f, 0.0f), 0.5f, 0.f, FLinearColor(1.0f, 0.1f, 0.05f), 6.f);
+	UMaterialInterface* Touch = MakeScreen(ButtonsMaterial, TEXT("MeshTouch"), 7.f, DisplayIntensity * 0.6f, 0.6f);
+	const TArray<FName> Slots = C->GetMaterialSlotNames();
+	for (int32 i = 0; i < Slots.Num(); ++i)
+	{
+		const FString Name = Slots[i].ToString();
+		if (Name.StartsWith(TEXT("Screen_")))
+		{
+			const FString Tex = Name.RightChop(7);
+			if (UMaterialInstanceDynamic* Screen = MakeOkuda(*Tex, DisplayIntensity * 0.55f))
+			{
+				C->SetMaterial(i, Screen);
+				if (Tex == TEXT("Tactical")) { TacticalScreens.Add(Screen); }
+				if (Tex == TEXT("Helm")) { HelmScreens.Add(Screen); }
+			}
+		}
+		else if (Name == TEXT("LightStrip") && Strip) { C->SetMaterial(i, Strip); }
+		else if (Name == TEXT("LightSoft")) { C->SetMaterial(i, MakeLit(TEXT("MeshSoft"), FLinearColor(0.9f, 0.92f, 0.95f), 0.8f, 0.f, FLinearColor(0.95f, 0.97f, 1.0f), LightPanelEmissive * 0.8f)); }
+		else if (Name == TEXT("ClockRed") && Clock) { C->SetMaterial(i, Clock); }
+		else if (Name == TEXT("TouchPanel") && Touch) { C->SetMaterial(i, Touch); }
+	}
+
+	// Crew at the helm and at the perimeter stations, matching the layout the Blender generator uses.
+	if (bShowCrew)
+	{
+		UniformMaroon = MakeLit(TEXT("UniformMaroon"), FLinearColor(0.40f, 0.07f, 0.09f), 0.85f);
+		const float R = 560.f, HD = 40.f, VS = 34.f, Step = 32.f;
+		const float Lifts[2] = { 150.f, 210.f };
+		for (int32 s = -1; s <= 1; s += 2)
+		{
+			Crew(FVector(230.f - 95.f, s * 68.f, 55.f), 0.f, UniformMaroon);
+		}
+		int32 k = 0;
+		for (float A = VS + Step * 0.5f + 4.f; A < 360.f - VS - Step * 0.4f; A += Step)
+		{
+			bool bLift = false;
+			for (float L : Lifts) { bLift |= FMath::Abs(FMath::FindDeltaAngleDegrees(A, L)) < 12.f + Step * 0.45f; }
+			if (bLift || FMath::Abs(FMath::FindDeltaAngleDegrees(A, 180.f)) < 8.f) { continue; }
+			if ((k++ % 3) != 1)
+			{
+				Crew(FRotator(0.f, A, 0.f).Vector() * (R - 130.f) + FVector(0, 0, HD + 55.f), A, (k % 2) ? UniformMaroon : UniformRed);
+			}
+		}
+	}
+
+	// Lighting as for the primitive refit.
+	const float R = WallRadius, H = CeilingHeight;
+	for (int32 i = 0; i < 6; ++i)
+	{
+		const float A = i * 60.f + 30.f;
+		Light(FRotator(0.f, A, 0.f).Vector() * (R * 0.6f) + FVector(0, 0, H - 100.f), LightIntensity * 0.7f, 1300.f);
+	}
+	Light(FVector(0, 0, H - 50.f), LightIntensity * 0.5f, 1200.f);
 }
 
 void UBridgeInteriorComponent::BuildOriginal()

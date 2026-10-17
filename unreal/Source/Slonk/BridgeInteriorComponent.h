@@ -22,8 +22,10 @@ enum class EBridgeStyle : uint8
 {
 	/** The original Constitution-class bridge: sunken well, red rails, blue-grey walls, button consoles. */
 	Original,
-	/** The Enterprise-A bridge of Star Trek VI: light-grey panelling, white light strips, teal displays, grey chairs, burgundy turbolift doors. */
-	Refit
+	/** The Enterprise-A bridge of Star Trek VI built from engine primitives: light-grey panelling, white light strips, teal displays, grey chairs, burgundy turbolift doors. */
+	Refit,
+	/** The same bridge as the static mesh modelled in Blender (blender/bridge-st6), with its screen slots bound to the live Okudagram material. */
+	RefitMesh
 };
 
 /**
@@ -44,7 +46,7 @@ public:
 
 	/** Which bridge to build. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
-	EBridgeStyle Style = EBridgeStyle::Refit;
+	EBridgeStyle Style = EBridgeStyle::RefitMesh;
 
 	/** Where the seated captain's eyes are, relative to this component (cm). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
@@ -112,6 +114,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge|Materials") TSoftObjectPtr<UMaterialInterface> ViewerMaterial;
 	/** Refit screens: an unlit material showing an Okudagram texture (/Game/Slonk/Bridge/T_Okuda_*) with live bars drawn over it. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge|Materials") TSoftObjectPtr<UMaterialInterface> OkudagramMaterial;
+	/** The modelled bridge (SM_BridgeRefit) for the RefitMesh style. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge|Materials") TSoftObjectPtr<UStaticMesh> RefitMesh;
+	/** Rotation applied to the modelled bridge so its viewscreen faces +X (set after checking the import). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge|Materials") FRotator RefitMeshRotation = FRotator::ZeroRotator;
 	/** UV orientation of the screen texture on a wall box's inward face (0..7: quarter turns, +4 mirrors). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge|Materials") float ScreenUVMode = 0.f;
 
@@ -135,6 +141,7 @@ public:
 private:
 	void BuildOriginal();
 	void BuildRefit();
+	void BuildRefitMesh();
 	/** Refit furniture: a grey upholstered swivel chair on a black pedestal, optionally with a crew member. */
 	void RefitChair(const FVector& FloorPos, float YawDeg, bool bCrew, UMaterialInterface* UniformMat);
 	/** Refit perimeter station: light-grey cabinet with three light bars at its foot, a black desk and a large raked display bank. */

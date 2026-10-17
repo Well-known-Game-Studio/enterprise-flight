@@ -1413,7 +1413,7 @@ void AStarshipPawn::ProcessDebugCommand()
 	else if (Op == TEXT("bridge") && BridgeInterior)
 	{
 		const FString Which = ArgStr(1);
-		BridgeInterior->SetStyle(Which == TEXT("original") || Which == TEXT("tos") ? EBridgeStyle::Original : EBridgeStyle::Refit);
+		BridgeInterior->SetStyle(Which == TEXT("original") || Which == TEXT("tos") ? EBridgeStyle::Original : (Which == TEXT("refit") || Which == TEXT("prims") ? EBridgeStyle::Refit : EBridgeStyle::RefitMesh));
 		BridgeInterior->SetVisibility(CameraMode == EStarshipCameraMode::Bridge, true);
 	}
 	else if (Op == TEXT("rcs"))
