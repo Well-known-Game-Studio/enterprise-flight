@@ -17,6 +17,15 @@ class UPointLightComponent;
 class UMaterialInterface;
 class UMaterialInstanceDynamic;
 
+UENUM(BlueprintType)
+enum class EBridgeStyle : uint8
+{
+	/** The original Constitution-class bridge: sunken well, red rails, blue-grey walls, button consoles. */
+	Original,
+	/** The Enterprise-A bridge of Star Trek VI: light-grey panelling, white light strips, teal displays, grey chairs, burgundy turbolift doors. */
+	Refit
+};
+
 /**
  * Attach to the ship so that this component's origin is the well floor under the captain's chair (the
  * centre of the bridge), +X facing the viewscreen. The bridge camera belongs at EyeOffset. Geometry is
@@ -32,6 +41,10 @@ public:
 	UBridgeInteriorComponent();
 
 	virtual void BeginPlay() override;
+
+	/** Which bridge to build. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
+	EBridgeStyle Style = EBridgeStyle::Refit;
 
 	/** Where the seated captain's eyes are, relative to this component (cm). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
@@ -102,10 +115,19 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Bridge")
 	void Build();
 
+	UFUNCTION(BlueprintCallable, Category = "Bridge")
+	void SetStyle(EBridgeStyle NewStyle) { Style = NewStyle; Build(); }
+
 	UFUNCTION(BlueprintPure, Category = "Bridge")
 	bool IsBuilt() const { return Pieces.Num() > 0; }
 
 private:
+	void BuildOriginal();
+	void BuildRefit();
+	/** Refit furniture: a grey upholstered swivel chair on a black pedestal, optionally with a crew member. */
+	void RefitChair(const FVector& FloorPos, float YawDeg, bool bCrew, UMaterialInterface* UniformMat);
+	/** Refit perimeter station: light-grey console body with a white light strip at its foot, a raked teal display bank and a framed monitor above. */
+	void RefitStation(float AngleDeg, float Chord, float& Seed, bool bConsole);
 	UMaterialInstanceDynamic* MakeLit(const TCHAR* Name, FLinearColor Base, float Roughness, float Metallic = 0.f, FLinearColor Emissive = FLinearColor::Black, float EmissiveStrength = 0.f);
 	UMaterialInstanceDynamic* MakeScreen(const TSoftObjectPtr<UMaterialInterface>& Parent, const TCHAR* Name, float Seed, float Intensity, float CellScale = 1.f);
 
@@ -144,5 +166,15 @@ private:
 	UMaterialInterface* UniformGold = nullptr;
 	UMaterialInterface* UniformBlue = nullptr;
 	UMaterialInterface* UniformRed = nullptr;
+	// Refit palette.
+	UMaterialInterface* PanelGrey = nullptr;
+	UMaterialInterface* PanelDark = nullptr;
+	UMaterialInterface* Carpet = nullptr;
+	UMaterialInterface* StripWhite = nullptr;
+	UMaterialInterface* Burgundy = nullptr;
+	UMaterialInterface* SeatGrey = nullptr;
+	UMaterialInterface* RailGrey = nullptr;
+	UMaterialInterface* ScreenDark = nullptr;
+	UMaterialInterface* UniformMaroon = nullptr;
 	int32 PieceCount = 0;
 };

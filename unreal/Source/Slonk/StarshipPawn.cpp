@@ -964,6 +964,27 @@ void AStarshipPawn::SetupHullMaterials()
 					Mid->SetTextureParameterValue(Pair.Value, Tex);
 				}
 			}
+			// Roughness (from the set's specular map) and baked occlusion, by slot name: the imported instances
+			// never referenced them.
+			const FString SlotName = ShipMesh->GetMaterialSlotNames().IsValidIndex(i) ? ShipMesh->GetMaterialSlotNames()[i].ToString() : FString();
+			if (SlotName.StartsWith(TEXT("Constitution_")))
+			{
+				const FString Base = FString::Printf(TEXT("/Game/Enterprise/Fed_TMP_%s_"), *SlotName);
+				if (UTexture* Rough = LoadObject<UTexture>(nullptr, *(Base + TEXT("ROUGH"))))
+				{
+					Mid->SetTextureParameterValue(TEXT("Rough"), Rough);
+				}
+				if (UTexture* AO = LoadObject<UTexture>(nullptr, *(Base + TEXT("AO"))))
+				{
+					Mid->SetTextureParameterValue(TEXT("AO"), AO);
+				}
+			}
+			else
+			{
+				// The impulse grille has no such maps: plain roughness, no occlusion.
+				Mid->SetScalarParameterValue(TEXT("RoughMapWeight"), 0.f);
+				Mid->SetScalarParameterValue(TEXT("AOStrength"), 0.f);
+			}
 			ShipMesh->SetMaterial(i, Mid);
 		}
 		else
@@ -1384,6 +1405,12 @@ void AStarshipPawn::ProcessDebugCommand()
 	UE_LOG(LogTemp, Log, TEXT("Starship debug command: %s"), *Cmd);
 
 	if (Op == TEXT("throttle") && Movement) { Movement->SetThrottle(Arg(1, 0.f)); }
+	else if (Op == TEXT("bridge") && BridgeInterior)
+	{
+		const FString Which = ArgStr(1);
+		BridgeInterior->SetStyle(Which == TEXT("original") || Which == TEXT("tos") ? EBridgeStyle::Original : EBridgeStyle::Refit);
+		BridgeInterior->SetVisibility(CameraMode == EStarshipCameraMode::Bridge, true);
+	}
 	else if (Op == TEXT("rcs"))
 	{
 		if (ArgStr(1) == TEXT("all")) { if (Thrusters) { Thrusters->SetAllOn(Arg(2, 3.f)); } }
