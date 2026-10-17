@@ -110,6 +110,17 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge|Materials") TSoftObjectPtr<UMaterialInterface> DisplayMaterial;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge|Materials") TSoftObjectPtr<UMaterialInterface> ButtonsMaterial;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge|Materials") TSoftObjectPtr<UMaterialInterface> ViewerMaterial;
+	/** Refit screens: an unlit material showing an Okudagram texture (/Game/Slonk/Bridge/T_Okuda_*) with live bars drawn over it. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge|Materials") TSoftObjectPtr<UMaterialInterface> OkudagramMaterial;
+	/** UV orientation of the screen texture on a wall box's inward face (0..7: quarter turns, +4 mirrors). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge|Materials") float ScreenUVMode = 0.f;
+
+	/**
+	 * Feed the live panels: shields and hull on the tactical screen, throttle and warp on the helm. Fractions 0..1;
+	 * bAlert washes the tactical screen red. Call every frame while the bridge is in view.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Bridge")
+	void SetLiveReadouts(float ShieldFraction, float HullFraction, float Throttle, float WarpFraction, bool bAlert);
 
 	/** (Re)build the set. Safe to call again; existing pieces are destroyed first. */
 	UFUNCTION(BlueprintCallable, Category = "Bridge")
@@ -128,6 +139,8 @@ private:
 	void RefitChair(const FVector& FloorPos, float YawDeg, bool bCrew, UMaterialInterface* UniformMat);
 	/** Refit perimeter station: light-grey cabinet with three light bars at its foot, a black desk and a large raked display bank. */
 	void RefitStation(float AngleDeg, float Chord, float& Seed, bool bConsole);
+	/** An Okudagram screen instance showing the named texture (/Game/Slonk/Bridge/T_Okuda_<Name>); null when the texture or material is missing. */
+	UMaterialInstanceDynamic* MakeOkuda(const TCHAR* TextureName, float Intensity);
 	/** A teal-on-black display instance with the refit palette and sparse cells. */
 	UMaterialInstanceDynamic* RefitScreen(const TCHAR* Name, float Seed, float Intensity, float CellScale, float Gap);
 	/** Three stacked white light bars on a vertical face at a bearing (the refit's kick lighting). */
@@ -181,5 +194,8 @@ private:
 	UMaterialInterface* ScreenDark = nullptr;
 	UMaterialInterface* UniformMaroon = nullptr;
 	UMaterialInterface* ClockRed = nullptr;
+	UPROPERTY() TArray<TObjectPtr<UMaterialInstanceDynamic>> TacticalScreens;
+	UPROPERTY() TArray<TObjectPtr<UMaterialInstanceDynamic>> HelmScreens;
+	int32 RefitStationIndex = 0;
 	int32 PieceCount = 0;
 };

@@ -27,6 +27,7 @@ UBridgeInteriorComponent::UBridgeInteriorComponent()
 	DisplayMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_BridgeDisplay.M_BridgeDisplay")));
 	ButtonsMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_BridgeButtons.M_BridgeButtons")));
 	ViewerMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_BridgeViewer.M_BridgeViewer")));
+	OkudagramMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_Okudagram.M_Okudagram")));
 }
 
 void UBridgeInteriorComponent::BeginPlay()
@@ -214,6 +215,9 @@ void UBridgeInteriorComponent::Build()
 	}
 	Pieces.Reset();
 	Materials.Reset();
+	TacticalScreens.Reset();
+	HelmScreens.Reset();
+	RefitStationIndex = 0;
 	PieceCount = 0;
 
 	WallBlue = MakeLit(TEXT("WallBlue"), FLinearColor(0.26f, 0.32f, 0.42f), 0.75f);
@@ -414,6 +418,43 @@ void UBridgeInteriorComponent::BuildOriginal()
 // flanked by two smaller chairs, burgundy turbolift doors aft with a burgundy bench under the aft stations,
 // and a red digital clock above. Same frame as the original: origin under the captain's chair, +X forward.
 
+UMaterialInstanceDynamic* UBridgeInteriorComponent::MakeOkuda(const TCHAR* TextureName, float Intensity)
+{
+	UMaterialInterface* Parent = OkudagramMaterial.LoadSynchronous();
+	UTexture* Tex = LoadObject<UTexture>(nullptr, *FString::Printf(TEXT("/Game/Slonk/Bridge/T_Okuda_%s.T_Okuda_%s"), TextureName, TextureName));
+	if (!Parent || !Tex)
+	{
+		return nullptr;
+	}
+	UMaterialInstanceDynamic* M = UMaterialInstanceDynamic::Create(Parent, this, *FString::Printf(TEXT("Bridge_Okuda_%s_%d"), TextureName, PieceCount));
+	M->SetTextureParameterValue(TEXT("Screen"), Tex);
+	M->SetScalarParameterValue(TEXT("Intensity"), Intensity);
+	M->SetScalarParameterValue(TEXT("UVMode"), ScreenUVMode);
+	Materials.Add(M);
+	return M;
+}
+
+void UBridgeInteriorComponent::SetLiveReadouts(float ShieldFraction, float HullFraction, float Throttle, float WarpFraction, bool bAlert)
+{
+	for (UMaterialInstanceDynamic* M : TacticalScreens)
+	{
+		if (M)
+		{
+			M->SetScalarParameterValue(TEXT("BarA"), FMath::Clamp(ShieldFraction, 0.f, 1.f));
+			M->SetScalarParameterValue(TEXT("BarB"), FMath::Clamp(HullFraction, 0.f, 1.f));
+			M->SetScalarParameterValue(TEXT("Flash"), bAlert ? 1.f : 0.f);
+		}
+	}
+	for (UMaterialInstanceDynamic* M : HelmScreens)
+	{
+		if (M)
+		{
+			M->SetScalarParameterValue(TEXT("BarA"), FMath::Clamp(FMath::Abs(Throttle), 0.f, 1.f));
+			M->SetScalarParameterValue(TEXT("BarB"), FMath::Clamp(WarpFraction, 0.f, 1.f));
+		}
+	}
+}
+
 UMaterialInstanceDynamic* UBridgeInteriorComponent::RefitScreen(const TCHAR* Name, float Seed, float Intensity, float CellScale, float Gap)
 {
 	UMaterialInstanceDynamic* M = MakeScreen(DisplayMaterial, Name, Seed, Intensity, CellScale);
@@ -472,13 +513,27 @@ void UBridgeInteriorComponent::RefitStation(float A, float Chord, float& Seed, b
 		WallBox(A, R - 48.f, HD + 81.5f, 48.f, Chord - 14.f, 3.f, ScreenDark, 0.f, false);
 		WallBox(A, R - 52.f, HD + 83.6f, 36.f, Chord - 30.f, 1.5f, MakeScreen(ButtonsMaterial, TEXT("RefitTouch"), Seed, DisplayIntensity * 0.8f, 0.7f), 0.f, false);
 		WallBox(A, R - 12.f, HD + 132.f, 10.f, Chord - 10.f, 108.f, ScreenDark, -16.f, false);
-		WallBox(A, R - 18.4f, HD + 132.f, 2.f, Chord - 22.f, 94.f, RefitScreen(TEXT("RefitBank"), Seed + 0.5f, DisplayIntensity * 0.7f, 2.4f, 0.6f), -16.f, false);
+		// Okudagram screens, dealt round the ring from the starboard bow: weapons, tactical (live), communications,
+		// then science, engineering, environmental, navigation on the port side.
+		static const TCHAR* Order[] = { TEXT("Weapons"), TEXT("Tactical"), TEXT("Communications"), TEXT("Science"), TEXT("Engineering"), TEXT("Environmental"), TEXT("Navigation") };
+		const TCHAR* TexName = Order[RefitStationIndex % UE_ARRAY_COUNT(Order)];
+		++RefitStationIndex;
+		UMaterialInstanceDynamic* Screen = MakeOkuda(TexName, DisplayIntensity * 0.55f);
+		if (Screen && FCString::Strcmp(TexName, TEXT("Tactical")) == 0)
+		{
+			TacticalScreens.Add(Screen);
+		}
+		UMaterialInterface* BankMat = Screen ? static_cast<UMaterialInterface*>(Screen) : RefitScreen(TEXT("RefitBank"), Seed + 0.5f, DisplayIntensity * 0.7f, 2.4f, 0.6f);
+		// The bank is twice as wide as tall, like the textures.
+		WallBox(A, R - 18.4f, HD + 132.f, 2.f, Chord - 22.f, (Chord - 22.f) * 0.5f, BankMat, -16.f, false);
 	}
 	else
 	{
-		// A display bank alone over the aft bench.
+		// The master situation display alone over the aft bench.
 		WallBox(A, R - 4.f, HD + 150.f, 8.f, Chord - 10.f, 104.f, ScreenDark, -6.f, false);
-		WallBox(A, R - 8.6f, HD + 150.f, 2.f, Chord - 22.f, 90.f, RefitScreen(TEXT("RefitAftBank"), Seed + 0.5f, DisplayIntensity * 0.7f, 2.4f, 0.6f), -6.f, false);
+		UMaterialInstanceDynamic* Screen = MakeOkuda(TEXT("MasterSituation"), DisplayIntensity * 0.55f);
+		UMaterialInterface* BankMat = Screen ? static_cast<UMaterialInterface*>(Screen) : RefitScreen(TEXT("RefitAftBank"), Seed + 0.5f, DisplayIntensity * 0.7f, 2.4f, 0.6f);
+		WallBox(A, R - 8.6f, HD + 150.f, 2.f, Chord - 22.f, (Chord - 22.f) * 0.5f, BankMat, -6.f, false);
 	}
 	Seed += 7.f;
 }
@@ -672,7 +727,15 @@ void UBridgeInteriorComponent::BuildRefit()
 			Box(C + FVector(0, 0, 90.f), FVector(70.f, 174.f, 4.f), FRotator(-8.f, s * 20.f, 0.f), ScreenDark);
 			Box(C + FVector(0, 0, 92.5f), FVector(72.f, 176.f, 1.2f), FRotator(-8.f, s * 20.f, 0.f), StripWhite, false);
 			Box(C + FVector(1.f, 0, 93.2f), FVector(62.f, 166.f, 1.2f), FRotator(-8.f, s * 20.f, 0.f), ScreenDark, false);
-			Box(C + FVector(4.f, 0, 94.2f), FVector(44.f, 150.f, 1.f), FRotator(-8.f, s * 20.f, 0.f), MakeScreen(ButtonsMaterial, s < 0 ? TEXT("RefitHelm") : TEXT("RefitNav"), 101.f + s, DisplayIntensity * 0.9f, 0.7f), false);
+			{
+				UMaterialInstanceDynamic* Wing = MakeOkuda(s < 0 ? TEXT("Helm") : TEXT("Navigation"), DisplayIntensity * 0.5f);
+				if (Wing && s < 0)
+				{
+					HelmScreens.Add(Wing);
+				}
+				UMaterialInterface* WingMat = Wing ? static_cast<UMaterialInterface*>(Wing) : MakeScreen(ButtonsMaterial, s < 0 ? TEXT("RefitHelm") : TEXT("RefitNav"), 101.f + s, DisplayIntensity * 0.9f, 0.7f);
+				Box(C + FVector(4.f, 0, 94.2f), FVector(60.f, 120.f, 1.f), FRotator(-8.f, s * 20.f, 0.f), WingMat, false);
+			}
 			// Three diagonal light bars on the outboard end face.
 			for (int32 k = 0; k < 3; ++k)
 			{
@@ -681,10 +744,16 @@ void UBridgeInteriorComponent::BuildRefit()
 		}
 		Box(FVector(X0 - 20.f, 0.f, 44.f), FVector(60.f, 60.f, 88.f), FRotator::ZeroRotator, PanelGrey);
 		Box(FVector(X0 - 51.f, 0.f, 40.f), FVector(2.f, 40.f, 48.f), FRotator::ZeroRotator, StripWhite, false);
-		// Schematic pedestal between the helm chairs.
-		Box(FVector(X0 - 92.f, 0.f, 50.f), FVector(28.f, 46.f, 100.f), FRotator::ZeroRotator, PanelGrey);
-		Box(FVector(X0 - 106.5f, 0.f, 62.f), FVector(1.5f, 40.f, 60.f), FRotator::ZeroRotator, ScreenDark, false);
-		Piece(CylinderMesh, FVector(X0 - 107.5f, 0.f, 62.f), FVector(32.f, 32.f, 1.f), FRotator(90.f, 0.f, 0.f), RefitScreen(TEXT("RefitSchematic"), 77.f, DisplayIntensity, 1.4f, 0.3f), false);
+		// Schematic pedestal between the helm chairs: tall enough that its screen clears the platform edge from
+		// the captain's chair, with a small touch panel above the screen.
+		Box(FVector(X0 - 92.f, 0.f, 70.f), FVector(28.f, 46.f, 140.f), FRotator::ZeroRotator, PanelGrey);
+		Box(FVector(X0 - 106.5f, 0.f, 92.f), FVector(1.5f, 40.f, 84.f), FRotator::ZeroRotator, ScreenDark, false);
+		{
+			UMaterialInstanceDynamic* Sch = MakeOkuda(TEXT("Schematic"), DisplayIntensity * 0.6f);
+			UMaterialInterface* SchMat = Sch ? static_cast<UMaterialInterface*>(Sch) : RefitScreen(TEXT("RefitSchematic"), 77.f, DisplayIntensity, 1.4f, 0.3f);
+			Box(FVector(X0 - 107.5f, 0.f, 84.f), FVector(1.f, 34.f, 34.f), FRotator::ZeroRotator, SchMat, false);
+			Box(FVector(X0 - 107.5f, 0.f, 118.f), FVector(1.f, 30.f, 10.f), FRotator::ZeroRotator, MakeScreen(ButtonsMaterial, TEXT("RefitPedestal"), 303.f, DisplayIntensity * 0.6f, 0.5f), false);
+		}
 		for (int32 s = -1; s <= 1; s += 2)
 		{
 			RefitChair(FVector(X0 - 92.f, s * 70.f, 0.f), 0.f, true, UniformMaroon);

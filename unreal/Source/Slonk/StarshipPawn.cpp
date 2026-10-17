@@ -1204,6 +1204,11 @@ void AStarshipPawn::Tick(float DeltaTime)
 	UpdateWarpEffects(DeltaTime);
 	UpdateHullGlow(DeltaTime);
 	UpdateThrusters();
+	if (BridgeInterior && CameraMode == EStarshipCameraMode::Bridge)
+	{
+		const float WarpFrac = WarpDrive ? FMath::Clamp(WarpDrive->WarpFactor / 9.f, 0.f, 1.f) * (WarpDrive->GetState() == EWarpState::AtWarp ? 1.f : 0.3f) : 0.f;
+		BridgeInterior->SetLiveReadouts(GetShieldFraction(), GetHullFraction(), Movement ? (float)Movement->Throttle : 0.f, WarpFrac, ShieldStrength < MaxShieldStrength * 0.25f);
+	}
 	UpdateCameras(DeltaTime);
 
 	// Torpedo launch kick.
