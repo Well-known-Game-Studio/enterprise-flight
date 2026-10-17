@@ -62,21 +62,87 @@ def grid(d, box, rnd, cols=8, rows=4):
             col = rnd.choice(PAL) if on else DIM
             d.rectangle((x0 + 8 + c * cw, y0 + 32 + r * ch, x0 + 8 + (c + 1) * cw - 6, y0 + 32 + (r + 1) * ch - 6), fill=col)
 
-def ship_top(d, box, color):
-    # The refit from above: saucer, neck, engineering hull, pylons, nacelles; in thin lines.
+def ship_top(d, box, color, lw=2):
+    """The refit from above, bow up, as a green wireframe plan like the helm pedestal's display: saucer with a
+    radial grid and the bridge dome, impulse deck, neck, engineering hull with the deflector and shuttlebay,
+    swept pylons, nacelles with bussard caps and grilles. Proportions of the 305 m ship (saucer 142 m across)."""
     x0, y0, x1, y1 = box
-    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-    s = min(x1 - x0, y1 - y0) / 2.3
-    R = s * 0.48
-    d.ellipse((cx - R, cy - s * 0.95 - R, cx + R, cy - s * 0.95 + R), outline=color, width=3)
-    for f in (0.25, 0.55, 0.8):
-        d.ellipse((cx - R * f, cy - s * 0.95 - R * f, cx + R * f, cy - s * 0.95 + R * f), outline=color, width=1)
-    d.rectangle((cx - s * 0.06, cy - s * 0.5, cx + s * 0.06, cy - s * 0.05), outline=color, width=2)
-    d.rounded_rectangle((cx - s * 0.12, cy - s * 0.1, cx + s * 0.12, cy + s * 0.85), radius=int(s * 0.1), outline=color, width=3)
+    L = min((y1 - y0) * 0.98, (x1 - x0) / 0.47)        # length on the texture
+    cx, top = (x0 + x1) / 2, (y0 + y1) / 2 - L / 2
+    def P(u, t): return (cx + u * L, top + t * L)       # u across (right +), t down the length, both fractions of L
+    def ell(u, t, r, w=lw): d.ellipse((cx + (u - r) * L, top + (t - r) * L, cx + (u + r) * L, top + (t + r) * L), outline=color, width=w)
+    def rrect(u0, t0, u1, t1, rad, w=lw):
+        xa, xb = sorted((cx + u0 * L, cx + u1 * L))
+        d.rounded_rectangle((xa, top + t0 * L, xb, top + t1 * L), radius=max(1, int(rad * L)), outline=color, width=w)
+    def line(a, b, w=lw): d.line((P(*a), P(*b)), fill=color, width=w)
+    # Saucer: rim, grid rings, 24 radials, the bridge and the B/C deck superstructure.
+    SC, R = 0.233, 0.2325
+    ell(0, SC, R, lw + 1)
+    for f in (0.18, 0.4, 0.62, 0.82): ell(0, SC, R * f, 1)
+    for k in range(24):
+        a = math.radians(k * 15)
+        line((R * 0.18 * math.sin(a), SC - R * 0.18 * math.cos(a)), (R * 0.985 * math.sin(a), SC - R * 0.985 * math.cos(a)), 1)
+    ell(0, SC, 0.03, lw); ell(0, SC, 0.014, 1)
+    rrect(-0.035, SC + 0.02, 0.035, SC + 0.21, 0.02, 1)                      # B/C decks and the impulse deck
+    rrect(-0.06, SC + 0.19, 0.06, SC + 0.245, 0.01, lw)
+    for u in (-0.04, -0.013, 0.013, 0.04): line((u, SC + 0.2), (u, SC + 0.24), 1)
+    # Neck down to the engineering hull.
+    line((-0.028, SC + 0.2), (-0.02, 0.5)); line((0.028, SC + 0.2), (0.02, 0.5))
+    # Engineering hull: deflector housing forward, the hull, the shuttlebay doors aft.
+    ell(0, 0.455, 0.045, lw + 1); ell(0, 0.455, 0.025, 1)
+    rrect(-0.058, 0.44, 0.058, 0.94, 0.05, lw + 1)
+    line((-0.045, 0.86), (-0.045, 0.93), 1); line((0.045, 0.86), (0.045, 0.93), 1); line((-0.03, 0.88), (0.03, 0.88), 1)
+    line((0, 0.5), (0, 0.84), 1)
     for sgn in (-1, 1):
-        d.line((cx + sgn * s * 0.12, cy + s * 0.4, cx + sgn * s * 0.55, cy + s * 0.05), fill=color, width=3)
-        d.rounded_rectangle((cx + sgn * s * 0.48, cy - s * 0.45, cx + sgn * s * 0.62, cy + s * 0.75), radius=int(s * 0.06), outline=color, width=3)
-        d.line((cx + sgn * s * 0.48, cy - s * 0.2, cx + sgn * s * 0.62, cy - s * 0.2), fill=color, width=1)
+        # Pylon: a thin swept quad from the hull aft to the nacelle's forward third.
+        pts = [P(sgn * 0.058, 0.70), P(sgn * 0.058, 0.76), P(sgn * 0.17, 0.60), P(sgn * 0.17, 0.555)]
+        d.polygon(pts, outline=color, width=lw)
+        # Nacelle: body, centre seam, bussard cap, grilles, aft cap.
+        rrect(sgn * 0.17, 0.42, sgn * 0.225, 1.0, 0.025, lw + 1)
+        line((sgn * 0.1975, 0.47), (sgn * 0.1975, 0.95), 1)
+        ell(sgn * 0.1975, 0.445, 0.02, 1)
+        for t in (0.66, 0.74, 0.82):
+            rrect(sgn * 0.178, t, sgn * 0.217, t + 0.05, 0.005, 1)
+        line((sgn * 0.17, 0.96), (sgn * 0.225, 0.96), 1)
+
+def gauge_ring(d, cx, cy, R):
+    """The pedestal's circular status gauge: a thick blue ring broken into segments with thin white sections
+    between, a thinner teal ring of shorter arcs inside, and small blue tabs at the cardinals."""
+    for k in range(12):
+        a = k * 30 + 90
+        d.arc((cx - R, cy - R, cx + R, cy + R), a + 1, a + 19, fill=BLUE, width=int(R * 0.045))
+        d.arc((cx - R * 0.985, cy - R * 0.985, cx + R * 0.985, cy + R * 0.985), a + 21, a + 28, fill=WHITE, width=int(R * 0.022))
+    r2 = R * 0.915
+    for k in range(8):
+        a = k * 45 + 100
+        d.arc((cx - r2, cy - r2, cx + r2, cy + r2), a, a + 26, fill=TEAL, width=int(R * 0.02))
+    for a in (0, 90, 180, 270):
+        x = cx + R * 0.955 * math.cos(math.radians(a)); y = cy + R * 0.955 * math.sin(math.radians(a))
+        s = R * 0.035; d.rectangle((x - s, y - s, x + s, y + s), fill=BLUE)
+    for a in range(0, 360, 10):
+        if a % 30 == 0: continue
+        x0 = cx + R * 0.88 * math.cos(math.radians(a)); y0 = cy + R * 0.88 * math.sin(math.radians(a))
+        x1 = cx + R * 0.86 * math.cos(math.radians(a)); y1 = cy + R * 0.86 * math.sin(math.radians(a))
+        d.line((x0, y0, x1, y1), fill=GREY, width=1)
+
+def command_strip(d, box):
+    """The slim readout above the pedestal's gauge: a white-framed black strip with a red block on the left, two
+    rows of small pale buttons, and a caption, after the MANUAL COMMAND INPUT panel in Versiga's helm closeup."""
+    x0, y0, x1, y1 = box
+    d.rounded_rectangle(box, radius=10, outline=WHITE, width=3)
+    d.rounded_rectangle((x0 + 18, y0 + 12, x0 + 150, y1 - 24), radius=6, fill=(190, 48, 48))
+    for k in range(3):
+        d.rounded_rectangle((x0 + 34 + k * 38, y0 + 26, x0 + 58 + k * 38, y1 - 38), radius=5, fill=(235, 225, 215))
+    bx = x0 + 180
+    for row, yy in enumerate((y0 + 16, (y0 + y1) / 2 - 2)):
+        for k in range(14):
+            x = bx + k * 52
+            if x + 36 > x1 - 70: break
+            col = (240, 236, 220) if (k + row) % 3 else (255, 190, 80)
+            d.rounded_rectangle((x, yy, x + 36, yy + 20), radius=4, fill=col)
+            d.rectangle((x + 4, yy + 24, x + 32, yy + 26), fill=(120, 126, 132))
+    d.text((x1 - 300, y1 - 22), "MANUAL COMMAND INPUT", font=font(16, 2), fill=GREY)
+    d.text((x1 - 62, y0 + 10), "03-98-1", font=font(16, 2), fill=GREY)
 
 def live_slots(d):
     # Two outlined bar slots in the right column with labels; the material fills them.
@@ -133,12 +199,14 @@ panel("Environmental", "ENVIRONMENTAL", 6)
 panel("Navigation", "NAVIGATION", 7)
 panel("Helm", "HELM", 8, live=True)
 panel("Weapons", "WEAPONS", 9)
-# Round schematic for the helm pedestal: the ship from above in green on black.
+# The helm pedestal's display, between the two helmsmen and facing the captain: the slim command strip across the
+# top, then the big segmented blue gauge ring with the ship's green plan inside it, bow up. One texture covers the
+# whole black face of the pedestal head; the bridge mesh maps its Scr_Schematic quad to it square.
 im = Image.new("RGB", (1024, 1024), (0, 0, 0)); d = ImageDraw.Draw(im)
-d.ellipse((12, 12, 1011, 1011), outline=BLUE, width=10)
-for a in range(0, 360, 30):
-    r0, r1 = 470, 500; x0 = 512 + r0 * math.cos(math.radians(a)); y0 = 512 + r0 * math.sin(math.radians(a))
-    x1 = 512 + r1 * math.cos(math.radians(a)); y1 = 512 + r1 * math.sin(math.radians(a)); d.line((x0, y0, x1, y1), fill=WHITE, width=6)
-ship_top(d, (160, 120, 864, 904), GREEN)
+command_strip(d, (52, 28, 972, 124))
+gauge_ring(d, 512, 598, 388)
+ship_top(d, (512 - 300, 598 - 330, 512 + 300, 598 + 330), (34, 215, 80), lw=2)
+for (x, y) in ((40, 160), (984, 160), (40, 1000), (984, 1000)):
+    d.ellipse((x - 5, y - 5, x + 5, y + 5), fill=(60, 64, 70))                # bezel screws
 im.save(os.path.join(OUT, "T_Okuda_Schematic.png"), optimize=True); print("schematic")
 json.dump({"liveSlots": {"A": [0.60, 0.10, 0.96, 0.15], "B": [0.60, 0.20, 0.96, 0.25]}}, open(os.path.join(OUT, "layout.json"), "w"))

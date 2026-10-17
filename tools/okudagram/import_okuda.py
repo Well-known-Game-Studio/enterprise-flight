@@ -1,6 +1,7 @@
 """Import the Okudagram screen textures (run in the editor with -ExecutePythonScript)."""
 import unreal, os, glob
-SRC = "/private/tmp/claude-501/-Users-bob-well-known-game-studio-slonk-the-game/8e8566d6-7f43-4f17-bac6-98923e9605c1/scratchpad/okuda"
+# The generated PNGs: OKUDA_SRC in the environment, else the Blender set's okuda_png folder (see blender/bridge-st6).
+SRC = os.environ.get("OKUDA_SRC", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "blender", "bridge-st6", "okuda_png"))
 DEST = "/Game/Slonk/Bridge"
 tools = unreal.AssetToolsHelpers.get_asset_tools()
 tasks = []

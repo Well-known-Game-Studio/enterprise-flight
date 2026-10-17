@@ -133,8 +133,10 @@ def arc_sweep(name, profile, a0, a1, material, group, step=3.0, smooth=True, cap
             a = a0 + (a1 - a0) * i / (n - 1)
             c, sn = ang(a)
             verts.append((r0 * c, r0 * sn, z0)); verts.append((r1 * c, r1 * sn, z1))
+            # Blender's UV origin is the image's bottom-left (the FBX importer converts to Unreal's), so the top of
+            # the profile gets v = 1; u runs with increasing bearing. Checked against the station screens in game.
             u = i / (n - 1)
-            uvs[base + 2 * i] = (u, lens[j] / total); uvs[base + 2 * i + 1] = (u, lens[j + 1] / total)
+            uvs[base + 2 * i] = (u, 1.0 - lens[j] / total); uvs[base + 2 * i + 1] = (u, 1.0 - lens[j + 1] / total)
         for i in range(n - 1):
             faces.append((base + 2 * i, base + 2 * i + 2, base + 2 * i + 3, base + 2 * i + 1))
     if cap and closed and abs(a1 - a0) < 359.9:
@@ -191,9 +193,10 @@ def screen(name, center, w, h, material, group, yaw=0.0, pitch=0.0):
         x, z = x * cp + z * sp, -x * sp + z * cp
         x, y = x * cyw - y * syw, x * syw + y * cyw
         verts.append((cx + x, cy + y, cz + z))
-    # Viewer stands inboard looking outboard (+radial): their right is -tangential, i.e. local -y. u runs with
-    # local -y; v runs downward.
-    uvs = {0: (1.0, 1.0), 1: (0.0, 1.0), 2: (0.0, 0.0), 3: (1.0, 0.0)}
+    # Blender UVs: origin bottom-left of the image. The viewer stands inboard looking outboard (+radial) with
+    # their right along local -y, so the image's left (u = 0) is local +y and its top (v = 1) is local +z.
+    # Checked against the text on the station screens in the previews and in game.
+    uvs = {0: (1.0, 0.0), 1: (0.0, 0.0), 2: (0.0, 1.0), 3: (1.0, 1.0)}
     return mesh_from(name, verts, [(0, 3, 2, 1)], material, group, uvs=uvs)
 
 def wallbox(name, deg, radial, z, thick, width, height, material, group, pitch=0.0, bevel=0.0):
@@ -394,12 +397,22 @@ def helm():
             box(f"HelmBar{s}{k}", (ex - 0.14 * c + k * 0.13 * c, ey - 0.14 * sn + k * 0.13 * sn, 0.42 + k * 0.09), (0.03, 0.02, 0.24), M_Strip(), "Lights", yaw=yaw, roll=s * 25)
     box("HelmCentre", (X0 - 0.18, 0.0, 0.44), (0.60, 0.56, 0.88), M_PanelGrey(), "Consoles", bevel=0.02)
     box("HelmCentreLight", (X0 - 0.485, 0.0, 0.40), (0.02, 0.36, 0.44), M_Strip(), "Lights")
-    # The pedestal between the helm chairs: grey base with a lit control panel, black bezel, big round schematic.
-    box("Pedestal", (X0 - 0.95, 0.0, 0.34), (0.44, 0.56, 0.68), M_PanelGrey(), "Consoles", bevel=0.015)
-    box("PedestalPanel", (X0 - 1.175, 0.0, 0.50), (0.01, 0.44, 0.16), M_Buttons(), "Consoles")
-    box("PedestalHead", (X0 - 0.95, 0.0, 1.08), (0.34, 0.66, 0.84), M_Black(), "Consoles", bevel=0.012)
-    screen("Scr_Schematic", (X0 - 1.125, 0.0, 1.06), 0.60, 0.60, M_Screen("Schematic"), "Screens", yaw=180)
-    box("PedestalStrip", (X0 - 1.125, 0.0, 1.44), (0.01, 0.50, 0.03), M_Strip(), "Lights")
+    # The pedestal between the helm chairs, after Versiga's v08/v09: a narrow light-grey plinth from the deck, a
+    # wider grey block carrying a plate of small grey buttons and a black name plaque, and on top the black head,
+    # edged in grey, whose whole face toward the captain is the display (command strip over the gauge ring).
+    px = X0 - 0.95
+    box("PedestalPlinth", (px, 0.0, 0.25), (0.30, 0.42, 0.50), M_PanelGrey(), "Consoles", bevel=0.01)
+    box("PedestalBlock", (px, 0.0, 0.625), (0.40, 0.60, 0.25), M_PanelGrey(), "Consoles", bevel=0.012)
+    box("PedestalPlate", (px - 0.203, 0.0, 0.66), (0.008, 0.30, 0.15), M_PanelDark(), "Consoles", bevel=0.003)
+    for r in range(4):
+        for c in range(6):
+            if r in (1, 2) and c in (3, 4): continue                                  # the keypad grid sits here
+            box(f"PedKey{r}{c}", (px - 0.21, -0.11 + c * 0.044, 0.605 + r * 0.036), (0.008, 0.028, 0.02), M_PanelGrey(), "Consoles", bevel=0.004)
+    box("PedKeypad", (px - 0.21, 0.044, 0.66), (0.006, 0.07, 0.05), M_PostGrey(), "Consoles")
+    box("PedestalPlaque", (px - 0.203, 0.0, 0.535), (0.006, 0.30, 0.045), M_Black(), "Consoles")
+    box("PedestalHeadRim", (px + 0.01, 0.0, 1.10), (0.36, 0.74, 0.74), M_PanelGrey(), "Consoles", bevel=0.012)
+    box("PedestalHead", (px - 0.005, 0.0, 1.10), (0.36, 0.70, 0.70), M_Black(), "Consoles", bevel=0.008)
+    screen("Scr_Schematic", (px - 0.188, 0.0, 1.10), 0.64, 0.64, M_Screen("Schematic"), "Screens", yaw=180)
     for s in (-1, 1):
         chair(f"HelmChair{s}", (X0 - 0.95, s * 0.68, 0.0), 0.0, tall=True)
 

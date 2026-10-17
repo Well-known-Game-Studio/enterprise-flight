@@ -243,6 +243,13 @@ public:
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector TorpedoPatchMin = FVector(2850.0, -350.0, -450.0);
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector TorpedoPatchMax = FVector(3250.0, 350.0, -50.0);
+	/**
+	 * The two tube doors on the launcher face, measured from the mesh: recessed panes mirrored about the centreline
+	 * at |y| = Centre.Y, z = Centre.Z, lying in the plane x = Centre.X; Size = (half width, half height, tube mouth
+	 * radius) in cm. The skin material lights the panes and the weapons component fires from the mouths.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector TorpedoTubeCentre = FVector(3069.0, 281.0, -323.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FVector TorpedoTubeSize = FVector(96.0, 39.0, 32.0);
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") FLinearColor TorpedoBayGlowColor = FLinearColor(1.0f, 0.12f, 0.05f);
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hull|Glow") float TorpedoBayGlow = 30.f;
 	/** Impulse grille emissive: idle, plus this much at full throttle (sunlit white plating is about 40 in these units). */

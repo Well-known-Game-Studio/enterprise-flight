@@ -926,6 +926,14 @@ void AStarshipPawn::ApplyHullSkinParams()
 		Mid->SetVectorParameterValue(TEXT("RedKeyBMin"), V(TorpedoPatchMin)); Mid->SetVectorParameterValue(TEXT("RedKeyBMax"), V(TorpedoPatchMax));
 		Mid->SetVectorParameterValue(TEXT("SlotBoxMin"), V(TorpedoPatchMin)); Mid->SetVectorParameterValue(TEXT("SlotBoxMax"), V(TorpedoPatchMax));
 		Mid->SetVectorParameterValue(TEXT("SlotColor"), TorpedoBayGlowColor);
+		Mid->SetVectorParameterValue(TEXT("TubeCentre"), V(TorpedoTubeCentre));
+		Mid->SetVectorParameterValue(TEXT("TubeSize"), V(TorpedoTubeSize));
+	}
+	// The torpedoes leave from the tube mouths, just proud of the housing face so they never spawn inside the recess.
+	if (Weapons)
+	{
+		const double Face = TorpedoTubeCentre.X + 100.0;
+		Weapons->TorpedoTubeOffsets = { FVector(Face, -TorpedoTubeCentre.Y, TorpedoTubeCentre.Z), FVector(Face, TorpedoTubeCentre.Y, TorpedoTubeCentre.Z) };
 	}
 }
 
