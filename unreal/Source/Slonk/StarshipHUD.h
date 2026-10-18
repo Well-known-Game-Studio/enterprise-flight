@@ -102,6 +102,8 @@ private:
 
 	void DrawBar(float X, float Y, float W, float H, float Fraction, const FLinearColor& Color) const;
 	void DrawReticle(float Scale);
+	/** Full-screen Okudagram loading panel shown while the world-generation queue is still working. */
+	void DrawLoadingScreen(const class USlonkLoadSubsystem& Load, UFont* Font, UFont* SmallFont, float UIScale);
 	FString FormatSpeed(double CmPerSecond) const;
 	FString FormatDistance(double Cm) const;
 };

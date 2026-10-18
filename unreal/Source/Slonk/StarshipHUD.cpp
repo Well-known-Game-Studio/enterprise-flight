@@ -1,4 +1,5 @@
 #include "StarshipHUD.h"
+#include "SlonkLoadSubsystem.h"
 
 #include "Engine/Canvas.h"
 #include "RHI.h"
@@ -94,6 +95,15 @@ void AStarshipHUD::DrawHUD()
 	const float UIScale = FMath::Clamp(Canvas->ClipY / 1080.f, 0.7f, 2.f);
 	const float Line = 18.f * UIScale;
 	const FLinearColor Dim(1, 1, 1, 0.75f);
+
+	if (const USlonkLoadSubsystem* Load = USlonkLoadSubsystem::Get(this))
+	{
+		if (!Load->IsInitialLoadDone())
+		{
+			DrawLoadingScreen(*Load, Font, SmallFont, UIScale);
+			return;
+		}
+	}
 
 	if (!Ship)
 	{
@@ -806,4 +816,70 @@ bool AStarshipHUD::GetNavTargetInfo(FNavObject& Out)
 		}
 	}
 	return false;
+}
+
+void AStarshipHUD::DrawLoadingScreen(const USlonkLoadSubsystem& Load, UFont* Font, UFont* SmallFont, float UIScale)
+{
+	const float W = Canvas->ClipX, H = Canvas->ClipY;
+	const FLinearColor Teal(0.30f, 0.78f, 0.82f, 1.f);
+	const FLinearColor Orange(1.0f, 0.62f, 0.22f, 1.f);
+	const FLinearColor Pale(0.86f, 0.88f, 0.92f, 1.f);
+	const FLinearColor Faint(0.86f, 0.88f, 0.92f, 0.38f);
+	const FLinearColor Panel(0.012f, 0.016f, 0.028f, 1.f);
+	DrawRect(Panel, 0.f, 0.f, W, H);
+
+	auto Centred = [&](const FString& Text, float Y, const FLinearColor& Color, UFont* F, float Scale)
+	{
+		float TW = 0.f, TH = 0.f;
+		GetTextSize(Text, TW, TH, F, Scale);
+		DrawText(Text, Color, (W - TW) * 0.5f, Y, F, Scale);
+		return TH;
+	};
+
+	// The Okudagram frame: a wide black panel with teal rails top and bottom and an orange tab at the left.
+	const float PW = FMath::Min(W * 0.62f, 980.f * UIScale);
+	const float PX = (W - PW) * 0.5f;
+	const float Top = H * 0.30f;
+	const float Rail = 6.f * UIScale;
+	DrawRect(Teal, PX, Top, PW, Rail);
+	DrawRect(Orange, PX, Top, 120.f * UIScale, Rail);
+	DrawRect(Teal, PX, H * 0.70f, PW, Rail);
+	DrawRect(Orange, PX + PW - 120.f * UIScale, H * 0.70f, 120.f * UIScale, Rail);
+
+	float Y = Top + 34.f * UIScale;
+	Y += Centred(TEXT("U.S.S. ENTERPRISE   NCC-1701-A"), Y, Pale, Font, 2.1f * UIScale) + 8.f * UIScale;
+	Y += Centred(TEXT("STARFLEET SECTOR DATABASE   ·   INITIALISING STELLAR CARTOGRAPHY"), Y, Teal, SmallFont, 1.25f * UIScale) + 40.f * UIScale;
+
+	// Progress bar with a percentage, segmented like a console readout.
+	const float BarW = PW * 0.84f, BarH = 20.f * UIScale;
+	const float BX = (W - BarW) * 0.5f;
+	const float P = Load.GetProgress();
+	DrawRect(FLinearColor(0.08f, 0.12f, 0.18f, 1.f), BX, Y, BarW, BarH);
+	const int32 Segments = 40;
+	const float SegW = BarW / Segments;
+	for (int32 i = 0; i < Segments; ++i)
+	{
+		const float Fill = FMath::Clamp(P * Segments - i, 0.f, 1.f);
+		if (Fill > 0.f)
+		{
+			DrawRect(Orange, BX + i * SegW + 1.f, Y + 2.f, (SegW - 2.f) * Fill, BarH - 4.f);
+		}
+	}
+	DrawText(FString::Printf(TEXT("%3d%%"), FMath::RoundToInt(P * 100.f)), Pale, BX + BarW + 14.f * UIScale, Y - 2.f * UIScale, Font, 1.2f * UIScale);
+	Y += BarH + 18.f * UIScale;
+
+	// What is being built now, then the last few things finished, dimming with age.
+	const FString Now = Load.GetCurrentLabel().IsEmpty() ? FString(TEXT("Stand by")) : Load.GetCurrentLabel();
+	DrawText(Now.ToUpper(), Teal, BX, Y, Font, 1.1f * UIScale);
+	DrawText(FString::Printf(TEXT("%d / %d"), Load.GetTasksDone(), Load.GetTasksTotal()), Faint, BX + BarW - 90.f * UIScale, Y, Font, 1.1f * UIScale);
+	Y += 26.f * UIScale;
+	const TArray<FString>& Recent = Load.GetRecentLabels();
+	for (int32 i = Recent.Num() - 1, Row = 0; i >= 0 && Row < 5; --i, ++Row)
+	{
+		FLinearColor C = Faint;
+		C.A *= 1.f - 0.16f * Row;
+		DrawText(Recent[i].ToUpper(), C, BX, Y, SmallFont, 1.05f * UIScale);
+		Y += 17.f * UIScale;
+	}
+	DrawText(FString::Printf(TEXT("T+ %5.1f s"), Load.GetElapsedSeconds()), Faint, PX + PW - 110.f * UIScale, H * 0.70f - 24.f * UIScale, SmallFont, 1.1f * UIScale);
 }

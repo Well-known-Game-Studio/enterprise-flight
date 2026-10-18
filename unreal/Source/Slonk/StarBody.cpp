@@ -1,4 +1,5 @@
 #include "StarBody.h"
+#include "SlonkTiming.h"
 
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -137,6 +138,7 @@ void AStarBody::BeginPlay()
 
 void AStarBody::Tick(float DeltaTime)
 {
+	FSlonkScopeTimer SlonkTimer_(TEXT("Tick StarBody"));
 	Super::Tick(DeltaTime);
 	if (SettleTicks > 0)
 	{

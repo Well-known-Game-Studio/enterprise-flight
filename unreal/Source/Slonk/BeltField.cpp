@@ -1,4 +1,5 @@
 #include "BeltField.h"
+#include "SlonkTiming.h"
 
 #include "Components/HierarchicalInstancedStaticMeshComponent.h"
 #include "Engine/World.h"
@@ -171,6 +172,7 @@ void ABeltField::Rebuild(const FIntVector& Center, const FVector& StarLoc)
 
 void ABeltField::Tick(float DeltaTime)
 {
+	FSlonkScopeTimer SlonkTimer_(TEXT("Tick BeltField"));
 	Super::Tick(DeltaTime);
 	UpdateTimer -= DeltaTime;
 	if (UpdateTimer > 0.f)

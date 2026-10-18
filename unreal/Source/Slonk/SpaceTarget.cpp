@@ -1,4 +1,5 @@
 #include "SpaceTarget.h"
+#include "SlonkTiming.h"
 
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
@@ -93,6 +94,7 @@ void ASpaceTarget::BeginPlay()
 
 void ASpaceTarget::Tick(float DeltaTime)
 {
+	FSlonkScopeTimer SlonkTimer_(TEXT("Tick SpaceTarget"));
 	Super::Tick(DeltaTime);
 	if (SettleTicks > 0)
 	{

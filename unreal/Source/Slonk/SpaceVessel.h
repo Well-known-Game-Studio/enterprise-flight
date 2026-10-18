@@ -54,12 +54,33 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vessel")
 	FLinearColor GlowColor = FLinearColor(0.35f, 0.6f, 1.0f);
 
+	/** Extra hull material slots (1, 2, ...): the same hull material in these colours, for parts a builder stamps
+	 *  with a material ID (the cube's olive panels, copper pipes and blue-grey steel). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vessel")
+	TArray<FLinearColor> HullAccentColors;
+
+	/** Hull material finish. Starfleet plating is fairly smooth and a little metallic; the Borg cube is rough dark metal. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vessel")
+	float HullRoughness = 0.45f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vessel")
+	float HullMetallic = 0.25f;
+
+	/** Dielectric specular (UE's 0..1 scale). Zero on the cube: with the sun this bright even a broad highlight lifts a black hull to grey. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vessel")
+	float HullSpecular = 0.5f;
+
+	/** Colour of the second glow mesh: impulse vents, torpedo tubes, docking-bay doors (the warm lights). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vessel")
+	FLinearColor WarmGlowColor = FLinearColor(1.0f, 0.22f, 0.07f);
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vessel|Materials") TSoftObjectPtr<UMaterialInterface> HullMaterial;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vessel|Materials") TSoftObjectPtr<UMaterialInterface> GlowMaterial;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<USceneComponent> Root;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UDynamicMeshComponent> Hull;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UDynamicMeshComponent> Glow;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UDynamicMeshComponent> GlowWarm;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UShieldComponent> Shield;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<URunningLightsComponent> RunningLights;
 
@@ -119,6 +140,9 @@ protected:
 	float WindowSaucerThickness = 1.f;
 	float WindowHullMaxY = 0.f;
 	float WindowHullMaxZ = 0.f;
+	float WindowHullMinZ = -1.0e9f;
+	float WindowHullMinX = -1.0e9f;
+	float WindowHullMaxX = 1.0e9f;
 	float WindowPitch = 600.f;
 	float WindowDeck = 400.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vessel")
@@ -128,7 +152,13 @@ protected:
 	void ApplyWindowParams(UMaterialInstanceDynamic* MID) const;
 
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> HullMID;
+	UPROPERTY() TArray<TObjectPtr<UMaterialInstanceDynamic>> AccentMIDs;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> GlowMID;
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> WarmMID;
+	/** The warm glow mesh being built; valid only while BuildMeshes runs. */
+	UDynamicMesh* WarmMesh = nullptr;
+	/** Share of the loading bar this vessel's build takes (a cube is several ships' worth). */
+	float LoadWeight = 1.f;
 	bool bBuilt = false;
 	bool bBeyondHorizon = false;
 	bool bTractored = false;
@@ -155,7 +185,21 @@ enum class EShipWarpPhase : uint8
 	Afterimages,
 };
 
-/** Saucer, neck, engineering hull, pylons and two or four nacelles. Patrols around HomeLocation and now and then warps to another station. */
+/** Which Starfleet design a procedural ship follows. Auto lets the seed pick. */
+UENUM(BlueprintType)
+enum class EStarshipClass : uint8
+{
+	Auto,
+	/** The 2270s refit cruiser: round saucer on a short neck over a cigar engineering hull, swept pylons to two tall flat nacelles. */
+	Constitution,
+	/** The light cruiser: a big saucer with a flat aft section, nacelles slung underneath, a roll bar with a torpedo pod over the back. */
+	Miranda,
+	/** The big explorer: oval saucer, long leaning neck, long engineering hull with a flared tail, slender nacelles level with the hull. */
+	Excelsior,
+};
+
+/** Saucer, neck, engineering hull, pylons and nacelles after one of the film-era Starfleet classes. Patrols around
+ *  HomeLocation and now and then warps to another station. */
 UCLASS()
 class SLONK_API AProceduralStarship : public ASpaceVessel
 {
@@ -166,6 +210,13 @@ public:
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
 	virtual FVector GetVisualLocation() const override;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ship")
+	EStarshipClass ShipClass = EStarshipClass::Auto;
+
+	/** The class actually built (resolved from the seed when ShipClass is Auto). */
+	UFUNCTION(BlueprintPure, Category = "Ship")
+	EStarshipClass GetBuiltClass() const { return BuiltClass; }
 
 	/** Jump to warp towards a world-space destination; the ship patrols there afterwards. */
 	UFUNCTION(BlueprintCallable, Category = "Ship|Warp")
@@ -224,6 +275,7 @@ protected:
 	virtual void OnMeshesBuilt() override;
 
 private:
+	EStarshipClass BuiltClass = EStarshipClass::Constitution;
 	void PickWaypoint();
 	/** Patrol centre and current waypoint in universe space (they survive floating-origin rebases). */
 	FVector HomeUniverse = FVector::ZeroVector;
@@ -273,7 +325,22 @@ private:
 	UPROPERTY() TArray<TObjectPtr<UMaterialInstanceDynamic>> EchoGlowMIDs;
 };
 
-/** Hub, ring(s), spokes and a cap; spins slowly. */
+/** Which kind of Starfleet installation a station is built as. Auto lets the seed pick. */
+UENUM(BlueprintType)
+enum class EStationStyle : uint8
+{
+	Auto,
+	/** The Earth Spacedock mushroom: a vast domed cap with docking-bay doors, a long shaft, a flared lower pod and a spire. */
+	Spacedock,
+	/** Deep Space Station K-7: a central hub with three domed pods on radial arms. */
+	K7,
+	/** The Regula I laboratory: a dome over a wide platform, a long column with lab modules and a drum at its foot. */
+	Regula,
+	/** A classic wheel: a hub with domed caps, a boxy ring on spokes, docking ports round the rim. */
+	Ring,
+};
+
+/** A space station after one of the film-era installations; spins slowly. */
 UCLASS()
 class SLONK_API ASpaceStation : public ASpaceVessel
 {
@@ -285,6 +352,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Station")
 	float SpinDegPerSec = 0.4f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Station")
+	EStationStyle Style = EStationStyle::Auto;
 
 protected:
 	virtual void BuildMeshes(UDynamicMesh* HullMesh, UDynamicMesh* GlowMesh, FRandomStream& Rng) override;

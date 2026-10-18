@@ -1,4 +1,5 @@
 #include "StarshipPawn.h"
+#include "SlonkTiming.h"
 
 #include "Camera/CameraComponent.h"
 #include "GameFramework/PlayerController.h"
@@ -1180,6 +1181,7 @@ void AStarshipPawn::ResetCamera()
 
 void AStarshipPawn::Tick(float DeltaTime)
 {
+	FSlonkScopeTimer SlonkTimer_(TEXT("Tick StarshipPawn"));
 	Super::Tick(DeltaTime);
 	ProcessDebugCommand();
 	ShieldRechargeTimer -= DeltaTime;

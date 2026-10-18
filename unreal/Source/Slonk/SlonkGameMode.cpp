@@ -1,4 +1,5 @@
 #include "SlonkGameMode.h"
+#include "SlonkTiming.h"
 
 #include "Engine/DirectionalLight.h"
 #include "Engine/SkyLight.h"
@@ -91,6 +92,7 @@ void ASlonkGameMode::SpawnTestTargets()
 
 void ASlonkGameMode::Tick(float DeltaTime)
 {
+	FSlonkScopeTimer SlonkTimer_(TEXT("Tick SlonkGameMode"));
 	Super::Tick(DeltaTime);
 	if (bTrackStarLighting)
 	{

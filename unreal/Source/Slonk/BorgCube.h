@@ -59,6 +59,7 @@ public:
 
 protected:
 	virtual void BuildMeshes(UDynamicMesh* HullMesh, UDynamicMesh* GlowMesh, FRandomStream& Rng) override;
+	virtual void OnMeshesBuilt() override;
 
 private:
 	void StopBeam();
