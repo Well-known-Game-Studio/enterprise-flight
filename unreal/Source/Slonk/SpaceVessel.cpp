@@ -8,6 +8,7 @@
 #include "MeshPrims.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "SlonkMaterials.h"
+#include "SlonkLoadSubsystem.h"
 #include "SpaceTarget.h"
 #include "ShieldComponent.h"
 #include "RunningLightsComponent.h"
@@ -38,6 +39,7 @@ namespace
 			C->SetCollisionObjectType(ECC_WorldDynamic);
 			C->SetCollisionResponseToAllChannels(ECR_Block);
 			C->EnableComplexAsSimpleCollision();
+			C->bUseAsyncCooking = true;
 		}
 		else
 		{
@@ -48,10 +50,15 @@ namespace
 
 	using namespace SlonkMesh;
 
-	void Finish(UDynamicMeshComponent* C)
+	/** Moves a finished scratch mesh into the component. The hulls are built in detached UDynamicMesh objects:
+	 *  every GeometryScript append on a component's own mesh broadcasts a change and the component rebuilds its
+	 *  render data, which made a few thousand boxes (the Borg cube) take half a minute. */
+	void Finish(UDynamicMeshComponent* C, UDynamicMesh* Scratch)
 	{
+		if (!C || !Scratch) { return; }
 		FGeometryScriptCalculateNormalsOptions NO;
-		UGeometryScriptLibrary_MeshNormalsFunctions::RecomputeNormals(C->GetDynamicMesh(), NO);
+		UGeometryScriptLibrary_MeshNormalsFunctions::RecomputeNormals(Scratch, NO);
+		C->GetDynamicMesh()->SetMesh(MoveTemp(Scratch->GetMeshRef()));
 		C->NotifyMeshUpdated();
 		C->UpdateCollision(false);
 	}
@@ -113,7 +120,8 @@ void ASpaceVessel::BeginPlay()
 {
 	Super::BeginPlay();
 	Health = MaxHealth;
-	Rebuild();
+	// Built through the load queue so the first seconds of a level show progress instead of one long frame.
+	USlonkLoadSubsystem::Enqueue(this, FString::Printf(TEXT("Building %s"), *GetDisplayName()), [this]() { Rebuild(); }, LoadWeight);
 }
 
 void ASpaceVessel::ApplyMaterials()
@@ -188,23 +196,17 @@ void ASpaceVessel::Rebuild()
 	{
 		return;
 	}
-	UDynamicMesh* HM = Hull->GetDynamicMesh();
-	UDynamicMesh* GM = Glow->GetDynamicMesh();
-	if (!HM || !GM)
-	{
-		return;
-	}
-	HM->Reset();
-	GM->Reset();
-	WarmMesh = GlowWarm ? GlowWarm->GetDynamicMesh() : nullptr;
-	if (WarmMesh) { WarmMesh->Reset(); }
+	// Scratch meshes with no listeners; Finish moves them into the components in one step each.
+	UDynamicMesh* HM = NewObject<UDynamicMesh>(this, NAME_None, RF_Transient);
+	UDynamicMesh* GM = NewObject<UDynamicMesh>(this, NAME_None, RF_Transient);
+	WarmMesh = GlowWarm ? NewObject<UDynamicMesh>(this, NAME_None, RF_Transient) : nullptr;
 	FRandomStream Rng(Seed);
 	PendingLights.Reset();
 	PendingFloods.Reset();
 	BuildMeshes(HM, GM, Rng);
-	Finish(Hull);
-	Finish(Glow);
-	if (GlowWarm) { Finish(GlowWarm); }
+	Finish(Hull, HM);
+	Finish(Glow, GM);
+	if (GlowWarm) { Finish(GlowWarm, WarmMesh); }
 	WarmMesh = nullptr;
 	bBuilt = true;
 	ApplyMaterials();
@@ -1286,6 +1288,7 @@ void AProceduralStarship::UpdateWarpVisuals()
 ASpaceStation::ASpaceStation()
 {
 	MaxHealth = 5000.f;
+	LoadWeight = 2.f;
 	SizeCm = 400000.f;
 }
 

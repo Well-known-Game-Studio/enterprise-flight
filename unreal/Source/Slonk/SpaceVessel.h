@@ -151,6 +151,8 @@ protected:
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> WarmMID;
 	/** The warm glow mesh being built; valid only while BuildMeshes runs. */
 	UDynamicMesh* WarmMesh = nullptr;
+	/** Share of the loading bar this vessel's build takes (a cube is several ships' worth). */
+	float LoadWeight = 1.f;
 	bool bBuilt = false;
 	bool bBeyondHorizon = false;
 	bool bTractored = false;

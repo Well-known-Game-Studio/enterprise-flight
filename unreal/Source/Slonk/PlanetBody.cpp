@@ -1,4 +1,5 @@
 #include "PlanetBody.h"
+#include "SlonkTiming.h"
 
 #include "Components/DirectionalLightComponent.h"
 #include "Components/HierarchicalInstancedStaticMeshComponent.h"
@@ -835,6 +836,7 @@ void APlanetBody::UpdateSunDirectionParams()
 
 void APlanetBody::ApplyAppearance()
 {
+	FSlonkScopeTimer SlonkTimer_(TEXT("ApplyAppearance PlanetBody"));
 	if (bStyleFromArchetype)
 	{
 		ResolveStyleFromArchetype();
@@ -1027,6 +1029,7 @@ void APlanetBody::BeginPlay()
 
 void APlanetBody::Tick(float DeltaTime)
 {
+	FSlonkScopeTimer SlonkTimer_(TEXT("Tick PlanetBody"));
 	Super::Tick(DeltaTime);
 	if (SettleTicks > 0)
 	{
@@ -1120,6 +1123,7 @@ void APlanetBody::BuildDetailMesh()
 
 void APlanetBody::UpdateLOD()
 {
+	FSlonkScopeTimer SlonkTimer_(TEXT("UpdateLOD PlanetBody"));
 	UWorld* World = GetWorld();
 	if (!World || !World->IsGameWorld())
 	{

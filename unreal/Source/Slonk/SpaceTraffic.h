@@ -32,6 +32,8 @@ public:
 
 private:
 	void Populate();
+	/** Ships and the Borg cube near the player's start; re-queues itself until the player pawn exists. */
+	void SpawnStartShips();
 	bool bPopulated = false;
 	bool bStartShips = false;
 	float StartTimer = 0.5f;

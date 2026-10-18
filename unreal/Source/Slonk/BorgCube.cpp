@@ -16,6 +16,7 @@ ABorgCube::ABorgCube()
 	MaxHealth = 6000.f;
 	SizeCm = 300000.f;
 	DeathSeconds = 3.f;
+	LoadWeight = 4.f;
 	// At the locked exposure a 0.1 albedo reads as mid-grey; the cube should be near-black metal.
 	HullColor = FLinearColor(0.02f, 0.027f, 0.023f);
 	// Rough, mostly metallic: kills the broad sun highlight that made the old cube read as light grey.

@@ -1,4 +1,5 @@
 #include "DistantStarsComponent.h"
+#include "SlonkTiming.h"
 
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
@@ -72,6 +73,7 @@ UStaticMeshComponent* UDistantStarsComponent::EnsureSprite(int32 Index)
 
 void UDistantStarsComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
+	FSlonkScopeTimer SlonkTimer_(TEXT("TickComponent DistantStarsComponent"));
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
 	RescanTimer -= DeltaTime;

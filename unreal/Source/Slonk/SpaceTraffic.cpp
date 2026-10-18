@@ -7,6 +7,8 @@
 #include "PlanetBody.h"
 #include "SpaceVessel.h"
 #include "BorgCube.h"
+#include "SlonkLoadSubsystem.h"
+#include "SlonkTiming.h"
 
 namespace
 {
@@ -55,6 +57,7 @@ void ASpaceTraffic::BeginPlay()
 {
 	Super::BeginPlay();
 	Populate();
+	USlonkLoadSubsystem::Enqueue(this, TEXT("Spawning traffic"), [this]() { SpawnStartShips(); }, 0.5f);
 }
 
 void ASpaceTraffic::Populate()
@@ -65,6 +68,7 @@ void ASpaceTraffic::Populate()
 		return;
 	}
 	bPopulated = true;
+	FSlonkScopeTimer Timer(TEXT("ASpaceTraffic::Populate"));
 	FRandomStream Rng(Seed);
 	int32 ShipIndex = 0, StationIndex = 0;
 	auto SpawnShip = [&](const FVector& Loc, const FVector& Home, double Patrol)
@@ -116,12 +120,11 @@ void ASpaceTraffic::Populate()
 void ASpaceTraffic::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+}
+
+void ASpaceTraffic::SpawnStartShips()
+{
 	if (bStartShips)
-	{
-		return;
-	}
-	StartTimer -= DeltaTime;
-	if (StartTimer > 0.f)
 	{
 		return;
 	}
@@ -130,6 +133,8 @@ void ASpaceTraffic::Tick(float DeltaTime)
 	const APawn* Player = PC ? PC->GetPawn() : nullptr;
 	if (!Player)
 	{
+		// The pawn is possessed a frame or two after BeginPlay; try again next frame.
+		USlonkLoadSubsystem::Enqueue(this, TEXT("Spawning traffic"), [this]() { SpawnStartShips(); }, 0.01f);
 		return;
 	}
 	bStartShips = true;
