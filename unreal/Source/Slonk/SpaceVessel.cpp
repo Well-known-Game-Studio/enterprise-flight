@@ -149,7 +149,23 @@ void ASpaceVessel::ApplyMaterials()
 		HullMID->SetScalarParameterValue(TEXT("Metallic"), HullMetallic);
 		HullMID->SetScalarParameterValue(TEXT("Specular"), HullSpecular);
 		ApplyWindowParams(HullMID);
-		Hull->ConfigureMaterialSet({ HullMID.Get() });
+		TArray<UMaterialInterface*> Set = { HullMID.Get() };
+		AccentMIDs.SetNum(HullAccentColors.Num());
+		for (int32 i = 0; i < HullAccentColors.Num(); ++i)
+		{
+			if (!AccentMIDs[i])
+			{
+				AccentMIDs[i] = UMaterialInstanceDynamic::Create(HullMID->Parent, this);
+			}
+			AccentMIDs[i]->SetVectorParameterValue(TEXT("HullColor"), HullAccentColors[i]);
+			AccentMIDs[i]->SetScalarParameterValue(TEXT("PanelScale"), 400.f / FMath::Max(SizeCm, 1.f));
+			AccentMIDs[i]->SetScalarParameterValue(TEXT("Roughness"), HullRoughness);
+			AccentMIDs[i]->SetScalarParameterValue(TEXT("Metallic"), HullMetallic);
+			AccentMIDs[i]->SetScalarParameterValue(TEXT("Specular"), HullSpecular);
+			ApplyWindowParams(AccentMIDs[i]);
+			Set.Add(AccentMIDs[i]);
+		}
+		Hull->ConfigureMaterialSet(Set);
 	}
 	if (GlowMID)
 	{
@@ -203,7 +219,9 @@ void ASpaceVessel::Rebuild()
 	FRandomStream Rng(Seed);
 	PendingLights.Reset();
 	PendingFloods.Reset();
+	CurrentMaterialID() = 0;
 	BuildMeshes(HM, GM, Rng);
+	CurrentMaterialID() = 0;
 	Finish(Hull, HM);
 	Finish(Glow, GM);
 	if (GlowWarm) { Finish(GlowWarm, WarmMesh); }

@@ -54,4 +54,8 @@ private:
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> MID;
 	int32 NextSlot = 0;
 	float LastImpactTime = -1000.f;
+	/** Where and when each slot last flared (mesh space), so a beam held on one spot keeps one ring playing. */
+	FVector SlotPoint[4] = { FVector::ZeroVector, FVector::ZeroVector, FVector::ZeroVector, FVector::ZeroVector };
+	float SlotTime[4] = { -1000.f, -1000.f, -1000.f, -1000.f };
+	float SlotStrength[4] = { 0.f, 0.f, 0.f, 0.f };
 };

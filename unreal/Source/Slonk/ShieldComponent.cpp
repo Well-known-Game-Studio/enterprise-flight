@@ -79,10 +79,40 @@ void UShieldComponent::RegisterImpact(const FVector& WorldPoint, float Strength)
 	FVector Local = GetComponentTransform().InverseTransformPosition(WorldPoint);
 	Local = Local.GetSafeNormal() * 50.0;
 	const float Now = World->GetTimeSeconds();
-	MID->SetVectorParameterValue(ImpactParams[NextSlot], FLinearColor(Local.X, Local.Y, Local.Z, 0.f));
-	MID->SetScalarParameterValue(TimeParams[NextSlot], Now);
-	MID->SetScalarParameterValue(StrengthParams[NextSlot], FMath::Clamp(Strength, 0.1f, 3.f));
-	NextSlot = (NextSlot + 1) % 4;
+	Strength = FMath::Clamp(Strength, 0.1f, 3.f);
+	// A phaser beam reports a hit every frame. Restarting a slot each time kept its ring at age zero (invisible)
+	// until the beam stopped, so a hit near a ring that is still young only tops up that ring; once the ring is
+	// past half its life the slot restarts, and a held beam pulses instead of staying dark.
+	int32 Slot = -1;
+	const float Nearby = 50.f * ImpactRadiusFraction * 0.7f;
+	for (int32 i = 0; i < 4; ++i)
+	{
+		const float Age = Now - SlotTime[i];
+		if (Age < ImpactDuration && FVector::Dist(Local, SlotPoint[i]) < Nearby)
+		{
+			if (Age < ImpactDuration * 0.55f)
+			{
+				// Each frame of a held beam carries little damage; let the ring brighten while the beam stays on it.
+				SlotStrength[i] = FMath::Min(FMath::Max(SlotStrength[i], Strength) + Strength * 0.35f, 2.5f);
+				MID->SetScalarParameterValue(StrengthParams[i], SlotStrength[i]);
+				LastImpactTime = Now;
+				return;
+			}
+			Slot = i;
+			break;
+		}
+	}
+	if (Slot < 0)
+	{
+		Slot = NextSlot;
+		NextSlot = (NextSlot + 1) % 4;
+	}
+	SlotPoint[Slot] = Local;
+	SlotTime[Slot] = Now;
+	SlotStrength[Slot] = Strength;
+	MID->SetVectorParameterValue(ImpactParams[Slot], FLinearColor(Local.X, Local.Y, Local.Z, 0.f));
+	MID->SetScalarParameterValue(TimeParams[Slot], Now);
+	MID->SetScalarParameterValue(StrengthParams[Slot], Strength);
 	LastImpactTime = Now;
 	if (!IsVisible())
 	{

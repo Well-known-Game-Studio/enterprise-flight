@@ -54,6 +54,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vessel")
 	FLinearColor GlowColor = FLinearColor(0.35f, 0.6f, 1.0f);
 
+	/** Extra hull material slots (1, 2, ...): the same hull material in these colours, for parts a builder stamps
+	 *  with a material ID (the cube's olive panels, copper pipes and blue-grey steel). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vessel")
+	TArray<FLinearColor> HullAccentColors;
+
 	/** Hull material finish. Starfleet plating is fairly smooth and a little metallic; the Borg cube is rough dark metal. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vessel")
 	float HullRoughness = 0.45f;
@@ -147,6 +152,7 @@ protected:
 	void ApplyWindowParams(UMaterialInstanceDynamic* MID) const;
 
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> HullMID;
+	UPROPERTY() TArray<TObjectPtr<UMaterialInstanceDynamic>> AccentMIDs;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> GlowMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> WarmMID;
 	/** The warm glow mesh being built; valid only while BuildMeshes runs. */

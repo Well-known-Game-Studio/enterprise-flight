@@ -13,9 +13,28 @@ namespace SlonkMesh
 {
 	using PF = UGeometryScriptLibrary_MeshPrimitiveFunctions;
 
+	/** Material slot stamped on every primitive appended from now on (0 = the hull's main material). Builders that
+	 *  want accent colours set it around a group of appends and put it back to 0 when done. */
+	inline int32& CurrentMaterialID()
+	{
+		static int32 ID = 0;
+		return ID;
+	}
+
 	inline FGeometryScriptPrimitiveOptions Opts()
 	{
-		return FGeometryScriptPrimitiveOptions();
+		FGeometryScriptPrimitiveOptions O;
+		O.MaterialID = CurrentMaterialID();
+		return O;
+	}
+
+	/** Cylinder from A to B. */
+	inline void CylinderBetween(UDynamicMesh* M, const FVector& A, const FVector& B, float Radius, int32 Steps = 10)
+	{
+		const FVector D = B - A;
+		const float Len = D.Size();
+		if (Len <= KINDA_SMALL_NUMBER) { return; }
+		PF::AppendCylinder(M, Opts(), FTransform(FRotationMatrix::MakeFromZ(D / Len).Rotator(), A), Radius, Len, Steps, 0, true, EGeometryScriptPrimitiveOriginMode::Base);
 	}
 
 	inline void Box(UDynamicMesh* M, const FVector& Centre, const FVector& Dims, const FRotator& Rot = FRotator::ZeroRotator)
