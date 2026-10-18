@@ -4,7 +4,7 @@
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
-#include "GeometryScript/MeshPrimitiveFunctions.h"
+#include "MeshPrims.h"
 #include "Kismet/GameplayStatics.h"
 #include "PhaserBeam.h"
 #include "PhotonTorpedo.h"
@@ -17,7 +17,11 @@ ABorgCube::ABorgCube()
 	SizeCm = 300000.f;
 	DeathSeconds = 3.f;
 	// At the locked exposure a 0.1 albedo reads as mid-grey; the cube should be near-black metal.
-	HullColor = FLinearColor(0.03f, 0.035f, 0.033f);
+	HullColor = FLinearColor(0.02f, 0.027f, 0.023f);
+	// Rough, mostly metallic: kills the broad sun highlight that made the old cube read as light grey.
+	HullRoughness = 0.9f;
+	HullMetallic = 0.1f;
+	HullSpecular = 0.f;
 	GlowColor = FLinearColor(0.25f, 1.0f, 0.3f);
 	VesselName = TEXT("Borg cube");
 	BeamMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(SlonkMaterials::BorgBeamPath));
@@ -25,71 +29,108 @@ ABorgCube::ABorgCube()
 
 void ABorgCube::BuildMeshes(UDynamicMesh* HM, UDynamicMesh* GM, FRandomStream& Rng)
 {
-	using PF = UGeometryScriptLibrary_MeshPrimitiveFunctions;
-	FGeometryScriptPrimitiveOptions O;
+	using namespace SlonkMesh;
 	const float S = SizeCm;
-	auto Box = [&](UDynamicMesh* M, const FVector& C, const FVector& D, const FRotator& R = FRotator::ZeroRotator)
+	// The cube is a frame of heavy girders round a dark core, every face a regular lattice of plated cells,
+	// recessed pits and conduit runs, with long rails crossing at the third lines. The surface floats a little
+	// off the core, so there is depth and green light down in the gaps rather than strips painted on top.
+	Box(HM, FVector::ZeroVector, FVector(S * 0.90f));
+	for (int32 Axis = 0; Axis < 3; ++Axis)
 	{
-		PF::AppendBox(M, O, FTransform(R, C), D.X, D.Y, D.Z, 0, 0, 0, EGeometryScriptPrimitiveOriginMode::Center);
-	};
-	// Core block, slightly inset so the surface structure stands proud of it.
-	Box(HM, FVector::ZeroVector, FVector(S * 0.96f));
-	// Per face: a lattice of beams, random greeble blocks, and green conduits.
+		const int32 U = (Axis + 1) % 3, V = (Axis + 2) % 3;
+		for (int32 a = -1; a <= 1; a += 2)
+		{
+			for (int32 b = -1; b <= 1; b += 2)
+			{
+				FVector C = FVector::ZeroVector, Dm(S * 0.05f);
+				C[U] = a * S * 0.475f;
+				C[V] = b * S * 0.475f;
+				Dm[Axis] = S * 0.99f;
+				Box(HM, C, Dm);
+			}
+		}
+	}
+	for (int32 c = 0; c < 8; ++c)
+	{
+		Box(HM, FVector((c & 1) ? 1.f : -1.f, (c & 2) ? 1.f : -1.f, (c & 4) ? 1.f : -1.f) * S * 0.47f, FVector(S * 0.07f));
+	}
+	const int32 N = 12;
+	const float Cell = S * 0.96f / N;
 	for (int32 Face = 0; Face < 6; ++Face)
 	{
 		const int32 Axis = Face / 2;
 		const float Sign = (Face % 2) ? -1.f : 1.f;
 		const int32 U = (Axis + 1) % 3, V = (Axis + 2) % 3;
-		auto Place = [&](float u, float v, float Depth, float Du, float Dv, UDynamicMesh* M)
+		// A box on this face: (u, v) across it, standing Depth proud of a base plane Base * S from the centre.
+		auto Place = [&](float u, float v, float Depth, float Du, float Dv, UDynamicMesh* M, float Base = 0.48f)
 		{
 			FVector C = FVector::ZeroVector;
-			C[Axis] = Sign * (S * 0.48f + Depth * 0.5f);
+			C[Axis] = Sign * (S * Base + Depth * 0.5f);
 			C[U] = u; C[V] = v;
 			FVector D = FVector::ZeroVector;
 			D[Axis] = Depth; D[U] = Du; D[V] = Dv;
 			Box(M, C, D);
 		};
-		// Lattice: 4 beams each way.
-		for (int32 k = 0; k < 4; ++k)
+		// Rails at the third lines with clamps along them.
+		for (int32 k = 1; k <= 2; ++k)
 		{
-			const float P = -S * 0.375f + S * 0.25f * k;
-			Place(P, 0.f, S * 0.025f, S * 0.012f, S * 0.98f, HM);
-			Place(0.f, P, S * 0.025f, S * 0.98f, S * 0.012f, HM);
+			const float P = -S * 0.48f + S * 0.96f * k / 3.f;
+			Place(P, 0.f, S * 0.035f, S * 0.02f, S * 0.96f, HM);
+			Place(0.f, P, S * 0.035f, S * 0.96f, S * 0.02f, HM);
+			for (int32 q = -4; q <= 4; ++q)
+			{
+				Place(P, q * S * 0.11f, S * 0.045f, S * 0.034f, S * 0.014f, HM);
+				Place(q * S * 0.11f, P, S * 0.045f, S * 0.014f, S * 0.034f, HM);
+			}
 		}
-		// Greebles at three scales: a few large plates and towers, many mid blocks, a carpet of small ones.
-		for (int32 i = 0; i < 6; ++i)
+		// Cells.
+		for (int32 i = 0; i < N; ++i)
 		{
-			Place(Rng.FRandRange(-0.4f, 0.4f) * S, Rng.FRandRange(-0.4f, 0.4f) * S, S * Rng.FRandRange(0.05f, 0.11f), S * Rng.FRandRange(0.08f, 0.2f), S * Rng.FRandRange(0.08f, 0.2f), HM);
+			for (int32 j = 0; j < N; ++j)
+			{
+				const float u0 = -S * 0.48f + Cell * (i + 0.5f), v0 = -S * 0.48f + Cell * (j + 0.5f);
+				const float Roll = Rng.FRand();
+				if (Roll < 0.42f)
+				{
+					// A plate with a few small blocks on it.
+					Place(u0, v0, S * 0.02f, Cell * 0.86f, Cell * 0.86f, HM);
+					const int32 n = Rng.RandRange(1, 3);
+					for (int32 k = 0; k < n; ++k)
+					{
+						Place(u0 + Rng.FRandRange(-0.3f, 0.3f) * Cell, v0 + Rng.FRandRange(-0.3f, 0.3f) * Cell, S * Rng.FRandRange(0.01f, 0.03f), Cell * Rng.FRandRange(0.15f, 0.4f), Cell * Rng.FRandRange(0.15f, 0.4f), HM, 0.5f);
+					}
+				}
+				else if (Roll < 0.56f)
+				{
+					// A tower.
+					Place(u0, v0, S * Rng.FRandRange(0.05f, 0.1f), Cell * Rng.FRandRange(0.4f, 0.7f), Cell * Rng.FRandRange(0.4f, 0.7f), HM);
+				}
+				else if (Roll < 0.82f)
+				{
+					// A pit: four walls round a green floor down by the core.
+					Place(u0, v0, S * 0.004f, Cell * 0.55f, Cell * 0.55f, GM, 0.452f);
+					const float w = Cell * 0.1f, h = Cell * 0.8f;
+					Place(u0 - h * 0.5f + w * 0.5f, v0, S * 0.025f, w, h, HM);
+					Place(u0 + h * 0.5f - w * 0.5f, v0, S * 0.025f, w, h, HM);
+					Place(u0, v0 - h * 0.5f + w * 0.5f, S * 0.025f, h, w, HM);
+					Place(u0, v0 + h * 0.5f - w * 0.5f, S * 0.025f, h, w, HM);
+				}
+				else
+				{
+					// A conduit run: a green strip under a grating of three bars.
+					const bool bU = Rng.FRand() < 0.5f;
+					Place(u0, v0, S * 0.004f, bU ? Cell * 0.9f : Cell * 0.12f, bU ? Cell * 0.12f : Cell * 0.9f, GM, 0.47f);
+					for (int32 k = -1; k <= 1; ++k)
+					{
+						Place(u0 + (bU ? k * Cell * 0.3f : 0.f), v0 + (bU ? 0.f : k * Cell * 0.3f), S * 0.018f, bU ? Cell * 0.1f : Cell * 0.9f, bU ? Cell * 0.9f : Cell * 0.1f, HM);
+					}
+				}
+			}
 		}
-		for (int32 i = 0; i < 70; ++i)
+		// A few larger vents glowing on the surface.
+		for (int32 i = 0; i < 3; ++i)
 		{
-			Place(Rng.FRandRange(-0.46f, 0.46f) * S, Rng.FRandRange(-0.46f, 0.46f) * S, S * Rng.FRandRange(0.02f, 0.06f), S * Rng.FRandRange(0.03f, 0.09f), S * Rng.FRandRange(0.03f, 0.09f), HM);
-		}
-		for (int32 i = 0; i < 160; ++i)
-		{
-			const bool bBar = Rng.FRand() < 0.4f;
-			const float A = S * Rng.FRandRange(0.008f, 0.03f), B = bBar ? S * Rng.FRandRange(0.04f, 0.14f) : S * Rng.FRandRange(0.008f, 0.03f);
-			Place(Rng.FRandRange(-0.48f, 0.48f) * S, Rng.FRandRange(-0.48f, 0.48f) * S, S * Rng.FRandRange(0.01f, 0.035f), Rng.FRand() < 0.5f ? A : B, Rng.FRand() < 0.5f ? B : A, HM);
-		}
-		// Pipes running across the face.
-		for (int32 i = 0; i < 8; ++i)
-		{
-			const bool bAlongU = Rng.FRand() < 0.5f;
-			const float Len = S * Rng.FRandRange(0.2f, 0.7f), W = S * Rng.FRandRange(0.006f, 0.012f);
-			Place(Rng.FRandRange(-0.42f, 0.42f) * S, Rng.FRandRange(-0.42f, 0.42f) * S, S * 0.035f, bAlongU ? Len : W, bAlongU ? W : Len, HM);
-		}
-		// Conduits: thin glowing strips and a few nodes.
-		const int32 G = Rng.RandRange(10, 16);
-		for (int32 i = 0; i < G; ++i)
-		{
-			const bool bAlongU = Rng.FRand() < 0.5f;
-			const float Len = S * Rng.FRandRange(0.08f, 0.3f), W = S * 0.006f;
-			Place(Rng.FRandRange(-0.44f, 0.44f) * S, Rng.FRandRange(-0.44f, 0.44f) * S, S * 0.055f, bAlongU ? Len : W, bAlongU ? W : Len, GM);
-		}
-		for (int32 i = 0; i < 4; ++i)
-		{
-			const float D = S * Rng.FRandRange(0.015f, 0.03f);
-			Place(Rng.FRandRange(-0.44f, 0.44f) * S, Rng.FRandRange(-0.44f, 0.44f) * S, S * 0.06f, D, D, GM);
+			Place(Rng.FRandRange(-0.4f, 0.4f) * S, Rng.FRandRange(-0.4f, 0.4f) * S, S * 0.006f, S * 0.03f, S * 0.03f, GM, 0.5f);
 		}
 	}
 }
