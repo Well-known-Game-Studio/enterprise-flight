@@ -295,19 +295,20 @@ void UBridgeInteriorComponent::BuildRefitMesh()
 	if (bShowCrew)
 	{
 		UniformMaroon = MakeLit(TEXT("UniformMaroon"), FLinearColor(0.40f, 0.07f, 0.09f), 0.85f);
-		// The Blender set: deck 55 cm above its origin, helm chairs at (105, +-95) on the deck, station chairs 1.3 m in from the wall.
-		const float R = 560.f, HD = 55.f, VS = 34.f, Step = 32.f;
-		const float Lifts[2] = { 150.f, 210.f };
+		// The Blender set: the helm platform 36 cm and the station ring 100 cm above its origin (the well floor); helm
+		// chairs at (120, +-95); station chairs 1.3 m in from the wall at the side stations only (the aft ones are stood at).
+		const float R = 560.f, HD = 100.f, VS = 34.f, Step = 32.f;
+		const float Lifts[2] = { 100.f, 260.f };
 		for (int32 s = -1; s <= 1; s += 2)
 		{
-			Crew(FVector(105.f, s * 95.f, HD + 55.f), 0.f, UniformMaroon);
+			Crew(FVector(120.f, s * 95.f, 36.f + 55.f), 0.f, UniformMaroon);
 		}
 		int32 k = 0;
 		for (float A = VS + Step * 0.5f + 4.f; A < 360.f - VS - Step * 0.4f; A += Step)
 		{
 			bool bLift = false;
 			for (float L : Lifts) { bLift |= FMath::Abs(FMath::FindDeltaAngleDegrees(A, L)) < 12.f + Step * 0.45f; }
-			if (bLift || FMath::Abs(FMath::FindDeltaAngleDegrees(A, 180.f)) < 8.f) { continue; }
+			if (bLift || FMath::Abs(FMath::FindDeltaAngleDegrees(A, 180.f)) < 62.f) { continue; }
 			if ((k++ % 3) != 1)
 			{
 				Crew(FRotator(0.f, A, 0.f).Vector() * (R - 130.f) + FVector(0, 0, HD + 55.f), A, (k % 2) ? UniformMaroon : UniformRed);

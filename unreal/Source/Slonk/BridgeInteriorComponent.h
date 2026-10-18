@@ -52,9 +52,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
 	FVector EyeOffset = FVector(12.0, 0.0, 165.0);
 
-	/** The seated eye point on the Blender set: its captain sits at x -0.75 m on a deck 0.55 m above the set's origin (the well floor), eye just over the chair back. */
+	/** The seated eye point on the Blender set: its captain sits at x -0.55 m on a platform 0.74 m above the set's origin (the well floor), eye just over the chair back. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
-	FVector RefitMeshEyeOffset = FVector(-60.0, 0.0, 196.0);
+	FVector RefitMeshEyeOffset = FVector(-45.0, 0.0, 200.0);
 
 	/** The eye point for the current style: the Blender set has its own, the primitive sets share EyeOffset. */
 	FVector GetEyeOffset() const { return Style == EBridgeStyle::RefitMesh ? RefitMeshEyeOffset : EyeOffset; }
