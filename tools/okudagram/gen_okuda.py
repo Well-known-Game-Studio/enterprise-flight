@@ -94,8 +94,9 @@ def ship_top(d, box, color, lw=2):
     line((-0.045, 0.86), (-0.045, 0.93), 1); line((0.045, 0.86), (0.045, 0.93), 1); line((-0.03, 0.88), (0.03, 0.88), 1)
     line((0, 0.5), (0, 0.84), 1)
     for sgn in (-1, 1):
-        # Pylon: a thin swept quad from the hull aft to the nacelle's forward third.
-        pts = [P(sgn * 0.058, 0.70), P(sgn * 0.058, 0.76), P(sgn * 0.17, 0.60), P(sgn * 0.17, 0.555)]
+        # Pylon: a thin quad rooted on the engineering hull forward of midships and swept aft and outboard to the
+        # nacelle's aft third (bow is up, so the nacelle end sits lower on the plan than the hull end).
+        pts = [P(sgn * 0.058, 0.60), P(sgn * 0.058, 0.665), P(sgn * 0.17, 0.835), P(sgn * 0.17, 0.76)]
         d.polygon(pts, outline=color, width=lw)
         # Nacelle: body, centre seam, bussard cap, grilles, aft cap.
         rrect(sgn * 0.17, 0.42, sgn * 0.225, 1.0, 0.025, lw + 1)
