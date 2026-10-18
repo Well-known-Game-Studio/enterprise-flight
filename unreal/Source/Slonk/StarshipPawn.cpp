@@ -602,7 +602,7 @@ void AStarshipPawn::ApplyHullDimensions()
 	BridgeCamera->SetRelativeLocation(BridgeCameraOffset);
 	BridgeCamera->SetFieldOfView(BridgeFOV);
 	// The set's origin is the deck under the captain's chair; the camera sits at the seated eye point.
-	BridgeInterior->SetRelativeLocation(BridgeCameraOffset - BridgeInterior->EyeOffset);
+	BridgeInterior->SetRelativeLocation(BridgeCameraOffset - BridgeInterior->GetEyeOffset());
 
 	const float OrbitDistance = LengthCm * CinematicDistanceFactor;
 	const FVector OrbitOffset(-OrbitDistance, 0.0, OrbitDistance * 0.18);
@@ -1424,6 +1424,7 @@ void AStarshipPawn::ProcessDebugCommand()
 	{
 		const FString Which = ArgStr(1);
 		BridgeInterior->SetStyle(Which == TEXT("original") || Which == TEXT("tos") ? EBridgeStyle::Original : (Which == TEXT("refit") || Which == TEXT("prims") ? EBridgeStyle::Refit : EBridgeStyle::RefitMesh));
+		BridgeInterior->SetRelativeLocation(BridgeCameraOffset - BridgeInterior->GetEyeOffset());
 		BridgeInterior->SetVisibility(CameraMode == EStarshipCameraMode::Bridge, true);
 	}
 	else if (Op == TEXT("rcs"))

@@ -295,11 +295,12 @@ void UBridgeInteriorComponent::BuildRefitMesh()
 	if (bShowCrew)
 	{
 		UniformMaroon = MakeLit(TEXT("UniformMaroon"), FLinearColor(0.40f, 0.07f, 0.09f), 0.85f);
-		const float R = 560.f, HD = 40.f, VS = 34.f, Step = 32.f;
+		// The Blender set: deck 55 cm above its origin, helm chairs at (105, +-95) on the deck, station chairs 1.3 m in from the wall.
+		const float R = 560.f, HD = 55.f, VS = 34.f, Step = 32.f;
 		const float Lifts[2] = { 150.f, 210.f };
 		for (int32 s = -1; s <= 1; s += 2)
 		{
-			Crew(FVector(230.f - 95.f, s * 68.f, 55.f), 0.f, UniformMaroon);
+			Crew(FVector(105.f, s * 95.f, HD + 55.f), 0.f, UniformMaroon);
 		}
 		int32 k = 0;
 		for (float A = VS + Step * 0.5f + 4.f; A < 360.f - VS - Step * 0.4f; A += Step)
