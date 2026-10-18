@@ -24,8 +24,9 @@ UStarshipWeaponsComponent::UStarshipWeaponsComponent()
 	// Defaults for a 305 m Constitution-refit hull centred on the root; the pawn lays the banks out on its mesh.
 	PhaserBanks = { FPhaserBank(TEXT("DorsalFwd"), FVector(10600.0, 0.0, 2000.0), FVector::UpVector), FPhaserBank(TEXT("VentralFwd"), FVector(10600.0, 0.0, -600.0), FVector::DownVector) };
 	// One launcher with two tubes side by side, at the foot of the neck directly above the deflector dish, facing
-	// forward (pawn space x ~2850..3250, z -450..-50 on the refit mesh).
-	TorpedoTubeOffsets = { FVector(3250.0, -150.0, -250.0), FVector(3250.0, 150.0, -250.0) };
+	// forward. The mouths sit in the two recessed door panes of the refit mesh (|y| 2.8 m, z -3.2 m); the pawn
+	// overwrites these from its measured TorpedoTubeCentre when it lays out the hull.
+	TorpedoTubeOffsets = { FVector(3170.0, -281.0, -323.0), FVector(3170.0, 281.0, -323.0) };
 }
 
 void UStarshipWeaponsComponent::BeginPlay()

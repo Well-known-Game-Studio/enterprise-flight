@@ -926,6 +926,14 @@ void AStarshipPawn::ApplyHullSkinParams()
 		Mid->SetVectorParameterValue(TEXT("RedKeyBMin"), V(TorpedoPatchMin)); Mid->SetVectorParameterValue(TEXT("RedKeyBMax"), V(TorpedoPatchMax));
 		Mid->SetVectorParameterValue(TEXT("SlotBoxMin"), V(TorpedoPatchMin)); Mid->SetVectorParameterValue(TEXT("SlotBoxMax"), V(TorpedoPatchMax));
 		Mid->SetVectorParameterValue(TEXT("SlotColor"), TorpedoBayGlowColor);
+		Mid->SetVectorParameterValue(TEXT("TubeCentre"), V(TorpedoTubeCentre));
+		Mid->SetVectorParameterValue(TEXT("TubeSize"), V(TorpedoTubeSize));
+	}
+	// The torpedoes leave from the tube mouths, just proud of the housing face so they never spawn inside the recess.
+	if (Weapons)
+	{
+		const double Face = TorpedoTubeCentre.X + 100.0;
+		Weapons->TorpedoTubeOffsets = { FVector(Face, -TorpedoTubeCentre.Y, TorpedoTubeCentre.Z), FVector(Face, TorpedoTubeCentre.Y, TorpedoTubeCentre.Z) };
 	}
 }
 
@@ -963,6 +971,27 @@ void AStarshipPawn::SetupHullMaterials()
 				{
 					Mid->SetTextureParameterValue(Pair.Value, Tex);
 				}
+			}
+			// Roughness (from the set's specular map) and baked occlusion, by slot name: the imported instances
+			// never referenced them.
+			const FString SlotName = ShipMesh->GetMaterialSlotNames().IsValidIndex(i) ? ShipMesh->GetMaterialSlotNames()[i].ToString() : FString();
+			if (SlotName.StartsWith(TEXT("Constitution_")))
+			{
+				const FString Base = FString::Printf(TEXT("/Game/Enterprise/Fed_TMP_%s_"), *SlotName);
+				if (UTexture* Rough = LoadObject<UTexture>(nullptr, *(Base + TEXT("ROUGH"))))
+				{
+					Mid->SetTextureParameterValue(TEXT("Rough"), Rough);
+				}
+				if (UTexture* AO = LoadObject<UTexture>(nullptr, *(Base + TEXT("AO"))))
+				{
+					Mid->SetTextureParameterValue(TEXT("AO"), AO);
+				}
+			}
+			else
+			{
+				// The impulse grille has no such maps: plain roughness, no occlusion.
+				Mid->SetScalarParameterValue(TEXT("RoughMapWeight"), 0.f);
+				Mid->SetScalarParameterValue(TEXT("AOStrength"), 0.f);
 			}
 			ShipMesh->SetMaterial(i, Mid);
 		}
@@ -1183,6 +1212,11 @@ void AStarshipPawn::Tick(float DeltaTime)
 	UpdateWarpEffects(DeltaTime);
 	UpdateHullGlow(DeltaTime);
 	UpdateThrusters();
+	if (BridgeInterior && CameraMode == EStarshipCameraMode::Bridge)
+	{
+		const float WarpFrac = WarpDrive ? FMath::Clamp(WarpDrive->WarpFactor / 9.f, 0.f, 1.f) * (WarpDrive->GetState() == EWarpState::AtWarp ? 1.f : 0.3f) : 0.f;
+		BridgeInterior->SetLiveReadouts(GetShieldFraction(), GetHullFraction(), Movement ? (float)Movement->Throttle : 0.f, WarpFrac, ShieldStrength < MaxShieldStrength * 0.25f);
+	}
 	UpdateCameras(DeltaTime);
 
 	// Torpedo launch kick.
@@ -1384,6 +1418,12 @@ void AStarshipPawn::ProcessDebugCommand()
 	UE_LOG(LogTemp, Log, TEXT("Starship debug command: %s"), *Cmd);
 
 	if (Op == TEXT("throttle") && Movement) { Movement->SetThrottle(Arg(1, 0.f)); }
+	else if (Op == TEXT("bridge") && BridgeInterior)
+	{
+		const FString Which = ArgStr(1);
+		BridgeInterior->SetStyle(Which == TEXT("original") || Which == TEXT("tos") ? EBridgeStyle::Original : (Which == TEXT("refit") || Which == TEXT("prims") ? EBridgeStyle::Refit : EBridgeStyle::RefitMesh));
+		BridgeInterior->SetVisibility(CameraMode == EStarshipCameraMode::Bridge, true);
+	}
 	else if (Op == TEXT("rcs"))
 	{
 		if (ArgStr(1) == TEXT("all")) { if (Thrusters) { Thrusters->SetAllOn(Arg(2, 3.f)); } }

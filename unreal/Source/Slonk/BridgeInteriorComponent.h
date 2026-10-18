@@ -17,6 +17,17 @@ class UPointLightComponent;
 class UMaterialInterface;
 class UMaterialInstanceDynamic;
 
+UENUM(BlueprintType)
+enum class EBridgeStyle : uint8
+{
+	/** The original Constitution-class bridge: sunken well, red rails, blue-grey walls, button consoles. */
+	Original,
+	/** The Enterprise-A bridge of Star Trek VI built from engine primitives: light-grey panelling, white light strips, teal displays, grey chairs, burgundy turbolift doors. */
+	Refit,
+	/** The same bridge as the static mesh modelled in Blender (blender/bridge-st6), with its screen slots bound to the live Okudagram material. */
+	RefitMesh
+};
+
 /**
  * Attach to the ship so that this component's origin is the well floor under the captain's chair (the
  * centre of the bridge), +X facing the viewscreen. The bridge camera belongs at EyeOffset. Geometry is
@@ -32,6 +43,10 @@ public:
 	UBridgeInteriorComponent();
 
 	virtual void BeginPlay() override;
+
+	/** Which bridge to build. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
+	EBridgeStyle Style = EBridgeStyle::RefitMesh;
 
 	/** Where the seated captain's eyes are, relative to this component (cm). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
@@ -97,15 +112,46 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge|Materials") TSoftObjectPtr<UMaterialInterface> DisplayMaterial;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge|Materials") TSoftObjectPtr<UMaterialInterface> ButtonsMaterial;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge|Materials") TSoftObjectPtr<UMaterialInterface> ViewerMaterial;
+	/** Refit screens: an unlit material showing an Okudagram texture (/Game/Slonk/Bridge/T_Okuda_*) with live bars drawn over it. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge|Materials") TSoftObjectPtr<UMaterialInterface> OkudagramMaterial;
+	/** The modelled bridge (SM_BridgeRefit) for the RefitMesh style. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge|Materials") TSoftObjectPtr<UStaticMesh> RefitMesh;
+	/** Rotation applied to the modelled bridge so its viewscreen faces +X (set after checking the import). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge|Materials") FRotator RefitMeshRotation = FRotator::ZeroRotator;
+	/** UV orientation of the screen texture on a wall box's inward face (0..7: quarter turns, +4 mirrors). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge|Materials") float ScreenUVMode = 0.f;
+
+	/**
+	 * Feed the live panels: shields and hull on the tactical screen, throttle and warp on the helm. Fractions 0..1;
+	 * bAlert washes the tactical screen red. Call every frame while the bridge is in view.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Bridge")
+	void SetLiveReadouts(float ShieldFraction, float HullFraction, float Throttle, float WarpFraction, bool bAlert);
 
 	/** (Re)build the set. Safe to call again; existing pieces are destroyed first. */
 	UFUNCTION(BlueprintCallable, Category = "Bridge")
 	void Build();
 
+	UFUNCTION(BlueprintCallable, Category = "Bridge")
+	void SetStyle(EBridgeStyle NewStyle) { Style = NewStyle; Build(); }
+
 	UFUNCTION(BlueprintPure, Category = "Bridge")
 	bool IsBuilt() const { return Pieces.Num() > 0; }
 
 private:
+	void BuildOriginal();
+	void BuildRefit();
+	void BuildRefitMesh();
+	/** Refit furniture: a grey upholstered swivel chair on a black pedestal, optionally with a crew member. */
+	void RefitChair(const FVector& FloorPos, float YawDeg, bool bCrew, UMaterialInterface* UniformMat);
+	/** Refit perimeter station: light-grey cabinet with three light bars at its foot, a black desk and a large raked display bank. */
+	void RefitStation(float AngleDeg, float Chord, float& Seed, bool bConsole);
+	/** An Okudagram screen instance showing the named texture (/Game/Slonk/Bridge/T_Okuda_<Name>); null when the texture or material is missing. */
+	UMaterialInstanceDynamic* MakeOkuda(const TCHAR* TextureName, float Intensity);
+	/** A teal-on-black display instance with the refit palette and sparse cells. */
+	UMaterialInstanceDynamic* RefitScreen(const TCHAR* Name, float Seed, float Intensity, float CellScale, float Gap);
+	/** Three stacked white light bars on a vertical face at a bearing (the refit's kick lighting). */
+	void LightBars(float AngleDeg, float Radial, float Z, float Width, int32 Count = 3, float Pitch = 11.f);
 	UMaterialInstanceDynamic* MakeLit(const TCHAR* Name, FLinearColor Base, float Roughness, float Metallic = 0.f, FLinearColor Emissive = FLinearColor::Black, float EmissiveStrength = 0.f);
 	UMaterialInstanceDynamic* MakeScreen(const TSoftObjectPtr<UMaterialInterface>& Parent, const TCHAR* Name, float Seed, float Intensity, float CellScale = 1.f);
 
@@ -144,5 +190,19 @@ private:
 	UMaterialInterface* UniformGold = nullptr;
 	UMaterialInterface* UniformBlue = nullptr;
 	UMaterialInterface* UniformRed = nullptr;
+	// Refit palette.
+	UMaterialInterface* PanelGrey = nullptr;
+	UMaterialInterface* PanelDark = nullptr;
+	UMaterialInterface* Carpet = nullptr;
+	UMaterialInterface* StripWhite = nullptr;
+	UMaterialInterface* Burgundy = nullptr;
+	UMaterialInterface* SeatGrey = nullptr;
+	UMaterialInterface* RailGrey = nullptr;
+	UMaterialInterface* ScreenDark = nullptr;
+	UMaterialInterface* UniformMaroon = nullptr;
+	UMaterialInterface* ClockRed = nullptr;
+	UPROPERTY() TArray<TObjectPtr<UMaterialInstanceDynamic>> TacticalScreens;
+	UPROPERTY() TArray<TObjectPtr<UMaterialInstanceDynamic>> HelmScreens;
+	int32 RefitStationIndex = 0;
 	int32 PieceCount = 0;
 };

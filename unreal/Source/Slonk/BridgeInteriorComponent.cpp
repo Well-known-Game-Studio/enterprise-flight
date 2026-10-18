@@ -27,6 +27,8 @@ UBridgeInteriorComponent::UBridgeInteriorComponent()
 	DisplayMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_BridgeDisplay.M_BridgeDisplay")));
 	ButtonsMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_BridgeButtons.M_BridgeButtons")));
 	ViewerMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_BridgeViewer.M_BridgeViewer")));
+	OkudagramMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_Okudagram.M_Okudagram")));
+	RefitMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/Slonk/Bridge/SM_BridgeRefit.SM_BridgeRefit")));
 }
 
 void UBridgeInteriorComponent::BeginPlay()
@@ -214,6 +216,9 @@ void UBridgeInteriorComponent::Build()
 	}
 	Pieces.Reset();
 	Materials.Reset();
+	TacticalScreens.Reset();
+	HelmScreens.Reset();
+	RefitStationIndex = 0;
 	PieceCount = 0;
 
 	WallBlue = MakeLit(TEXT("WallBlue"), FLinearColor(0.26f, 0.32f, 0.42f), 0.75f);
@@ -231,6 +236,96 @@ void UBridgeInteriorComponent::Build()
 	UniformBlue = MakeLit(TEXT("UniformBlue"), FLinearColor(0.08f, 0.22f, 0.55f), 0.85f);
 	UniformRed = MakeLit(TEXT("UniformRed"), FLinearColor(0.50f, 0.05f, 0.07f), 0.85f);
 
+	if (Style == EBridgeStyle::RefitMesh)
+	{
+		BuildRefitMesh();
+	}
+	else if (Style == EBridgeStyle::Refit)
+	{
+		BuildRefit();
+	}
+	else
+	{
+		BuildOriginal();
+	}
+}
+
+void UBridgeInteriorComponent::BuildRefitMesh()
+{
+	UStaticMesh* Mesh = RefitMesh.LoadSynchronous();
+	if (!Mesh)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Bridge: SM_BridgeRefit missing, building the primitive refit instead."));
+		BuildRefit();
+		return;
+	}
+	UStaticMeshComponent* C = NewObject<UStaticMeshComponent>(GetOwner(), TEXT("BridgeMesh"));
+	PrepPrimitive(C, true);
+	C->SetStaticMesh(Mesh);
+	C->SetRelativeLocationAndRotation(FVector::ZeroVector, RefitMeshRotation);
+	C->RegisterComponent();
+	Pieces.Add(C);
+
+	// Bind slots by name: screens to the live Okudagram material, light strips and the clock to emissive instances;
+	// everything else keeps the material the import made from the Blender colours.
+	UMaterialInterface* Strip = MakeLit(TEXT("MeshStrip"), FLinearColor(0.9f, 0.92f, 0.95f), 0.8f, 0.f, FLinearColor(0.95f, 0.97f, 1.0f), LightPanelEmissive * 2.5f);
+	UMaterialInterface* Clock = MakeLit(TEXT("MeshClock"), FLinearColor(0.1f, 0.0f, 0.0f), 0.5f, 0.f, FLinearColor(1.0f, 0.1f, 0.05f), 6.f);
+	UMaterialInterface* Touch = MakeScreen(ButtonsMaterial, TEXT("MeshTouch"), 7.f, DisplayIntensity * 0.6f, 0.6f);
+	const TArray<FName> Slots = C->GetMaterialSlotNames();
+	for (int32 i = 0; i < Slots.Num(); ++i)
+	{
+		const FString Name = Slots[i].ToString();
+		if (Name.StartsWith(TEXT("Screen_")))
+		{
+			const FString Tex = Name.RightChop(7);
+			if (UMaterialInstanceDynamic* Screen = MakeOkuda(*Tex, DisplayIntensity * 0.55f))
+			{
+				C->SetMaterial(i, Screen);
+				if (Tex == TEXT("Tactical")) { TacticalScreens.Add(Screen); }
+				if (Tex == TEXT("Helm")) { HelmScreens.Add(Screen); }
+			}
+		}
+		else if (Name == TEXT("LightStrip") && Strip) { C->SetMaterial(i, Strip); }
+		else if (Name == TEXT("LightSoft")) { C->SetMaterial(i, MakeLit(TEXT("MeshSoft"), FLinearColor(0.9f, 0.92f, 0.95f), 0.8f, 0.f, FLinearColor(0.95f, 0.97f, 1.0f), LightPanelEmissive * 0.8f)); }
+		else if (Name == TEXT("ClockRed") && Clock) { C->SetMaterial(i, Clock); }
+		else if (Name == TEXT("TouchPanel") && Touch) { C->SetMaterial(i, Touch); }
+	}
+
+	// Crew at the helm and at the perimeter stations, matching the layout the Blender generator uses.
+	if (bShowCrew)
+	{
+		UniformMaroon = MakeLit(TEXT("UniformMaroon"), FLinearColor(0.40f, 0.07f, 0.09f), 0.85f);
+		const float R = 560.f, HD = 40.f, VS = 34.f, Step = 32.f;
+		const float Lifts[2] = { 150.f, 210.f };
+		for (int32 s = -1; s <= 1; s += 2)
+		{
+			Crew(FVector(230.f - 95.f, s * 68.f, 55.f), 0.f, UniformMaroon);
+		}
+		int32 k = 0;
+		for (float A = VS + Step * 0.5f + 4.f; A < 360.f - VS - Step * 0.4f; A += Step)
+		{
+			bool bLift = false;
+			for (float L : Lifts) { bLift |= FMath::Abs(FMath::FindDeltaAngleDegrees(A, L)) < 12.f + Step * 0.45f; }
+			if (bLift || FMath::Abs(FMath::FindDeltaAngleDegrees(A, 180.f)) < 8.f) { continue; }
+			if ((k++ % 3) != 1)
+			{
+				Crew(FRotator(0.f, A, 0.f).Vector() * (R - 130.f) + FVector(0, 0, HD + 55.f), A, (k % 2) ? UniformMaroon : UniformRed);
+			}
+		}
+	}
+
+	// Lighting as for the primitive refit.
+	const float R = WallRadius, H = CeilingHeight;
+	for (int32 i = 0; i < 6; ++i)
+	{
+		const float A = i * 60.f + 30.f;
+		Light(FRotator(0.f, A, 0.f).Vector() * (R * 0.6f) + FVector(0, 0, H - 100.f), LightIntensity * 0.7f, 1300.f);
+	}
+	Light(FVector(0, 0, H - 50.f), LightIntensity * 0.5f, 1200.f);
+}
+
+void UBridgeInteriorComponent::BuildOriginal()
+{
 	const float R = WallRadius;
 	const float RD = DeckRadius;
 	const float HD = DeckHeight;
@@ -390,4 +485,393 @@ void UBridgeInteriorComponent::Build()
 		Light(FRotator(0.f, A, 0.f).Vector() * (R * 0.55f) + FVector(0, 0, H - 120.f), LightIntensity, 1300.f);
 	}
 	Light(FVector(0, 0, H - 130.f), LightIntensity * 0.5f, 1200.f);
+}
+
+// ---- The Enterprise-A bridge of Star Trek VI --------------------------------------------------
+//
+// After Donny Versiga's renders of the 2293 bridge. Light-grey cabinets and pilasters, a dark upper wall and
+// ceiling with square recessed light panels, white light bars everywhere (three stacked at every console's
+// foot, vertical runs up the pilaster edges, under the deck lips), large raked black display banks with teal
+// graphics, a black-railed command platform with a chevron stair down the front and lamp posts either side,
+// the shallow-V helm/navigation console with its central schematic display, the tall quilted captain's chair
+// flanked by two smaller chairs, burgundy turbolift doors aft with a burgundy bench under the aft stations,
+// and a red digital clock above. Same frame as the original: origin under the captain's chair, +X forward.
+
+UMaterialInstanceDynamic* UBridgeInteriorComponent::MakeOkuda(const TCHAR* TextureName, float Intensity)
+{
+	UMaterialInterface* Parent = OkudagramMaterial.LoadSynchronous();
+	UTexture* Tex = LoadObject<UTexture>(nullptr, *FString::Printf(TEXT("/Game/Slonk/Bridge/T_Okuda_%s.T_Okuda_%s"), TextureName, TextureName));
+	if (!Parent || !Tex)
+	{
+		return nullptr;
+	}
+	UMaterialInstanceDynamic* M = UMaterialInstanceDynamic::Create(Parent, this, *FString::Printf(TEXT("Bridge_Okuda_%s_%d"), TextureName, PieceCount));
+	M->SetTextureParameterValue(TEXT("Screen"), Tex);
+	M->SetScalarParameterValue(TEXT("Intensity"), Intensity);
+	M->SetScalarParameterValue(TEXT("UVMode"), ScreenUVMode);
+	Materials.Add(M);
+	return M;
+}
+
+void UBridgeInteriorComponent::SetLiveReadouts(float ShieldFraction, float HullFraction, float Throttle, float WarpFraction, bool bAlert)
+{
+	for (UMaterialInstanceDynamic* M : TacticalScreens)
+	{
+		if (M)
+		{
+			M->SetScalarParameterValue(TEXT("BarA"), FMath::Clamp(ShieldFraction, 0.f, 1.f));
+			M->SetScalarParameterValue(TEXT("BarB"), FMath::Clamp(HullFraction, 0.f, 1.f));
+			M->SetScalarParameterValue(TEXT("Flash"), bAlert ? 1.f : 0.f);
+		}
+	}
+	for (UMaterialInstanceDynamic* M : HelmScreens)
+	{
+		if (M)
+		{
+			M->SetScalarParameterValue(TEXT("BarA"), FMath::Clamp(FMath::Abs(Throttle), 0.f, 1.f));
+			M->SetScalarParameterValue(TEXT("BarB"), FMath::Clamp(WarpFraction, 0.f, 1.f));
+		}
+	}
+}
+
+UMaterialInstanceDynamic* UBridgeInteriorComponent::RefitScreen(const TCHAR* Name, float Seed, float Intensity, float CellScale, float Gap)
+{
+	UMaterialInstanceDynamic* M = MakeScreen(DisplayMaterial, Name, Seed, Intensity, CellScale);
+	if (M)
+	{
+		M->SetScalarParameterValue(TEXT("Gap"), Gap);
+		M->SetVectorParameterValue(TEXT("PanelColor"), FLinearColor(0.004f, 0.006f, 0.008f));
+		M->SetVectorParameterValue(TEXT("ColorA"), FLinearColor(0.2f, 0.95f, 0.75f));
+		M->SetVectorParameterValue(TEXT("ColorB"), FLinearColor(0.15f, 0.6f, 1.0f));
+		M->SetVectorParameterValue(TEXT("ColorC"), FLinearColor(0.3f, 0.9f, 0.35f));
+		M->SetVectorParameterValue(TEXT("ColorD"), FLinearColor(0.6f, 0.95f, 0.9f));
+	}
+	return M;
+}
+
+void UBridgeInteriorComponent::LightBars(float AngleDeg, float Radial, float Z, float Width, int32 Count, float Pitch)
+{
+	for (int32 i = 0; i < Count; ++i)
+	{
+		WallBox(AngleDeg, Radial, Z + i * Pitch, 2.f, Width, 5.f, StripWhite, 0.f, false);
+	}
+}
+
+void UBridgeInteriorComponent::RefitChair(const FVector& FloorPos, float YawDeg, bool bCrew, UMaterialInterface* UniformMat)
+{
+	const FRotator R(0.f, YawDeg, 0.f);
+	const FVector F = R.Vector();
+	// Round black base, black column, grey upholstered seat and an egg-shaped grey back on a black spine,
+	// with black hoop arms.
+	Cyl(FloorPos + FVector(0, 0, 3.f), 27.f, 6.f, ChairBlack, R);
+	Cyl(FloorPos + FVector(0, 0, 26), 6.f, 46.f, ChairBlack, R);
+	Box(FloorPos + FVector(0, 0, 50), FVector(46, 46, 9), R, SeatGrey);
+	Box(FloorPos - F * 20.f + FVector(0, 0, 62), FVector(6, 14, 30), R, ChairBlack);
+	Piece(SphereMesh, FloorPos - F * 23.f + FVector(0, 0, 90), FVector(12, 44, 64), R, SeatGrey);
+	for (int32 s = -1; s <= 1; s += 2)
+	{
+		Box(FloorPos - F * 4.f + FVector(0, 0, 72) + R.RotateVector(FVector(0, s * 25.f, 0)), FVector(34, 3.5f, 3.5f), R, ChairBlack);
+		Box(FloorPos - F * 20.f + FVector(0, 0, 62) + R.RotateVector(FVector(0, s * 25.f, 0)), FVector(3.5f, 3.5f, 22), R, ChairBlack);
+	}
+	if (bCrew && bShowCrew)
+	{
+		Crew(FloorPos + FVector(0, 0, 55.f), YawDeg, UniformMat ? UniformMat : ChairBlack);
+	}
+}
+
+void UBridgeInteriorComponent::RefitStation(float A, float Chord, float& Seed, bool bConsole)
+{
+	const float R = WallRadius;
+	const float HD = DeckHeight;
+	if (bConsole)
+	{
+		// Cabinet: light-grey block with three light bars at its foot, a black desk top with lit touch panels,
+		// and the big raked display bank leaning back against the wall above a black bezel.
+		WallBox(A, R - 40.f, HD + 40.f, 60.f, Chord - 12.f, 80.f, PanelGrey);
+		LightBars(A, R - 71.f, HD + 8.f, Chord - 24.f);
+		WallBox(A, R - 48.f, HD + 81.5f, 48.f, Chord - 14.f, 3.f, ScreenDark, 0.f, false);
+		WallBox(A, R - 52.f, HD + 83.6f, 36.f, Chord - 30.f, 1.5f, MakeScreen(ButtonsMaterial, TEXT("RefitTouch"), Seed, DisplayIntensity * 0.8f, 0.7f), 0.f, false);
+		WallBox(A, R - 12.f, HD + 132.f, 10.f, Chord - 10.f, 108.f, ScreenDark, -16.f, false);
+		// Okudagram screens, dealt round the ring from the starboard bow: weapons, tactical (live), communications,
+		// then science, engineering, environmental, navigation on the port side.
+		static const TCHAR* Order[] = { TEXT("Weapons"), TEXT("Tactical"), TEXT("Communications"), TEXT("Science"), TEXT("Engineering"), TEXT("Environmental"), TEXT("Navigation") };
+		const TCHAR* TexName = Order[RefitStationIndex % UE_ARRAY_COUNT(Order)];
+		++RefitStationIndex;
+		UMaterialInstanceDynamic* Screen = MakeOkuda(TexName, DisplayIntensity * 0.55f);
+		if (Screen && FCString::Strcmp(TexName, TEXT("Tactical")) == 0)
+		{
+			TacticalScreens.Add(Screen);
+		}
+		UMaterialInterface* BankMat = Screen ? static_cast<UMaterialInterface*>(Screen) : RefitScreen(TEXT("RefitBank"), Seed + 0.5f, DisplayIntensity * 0.7f, 2.4f, 0.6f);
+		// The bank is twice as wide as tall, like the textures.
+		WallBox(A, R - 18.4f, HD + 132.f, 2.f, Chord - 22.f, (Chord - 22.f) * 0.5f, BankMat, -16.f, false);
+	}
+	else
+	{
+		// The master situation display alone over the aft bench.
+		WallBox(A, R - 4.f, HD + 150.f, 8.f, Chord - 10.f, 104.f, ScreenDark, -6.f, false);
+		UMaterialInstanceDynamic* Screen = MakeOkuda(TEXT("MasterSituation"), DisplayIntensity * 0.55f);
+		UMaterialInterface* BankMat = Screen ? static_cast<UMaterialInterface*>(Screen) : RefitScreen(TEXT("RefitAftBank"), Seed + 0.5f, DisplayIntensity * 0.7f, 2.4f, 0.6f);
+		WallBox(A, R - 8.6f, HD + 150.f, 2.f, Chord - 22.f, (Chord - 22.f) * 0.5f, BankMat, -6.f, false);
+	}
+	Seed += 7.f;
+}
+
+void UBridgeInteriorComponent::BuildRefit()
+{
+	PanelGrey = MakeLit(TEXT("PanelGrey"), FLinearColor(0.52f, 0.53f, 0.55f), 0.6f);
+	PanelDark = MakeLit(TEXT("PanelDark"), FLinearColor(0.14f, 0.15f, 0.165f), 0.75f);
+	Carpet = MakeLit(TEXT("Carpet"), FLinearColor(0.11f, 0.115f, 0.12f), 0.9f);
+	StripWhite = MakeLit(TEXT("StripWhite"), FLinearColor(0.9f, 0.92f, 0.95f), 0.8f, 0.f, FLinearColor(0.95f, 0.97f, 1.0f), LightPanelEmissive * 2.5f);
+	Burgundy = MakeLit(TEXT("Burgundy"), FLinearColor(0.28f, 0.045f, 0.055f), 0.7f);
+	SeatGrey = MakeLit(TEXT("SeatGrey"), FLinearColor(0.58f, 0.58f, 0.59f), 0.95f);
+	RailGrey = MakeLit(TEXT("RailGrey"), FLinearColor(0.45f, 0.45f, 0.47f), 0.35f, 0.4f);
+	ScreenDark = MakeLit(TEXT("ScreenDark"), FLinearColor(0.012f, 0.014f, 0.018f), 0.3f);
+	UniformMaroon = MakeLit(TEXT("UniformMaroon"), FLinearColor(0.40f, 0.07f, 0.09f), 0.85f);
+	ClockRed = MakeLit(TEXT("ClockRed"), FLinearColor(0.1f, 0.0f, 0.0f), 0.5f, 0.f, FLinearColor(1.0f, 0.1f, 0.05f), 6.f);
+
+	const float R = WallRadius;
+	const float HD = DeckHeight;          // perimeter deck above the helm floor
+	const float HC = HD + 26.f;           // command platform
+	const float H = CeilingHeight;
+	const float VS = ViewscreenHalfAngle;
+	const float RC = 215.f;               // command platform radius
+	const float RD = DeckRadius;          // inner edge of the perimeter deck
+	const float Lifts[2] = { 150.f, 210.f };
+	const float LiftHalf = 12.f;
+
+	// ---- Floors. Helm floor, perimeter deck ring with a black riser and a light strip under its lip, the two-tier
+	// command platform behind the helm with black risers, and a chevron stair down the front.
+	Cyl(FVector(0, 0, -3), RD + 10.f, 6.f, Carpet);
+	Revolve({ FVector2D(RD, 0), FVector2D(R + 15.f, 0), FVector2D(R + 15.f, HD), FVector2D(RD, HD) }, 0.f, 360.f, Carpet);
+	Revolve({ FVector2D(RD - 1.5f, 0.f), FVector2D(RD + 1.f, 0.f), FVector2D(RD + 1.f, HD - 5.f), FVector2D(RD - 1.5f, HD - 5.f) }, 0.f, 360.f, ChairBlack);
+	Revolve({ FVector2D(RD - 1.f, HD - 5.f), FVector2D(RD + 3.f, HD - 5.f), FVector2D(RD + 3.f, HD - 1.f), FVector2D(RD - 1.f, HD - 1.f) }, 0.f, 360.f, StripWhite, false);
+	Revolve({ FVector2D(0.f, 0.f), FVector2D(RC, 0.f), FVector2D(RC, HC), FVector2D(0.f, HC) }, 46.f, 314.f, Carpet);
+	Revolve({ FVector2D(RC - 1.f, 0.f), FVector2D(RC + 1.5f, 0.f), FVector2D(RC + 1.5f, HC - 5.f), FVector2D(RC - 1.f, HC - 5.f) }, 46.f, 314.f, ChairBlack);
+	Revolve({ FVector2D(RC - 1.f, HC - 5.f), FVector2D(RC + 2.5f, HC - 5.f), FVector2D(RC + 2.5f, HC - 1.f), FVector2D(RC - 1.f, HC - 1.f) }, 46.f, 314.f, StripWhite, false);
+	for (int32 s = -1; s <= 1; s += 2)
+	{
+		// Squared shoulders either side of the stair, black-faced.
+		Box(FVector(100.f, s * 170.f, HC * 0.5f), FVector(96.f, 112.f, HC), FRotator::ZeroRotator, Carpet);
+		Box(FVector(149.f, s * 170.f, HC * 0.5f - 2.5f), FVector(2.f, 112.f, HC - 5.f), FRotator::ZeroRotator, ChairBlack);
+		Box(FVector(149.5f, s * 170.f, HC - 3.f), FVector(2.f, 110.f, 4.f), FRotator::ZeroRotator, StripWhite, false);
+	}
+	// Two steps, chevron-pointed toward the helm.
+	for (int32 st = 0; st < 2; ++st)
+	{
+		const float Top = HC * (st == 0 ? 0.5f : 1.0f);
+		const float X = st == 0 ? 160.f : 136.f;
+		Box(FVector(X, 0.f, Top * 0.5f), FVector(28.f, 232.f - st * 20.f, Top), FRotator::ZeroRotator, Carpet);
+		for (int32 s = -1; s <= 1; s += 2)
+		{
+			Box(FVector(X + 12.f, s * 50.f, Top * 0.5f), FVector(28.f, 100.f, Top), FRotator(0.f, s * -22.f, 0.f), Carpet);
+		}
+		Box(FVector(X + 26.f, 0.f, Top - 2.5f), FVector(2.f, 60.f, 4.f), FRotator::ZeroRotator, StripWhite, false);
+	}
+
+	// ---- Handrail round the command platform: black round top rail and a thin lower rail on flat grey posts,
+	// open at the front; a black lamp post with light bars at each stair end.
+	{
+		const float RR = RC + 10.f;
+		const float Arc0 = 50.f, Arc1 = 310.f;
+		Revolve({ FVector2D(RR - 3.f, HC + 93.f), FVector2D(RR + 3.f, HC + 93.f), FVector2D(RR + 3.f, HC + 99.f), FVector2D(RR - 3.f, HC + 99.f) }, Arc0, Arc1, ChairBlack, false);
+		Revolve({ FVector2D(RR - 1.5f, HC + 52.f), FVector2D(RR + 1.5f, HC + 52.f), FVector2D(RR + 1.5f, HC + 55.f), FVector2D(RR - 1.5f, HC + 55.f) }, Arc0, Arc1, RailGrey, false);
+		const int32 Posts = 16;
+		for (int32 i = 0; i < Posts; ++i)
+		{
+			const float A = FMath::Lerp(Arc0, Arc1, (float)i / (Posts - 1));
+			Box(FRotator(0.f, A, 0.f).Vector() * RR + FVector(0, 0, HC + 47.f), FVector(2.f, 7.f, 94.f), FRotator(0.f, A, 0.f), RailGrey, false);
+		}
+		for (int32 s = -1; s <= 1; s += 2)
+		{
+			const FVector P(176.f, s * 132.f, 0.f);
+			Cyl(P + FVector(0, 0, HC * 0.5f + 60.f), 7.f, 120.f, ChairBlack, FRotator::ZeroRotator, false);
+			for (int32 k = 0; k < 3; ++k)
+			{
+				Cyl(P + FVector(0, 0, HC * 0.5f + 70.f + k * 14.f), 7.6f, 5.f, StripWhite, FRotator::ZeroRotator, false);
+			}
+			// Small black side table beside each post.
+			Cyl(P + FVector(-30.f, s * 30.f, HC + 55.f), 4.f, 60.f, ChairBlack, FRotator::ZeroRotator, false);
+			Piece(CylinderMesh, P + FVector(-30.f, s * 30.f, HC + 86.f), FVector(70.f, 34.f, 4.f), FRotator(0.f, s * 30.f, 0.f), ChairBlack, false);
+		}
+	}
+
+	// ---- Walls and ceiling: light-grey wall behind the cabinets, dark grey above the display banks and overhead,
+	// square recessed light panels in a ring, a ribbed grey dome at the centre.
+	Revolve({ FVector2D(R + 4.f, HD), FVector2D(R + 16.f, HD), FVector2D(R + 16.f, HD + 150.f), FVector2D(R + 4.f, HD + 150.f) }, VS, 360.f - VS, PanelGrey);
+	Revolve({ FVector2D(R + 4.f, HD + 150.f), FVector2D(R + 16.f, HD + 150.f), FVector2D(R + 16.f, H + 2.f), FVector2D(R + 4.f, H + 2.f) }, VS, 360.f - VS, PanelDark);
+	Revolve({ FVector2D(R - 2.f, H - 36.f), FVector2D(R + 6.f, H - 36.f), FVector2D(R + 6.f, H - 32.f), FVector2D(R - 2.f, H - 32.f) }, VS, 360.f - VS, StripWhite, false);
+	Cyl(FVector(0, 0, H + 6.f), R + 20.f, 12.f, PanelDark);
+	Revolve({ FVector2D(0.f, H - 1.f), FVector2D(R * 0.98f, H - 1.f), FVector2D(R * 0.98f, H + 1.f), FVector2D(0.f, H + 1.f) }, 0.f, 360.f, PanelDark);
+	for (int32 i = 0; i < 10; ++i)
+	{
+		const float A = i * 36.f + 18.f;
+		Box(FRotator(0.f, A, 0.f).Vector() * (R * 0.72f) + FVector(0, 0, H - 2.f), FVector(70.f, 44.f, 3.f), FRotator(0.f, A, 0.f), StripWhite, false);
+	}
+	Piece(SphereMesh, FVector(0, 0, H + 20.f), FVector(240.f, 240.f, 90.f), FRotator::ZeroRotator, PanelGrey, false);
+	Revolve({ FVector2D(90.f, H - 22.f), FVector2D(122.f, H - 22.f), FVector2D(122.f, H - 18.f), FVector2D(90.f, H - 18.f) }, 0.f, 360.f, StripWhite, false);
+	Cyl(FVector(0, 0, H - 26.f), 52.f, 4.f, StripWhite, FRotator::ZeroRotator, false);
+
+	// ---- Perimeter stations every 32 degrees, pilasters with vertical light bars between them; the turbolifts
+	// and the viewscreen are left clear.
+	const float Step = 32.f;
+	const float Chord = 2.f * R * FMath::Sin(FMath::DegreesToRadians(Step * 0.5f));
+	float Seed = 11.f;
+	TArray<float> StationAngles;
+	for (float A = VS + Step * 0.5f + 4.f; A < 360.f - VS - Step * 0.4f; A += Step)
+	{
+		bool bLift = false;
+		for (float L : Lifts)
+		{
+			if (FMath::Abs(FMath::FindDeltaAngleDegrees(A, L)) < LiftHalf + Step * 0.45f)
+			{
+				bLift = true;
+			}
+		}
+		if (bLift)
+		{
+			continue;
+		}
+		const bool bAft = FMath::Abs(FMath::FindDeltaAngleDegrees(A, 180.f)) < 8.f;
+		RefitStation(A, Chord, Seed, !bAft);
+		if (!bAft)
+		{
+			StationAngles.Add(A);
+		}
+	}
+	for (float A = VS + 4.f; A <= 360.f - VS - 3.f; A += Step)
+	{
+		bool bNearLift = false;
+		for (float L : Lifts)
+		{
+			bNearLift |= FMath::Abs(FMath::FindDeltaAngleDegrees(A, L)) < LiftHalf + 8.f;
+		}
+		if (bNearLift)
+		{
+			continue;
+		}
+		WallBox(A, R - 30.f, (HD + H) * 0.5f, 64.f, 16.f, H - HD, PanelGrey);
+		// A vertical light bar up each edge of the pilaster's inner face.
+		for (int32 s = -1; s <= 1; s += 2)
+		{
+			const FVector Dir = FRotator(0.f, A, 0.f).Vector();
+			const FVector Side = FRotator(0.f, A + 90.f, 0.f).Vector();
+			Box(Dir * (R - 63.f) + Side * (s * 6.5f) + FVector(0, 0, HD + 90.f + (H - HD - 110.f) * 0.5f), FVector(2.f, 2.5f, H - HD - 110.f), FRotator(0.f, A, 0.f), StripWhite, false);
+		}
+	}
+
+	// ---- Viewscreen: a wide opening in a light-grey frame with a sill console under it and a dark lintel.
+	Revolve({ FVector2D(R + 2.f, HD), FVector2D(R + 12.f, HD), FVector2D(R + 12.f, ViewscreenBottom), FVector2D(R + 2.f, ViewscreenBottom) }, -VS, VS, PanelGrey);
+	LightBars(0.f, R - 1.f, HD + 8.f, 200.f);
+	Revolve({ FVector2D(R - 6.f, ViewscreenBottom - 10.f), FVector2D(R + 8.f, ViewscreenBottom - 10.f), FVector2D(R + 8.f, ViewscreenBottom), FVector2D(R - 6.f, ViewscreenBottom) }, -VS, VS, LightGrey, false);
+	Revolve({ FVector2D(R + 2.f, ViewscreenTop), FVector2D(R + 16.f, ViewscreenTop), FVector2D(R + 16.f, H + 2.f), FVector2D(R + 2.f, H + 2.f) }, -VS, VS, PanelDark);
+	Revolve({ FVector2D(R - 6.f, ViewscreenTop), FVector2D(R + 8.f, ViewscreenTop), FVector2D(R + 8.f, ViewscreenTop + 10.f), FVector2D(R - 6.f, ViewscreenTop + 10.f) }, -VS, VS, LightGrey, false);
+	for (int32 s = -1; s <= 1; s += 2)
+	{
+		WallBox(s * (VS + 1.5f), R + 1.f, (HD + H) * 0.5f, 34.f, 24.f, H - HD, LightGrey);
+		WallBox(s * (VS - 0.8f), R - 2.f, (ViewscreenBottom + ViewscreenTop) * 0.5f, 2.f, 2.5f, ViewscreenTop - ViewscreenBottom, StripWhite, 0.f, false);
+	}
+
+	// ---- Turbolifts aft: burgundy doors in pale surrounds with a small lit sign, light bars up the surround edges.
+	for (float A : Lifts)
+	{
+		WallBox(A, R + 8.f, HD + 110.f, 8.f, 150.f, 220.f, LightGrey);
+		WallBox(A, R + 1.f, HD + 100.f, 4.f, 110.f, 200.f, Burgundy);
+		WallBox(A, R - 1.5f, HD + 100.f, 1.f, 2.f, 196.f, ChairBlack, 0.f, false);
+		WallBox(A, R - 1.f, HD + 212.f, 2.f, 40.f, 7.f, ClockRed, 0.f, false);
+		for (int32 s = -1; s <= 1; s += 2)
+		{
+			WallBox(A + s * 7.6f, R + 3.f, HD + 110.f, 2.f, 3.f, 216.f, StripWhite, 0.f, false);
+		}
+	}
+	// The burgundy bench under the aft display, between the lifts, and the red clock above the aft centre.
+	{
+		const float A = 180.f;
+		WallBox(A, R - 32.f, HD + 22.f, 52.f, 300.f, 44.f, Burgundy);
+		WallBox(A, R - 10.f, HD + 62.f, 14.f, 300.f, 44.f, Burgundy);
+		LightBars(A, R - 59.f, HD + 8.f, 296.f);
+		WallBox(A, R + 2.f, H - 48.f, 2.f, 36.f, 9.f, ClockRed, 0.f, false);
+	}
+
+	// ---- Helm and navigation: a shallow-V console of two light-grey wings with black tops outlined in white,
+	// slanted ends with three diagonal light bars, a grey base with a lit panel, and between the two chairs a
+	// pedestal carrying the round ship schematic that faces the captain.
+	{
+		const float X0 = 236.f;
+		for (int32 s = -1; s <= 1; s += 2)
+		{
+			const FRotator Rw(0.f, s * 20.f, 0.f);
+			const FVector C = FVector(X0, s * 78.f, 0.f);
+			Box(C + FVector(0, 0, 44.f), FVector(62.f, 168.f, 88.f), Rw, PanelGrey);
+			Box(C + FVector(0, 0, 90.f), FVector(70.f, 174.f, 4.f), FRotator(-8.f, s * 20.f, 0.f), ScreenDark);
+			Box(C + FVector(0, 0, 92.5f), FVector(72.f, 176.f, 1.2f), FRotator(-8.f, s * 20.f, 0.f), StripWhite, false);
+			Box(C + FVector(1.f, 0, 93.2f), FVector(62.f, 166.f, 1.2f), FRotator(-8.f, s * 20.f, 0.f), ScreenDark, false);
+			{
+				UMaterialInstanceDynamic* Wing = MakeOkuda(s < 0 ? TEXT("Helm") : TEXT("Navigation"), DisplayIntensity * 0.5f);
+				if (Wing && s < 0)
+				{
+					HelmScreens.Add(Wing);
+				}
+				UMaterialInterface* WingMat = Wing ? static_cast<UMaterialInterface*>(Wing) : MakeScreen(ButtonsMaterial, s < 0 ? TEXT("RefitHelm") : TEXT("RefitNav"), 101.f + s, DisplayIntensity * 0.9f, 0.7f);
+				Box(C + FVector(4.f, 0, 94.2f), FVector(60.f, 120.f, 1.f), FRotator(-8.f, s * 20.f, 0.f), WingMat, false);
+			}
+			// Three diagonal light bars on the outboard end face.
+			for (int32 k = 0; k < 3; ++k)
+			{
+				Box(C + Rw.RotateVector(FVector(-10.f + k * 12.f, s * 85.f, 0.f)) + FVector(0, 0, 40.f + k * 10.f), FVector(4.f, 2.f, 26.f), FRotator(0.f, s * 20.f, s * 35.f), StripWhite, false);
+			}
+		}
+		Box(FVector(X0 - 20.f, 0.f, 44.f), FVector(60.f, 60.f, 88.f), FRotator::ZeroRotator, PanelGrey);
+		Box(FVector(X0 - 51.f, 0.f, 40.f), FVector(2.f, 40.f, 48.f), FRotator::ZeroRotator, StripWhite, false);
+		// Schematic pedestal between the helm chairs: tall enough that its screen clears the platform edge from
+		// the captain's chair, with a small touch panel above the screen.
+		Box(FVector(X0 - 92.f, 0.f, 70.f), FVector(28.f, 46.f, 140.f), FRotator::ZeroRotator, PanelGrey);
+		Box(FVector(X0 - 106.5f, 0.f, 92.f), FVector(1.5f, 40.f, 84.f), FRotator::ZeroRotator, ScreenDark, false);
+		{
+			UMaterialInstanceDynamic* Sch = MakeOkuda(TEXT("Schematic"), DisplayIntensity * 0.6f);
+			UMaterialInterface* SchMat = Sch ? static_cast<UMaterialInterface*>(Sch) : RefitScreen(TEXT("RefitSchematic"), 77.f, DisplayIntensity, 1.4f, 0.3f);
+			Box(FVector(X0 - 107.5f, 0.f, 84.f), FVector(1.f, 34.f, 34.f), FRotator::ZeroRotator, SchMat, false);
+			Box(FVector(X0 - 107.5f, 0.f, 118.f), FVector(1.f, 30.f, 10.f), FRotator::ZeroRotator, MakeScreen(ButtonsMaterial, TEXT("RefitPedestal"), 303.f, DisplayIntensity * 0.6f, 0.5f), false);
+		}
+		for (int32 s = -1; s <= 1; s += 2)
+		{
+			RefitChair(FVector(X0 - 92.f, s * 70.f, 0.f), 0.f, true, UniformMaroon);
+		}
+	}
+
+	// ---- Captain's chair at the platform centre: tall quilted grey back with a headrest, black arms with small
+	// touch panels, a grey pedestal; the camera sits at its headrest. Two smaller grey chairs flank it.
+	Cyl(FVector(0, 0, HC + 2.5f), 60.f, 5.f, ChairBlack);
+	Cyl(FVector(0, 0, HC + 22.f), 14.f, 36.f, PanelGrey);
+	Box(FVector(-4.f, 0, HC + 46.f), FVector(60, 58, 12), FRotator::ZeroRotator, SeatGrey);
+	// The back stays below the eye line (z 165 at the headrest) so the view aft is not our own chair.
+	for (int32 k = 0; k < 4; ++k)
+	{
+		Box(FVector(-33.f - k * 1.0f, 0, HC + 52.f + k * 11.f), FVector(12, 54 - k * 2.f, 10), FRotator(-6.f, 0.f, 0.f), SeatGrey);
+	}
+	Box(FVector(-41.f, 0, HC + 58.f), FVector(4, 58, 76), FRotator(-6.f, 0.f, 0.f), ChairBlack);
+	for (int32 s = -1; s <= 1; s += 2)
+	{
+		Box(FVector(-4.f, s * 36.f, HC + 70.f), FVector(56, 10, 9), FRotator::ZeroRotator, ChairBlack);
+		Box(FVector(12.f, s * 36.f, HC + 75.f), FVector(18, 8, 1.5f), FRotator::ZeroRotator, MakeScreen(ButtonsMaterial, TEXT("RefitArm"), 200.f + s, DisplayIntensity * 0.7f, 0.5f), false);
+		RefitChair(FVector(-20.f, s * 128.f, HC), 0.f, false, nullptr);
+	}
+
+	// ---- Perimeter crew: chairs at the stations, some occupied.
+	int32 k = 0;
+	for (float A : StationAngles)
+	{
+		const bool bCrew = (k % 3) != 1;
+		UMaterialInterface* Uni = (k % 2 == 0) ? UniformMaroon : UniformRed;
+		RefitChair(FRotator(0.f, A, 0.f).Vector() * (R - 132.f) + FVector(0, 0, HD), A, bCrew, Uni);
+		++k;
+	}
+
+	// ---- Lighting: cool, fairly dim fill; the strips and panels do the accenting.
+	for (int32 i = 0; i < 6; ++i)
+	{
+		const float A = i * 60.f + 30.f;
+		Light(FRotator(0.f, A, 0.f).Vector() * (R * 0.6f) + FVector(0, 0, H - 100.f), LightIntensity * 0.7f, 1300.f);
+	}
+	Light(FVector(0, 0, H - 50.f), LightIntensity * 0.5f, 1200.f);
 }

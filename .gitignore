@@ -77,3 +77,11 @@ Intermediate
 Saved
 Binaries
 DerivedDataCache
+
+# Blender bridge build outputs (the script is the source)
+blender/bridge-st6/*.blend
+blender/bridge-st6/*.blend1
+blender/bridge-st6/*.fbx
+blender/bridge-st6/*.fbm/
+blender/bridge-st6/okuda_png/
+blender/bridge-st6/previews/
