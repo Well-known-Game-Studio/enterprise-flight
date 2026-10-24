@@ -154,8 +154,9 @@ def arc_sweep(name, profile, a0, a1, material, group, step=3.0, smooth=True, cap
             if len(poly.vertices) == 4: poly.use_smooth = True
     return obj
 
-def lathe(name, profile, material, group, segments=48, smooth=True):
-    """Revolve an open (r, z) profile a full turn, capped at both ends; split per segment like arc_sweep."""
+def lathe(name, profile, material, group, segments=48, smooth=True, cap=True):
+    """Revolve an open (r, z) profile a full turn, capped at both ends with full discs (cap=False for an annular
+    profile, which should be closed on itself instead); split per segment like arc_sweep."""
     verts = []; faces = []
     P = len(profile)
     for j in range(P - 1):
@@ -168,7 +169,7 @@ def lathe(name, profile, material, group, segments=48, smooth=True):
             i2 = (i + 1) % segments
             faces.append((base + 2 * i, base + 2 * i2, base + 2 * i2 + 1, base + 2 * i + 1))
     for (r, z), flip in ((profile[0], True), (profile[-1], False)):
-        if r > 1e-6:
+        if cap and r > 1e-6:
             base = len(verts)
             for i in range(segments):
                 c, sn = ang(360.0 * i / segments); verts.append((r * c, r * sn, z))
@@ -268,7 +269,11 @@ ZR = 0.60        # main deck
 ZC = ZR          # the captain's chair stands on the main deck
 HD = ZR
 HC = ZC
-H = 3.40         # ceiling above the sunken floor
+H = 3.40         # the high ceiling above the sunken floor
+ZS = 3.00        # the low soffit over the stations
+RS = 4.25        # the soffit's inner edge, where the ceiling steps up
+RL = 2.30        # radius of the central lit disc, recessed in a well above the ceiling
+WELL = 0.32      # depth of that well
 VS = 32.0        # viewscreen half-angle: the forward bulkhead separators stand here
 RW = 3.20        # radius of the sunken circle
 XA = 1.45        # apex of the helm platform's chevron nose
@@ -276,7 +281,7 @@ XB = -0.85       # the chord where the helm platform meets the deck
 YP = 1.50        # half-width of the helm platform at the chord
 STAIRS = (-38.0, 38.0)     # bearings of the two side stairs down from the deck into the sunken floor
 RAIL_GAP = 100.0           # degrees of open rail behind the captain
-LIFTS = (-103.0, 103.0); LIFT_HALF = 12.0
+LIFTS = (-103.0, 103.0); LIFT_HALF = 9.0   # the alcove is 2 x LIFT_HALF wide
 STEP = 32.0
 # Stations round the deck: bearing, hood span in degrees, kind, Okudagram. 0 is the viewscreen, positive starboard.
 # Four seated stations each side between the viewscreen bulkhead and the midpoint bulkhead at 90; just aft of the
@@ -360,25 +365,56 @@ def lamp_post(name, x, y, z):
             o.location = B(x, y, z + 0.30 + k * 0.62 + j * 0.075)
 
 def walls_ceiling():
-    arc_sweep("WallLower", [(R + 0.04, 0.0), (R + 0.16, 0.0), (R + 0.16, HD + 2.42), (R + 0.04, HD + 2.42)], VS, 360 - VS, M_PanelGrey(), "Walls", cap=False)
-    # Above the station ledges the wall is dark and steps in slightly toward the ceiling.
-    arc_sweep("WallUpper", [(R - 0.10, HD + 2.42), (R + 0.16, HD + 2.42), (R + 0.16, H + 0.02), (R - 0.10, H + 0.02)], VS, 360 - VS, M_PanelDark(), "Walls", cap=False)
-    lathe("Ceiling", [(0.0, H), (R + 0.2, H), (R + 0.2, H + 0.12), (0.0, H + 0.12)], M_PanelDark(), "Ceiling", smooth=False)
-    # A ring of square recessed light panels and, inside it, small round can lights.
-    for i in range(12):
-        a = i * 30 + 15
-        wallbox(f"CeilPanel{i}", a, R * 0.80, H - 0.015, 0.62, 0.42, 0.03, M_Strip(), "Lights")
-        wallbox(f"CeilPanelRim{i}", a, R * 0.80, H - 0.005, 0.70, 0.50, 0.012, M_PanelGrey(), "Ceiling")
-    soft = mat("LightSoft", WHITE, 0.8, emit=(0.95, 0.97, 1.0), strength=1.5)
-    for i in range(8):
-        a = i * 45 + 22
+    """Walls from the floor to the soffit, broken at the turbolift alcoves. Three ceiling levels, after v01/v04/v21:
+    the low dark soffit over the stations with pairs of small square lights; a step up to the high dark ring with a
+    round can light over each station; and the central white lit disc divided by dark radial ribs round a dark hub
+    that carries the glass dome."""
+    soft = mat("LightSoft", WHITE, 0.8, emit=(0.95, 0.97, 1.0), strength=4.0)
+    glass = mat("DomeGlass", (0.22, 0.23, 0.25), 0.12, 0.6)
+    # Lower wall in segments that stop at the alcoves.
+    cuts = sorted([(L - LIFT_HALF, L + LIFT_HALF) for L in LIFTS], key=lambda c: (c[0] + 360) % 360)
+    a = VS
+    for (c0, c1) in sorted([((c0 + 360) % 360, (c1 + 360) % 360) for (c0, c1) in cuts]):
+        arc_sweep(f"WallLower{int(a)}", [(R + 0.04, 0.0), (R + 0.16, 0.0), (R + 0.16, ZS + 0.02), (R + 0.04, ZS + 0.02)], a, c0, M_PanelGrey(), "Walls", cap=False)
+        a = c1
+    arc_sweep(f"WallLower{int(a)}", [(R + 0.04, 0.0), (R + 0.16, 0.0), (R + 0.16, ZS + 0.02), (R + 0.04, ZS + 0.02)], a, 360 - VS, M_PanelGrey(), "Walls", cap=False)
+    # Soffit over the stations, from the wall in to RS, and the step face up to the high ceiling.
+    arc_sweep("Soffit", [(RS, ZS), (R + 0.16, ZS), (R + 0.16, ZS + 0.10), (RS, ZS + 0.10)], 0, 360, M_PanelDark(), "Ceiling", smooth=False, cap=False)
+    arc_sweep("SoffitStep", [(RS - 0.06, ZS), (RS + 0.02, ZS), (RS + 0.02, H), (RS - 0.06, H)], 0, 360, M_PanelDark(), "Ceiling", cap=False)
+    arc_sweep("SoffitStepTrim", [(RS - 0.10, ZS + 0.06), (RS - 0.02, ZS + 0.06), (RS - 0.02, ZS + 0.14), (RS - 0.10, ZS + 0.14)], 0, 360, M_PostGrey(), "Ceiling", cap=False)
+    lathe("Ceiling", [(RL + 0.28, H), (RS + 0.2, H), (RS + 0.2, H + 0.12), (RL + 0.28, H + 0.12), (RL + 0.28, H)], M_PanelDark(), "Ceiling", 64, smooth=False, cap=False)
+    # Pairs of small square lights in the soffit over each station, and a can light in the high ring above it.
+    for (a, span, kind, name) in STATIONS:
+        c, sn = ang(a); tc, ts = ang(a + 90)
+        for sgn in (-1, 1):
+            box(f"SoffitLight{int(a)}{sgn}", ((R - 0.95) * c + tc * sgn * 0.22, (R - 0.95) * sn + ts * sgn * 0.22, ZS - 0.01), (0.26, 0.22, 0.03), M_Strip(), "Lights", yaw=a)
+            box(f"SoffitLightRim{int(a)}{sgn}", ((R - 0.95) * c + tc * sgn * 0.22, (R - 0.95) * sn + ts * sgn * 0.22, ZS - 0.005), (0.32, 0.28, 0.012), M_PostGrey(), "Ceiling", yaw=a)
+        o = lathe(f"CanLight{int(a)}", [(0.0, H - 0.03), (0.10, H - 0.03), (0.10, H), (0.0, H)], M_Strip(), "Lights", 20); o.location = B((RS - 0.55) * c, (RS - 0.55) * sn, 0)
+        o = lathe(f"CanRim{int(a)}", [(0.10, H - 0.035), (0.13, H - 0.035), (0.13, H), (0.10, H), (0.10, H - 0.035)], M_PostGrey(), "Ceiling", 20, cap=False); o.location = B((RS - 0.55) * c, (RS - 0.55) * sn, 0)
+    # The central lit disc, recessed in a well above the ceiling so it only shows from beneath (v01 sees a dark
+    # ceiling, v21 the white disc): the well's dark wall, the disc at its top, six heavy dark ribs across its mouth
+    # from the hub, and the hub itself hanging below.
+    lathe("SkyDisc", [(0.0, H + WELL), (RL, H + WELL), (RL, H + WELL + 0.06), (0.0, H + WELL + 0.06)], soft, "Lights", 64)
+    lathe("SkyWell", [(RL - 0.01, H - 0.04), (RL + 0.30, H - 0.04), (RL + 0.30, H + WELL + 0.02), (RL - 0.01, H + WELL + 0.02), (RL - 0.01, H - 0.04)], M_PanelDark(), "Ceiling", 64, cap=False)
+    lathe("SkyLip", [(RL - 0.04, H - 0.12), (RL + 0.34, H - 0.12), (RL + 0.34, H - 0.04), (RL - 0.04, H - 0.04), (RL - 0.04, H - 0.12)], M_PanelDark(), "Ceiling", 64, cap=False)
+    for k in range(6):
+        a = k * 60 + 30
         c, sn = ang(a)
-        o = lathe(f"CanLight{i}", [(0.0, H - 0.03), (0.09, H - 0.03), (0.09, H), (0.0, H)], M_Strip(), "Lights", 20); o.location = B(R * 0.52 * c, R * 0.52 * sn, 0)
-        o = lathe(f"CanRim{i}", [(0.09, H - 0.035), (0.12, H - 0.035), (0.12, H), (0.09, H)], M_PostGrey(), "Ceiling", 20); o.location = B(R * 0.52 * c, R * 0.52 * sn, 0)
-    # The central fixture: a shallow grey dome with a bright ring and centre.
-    lathe("Dome", [(0.0, H - 0.34), (0.55, H - 0.26), (0.82, H - 0.10), (0.86, H), (0.0, H)], M_PostGrey(), "Ceiling", 48)
-    lathe("DomeRing", [(0.60, H - 0.21), (0.84, H - 0.21), (0.84, H - 0.17), (0.60, H - 0.17)], soft, "Lights", 48)
-    lathe("DomeCentre", [(0.0, H - 0.36), (0.30, H - 0.36), (0.30, H - 0.32), (0.0, H - 0.32)], soft, "Lights", 48)
+        mid = (0.85 + RL + 0.1) / 2
+        box(f"Rib{k}", (mid * c, mid * sn, H - 0.03), (RL + 0.1 - 0.85, 0.22, 0.18), M_PanelDark(), "Ceiling", yaw=a)
+    lathe("Hub", [(0.0, H - 0.30), (0.92, H - 0.30), (0.92, H + 0.06), (0.0, H + 0.06)], M_PanelDark(), "Ceiling", 48)
+    lathe("HubRim", [(0.64, H - 0.38), (0.94, H - 0.38), (0.94, H - 0.28), (0.64, H - 0.28), (0.64, H - 0.38)], M_PanelDark(), "Ceiling", 48, cap=False)
+    # The dome: a dark glass hemisphere under the hub with a bright ring inside its collar.
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=32, ring_count=16, radius=0.5)
+    dome = bpy.context.active_object; dome.name = "Dome"
+    dome.scale = (1.0, 1.0, 0.9); dome.location = B(0.0, 0.0, H - 0.38)
+    for col in dome.users_collection: col.objects.unlink(dome)
+    finish(dome, glass, "Ceiling", smooth=True)
+    lathe("DomeRing", [(0.46, H - 0.40), (0.52, H - 0.40), (0.52, H - 0.36), (0.46, H - 0.36), (0.46, H - 0.40)], M_Strip(), "Lights", 48, cap=False)
+    for k in range(6):
+        a = k * 60
+        c, sn = ang(a)
+        box(f"DomeRib{k}", (0.26 * c, 0.26 * sn, H - 0.60), (0.44, 0.02, 0.02), M_Rail(), "Ceiling", yaw=a, pitch=-40)
 
 def near_lift(a, margin):
     return any(abs((a - L + 180) % 360 - 180) < LIFT_HALF + margin for L in LIFTS)
@@ -449,23 +485,29 @@ def stations():
     for (a, span, kind, name) in STATIONS:
         station_unit(a, span, name, kind)
     # Pilasters between neighbouring units, and the heavier bulkheads at the midpoints and either side of the screen.
-    def pilaster(a, width):
-        wallbox(f"Pilaster{int(a)}", a, R - 0.22, HD + 0.95 + (H - HD - 0.95) / 2, 0.56, width, H - HD - 0.95, M_PanelGrey(), "Walls", bevel=0.012)
+    def pilaster(a, width, trellis=False):
+        c, sn = ang(a); tc, ts = ang(a + 90)
+        # A pale slab from the deck up to the soffit: upright above the desk line, leaning out to the cabinet front below.
+        wallbox(f"Pilaster{int(a)}", a, R - 0.24, HD + 0.95 + (ZS - HD - 0.95) / 2, 0.60, width, ZS - HD - 0.95, M_PanelGrey(), "Walls", bevel=0.012)
         wallbox(f"PilFoot{int(a)}", a, R - 0.50, HD + 0.48, 0.14, width, 1.06, M_PanelGrey(), "Walls", pitch=28, bevel=0.012)
         wallbox(f"PilFootFill{int(a)}", a, R - 0.24, HD + 0.44, 0.56, width, 0.88, M_PanelGrey(), "Walls")
-        c, sn = ang(a); tc, ts = ang(a + 90)
+        if trellis:
+            # The structural frame seen between the port forward stations: a dark recess with two crossed grey braces.
+            wallbox(f"PilRecess{int(a)}", a, R - 0.55, HD + 1.70, 0.02, width - 0.08, 1.10, M_PanelDark(), "Walls")
+            for sgn in (-1, 1):
+                box(f"PilBrace{int(a)}{sgn}", ((R - 0.565) * c, (R - 0.565) * sn, HD + 1.70), (0.025, 0.06, 1.16), M_PanelGrey(), "Walls", yaw=a, roll=sgn * 38)
         for sgn in (-1, 1):
-            z0 = HD + 0.98; hgt = H - HD - 1.02
-            off = width / 2 - 0.025
-            box(f"PilBar{int(a)}{sgn}", ((R - 0.51) * c + tc * sgn * off, (R - 0.51) * sn + ts * sgn * off, z0 + hgt / 2), (0.02, 0.03, hgt), M_Strip(), "Lights", yaw=a)
-            box(f"PilBarFoot{int(a)}{sgn}", ((R - 0.57) * c + tc * sgn * off, (R - 0.57) * sn + ts * sgn * off, HD + 0.49), (0.02, 0.03, 1.00), M_Strip(), "Lights", yaw=a, pitch=28)
+            off = width / 2 - 0.03
+            z0 = HD + 0.98; hgt = ZS - HD - 1.00
+            box(f"PilBar{int(a)}{sgn}", ((R - 0.55) * c + tc * sgn * off, (R - 0.55) * sn + ts * sgn * off, z0 + hgt / 2), (0.02, 0.035, hgt), M_Strip(), "Lights", yaw=a)
+            box(f"PilBarFoot{int(a)}{sgn}", ((R - 0.57) * c + tc * sgn * off, (R - 0.57) * sn + ts * sgn * off, HD + 0.49), (0.02, 0.035, 1.00), M_Strip(), "Lights", yaw=a, pitch=28)
     for i in range(len(STATIONS)):
         a0 = STATIONS[i][0]; a1 = STATIONS[(i + 1) % len(STATIONS)][0]
         if a1 < a0: a1 += 360
         a = (a0 + a1) / 2
-        if a1 - a0 > 28 or near_lift(a, 10) or abs((a + 180) % 360 - 180) < VS + 4:
+        if a1 - a0 > 28 or near_lift(a, 6) or abs((a + 180) % 360 - 180) < VS + 4:
             continue
-        pilaster(a, 0.26)
+        pilaster(a, 0.30, trellis=abs(abs(a) - 61) < 1.0)
     for a in (90, -90):
         pilaster(a, 0.60)
 
@@ -475,9 +517,9 @@ def viewscreen():
     WW = 2 * R * math.sin(math.radians(VS))         # opening width across the chord
     # Flat front wall panel with the opening, in four pieces, and a thick pale frame round it.
     box("FrontSill", (XW, 0, VB / 2), (0.12, WW + 0.6, VB), M_PanelGrey(), "Walls")
-    box("FrontLintel", (XW, 0, (VT + H + 0.02) / 2), (0.12, WW + 0.6, H + 0.02 - VT), M_PanelDark(), "Walls")
+    box("FrontLintel", (XW, 0, (VT + ZS + 0.02) / 2), (0.12, WW + 0.6, ZS + 0.02 - VT), M_PanelGrey(), "Walls")
     for s in (-1, 1):
-        box(f"FrontJamb{s}", (XW, s * (WW / 2 + 0.6), H / 2), (0.12, 1.2, H), M_PanelGrey(), "Walls")
+        box(f"FrontJamb{s}", (XW, s * (WW / 2 + 0.6), ZS / 2), (0.12, 1.2, ZS + 0.02), M_PanelGrey(), "Walls")
     fw = 0.16
     box("FrameLo", (XW - 0.06, 0, VB - fw / 2), (0.14, WW + 2 * fw, fw), M_PanelGrey(), "Walls", bevel=0.02)
     box("FrameHi", (XW - 0.06, 0, VT + fw / 2), (0.14, WW + 2 * fw, fw), M_PanelGrey(), "Walls", bevel=0.02)
@@ -487,19 +529,34 @@ def viewscreen():
     light_bars("Sill", 0, XW - 0.07, ZR + 0.10, WW - 0.4)
     box("ClockFront", (XW - 0.07, 0, VT + 0.30), (0.02, 0.44, 0.10), M_Clock(), "Lights")
     for s in (-1, 1):
-        wallbox(f"ScreenPillar{s}", s * (VS + 1.5), R + 0.01, H / 2, 0.34, 0.24, H, M_PanelGrey(), "Walls", bevel=0.012)
+        wallbox(f"ScreenPillar{s}", s * (VS + 1.5), R + 0.01, ZS / 2, 0.34, 0.30, ZS, M_PanelGrey(), "Walls", bevel=0.012)
 
 def lifts_and_bench():
-    """The two turbolifts just aft of the midpoint bulkheads, with lit surrounds, signs and the rail across the doors; the clock over the aft panels."""
+    """Each turbolift in a recessed alcove just aft of its midpoint bulkhead: pale side walls, a light panel in the
+    alcove ceiling, the burgundy doors with a rounded frame, a call panel beside them, light bars at the foot of
+    each side wall, and the lintel carrying the wall above. The clock sits over the aft panels."""
+    W = 2 * R * math.sin(math.radians(LIFT_HALF))     # alcove width across the opening
+    DEEP = 0.40
     for L in LIFTS:
-        wallbox(f"LiftSurround{int(L)}", L, R + 0.08, HD + 1.10, 0.08, 1.50, 2.20, M_PanelGrey(), "Walls", bevel=0.01)
-        wallbox(f"LiftDoors{int(L)}", L, R + 0.01, HD + 1.00, 0.04, 1.10, 2.00, M_Burgundy(), "Walls")
-        wallbox(f"LiftSeam{int(L)}", L, R - 0.015, HD + 1.00, 0.01, 0.02, 1.96, M_Black(), "Walls")
-        wallbox(f"LiftRail{int(L)}", L, R - 0.015, HD + 0.95, 0.01, 1.08, 0.03, M_Black(), "Walls")
-        wallbox(f"LiftSign{int(L)}", L, R - 0.01, HD + 2.12, 0.02, 0.40, 0.07, M_Clock(), "Lights")
-        for sg in (-1, 1):
-            wallbox(f"LiftBar{int(L)}{sg}", L + sg * 7.6, R + 0.03, HD + 1.10, 0.02, 0.03, 2.16, M_Strip(), "Lights")
-    wallbox("Clock", 180, R + 0.02, H - 0.48, 0.02, 0.36, 0.09, M_Clock(), "Lights")
+        c, sn = ang(L); tc, ts = ang(L + 90)
+        wallbox(f"LiftBack{int(L)}", L, R + DEEP + 0.06, (HD + ZS) / 2, 0.12, W + 0.3, ZS - HD + 0.1, M_PanelGrey(), "Walls")
+        for sgn in (-1, 1):
+            box(f"LiftSide{int(L)}{sgn}", ((R + DEEP / 2 + 0.02) * c + tc * sgn * (W / 2 + 0.03), (R + DEEP / 2 + 0.02) * sn + ts * sgn * (W / 2 + 0.03), (HD + ZS) / 2), (DEEP + 0.2, 0.08, ZS - HD), M_PanelGrey(), "Walls", yaw=L)
+            box(f"LiftSideBars{int(L)}{sgn}", ((R + DEEP / 2) * c + tc * sgn * (W / 2 - 0.01), (R + DEEP / 2) * sn + ts * sgn * (W / 2 - 0.01), HD + 0.16), (0.44, 0.02, 0.26), M_PanelDark(), "Walls", yaw=L)
+            for k in range(3):
+                box(f"LiftSideBar{int(L)}{sgn}{k}", ((R + DEEP / 2) * c + tc * sgn * (W / 2 - 0.025), (R + DEEP / 2) * sn + ts * sgn * (W / 2 - 0.025), HD + 0.08 + k * 0.075), (0.40, 0.015, 0.045), M_Strip(), "Lights", yaw=L)
+        box(f"LiftCeiling{int(L)}", ((R + DEEP / 2) * c, (R + DEEP / 2) * sn, HD + 2.32), (DEEP + 0.1, W + 0.1, 0.06), M_PanelGrey(), "Walls", yaw=L)
+        # Light strips up the inboard edge of each alcove wall, as on the pilasters.
+        for sgn in (-1, 1):
+            box(f"LiftEdgeBar{int(L)}{sgn}", ((R - 0.02) * c + tc * sgn * (W / 2 + 0.01), (R - 0.02) * sn + ts * sgn * (W / 2 + 0.01), HD + 0.95 + (ZS - HD - 1.05) / 2), (0.035, 0.02, ZS - HD - 1.05), M_Strip(), "Lights", yaw=L)
+        box(f"LiftLightPanel{int(L)}", ((R + DEEP / 2) * c, (R + DEEP / 2) * sn, HD + 2.285), (0.36, 0.70, 0.03), M_Strip(), "Lights", yaw=L)
+        box(f"LiftLintel{int(L)}", ((R + 0.10) * c, (R + 0.10) * sn, (HD + 2.35 + ZS + 0.02) / 2), (0.12, W + 0.3, ZS + 0.02 - HD - 2.35), M_PanelGrey(), "Walls", yaw=L)
+        wallbox(f"LiftFrame{int(L)}", L, R + DEEP, HD + 1.05, 0.06, 1.34, 2.10, M_PostGrey(), "Walls", bevel=0.03)
+        wallbox(f"LiftDoors{int(L)}", L, R + DEEP - 0.02, HD + 1.00, 0.04, 1.10, 2.00, M_Burgundy(), "Walls")
+        wallbox(f"LiftSeam{int(L)}", L, R + DEEP - 0.045, HD + 1.00, 0.01, 0.02, 1.96, M_Black(), "Walls")
+        wallbox(f"LiftRail{int(L)}", L, R + DEEP - 0.045, HD + 0.95, 0.01, 1.08, 0.03, M_Black(), "Walls")
+        box(f"LiftCall{int(L)}", ((R + DEEP - 0.04) * c + tc * 0.80, (R + DEEP - 0.04) * sn + ts * 0.80, HD + 1.35), (0.02, 0.12, 0.26), M_Buttons(), "Consoles", yaw=L)
+    wallbox("Clock", 180, R + 0.02, ZS - 0.30, 0.02, 0.36, 0.09, M_Clock(), "Lights")
 
 def egg(name, pos, yaw, scale, material):
     bpy.ops.mesh.primitive_uv_sphere_add(segments=24, ring_count=16, radius=0.5)
@@ -665,6 +722,8 @@ def previews(outdir):
         "v09": ((-2.9, 0.0, ZC + 1.9), (0.9, 0.0, ZH + 0.7), 24),
         "v13": ((-3.3, 0.6, ZR + 0.55), (-3.3, 4.5, ZR + 1.0), 22),
         "v08": ((-2.15, 0.0, ZC + 1.28), (5.0, 0.0, ZC + 0.6), 22),
+        "ceil": ((1.1, 0.4, ZH + 1.1), (0.1, 0.0, H + 4.0), 20),
+        "lift": ((1.5, -1.0, ZR + 1.3), (5.6 * math.cos(math.radians(-103)), 5.6 * math.sin(math.radians(-103)), ZR + 1.4), 24),
         "dbg": ((4.2, -2.2, 3.1), (1.4, 0.0, 0.3), 22),
     }
     for name, (eye, target, lens) in views.items():
@@ -674,7 +733,7 @@ def previews(outdir):
         scn.render.filepath = os.path.join(outdir, f"prev_{name}.png"); bpy.ops.render.render(write_still=True)
     coll("Ceiling").hide_render = True
     # The open isometric, cut like Versiga's: the camera's near clip slices off the front wall and ceiling fixtures.
-    hidden = [o for o in bpy.data.objects if o.name.startswith(("CeilPanel", "CanLight", "CanRim", "Dome"))]
+    hidden = [o for o in bpy.data.objects if o.name.startswith(("SoffitLight", "CanLight", "CanRim", "Dome", "Sky", "Rib", "Hub", "Soffit", "Ceiling"))]
     for o in hidden: o.hide_render = True
     cam.location = B(8.2, 7.0, 7.4); cam_data.lens = 26; d = B(-0.4, -0.2, 0.5) - cam.location
     cam.rotation_euler = d.to_track_quat('-Z', 'Y').to_euler()
