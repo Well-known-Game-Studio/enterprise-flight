@@ -567,6 +567,45 @@ def egg(name, pos, yaw, scale, material):
     for col in o.users_collection: col.objects.unlink(o)
     return finish(o, material, "Furniture", smooth=True)
 
+def pillow(name, center, size, material, group, yaw=0.0, pitch=0.0, round_=0.46):
+    """A plump upholstered pad: a true-size box whose edges are rounded by a wide multi-segment bevel, so it keeps
+    flat faces and a rounded-rectangle footprint (an egg is too pointed at the ends for the captain's seat and rolls).
+    round_ is the bevel width as a fraction of the smallest extent (0.5 is fully rounded)."""
+    o = box(name, center, size, material, group, yaw=yaw, pitch=pitch, bevel=round_ * min(size))
+    m = o.modifiers["Bevel"]; m.segments = 6; m.limit_method = "NONE"
+    for p in o.data.polygons: p.use_smooth = True
+    return o
+
+def slab_yz(name, origin, outline, thick, material, group, pitch=0.0, bevel=0.0):
+    """A slab of thickness `thick` along x, whose (y, z) outline (counter-clockwise seen from +x) is given relative to
+    `origin`, then pitched nose-up about origin: the captain's back shell with its rounded top corners."""
+    ox, oy, oz = origin
+    cp, sp = math.cos(math.radians(pitch)), math.sin(math.radians(pitch))
+    verts = []
+    for dx in (-thick / 2, thick / 2):
+        for (y, z) in outline:
+            x, zz = dx * cp + z * sp, -dx * sp + z * cp
+            verts.append((ox + x, oy + y, oz + zz))
+    n = len(outline)
+    faces = [tuple(range(n - 1, -1, -1)), tuple(range(n, 2 * n))]
+    for i in range(n):
+        j = (i + 1) % n
+        faces.append((i, j, n + j, n + i))
+    return mesh_from(name, verts, faces, material, group, bevel=bevel)
+
+def rounded_outline(w_bot, w_top, h, r_top, r_bot=0.03, steps=6):
+    """Counter-clockwise (y, z) outline of a trapezoid-ish panel with rounded corners, base centred on z=0."""
+    pts = []
+    def corner(cy, cz, a0, a1, r):
+        for k in range(steps + 1):
+            a = math.radians(a0 + (a1 - a0) * k / steps)
+            pts.append((cy + r * math.cos(a), cz + r * math.sin(a)))
+    corner(w_bot / 2 - r_bot, r_bot, -90, 0, r_bot)
+    corner(w_top / 2 - r_top, h - r_top, 0, 90, r_top)
+    corner(-w_top / 2 + r_top, h - r_top, 90, 180, r_top)
+    corner(-w_bot / 2 + r_bot, r_bot, 180, 270, r_bot)
+    return pts
+
 def chair(name, pos, yaw, tall=False, headrest=False):
     """Grey egg pad and seat on a black stem and round base, black hoop arms. The helm chairs carry a tall narrow
     black shell behind the pad, the angular fin seen from the captain's side in v08/v09."""
@@ -644,21 +683,44 @@ def helm():
         chair(f"HelmChair{sgn}", (0.30, sgn * 0.82, ZH), 0.0, tall=True)
 
 def captain():
-    """The captain's chair at the centre of its platform, after v02: six rounded grey cushions up a leaning black
-    spine with a narrower headrest, grey seat on a black shell, black arms on posts with keypads, black stem and base."""
+    """The captain's chair after v02-v07: a recliner on a heavy domed black base and short stem with a swivel
+    knuckle; a black bucket shell under a thick grey seat pad, turning up behind a stack of five grey rolls and a
+    rounded headrest with wings either side; black paddle arms cantilevered forward off the shell's cheeks, each
+    with a padded top in three bumps and a button block at the front end."""
     cx = -2.25
-    o = lathe("CaptBase", [(0.0, ZC), (0.40, ZC), (0.40, ZC + 0.06), (0.36, ZC + 0.08), (0.0, ZC + 0.08)], M_Black(), "Furniture", 48); o.location = B(cx, 0, 0)
-    o = lathe("CaptCol", [(0.0, ZC + 0.08), (0.10, ZC + 0.08), (0.10, ZC + 0.42), (0.0, ZC + 0.42)], M_Black(), "Furniture", 24); o.location = B(cx, 0, 0)
-    box("CaptSeatShell", (cx - 0.02, 0.0, ZC + 0.44), (0.62, 0.60, 0.06), M_Black(), "Furniture", bevel=0.02)
-    box("CaptSeat", (cx - 0.02, 0.0, ZC + 0.50), (0.58, 0.56, 0.12), M_Seat(), "Furniture", bevel=0.05)
-    box("CaptSpine", (cx - 0.40, 0.0, ZC + 0.90), (0.05, 0.50, 0.84), M_Black(), "Furniture", pitch=-7, bevel=0.01)
-    for k in range(6):
-        w = 0.54 if k < 5 else 0.40
-        egg(f"CaptCushion{k}", (cx - 0.33 - k * 0.011, 0.0, ZC + 0.62 + k * 0.115), 0.0, (0.18, w, 0.10), M_Seat())
+    S = ZC + 0.50                                   # top of the seat pad
+    o = lathe("CaptBase", [(0.0, ZC), (0.34, ZC), (0.34, ZC + 0.05), (0.31, ZC + 0.09), (0.18, ZC + 0.105), (0.0, ZC + 0.105)], M_Black(), "Furniture", 48); o.location = B(cx, 0, 0)
+    o = lathe("CaptStem", [(0.0, ZC + 0.10), (0.085, ZC + 0.10), (0.085, ZC + 0.33), (0.0, ZC + 0.33)], M_Black(), "Furniture", 24); o.location = B(cx, 0, 0)
+    box("CaptKnuckle", (cx - 0.02, 0.0, ZC + 0.36), (0.30, 0.24, 0.10), M_Black(), "Furniture", pitch=-6, bevel=0.02)
+    # The bucket: a black seat shell, and the plump grey pad over it.
+    box("CaptShell", (cx - 0.03, 0.0, ZC + 0.42), (0.64, 0.60, 0.08), M_Black(), "Furniture", bevel=0.03)
+    pillow("CaptSeat", (cx + 0.01, 0.0, S - 0.08), (0.60, 0.56, 0.16), M_Seat(), "Furniture", pitch=-3)
+    # Back shell leaning 10 deg aft, with the wings that wrap round the rolls.
+    bx = cx - 0.36
+    t = math.tan(math.radians(10))
+    # The shell widens a little toward the top and its top corners are rounded (v06); the wings wrap the rolls.
+    slab_yz("CaptBackShell", (bx - 0.07, 0.0, S - 0.03), rounded_outline(0.58, 0.64, 0.93, 0.14), 0.07, M_Black(), "Furniture", pitch=-10, bevel=0.02)
     for sgn in (-1, 1):
-        box(f"CaptArm{sgn}", (cx - 0.04, sgn * 0.36, ZC + 0.72), (0.52, 0.09, 0.08), M_Black(), "Furniture", bevel=0.02)
-        box(f"CaptArmPost{sgn}", (cx - 0.20, sgn * 0.36, ZC + 0.58), (0.08, 0.06, 0.22), M_Black(), "Furniture")
-        box(f"CaptArmPanel{sgn}", (cx + 0.10, sgn * 0.36, ZC + 0.765), (0.16, 0.07, 0.012), M_Buttons(), "Consoles")
+        box(f"CaptWing{sgn}", (bx + 0.02 - 0.38 * t, sgn * 0.29, S + 0.37), (0.14, 0.03, 0.76), M_Black(), "Furniture", pitch=-10, bevel=0.01)
+    # Five rolls up the back, touching, then the headrest, all following the lean.
+    for k in range(5):
+        z = S + 0.10 + k * 0.142
+        pillow(f"CaptRoll{k}", (bx + 0.08 - (z - S) * t, 0.0, z), (0.20, 0.52, 0.145), M_Seat(), "Furniture", pitch=-10)
+    z = S + 0.10 + 5 * 0.142 + 0.06
+    pillow("CaptHeadrest", (bx + 0.07 - (z - S) * t, 0.0, z), (0.20, 0.42, 0.21), M_Seat(), "Furniture", pitch=-10)
+    # Arms: a black cheek off the shell's side, the paddle cantilevered forward, three grey pad bumps on top and
+    # the button block at the end, splayed a few degrees outward as in v02.
+    for sgn in (-1, 1):
+        y = sgn * 0.335
+        c, sn = ang(sgn * 4)
+        box(f"CaptCheek{sgn}", (cx - 0.16, y, S + 0.10), (0.26, 0.07, 0.24), M_Black(), "Furniture", bevel=0.015)
+        box(f"CaptArm{sgn}", (cx + 0.08, y + sgn * 0.012, S + 0.235), (0.64, 0.10, 0.05), M_Black(), "Furniture", yaw=sgn * 4, pitch=6, bevel=0.012)
+        for k in range(3):
+            d = -0.12 + k * 0.145
+            pillow(f"CaptArmPad{sgn}{k}", (cx + d * c, y + d * sn + sgn * 0.012, S + 0.28 + d * 0.10), (0.15, 0.10, 0.055), M_Seat(), "Furniture", yaw=sgn * 4)
+        d = 0.37
+        box(f"CaptArmEnd{sgn}", (cx + d * c, y + d * sn + sgn * 0.02, S + 0.29), (0.16, 0.12, 0.09), M_Black(), "Furniture", yaw=sgn * 4, bevel=0.012)
+        box(f"CaptArmPanel{sgn}", (cx + d * c, y + d * sn + sgn * 0.02, S + 0.34), (0.12, 0.09, 0.008), M_Buttons(), "Consoles", yaw=sgn * 4, pitch=12)
 
 def is_aft(a):
     return abs((a - 180 + 180) % 360 - 180) < 62
@@ -714,6 +776,10 @@ def previews(outdir):
         a = i * 30 + 15; c, s = ang(a)
         ld = bpy.data.lights.new(f"Panel{i}", 'AREA'); ld.energy = 18; ld.size = 0.6; ld.color = (0.92, 0.95, 1.0)
         lo = bpy.data.objects.new(f"Panel{i}", ld); scn.collection.objects.link(lo); lo.location = B(R * 0.80 * c, R * 0.80 * s, H - 0.05)
+    # A key over the captain so the chair reads in its close views (the references are far brighter than these).
+    ld = bpy.data.lights.new("CaptLight", 'AREA'); ld.energy = 28; ld.size = 0.9; ld.color = (0.95, 0.96, 1.0)
+    lo = bpy.data.objects.new("CaptLight", ld); scn.collection.objects.link(lo); lo.location = B(-1.4, 0.0, ZC + 2.4)
+    lo.rotation_euler = (B(-2.25, 0, ZC + 0.9) - lo.location).to_track_quat('-Z', 'Y').to_euler()
     ld = bpy.data.lights.new("DomeLight", 'POINT'); ld.energy = 60; ld.shadow_soft_size = 0.6
     lo = bpy.data.objects.new("DomeLight", ld); scn.collection.objects.link(lo); lo.location = B(0, 0, H - 0.45)
     views = {
@@ -725,12 +791,22 @@ def previews(outdir):
         "ceil": ((1.1, 0.4, ZH + 1.1), (0.1, 0.0, H + 4.0), 20),
         "lift": ((1.5, -1.0, ZR + 1.3), (5.6 * math.cos(math.radians(-103)), 5.6 * math.sin(math.radians(-103)), ZR + 1.4), 24),
         "dbg": ((4.2, -2.2, 3.1), (1.4, 0.0, 0.3), 22),
+        # The captain's chair: from above the helm as in v02, over the shoulder as in v06, from the rail as in v05.
+        "capt": ((1.5, 0.0, ZH + 1.75), (-2.25, 0.0, ZC + 0.85), 22),
+        "v06": ((-3.35, 0.55, ZC + 1.70), (4.0, -0.7, ZC + 0.75), 18),
+        "capt_side": ((-0.6, 2.6, ZC + 1.15), (-2.25, 0.0, ZC + 0.85), 34),
+        "capt_port": ((0.3, -2.4, ZC + 1.45), (-2.0, 0.6, ZC + 0.8), 26),
     }
+    only = None
+    for a in ARGS:
+        if a.startswith("--views="): only = set(a.split("=", 1)[1].split(","))
     for name, (eye, target, lens) in views.items():
+        if only is not None and name not in only: continue
         cam.location = B(*eye); cam_data.lens = lens
         d = B(*target) - cam.location
         cam.rotation_euler = d.to_track_quat('-Z', 'Y').to_euler()
         scn.render.filepath = os.path.join(outdir, f"prev_{name}.png"); bpy.ops.render.render(write_still=True)
+    if only is not None: return
     coll("Ceiling").hide_render = True
     # The open isometric, cut like Versiga's: the camera's near clip slices off the front wall and ceiling fixtures.
     hidden = [o for o in bpy.data.objects if o.name.startswith(("SoffitLight", "CanLight", "CanRim", "Dome", "Sky", "Rib", "Hub", "Soffit", "Ceiling"))]
