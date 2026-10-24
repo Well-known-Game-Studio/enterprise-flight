@@ -257,107 +257,99 @@ def chevron(apex_x, spread_deg, y_max):
 
 # ---- the set -----------------------------------------------------------------------------------------------------
 R = 5.6          # wall radius
-# Four floor levels, after Versiga's v01/v02: a sunken well in the middle, out of which rise the helm platform and,
-# behind it, the captain's platform; the outer station ring is the highest and surrounds the well.
-ZW = 0.0         # the well
-ZH = 0.36        # helm platform (three 12 cm risers up from the well: two steps and the platform edge)
-ZC = 0.74        # captain's platform
-ZR = 1.00        # outer station ring
-HD = ZR          # the stations, lifts and walls stand on the ring
+# Three floor levels, after Versiga's isometric: the main deck (the outer ring of stations, continuing inside the
+# rail at the back where the captain sits); the helm platform, a chevron a step below the deck, meeting it along a
+# chord behind the helm chairs; and the sunken floor, a crescent round the front and sides of the helm platform,
+# two chevron steps below it. The single rail runs along the deck's edge over the sunken floor, broken at the two
+# side stairs and wide open behind the captain.
+ZW = 0.0         # the sunken floor
+ZH = 0.30        # helm platform
+ZR = 0.60        # main deck
+ZC = ZR          # the captain's chair stands on the main deck
+HD = ZR
 HC = ZC
-H = 3.60         # ceiling above the well floor
-VS = 34.0        # viewscreen half-angle
-RI = 2.55        # radius of the central island (helm + captain)
-RW = 3.55        # inner radius of the outer ring; the well lies between RI and RW
-XC = 0.55        # chord between the helm platform (in front) and the captain's platform (behind)
-XA = 2.15        # apex of the helm platform's chevron front
-LIFTS = (100.0, 260.0); LIFT_HALF = 12.0
+H = 3.40         # ceiling above the sunken floor
+VS = 32.0        # viewscreen half-angle: the forward bulkhead separators stand here
+RW = 3.20        # radius of the sunken circle
+XA = 1.45        # apex of the helm platform's chevron nose
+XB = -0.85       # the chord where the helm platform meets the deck
+YP = 1.50        # half-width of the helm platform at the chord
+STAIRS = (-38.0, 38.0)     # bearings of the two side stairs down from the deck into the sunken floor
+RAIL_GAP = 100.0           # degrees of open rail behind the captain
+LIFTS = (-103.0, 103.0); LIFT_HALF = 12.0
 STEP = 32.0
+# Stations round the deck: bearing, hood span in degrees, kind, Okudagram. 0 is the viewscreen, positive starboard.
+# Four seated stations each side between the viewscreen bulkhead and the midpoint bulkhead at 90; just aft of the
+# midpoint the turbolifts; aft of each lift one larger seated station with a small desk reaching out; and across
+# the aft wall the display panels with the red quilted band and no desks or seats.
+STATIONS = [
+    (40, 13, "seat", "Weapons"), (54, 13, "seat", "Tactical"), (68, 13, "seat", "Science"), (82, 13, "seat", "Engineering"),
+    (-40, 13, "seat", "Environmental"), (-54, 13, "seat", "Navigation"), (-68, 13, "seat", "Science"), (-82, 13, "seat", "Communications"),
+    (126, 20, "desk", "Science"), (-126, 20, "desk", "Communications"),
+    (157, 21, "panel", "Tactical"), (180, 21, "panel", "MasterSituation"), (203, 21, "panel", "Engineering"),
+]
 
 def floors():
-    """Well floor; the outer ring with its curved black riser lit under the lip; the captain's platform (the
-    island behind the chord, joined to the aft ring); the helm platform in front with its chevron nose; and the
-    two chevron steps down from the nose into the well."""
-    lathe("WellFloor", [(0.0, -0.06), (R + 0.15, -0.06), (R + 0.15, ZW), (0.0, ZW)], M_Carpet(), "Floor", smooth=False)
-    # Outer ring and its riser; at the rear the captain's platform meets it, so the riser there is shorter.
+    """Sunken floor; the main deck as a ring plus the segment behind the chord; the helm platform between; the
+    risers (black, lit under the lip) along the sunken circle's front arc, the chord, and the platform's sides;
+    the two chevron steps at the nose; the two side stairs from the deck down to the sunken floor."""
+    lathe("SunkFloor", [(0.0, -0.06), (R + 0.15, -0.06), (R + 0.15, ZW), (0.0, ZW)], M_Carpet(), "Floor", smooth=False)
     arc_sweep("Ring", [(RW, ZW), (R + 0.15, ZW), (R + 0.15, ZR), (RW, ZR)], 0, 360, M_Carpet(), "Floor", smooth=False, cap=False)
-    arc_sweep("RingRiser", [(RW - 0.015, ZW), (RW + 0.01, ZW), (RW + 0.01, ZR - 0.05), (RW - 0.015, ZR - 0.05)], -126, 126, M_Black(), "Floor", cap=False)
-    arc_sweep("RingLipStrip", [(RW - 0.012, ZR - 0.05), (RW + 0.03, ZR - 0.05), (RW + 0.03, ZR - 0.012), (RW - 0.012, ZR - 0.012)], -126, 126, M_Strip(), "Lights", cap=False)
-    arc_sweep("RingRiserAft", [(RW - 0.015, ZC), (RW + 0.01, ZC), (RW + 0.01, ZR - 0.04), (RW - 0.015, ZR - 0.04)], 126, 234, M_Black(), "Floor", cap=False)
-    arc_sweep("RingLipStripAft", [(RW - 0.012, ZR - 0.04), (RW + 0.03, ZR - 0.04), (RW + 0.03, ZR - 0.012), (RW - 0.012, ZR - 0.012)], 126, 234, M_Strip(), "Lights", cap=False)
-    # Captain's platform: the island behind the chord, plus the sector that reaches the aft ring.
-    a0 = math.degrees(math.acos(XC / RI))
-    cap = arc_pts(RI, a0, 126) + arc_pts(RW - 0.02, 126, 234) + arc_pts(RI, 234, 360 - a0)
-    prism("CaptainPlatform", oriented(cap), ZW, ZC, M_Carpet(), "Floor")
-    arc_sweep("CaptRiser", [(RI - 0.015, ZW), (RI + 0.01, ZW), (RI + 0.01, ZC - 0.05), (RI - 0.015, ZC - 0.05)], a0, 126, M_Black(), "Floor", cap=False)
-    arc_sweep("CaptRiser2", [(RI - 0.015, ZW), (RI + 0.01, ZW), (RI + 0.01, ZC - 0.05), (RI - 0.015, ZC - 0.05)], 234, 360 - a0, M_Black(), "Floor", cap=False)
-    arc_sweep("CaptLipStrip", [(RI - 0.012, ZC - 0.05), (RI + 0.03, ZC - 0.05), (RI + 0.03, ZC - 0.012), (RI - 0.012, ZC - 0.012)], a0, 126, M_Strip(), "Lights", cap=False)
-    arc_sweep("CaptLipStrip2", [(RI - 0.012, ZC - 0.05), (RI + 0.03, ZC - 0.05), (RI + 0.03, ZC - 0.012), (RI - 0.012, ZC - 0.012)], 234, 360 - a0, M_Strip(), "Lights", cap=False)
-    # The step between the captain's platform and the helm platform, along the chord.
-    y0 = math.sqrt(RI * RI - XC * XC)
-    box("ChordFace", (XC + 0.01, 0.0, (ZH + ZC) / 2 - 0.02), (0.02, 2 * y0, ZC - ZH - 0.04), M_Black(), "Floor")
-    box("ChordStrip", (XC + 0.025, 0.0, ZC - 0.03), (0.02, 2 * y0, 0.03), M_Strip(), "Lights")
-    # Helm platform: from the chord forward to the chevron nose, within the island circle.
-    chev = chevron(XA, 32.0, 1.35)
-    ac = math.degrees(math.atan2(1.35, chev[2][0]))
-    helm_pts = [(XC, -y0)] + arc_pts(RI, -a0, -ac) + chev[:1] + chev[1:2] + chev[2:] + arc_pts(RI, ac, a0) + [(XC, y0)]
-    # (the chevron ends sit a little inside the circle; the arcs run to the matching bearings)
-    prism("HelmPlatform", oriented(helm_pts), ZW, ZH, M_Carpet(), "Floor")
-    for i in range(2):
-        (x0, y0c), (x1, _), (x2, y2c) = chev
-        seg = [(x0, y0c), (x1, 0.0), (x2, y2c)]
-        for j, (px, py) in enumerate(seg):
-            pass
-    # Risers: the platform nose and two steps, each 12 cm, as chevron bands offset forward.
-    def offset_chev(d):
-        return chevron(XA + d, 32.0, 1.35)
-    bands = [(0.0, ZH), (0.40, ZH - 0.12), (0.80, ZH - 0.24)]
-    for k, (d, ztop) in enumerate(bands):
-        inner = offset_chev(d); outer = offset_chev(d + 0.40)
-        poly = inner + list(reversed(outer))
-        name = "HelmNose" if k == 0 else f"Step{k}"
-        prism(name, oriented(poly), ZW, ztop, M_Carpet(), "Floor")
-        # Black face along the outer edge with a strip under the lip.
-        for sgn in (-1, 1):
-            (ax, ay), (bx, by) = outer[1], outer[2 if sgn > 0 else 0]
-            L = math.hypot(bx - ax, by - ay); yaw = math.degrees(math.atan2(by - ay, bx - ax))
-            mx, my = (ax + bx) / 2, (ay + by) / 2
-            box(f"{name}Face{sgn}", (mx, my, ztop / 2 - 0.01), (L, 0.02, ztop - 0.02), M_Black(), "Floor", yaw=yaw)
-            box(f"{name}Strip{sgn}", (mx, my, ztop - 0.03), (L, 0.025, 0.03), M_Strip(), "Lights", yaw=yaw)
-    # Black riser along the chevron sides between the island arc ends and the nose (the sides of the helm platform).
-    for sgn in (-1, 1):
-        c, sn = ang(sgn * (a0 + ac) / 2)
-    arc_sweep("HelmRiser", [(RI - 0.015, ZW), (RI + 0.01, ZW), (RI + 0.01, ZH - 0.05), (RI - 0.015, ZH - 0.05)], -a0, -ac, M_Black(), "Floor", cap=False)
-    arc_sweep("HelmRiser2", [(RI - 0.015, ZW), (RI + 0.01, ZW), (RI + 0.01, ZH - 0.05), (RI - 0.015, ZH - 0.05)], ac, a0, M_Black(), "Floor", cap=False)
-    arc_sweep("HelmLipStrip", [(RI - 0.012, ZH - 0.05), (RI + 0.03, ZH - 0.05), (RI + 0.03, ZH - 0.012), (RI - 0.012, ZH - 0.012)], -a0, -ac, M_Strip(), "Lights", cap=False)
-    arc_sweep("HelmLipStrip2", [(RI - 0.012, ZH - 0.05), (RI + 0.03, ZH - 0.05), (RI + 0.03, ZH - 0.012), (RI - 0.012, ZH - 0.012)], ac, a0, M_Strip(), "Lights", cap=False)
+    yc = math.sqrt(RW * RW - XB * XB)
+    ac = math.degrees(math.atan2(yc, XB))                     # bearing of the chord's starboard end (> 90)
+    prism("DeckAft", oriented(arc_pts(RW - 0.01, ac, 360 - ac)), ZW, ZR, M_Carpet(), "Floor")
+    # Riser round the front of the sunken circle.
+    arc_sweep("RingRiser", [(RW - 0.015, ZW), (RW + 0.01, ZW), (RW + 0.01, ZR - 0.05), (RW - 0.015, ZR - 0.05)], -ac, ac, M_Black(), "Floor", cap=False)
+    arc_sweep("RingLipStrip", [(RW - 0.012, ZR - 0.05), (RW + 0.03, ZR - 0.05), (RW + 0.03, ZR - 0.012), (RW - 0.012, ZR - 0.012)], -ac, ac, M_Strip(), "Lights", cap=False)
+    def face(name, a, b, z0, z1):
+        (ax, ay), (bx, by) = a, b
+        L = math.hypot(bx - ax, by - ay); yaw = math.degrees(math.atan2(by - ay, bx - ax))
+        mx, my = (ax + bx) / 2, (ay + by) / 2
+        box(f"{name}Face", (mx, my, (z0 + z1) / 2 - 0.02), (L, 0.02, z1 - z0 - 0.04), M_Black(), "Floor", yaw=yaw)
+        box(f"{name}Strip", (mx, my, z1 - 0.03), (L, 0.025, 0.03), M_Strip(), "Lights", yaw=yaw)
+    # The chord: deck down to the sunken floor beside the platform, down to the platform behind it.
+    face("ChordP", (XB, -yc), (XB, -YP), ZW, ZR); face("ChordS", (XB, YP), (XB, yc), ZW, ZR)
+    face("ChordMid", (XB, -YP), (XB, YP), ZH, ZR)
+    # Helm platform: chevron nose, straight sides back to the chord.
+    chev = chevron(XA, 36.0, YP)
+    prism("HelmPlatform", oriented([(XB, -YP), chev[0], chev[1], chev[2], (XB, YP)]), ZW, ZH, M_Carpet(), "Floor")
+    face("PlatSideP", (XB, -YP), chev[0], ZW, ZH); face("PlatSideS", chev[2], (XB, YP), ZW, ZH)
+    for k, (d, ztop) in enumerate(((0.0, ZH), (0.36, ZH - 0.10), (0.72, ZH - 0.20))):
+        inner = chevron(XA + d, 36.0, YP); outer = chevron(XA + d + 0.36, 36.0, YP)
+        name = "Nose" if k == 0 else f"Step{k}"
+        if k > 0:
+            prism(name, oriented(inner + list(reversed(outer))), ZW, ztop, M_Carpet(), "Floor")
+        face(f"{name}P", outer[0], outer[1], ZW, ztop); face(f"{name}S", outer[1], outer[2], ZW, ztop)
+    # Side stairs: three grated treads stepping inward from the deck's edge, no rails.
+    for a in STAIRS:
+        for k in range(3):
+            r = RW - 0.17 - k * 0.34
+            ztop = ZR - (k + 1) * 0.15
+            wallbox(f"Stair{int(a)}_{k}", a, r, ztop - 0.02, 0.34, 1.0, 0.04, M_PostGrey(), "Floor")
+            wallbox(f"StairRiser{int(a)}_{k}", a, r - 0.16, ztop - 0.085, 0.025, 1.0, 0.13, M_Black(), "Floor")
 
 def rails():
-    """The black handrail round the island on flat posts, higher behind the captain than beside the helm; the knee
-    rail along the outer ring's edge over the well with a lamp post at its centre and at each end, and round side
-    tables on the ring beside them."""
-    RR = RI - 0.10
-    for (b0, b1, zf) in ((38, 70, ZH), (290, 322, ZH), (70, 290, ZC)):
-        arc_sweep(f"TopRail{b0}", [(RR - 0.03, zf + 1.00), (RR + 0.03, zf + 1.00), (RR + 0.03, zf + 1.06), (RR - 0.03, zf + 1.06)], b0, b1, M_Rail(), "Rails")
-        arc_sweep(f"LowRail{b0}", [(RR - 0.015, zf + 0.58), (RR + 0.015, zf + 0.58), (RR + 0.015, zf + 0.61), (RR - 0.015, zf + 0.61)], b0, b1, M_PostGrey(), "Rails")
-        n = max(2, int(round((b1 - b0) / 18.0)) + 1)
+    """The single black rail on leaning grey posts along the deck's edge over the sunken floor, broken at the two
+    side stairs and open across the back behind the captain; ringed lamp posts beside the stair heads."""
+    RR = RW + 0.08
+    half_gap = RAIL_GAP / 2
+    gaps = [(a - 10.5, a + 10.5) for a in STAIRS] + [(180 - half_gap, 180 + half_gap)]
+    edges = sorted([g[0] for g in gaps] + [g[1] for g in gaps])
+    spans = []
+    start = edges[-1] - 360
+    for i in range(0, len(edges), 2):
+        spans.append((start, edges[i])); start = edges[i + 1]
+    for (b0, b1) in spans:
+        if b1 - b0 < 2: continue
+        arc_sweep(f"TopRail{int(b0)}", [(RR - 0.03, ZR + 0.98), (RR + 0.03, ZR + 0.98), (RR + 0.03, ZR + 1.04), (RR - 0.03, ZR + 1.04)], b0, b1, M_Rail(), "Rails")
+        n = max(2, int(round((b1 - b0) / 22.0)) + 1)
         for i in range(n):
             a = b0 + (b1 - b0) * i / (n - 1)
-            wallbox(f"Post{b0}_{i}", a, RR + 0.03, zf + 0.52, 0.02, 0.07, 1.04, M_PostGrey(), "Rails", pitch=-5)
-    # Knee rail on the ring, round the front half of the well.
-    arc_sweep("KneeRail", [(RW - 0.14, ZR + 0.47), (RW - 0.11, ZR + 0.47), (RW - 0.11, ZR + 0.495), (RW - 0.14, ZR + 0.495)], -64, 64, M_PostGrey(), "Rails")
-    for a in range(-60, 61, 12):
-        if abs(a) < 6 or abs(abs(a) - 60) < 1: continue
-        wallbox(f"KneePost{a}", a, RW - 0.125, ZR + 0.235, 0.02, 0.05, 0.47, M_PostGrey(), "Rails")
-    # Lamp posts at the knee rail's ends (the one at its centre in v01 would stand in the captain's view of the viewscreen).
-    for a in (-62, 62):
-        c, sn = ang(a)
-        lamp_post(f"Lamp{a}", (RW - 0.125) * c, (RW - 0.125) * sn, ZR)
-    for sgn in (-1, 1):
-        c, sn = ang(sgn * 50)
-        tx, ty = (RW - 0.42) * c, (RW - 0.42) * sn
-        o = lathe(f"TableStem{sgn}", [(0.0, ZR), (0.16, ZR), (0.16, ZR + 0.03), (0.035, ZR + 0.03), (0.035, ZR + 0.72), (0.0, ZR + 0.72)], M_Black(), "Rails", 24); o.location = B(tx, ty, 0)
-        o = lathe(f"TableTop{sgn}", [(0.0, ZR + 0.72), (0.24, ZR + 0.72), (0.24, ZR + 0.75), (0.0, ZR + 0.75)], M_Black(), "Rails", 32); o.location = B(tx, ty, 0)
+            wallbox(f"Post{int(b0)}_{i}", a, RR + 0.02, ZR + 0.51, 0.02, 0.07, 1.02, M_PostGrey(), "Rails", pitch=-5)
+    for a in STAIRS:
+        sgn = 1 if a > 0 else -1
+        c, sn = ang(a + sgn * 12.5)
+        lamp_post(f"Lamp{int(a)}", (RR + 0.02) * c, (RR + 0.02) * sn, ZR)
 
 def lamp_post(name, x, y, z):
     o = lathe(f"{name}_Post", [(0.0, z), (0.075, z), (0.075, z + 1.32), (0.0, z + 1.32)], M_Black(), "Rails", 24); o.location = B(x, y, 0)
@@ -391,76 +383,91 @@ def walls_ceiling():
 def near_lift(a, margin):
     return any(abs((a - L + 180) % 360 - 180) < LIFT_HALF + margin for L in LIFTS)
 
-def station_unit(a, chord, name):
-    """One perimeter station after Versiga's v13: a light-grey cabinet with a dark recess holding three white bars,
-    a raked black desk with a touch strip, and above it one tall black hood that leans back from the desk and curls
-    forward at the top under a pale ledge, its whole face the Okudagram."""
-    half = STEP / 2 - 1.1
-    # Cabinet, the dark recess with the three bars, and the desk lip.
+def station_unit(a, span, name, kind="seat"):
+    """One perimeter unit. "seat": light-grey cabinet with the red quilted band over three white bars, raked black
+    desk with a touch strip, the tall black hood above framed in light grey under a pale ledge, and a chair.
+    "desk": the same, wider, with a small black desk reaching out from the console. "panel": the aft display
+    panels: the hood and the red band over the bars, no desk and no seat."""
+    half = span / 2
+    chord = 2 * R * math.sin(math.radians(half))
+    tex = name
+    name = f"{name}{int(a)}"
     arc_sweep(f"Cab_{name}", [(R - 0.78, HD), (R - 0.05, HD), (R - 0.05, HD + 0.74), (R - 0.78, HD + 0.74)], a - half, a + half, M_PanelGrey(), "Consoles")
-    if is_aft(a):
-        # Under the aft desks the three bars sit low, below the red quilted band.
-        arc_sweep(f"CabRecess_{name}", [(R - 0.80, HD + 0.05), (R - 0.74, HD + 0.05), (R - 0.74, HD + 0.30), (R - 0.80, HD + 0.30)], a - half, a + half, M_PanelDark(), "Consoles")
-        light_bars(f"Cab_{name}", a, R - 0.79, HD + 0.08, chord - 0.20, pitch=0.075)
-    else:
-        arc_sweep(f"CabRecess_{name}", [(R - 0.80, HD + 0.14), (R - 0.74, HD + 0.14), (R - 0.74, HD + 0.52), (R - 0.80, HD + 0.52)], a - half + 2.0, a + half - 2.0, M_PanelDark(), "Consoles")
-        light_bars(f"Cab_{name}", a, R - 0.79, HD + 0.19, chord - 0.60, pitch=0.12)
+    arc_sweep(f"CabRecess_{name}", [(R - 0.80, HD + 0.05), (R - 0.74, HD + 0.05), (R - 0.74, HD + 0.30), (R - 0.80, HD + 0.30)], a - half, a + half, M_PanelDark(), "Consoles")
+    light_bars(f"Cab_{name}", a, R - 0.79, HD + 0.08, chord - 0.16, pitch=0.075)
+    n = max(2, int(span / 3.5))
+    for k in range(n):
+        aa = a - half + span * (k + 0.5) / n
+        c, sn = ang(aa)
+        box(f"Quilt_{name}_{k}", ((R - 0.80) * c, (R - 0.80) * sn, HD + 0.53), (0.09, chord / n - 0.03, 0.38), M_Burgundy(), "Furniture", yaw=aa, bevel=0.03)
+    if kind == "panel":
+        # A grey sill over the band, then the hood straight up from it.
+        arc_sweep(f"Sill_{name}", [(R - 0.84, HD + 0.72), (R - 0.40, HD + 0.72), (R - 0.40, HD + 0.98), (R - 0.84, HD + 0.98)], a - half, a + half, M_PanelGrey(), "Consoles")
+        face = [(R - 0.10, HD + 2.26), (R - 0.04, HD + 2.05), (R - 0.02, HD + 1.70), (R - 0.08, HD + 1.35), (R - 0.22, HD + 1.10), (R - 0.34, HD + 0.99)]
+        arc_sweep(f"Scr_{name}", face, a - half + 0.6, a + half - 0.6, M_Screen(tex), "Screens", closed=False, cap=False, uv=True)
+        shell = [(r + 0.03, z + 0.02) for (r, z) in face] + [(R + 0.04, HD + 0.95), (R + 0.04, HD + 2.34), (R - 0.10, HD + 2.34)]
+        arc_sweep(f"Hood_{name}", shell, a - half, a + half, M_Black(), "Consoles")
+        arc_sweep(f"HoodRimTop_{name}", [(R - 0.16, HD + 2.33), (R - 0.09, HD + 2.26), (R - 0.07, HD + 2.18)], a - half, a + half, M_PanelGrey(), "Consoles", closed=False, cap=False)
+        arc_sweep(f"Ledge_{name}", [(R - 0.30, HD + 2.30), (R + 0.04, HD + 2.30), (R + 0.04, HD + 2.42), (R - 0.30, HD + 2.42)], a - half - 0.5, a + half + 0.5, M_PanelGrey(), "Walls", cap=False)
+        return
     # Raked desk: black slope from the lip up to the foot of the hood, with a teal touch strip along it.
     arc_sweep(f"Desk_{name}", [(R - 0.84, HD + 0.74), (R - 0.84, HD + 0.80), (R - 0.34, HD + 0.98), (R - 0.34, HD + 0.92)], a - half, a + half, M_Black(), "Consoles")
     arc_sweep(f"DeskLip_{name}", [(R - 0.86, HD + 0.72), (R - 0.78, HD + 0.72), (R - 0.78, HD + 0.82), (R - 0.86, HD + 0.82)], a - half, a + half, M_PanelGrey(), "Consoles")
     arc_sweep(f"DeskTouch_{name}", [(R - 0.70, HD + 0.861), (R - 0.46, HD + 0.947), (R - 0.46, HD + 0.95), (R - 0.70, HD + 0.864)], a - half + 1.5, a + half - 1.5, M_Buttons(), "Consoles", closed=False, cap=False)
-    # The hood: from the desk foot up and back, then curling forward under the ledge.
-    face = [(R - 0.10, HD + 2.26), (R - 0.04, HD + 2.05), (R - 0.02, HD + 1.70), (R - 0.08, HD + 1.35), (R - 0.22, HD + 1.10), (R - 0.34, HD + 0.99)]
-    arc_sweep(f"Scr_{name}", face, a - half + 0.6, a + half - 0.6, M_Screen(name), "Screens", closed=False, cap=False, uv=True)
+    # The hood: from the desk foot up and back, then curling forward under the ledge. The larger stations carry a
+    # flatter, more upright screen in a grey frame that wraps its sides.
+    if kind == "desk":
+        face = [(R - 0.14, HD + 2.10), (R - 0.08, HD + 1.90), (R - 0.07, HD + 1.55), (R - 0.12, HD + 1.25), (R - 0.24, HD + 1.06), (R - 0.34, HD + 0.99)]
+    else:
+        face = [(R - 0.10, HD + 2.26), (R - 0.04, HD + 2.05), (R - 0.02, HD + 1.70), (R - 0.08, HD + 1.35), (R - 0.22, HD + 1.10), (R - 0.34, HD + 0.99)]
+    arc_sweep(f"Scr_{name}", face, a - half + 0.6, a + half - 0.6, M_Screen(tex), "Screens", closed=False, cap=False, uv=True)
     shell = [(r + 0.03, z + 0.02) for (r, z) in face] + [(R + 0.04, HD + 0.95), (R + 0.04, HD + 2.34), (R - 0.10, HD + 2.34)]
     arc_sweep(f"Hood_{name}", shell, a - half, a + half, M_Black(), "Consoles")
-    # Pale rounded frame: thin grey strips just proud of the screen along its two sides and top.
     rim_out = [(r - 0.025, z) for (r, z) in face]
-    rim_in = [(r - 0.015, z) for (r, z) in face]
-    for sgn, aa in ((-1, a - half + 0.3), (1, a + half - 0.3)):
-        arc_sweep(f"HoodRim_{name}{sgn}", rim_out, aa - 0.3, aa + 0.3, M_PanelGrey(), "Consoles", closed=False, cap=False)
-    arc_sweep(f"HoodRimTop_{name}", [(R - 0.16, HD + 2.33), (R - 0.09, HD + 2.26), (R - 0.07, HD + 2.18)], a - half, a + half, M_PanelGrey(), "Consoles", closed=False, cap=False)
+    rim_w = 0.9 if kind == "desk" else 0.3
+    for sgn, aa in ((-1, a - half + rim_w / 2 + 0.05), (1, a + half - rim_w / 2 - 0.05)):
+        arc_sweep(f"HoodRim_{name}{sgn}", rim_out, aa - rim_w / 2, aa + rim_w / 2, M_PanelGrey(), "Consoles", closed=False, cap=False)
+    arc_sweep(f"HoodRimTop_{name}", [(face[0][0] - 0.06, face[0][1] + 0.07), (face[0][0] + 0.01, face[0][1]), (face[0][0] + 0.03, face[0][1] - 0.08)], a - half, a + half, M_PanelGrey(), "Consoles", closed=False, cap=False)
     arc_sweep(f"HoodRimBot_{name}", [(R - 0.33, HD + 1.00), (R - 0.37, HD + 0.95)], a - half, a + half, M_PanelGrey(), "Consoles", closed=False, cap=False)
-    # Pale ledge over the hood and a dark soffit above it.
     arc_sweep(f"Ledge_{name}", [(R - 0.30, HD + 2.30), (R + 0.04, HD + 2.30), (R + 0.04, HD + 2.42), (R - 0.30, HD + 2.42)], a - half - 0.5, a + half + 0.5, M_PanelGrey(), "Walls", cap=False)
+    c, sn = ang(a)
+    if kind == "desk":
+        # The slim desk arm reaching out from the console on the turbolift side, a monitor on its end; the chair
+        # sits aft of it, in front of the screen.
+        tc, ts = ang(a + 90)
+        lift_side = -1.0 if a > 0 else 1.0           # toward decreasing |bearing|, where the lift is
+        dx, dy = (R - 1.35) * c + tc * lift_side * 0.42, (R - 1.35) * sn + ts * lift_side * 0.42
+        box(f"DeskArm_{name}", (dx + 0.25 * c, dy + 0.25 * sn, HD + 0.72), (0.70, 0.26, 0.05), M_Black(), "Consoles", yaw=a, bevel=0.01)
+        box(f"DeskPost_{name}", (dx, dy, HD + 0.35), (0.08, 0.14, 0.70), M_Black(), "Consoles", yaw=a)
+        box(f"DeskMonitor_{name}", (dx, dy, HD + 0.86), (0.06, 0.34, 0.24), M_Black(), "Consoles", yaw=a, pitch=-12, bevel=0.008)
+        box(f"DeskMonScr_{name}", (dx - 0.035 * c, dy - 0.035 * sn, HD + 0.86), (0.01, 0.30, 0.20), M_Buttons(), "Consoles", yaw=a, pitch=-12)
+        chair(f"Chair{int(a)}", ((R - 1.15) * c - tc * lift_side * 0.30, (R - 1.15) * sn - ts * lift_side * 0.30, HD), a, headrest=True)
+    else:
+        chair(f"Chair{int(a)}", ((R - 1.15) * c, (R - 1.15) * sn, HD), a)
 
 def stations():
-    chord = 2 * R * math.sin(math.radians(STEP / 2))
-    order = ["Weapons", "Tactical", "Communications", "Science", "Engineering", "Environmental", "Navigation"]
-    k = 0
-    a = VS + STEP / 2 + 4
-    while a < 360 - VS - STEP * 0.4:
-        if near_lift(a, STEP * 0.45):
-            a += STEP; continue
-        aft = abs((a - 180 + 180) % 360 - 180) < 8
-        if aft:
-            station_unit(a, chord, "MasterSituation")
-        elif True:
-            name = order[k % len(order)]; k += 1
-            station_unit(a, chord, name)
-        else:
-            # The master situation display over the aft bench: a shallow hood without a desk.
-            half = STEP / 2 - 1.2
-            face = [(R - 0.30, HD + 2.25), (R - 0.12, HD + 2.05), (R - 0.06, HD + 1.60), (R - 0.10, HD + 1.20)]
-            arc_sweep("Scr_MasterSituation", face, a - half + 0.8, a + half - 0.8, M_Screen("MasterSituation"), "Screens", closed=False, cap=False, uv=True)
-            shell = [(r + 0.03, z + 0.03) for (r, z) in face] + [(R + 0.02, HD + 1.14), (R + 0.02, HD + 2.32), (R - 0.30, HD + 2.32)]
-            arc_sweep("Hood_Master", shell, a - half, a + half, M_Black(), "Consoles")
-        a += STEP
-    # Pilasters: light-grey slabs between the stations, flaring out at the foot to the cabinet line, with a white
-    # light bar up each inner edge from the deck to the ceiling.
-    a = VS + 4
-    while a <= 360 - VS - 3:
-        if not near_lift(a, 8):
-            wallbox(f"Pilaster{int(a)}", a, R - 0.22, HD + 0.95 + (H - HD - 0.95) / 2, 0.56, 0.34, H - HD - 0.95, M_PanelGrey(), "Walls", bevel=0.012)
-            # The foot: a slab leaning in from the wall to the cabinet front.
-            wallbox(f"PilFoot{int(a)}", a, R - 0.50, HD + 0.48, 0.14, 0.34, 1.06, M_PanelGrey(), "Walls", pitch=28, bevel=0.012)
-            wallbox(f"PilFootFill{int(a)}", a, R - 0.24, HD + 0.44, 0.56, 0.34, 0.88, M_PanelGrey(), "Walls")
-            c, sn = ang(a); tc, ts = ang(a + 90)
-            for sgn in (-1, 1):
-                z0 = HD + 0.98; hgt = H - HD - 1.02
-                box(f"PilBar{int(a)}{sgn}", ((R - 0.51) * c + tc * sgn * 0.145, (R - 0.51) * sn + ts * sgn * 0.145, z0 + hgt / 2), (0.02, 0.03, hgt), M_Strip(), "Lights", yaw=a)
-                box(f"PilBarFoot{int(a)}{sgn}", ((R - 0.57) * c + tc * sgn * 0.145, (R - 0.57) * sn + ts * sgn * 0.145, HD + 0.49), (0.02, 0.03, 1.00), M_Strip(), "Lights", yaw=a, pitch=28)
-        a += STEP
+    for (a, span, kind, name) in STATIONS:
+        station_unit(a, span, name, kind)
+    # Pilasters between neighbouring units, and the heavier bulkheads at the midpoints and either side of the screen.
+    def pilaster(a, width):
+        wallbox(f"Pilaster{int(a)}", a, R - 0.22, HD + 0.95 + (H - HD - 0.95) / 2, 0.56, width, H - HD - 0.95, M_PanelGrey(), "Walls", bevel=0.012)
+        wallbox(f"PilFoot{int(a)}", a, R - 0.50, HD + 0.48, 0.14, width, 1.06, M_PanelGrey(), "Walls", pitch=28, bevel=0.012)
+        wallbox(f"PilFootFill{int(a)}", a, R - 0.24, HD + 0.44, 0.56, width, 0.88, M_PanelGrey(), "Walls")
+        c, sn = ang(a); tc, ts = ang(a + 90)
+        for sgn in (-1, 1):
+            z0 = HD + 0.98; hgt = H - HD - 1.02
+            off = width / 2 - 0.025
+            box(f"PilBar{int(a)}{sgn}", ((R - 0.51) * c + tc * sgn * off, (R - 0.51) * sn + ts * sgn * off, z0 + hgt / 2), (0.02, 0.03, hgt), M_Strip(), "Lights", yaw=a)
+            box(f"PilBarFoot{int(a)}{sgn}", ((R - 0.57) * c + tc * sgn * off, (R - 0.57) * sn + ts * sgn * off, HD + 0.49), (0.02, 0.03, 1.00), M_Strip(), "Lights", yaw=a, pitch=28)
+    for i in range(len(STATIONS)):
+        a0 = STATIONS[i][0]; a1 = STATIONS[(i + 1) % len(STATIONS)][0]
+        if a1 < a0: a1 += 360
+        a = (a0 + a1) / 2
+        if a1 - a0 > 28 or near_lift(a, 10) or abs((a + 180) % 360 - 180) < VS + 4:
+            continue
+        pilaster(a, 0.26)
+    for a in (90, -90):
+        pilaster(a, 0.60)
 
 def viewscreen():
     VB, VT = ZR + 0.55, ZR + 2.20
@@ -483,24 +490,15 @@ def viewscreen():
         wallbox(f"ScreenPillar{s}", s * (VS + 1.5), R + 0.01, H / 2, 0.34, 0.24, H, M_PanelGrey(), "Walls", bevel=0.012)
 
 def lifts_and_bench():
-    """Turbolifts at the sides (v01/v13), and the aft wall under the screens: the red quilted band over the light
-    bars, continuous across the aft stations, with the clock above."""
+    """The two turbolifts just aft of the midpoint bulkheads, with lit surrounds, signs and the rail across the doors; the clock over the aft panels."""
     for L in LIFTS:
         wallbox(f"LiftSurround{int(L)}", L, R + 0.08, HD + 1.10, 0.08, 1.50, 2.20, M_PanelGrey(), "Walls", bevel=0.01)
         wallbox(f"LiftDoors{int(L)}", L, R + 0.01, HD + 1.00, 0.04, 1.10, 2.00, M_Burgundy(), "Walls")
         wallbox(f"LiftSeam{int(L)}", L, R - 0.015, HD + 1.00, 0.01, 0.02, 1.96, M_Black(), "Walls")
         wallbox(f"LiftRail{int(L)}", L, R - 0.015, HD + 0.95, 0.01, 1.08, 0.03, M_Black(), "Walls")
         wallbox(f"LiftSign{int(L)}", L, R - 0.01, HD + 2.12, 0.02, 0.40, 0.07, M_Clock(), "Lights")
-        for s in (-1, 1):
-            wallbox(f"LiftBar{int(L)}{s}", L + s * 7.6, R + 0.03, HD + 1.10, 0.02, 0.03, 2.16, M_Strip(), "Lights")
-    # Red quilted band: upright cushions along the aft cabinet front from 120 to 240 degrees.
-    a = 121.5
-    k = 0
-    while a < 239:
-        c, sn = ang(a)
-        box(f"AftCushion{k}", ((R - 0.80) * c, (R - 0.80) * sn, HD + 0.52), (0.10, 0.32, 0.42), M_Burgundy(), "Furniture", yaw=a, bevel=0.035)
-        a += 3.7; k += 1
-    arc_sweep("AftCushionBase", [(R - 0.78, HD + 0.30), (R - 0.05, HD + 0.30), (R - 0.05, HD + 0.74), (R - 0.78, HD + 0.74)], 120, 240, M_PanelDark(), "Furniture")
+        for sg in (-1, 1):
+            wallbox(f"LiftBar{int(L)}{sg}", L + sg * 7.6, R + 0.03, HD + 1.10, 0.02, 0.03, 2.16, M_Strip(), "Lights")
     wallbox("Clock", 180, R + 0.02, H - 0.48, 0.02, 0.36, 0.09, M_Clock(), "Lights")
 
 def egg(name, pos, yaw, scale, material):
@@ -512,7 +510,7 @@ def egg(name, pos, yaw, scale, material):
     for col in o.users_collection: col.objects.unlink(o)
     return finish(o, material, "Furniture", smooth=True)
 
-def chair(name, pos, yaw, tall=False):
+def chair(name, pos, yaw, tall=False, headrest=False):
     """Grey egg pad and seat on a black stem and round base, black hoop arms. The helm chairs carry a tall narrow
     black shell behind the pad, the angular fin seen from the captain's side in v08/v09."""
     x, y, z = pos
@@ -527,6 +525,11 @@ def chair(name, pos, yaw, tall=False):
         box(f"{name}_Shell", (x - 0.26 * c, y - 0.26 * s, z + 1.00), (0.07, 0.30, 1.05), M_Black(), "Furniture", yaw=yaw, pitch=-7, bevel=0.015)
         box(f"{name}_ShellTop", (x - 0.30 * c, y - 0.30 * s, z + 1.56), (0.07, 0.30, 0.16), M_Black(), "Furniture", yaw=yaw, pitch=-7, roll=18, bevel=0.012)
         egg(f"{name}_Back", (x - 0.20 * c, y - 0.20 * s, z + 1.02), yaw, (0.10, 0.44, 0.70), M_Seat())
+    elif headrest:
+        # The taller back of the two larger stations: a long grey pad up a black spine, with a headrest above it.
+        box(f"{name}_Spine", (x - 0.21 * c, y - 0.21 * s, z + 0.80), (0.05, 0.12, 0.62), M_Black(), "Furniture", yaw=yaw, pitch=-8)
+        egg(f"{name}_Back", (x - 0.24 * c, y - 0.24 * s, z + 0.98), yaw, (0.10, 0.44, 0.76), M_Seat())
+        egg(f"{name}_Head", (x - 0.28 * c, y - 0.28 * s, z + 1.44), yaw, (0.10, 0.30, 0.20), M_Seat())
     else:
         box(f"{name}_Spine", (x - 0.20 * c, y - 0.20 * s, z + 0.66), (0.05, 0.12, 0.34), M_Black(), "Furniture", yaw=yaw, pitch=-8)
         egg(f"{name}_Back", (x - 0.23 * c, y - 0.23 * s, z + 0.92), yaw, (0.10, 0.42, 0.60), M_Seat())
@@ -540,8 +543,8 @@ def helm():
     outlined in white and carrying the two Okudagrams, on a grey cabinet that narrows to a central pedestal with a
     lit panel on its front (the wings overhang the chairs' bases); angled black end panels with three bars and
     grated side shelves; the two chairs; and between them the pedestal whose screen faces the captain."""
-    RA = 2.05                      # radius of the console arc about the bridge centre
-    SP = 36.0                      # half-angle of the console
+    RA = 1.15                      # radius of the console arc about the bridge centre; it sits on the platform's nose
+    SP = 48.0                      # half-angle of the console
     top = [(RA - 0.30, ZH + 0.78), (RA + 0.26, ZH + 0.96), (RA + 0.26, ZH + 0.91), (RA - 0.30, ZH + 0.73)]
     # The white outline: a slab a little wider than the top and just under it, so only a rim shows round the black.
     arc_sweep("HelmTopOutline", [(r - 0.012 if i in (0, 3) else r + 0.012, z - 0.006) for i, (r, z) in enumerate(top)], -SP - 0.4, SP + 0.4, M_Strip(), "Lights")
@@ -550,7 +553,7 @@ def helm():
         arc_sweep(f"Scr_{name}", [(RA + 0.22, ZH + 0.953), (RA - 0.24, ZH + 0.805)], b0, b1, M_Screen(name), "Screens", closed=False, cap=False, uv=True)
     # Cabinet under the top, open beneath the wings; the central pedestal from the floor with the lit panel.
     arc_sweep("HelmCabinet", [(RA - 0.26, ZH + 0.40), (RA + 0.18, ZH + 0.40), (RA + 0.18, ZH + 0.80), (RA - 0.26, ZH + 0.80)], -SP + 1.0, SP - 1.0, M_PanelGrey(), "Consoles")
-    arc_sweep("HelmPedestal", [(RA - 0.22, ZH), (RA + 0.14, ZH), (RA + 0.14, ZH + 0.42), (RA - 0.22, ZH + 0.42)], -11, 11, M_PanelGrey(), "Consoles")
+    arc_sweep("HelmPedestal", [(RA - 0.22, ZH), (RA + 0.14, ZH), (RA + 0.14, ZH + 0.42), (RA - 0.22, ZH + 0.42)], -15, 15, M_PanelGrey(), "Consoles")
     arc_sweep("HelmPedestalLight", [(RA + 0.14, ZH + 0.08), (RA + 0.165, ZH + 0.08), (RA + 0.165, ZH + 0.74), (RA + 0.14, ZH + 0.74)], -5, 5, M_Strip(), "Lights")
     for sgn in (-1, 1):
         a = sgn * SP
@@ -558,13 +561,13 @@ def helm():
         wallbox(f"HelmEnd{sgn}", a, RA - 0.02, ZH + 0.60, 0.62, 0.08, 0.60, M_Black(), "Consoles", bevel=0.01)
         for k in range(3):
             box(f"HelmBar{sgn}{k}", ((RA - 0.18 + k * 0.14) * c, (RA - 0.18 + k * 0.14) * sn, ZH + 0.48 + k * 0.09), (0.03, 0.02, 0.22), M_Strip(), "Lights", yaw=a)
-        a2 = sgn * (SP + 11)
+        a2 = sgn * (SP + 15)
         c2, s2 = ang(a2)
         box(f"HelmShelf{sgn}", (RA * c2, RA * s2, ZH + 0.66), (0.46, 0.44, 0.03), M_PostGrey(), "Consoles", yaw=a2)
         box(f"HelmShelfLeg{sgn}", (RA * c2, RA * s2, ZH + 0.33), (0.06, 0.06, 0.66), M_Black(), "Consoles", yaw=a2)
     # The pedestal between the helm chairs: narrow plinth, the block with the keypad plate and plaque toward the
     # captain, the black head edged in grey whose face toward the captain is the display.
-    px = 0.95
+    px = -0.25
     # Low, as in v09: the head's top is about level with the helm chairs' seat backs.
     box("PedestalPlinth", (px, 0.0, ZH + 0.15), (0.30, 0.42, 0.30), M_PanelGrey(), "Consoles", bevel=0.01)
     box("PedestalBlock", (px, 0.0, ZH + 0.41), (0.40, 0.54, 0.22), M_PanelGrey(), "Consoles", bevel=0.012)
@@ -581,12 +584,12 @@ def helm():
     # Its front, toward the viewscreen: a dark panel with a blue-edged display (v02).
     box("PedestalFrontPanel", (px + 0.205, 0.0, ZH + 0.36), (0.01, 0.30, 0.20), M_Buttons(), "Consoles")
     for sgn in (-1, 1):
-        chair(f"HelmChair{sgn}", (1.20, sgn * 0.95, ZH), 0.0, tall=True)
+        chair(f"HelmChair{sgn}", (0.30, sgn * 0.82, ZH), 0.0, tall=True)
 
 def captain():
     """The captain's chair at the centre of its platform, after v02: six rounded grey cushions up a leaning black
     spine with a narrower headrest, grey seat on a black shell, black arms on posts with keypads, black stem and base."""
-    cx = -0.55
+    cx = -2.25
     o = lathe("CaptBase", [(0.0, ZC), (0.40, ZC), (0.40, ZC + 0.06), (0.36, ZC + 0.08), (0.0, ZC + 0.08)], M_Black(), "Furniture", 48); o.location = B(cx, 0, 0)
     o = lathe("CaptCol", [(0.0, ZC + 0.08), (0.10, ZC + 0.08), (0.10, ZC + 0.42), (0.0, ZC + 0.42)], M_Black(), "Furniture", 24); o.location = B(cx, 0, 0)
     box("CaptSeatShell", (cx - 0.02, 0.0, ZC + 0.44), (0.62, 0.60, 0.06), M_Black(), "Furniture", bevel=0.02)
@@ -604,14 +607,7 @@ def is_aft(a):
     return abs((a - 180 + 180) % 360 - 180) < 62
 
 def crew_chairs():
-    # Chairs at the side stations only; the aft stations are stood at, over the red quilted wall.
-    chord = 2 * R * math.sin(math.radians(STEP / 2))
-    a = VS + STEP / 2 + 4
-    while a < 360 - VS - STEP * 0.4:
-        if not near_lift(a, STEP * 0.45) and not is_aft(a):
-            c, s = ang(a)
-            chair(f"Chair{int(a)}", ((R - 1.30) * c, (R - 1.30) * s, HD), a)
-        a += STEP
+    pass
 
 def fix_normals():
     """Closed shells get consistent outward normals; open screen strips face the captain's eye (the game material
@@ -664,11 +660,11 @@ def previews(outdir):
     ld = bpy.data.lights.new("DomeLight", 'POINT'); ld.energy = 60; ld.shadow_soft_size = 0.6
     lo = bpy.data.objects.new("DomeLight", ld); scn.collection.objects.link(lo); lo.location = B(0, 0, H - 0.45)
     views = {
-        "v01": ((4.55, 0.0, ZR + 1.70), (-0.5, 0.0, 0.5), 14),
-        "v02": ((2.45, 0.0, ZH + 1.05), (-0.6, 0.0, ZC + 0.9), 24),
-        "v09": ((-1.2, 0.0, ZC + 1.6), (1.7, 0.0, ZH + 0.7), 24),
-        "v13": ((0.6, 1.6, ZC + 1.1), (5.0 * math.cos(math.radians(80)), 5.0 * math.sin(math.radians(80)), ZR + 1.0), 22),
-        "v08": ((-0.45, 0.0, ZC + 1.28), (5.0, 0.0, ZC + 0.9), 22),
+        "v01": ((4.6, 0.0, ZR + 1.70), (-1.2, 0.0, 0.4), 14),
+        "v02": ((1.5, 0.0, ZH + 1.05), (-2.3, 0.0, ZC + 0.9), 24),
+        "v09": ((-2.9, 0.0, ZC + 1.9), (0.9, 0.0, ZH + 0.7), 24),
+        "v13": ((-3.3, 0.6, ZR + 0.55), (-3.3, 4.5, ZR + 1.0), 22),
+        "v08": ((-2.15, 0.0, ZC + 1.28), (5.0, 0.0, ZC + 0.6), 22),
         "dbg": ((4.2, -2.2, 3.1), (1.4, 0.0, 0.3), 22),
     }
     for name, (eye, target, lens) in views.items():
@@ -677,6 +673,15 @@ def previews(outdir):
         cam.rotation_euler = d.to_track_quat('-Z', 'Y').to_euler()
         scn.render.filepath = os.path.join(outdir, f"prev_{name}.png"); bpy.ops.render.render(write_still=True)
     coll("Ceiling").hide_render = True
+    # The open isometric, cut like Versiga's: the camera's near clip slices off the front wall and ceiling fixtures.
+    hidden = [o for o in bpy.data.objects if o.name.startswith(("CeilPanel", "CanLight", "CanRim", "Dome"))]
+    for o in hidden: o.hide_render = True
+    cam.location = B(8.2, 7.0, 7.4); cam_data.lens = 26; d = B(-0.4, -0.2, 0.5) - cam.location
+    cam.rotation_euler = d.to_track_quat('-Z', 'Y').to_euler()
+    cam_data.clip_start = 7.6
+    scn.render.filepath = os.path.join(outdir, "prev_iso_open.png"); bpy.ops.render.render(write_still=True)
+    cam_data.clip_start = 0.1
+    for o in hidden: o.hide_render = False
     cam.location = B(-9.0, 6.0, 9.0); d = B(0.5, 0.0, 0.8) - cam.location
     cam.rotation_euler = d.to_track_quat('-Z', 'Y').to_euler(); cam_data.lens = 28
     scn.render.filepath = os.path.join(outdir, "prev_overview.png"); bpy.ops.render.render(write_still=True)
