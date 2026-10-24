@@ -204,6 +204,17 @@ def wallbox(name, deg, radial, z, thick, width, height, material, group, pitch=0
     c, s = ang(deg)
     return box(name, (radial * c, radial * s, z), (thick, width, height), material, group, yaw=deg, pitch=pitch, bevel=bevel)
 
+def tri_recess(name, deg, radial, tri, depth, material, group):
+    """A dark triangular inset in a wall face at a bearing: an (across, up) outline, extruded `depth` outward."""
+    c, s = ang(deg); tc, ts = ang(deg + 90)
+    verts = [(r * c + tc * u, r * s + ts * u, z) for r in (radial, radial + depth) for (u, z) in tri]
+    faces = [(0, 1, 2), (3, 4, 5), (0, 1, 4, 3), (1, 2, 5, 4), (2, 0, 3, 5)]
+    obj = mesh_from(name, verts, faces, material, group)
+    bm = bmesh.new(); bm.from_mesh(obj.data)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    bm.to_mesh(obj.data); bm.free(); obj.data.update()
+    return obj
+
 def light_bars(prefix, deg, radial, z0, width, count=3, pitch=0.11):
     for i in range(count):
         wallbox(f"{prefix}_bar{i}", deg, radial, z0 + i * pitch, 0.02, width, 0.05, M_Strip(), "Lights")
@@ -288,10 +299,10 @@ STEP = 32.0
 # midpoint the turbolifts; aft of each lift one larger seated station with a small desk reaching out; and across
 # the aft wall the display panels with the red quilted band and no desks or seats.
 STATIONS = [
-    (40, 13, "seat", "Weapons"), (54, 13, "seat", "Tactical"), (68, 13, "seat", "Science"), (82, 13, "seat", "Engineering"),
-    (-40, 13, "seat", "Environmental"), (-54, 13, "seat", "Navigation"), (-68, 13, "seat", "Science"), (-82, 13, "seat", "Communications"),
-    (126, 20, "desk", "Science"), (-126, 20, "desk", "Communications"),
-    (157, 21, "panel", "Tactical"), (180, 21, "panel", "MasterSituation"), (203, 21, "panel", "Engineering"),
+    (40, 12, "seat", "Weapons"), (54, 13, "seat", "Tactical"), (68, 13, "seat", "Science"), (82, 13, "seat", "Engineering"),
+    (-40, 12, "seat", "Environmental"), (-54, 13, "seat", "Navigation"), (-68, 13, "seat", "Science"), (-82, 13, "seat", "Communications"),
+    (126, 22, "desk", "Science"), (-126, 22, "desk", "Communications"),
+    (155, 25, "panel", "Tactical"), (180, 23, "panel", "MasterSituation"), (205, 25, "panel", "Engineering"),
 ]
 
 def floors():
@@ -484,32 +495,54 @@ def station_unit(a, span, name, kind="seat"):
 def stations():
     for (a, span, kind, name) in STATIONS:
         station_unit(a, span, name, kind)
-    # Pilasters between neighbouring units, and the heavier bulkheads at the midpoints and either side of the screen.
-    def pilaster(a, width, trellis=False):
+    # Pilasters: one lit pilaster between every pair of neighbouring stations and at the edges of the turbolift
+    # alcoves and the viewscreen (v01/v02/v13); within the aft trio of display panels only thin unlit dividers.
+    def pilaster(a, width=0.32, strip=0.10, trellis=False):
         c, sn = ang(a); tc, ts = ang(a + 90)
-        # A pale slab from the deck up to the soffit: upright above the desk line, leaning out to the cabinet front below.
-        wallbox(f"Pilaster{int(a)}", a, R - 0.24, HD + 0.95 + (ZS - HD - 0.95) / 2, 0.60, width, ZS - HD - 0.95, M_PanelGrey(), "Walls", bevel=0.012)
-        wallbox(f"PilFoot{int(a)}", a, R - 0.50, HD + 0.48, 0.14, width, 1.06, M_PanelGrey(), "Walls", pitch=28, bevel=0.012)
-        wallbox(f"PilFootFill{int(a)}", a, R - 0.24, HD + 0.44, 0.56, width, 0.88, M_PanelGrey(), "Walls")
+        # A pale slab from the deck up to the soffit, 46 cm deep so its face stands proud of the hoods, upright above
+        # the desk line and leaning out to the cabinet front below, with one light strip up the middle of its face.
+        wallbox(f"Pilaster{int(a)}", a, R - 0.19, HD + 0.95 + (ZS - HD - 0.95) / 2, 0.46, width, ZS - HD - 0.95, M_PanelGrey(), "Walls", bevel=0.012)
+        wallbox(f"PilFoot{int(a)}", a, R - 0.60, HD + 0.50, 0.14, width, 1.06, M_PanelGrey(), "Walls", pitch=20, bevel=0.012)
+        wallbox(f"PilFootFill{int(a)}", a, R - 0.20, HD + 0.46, 0.48, width, 0.92, M_PanelGrey(), "Walls")
         if trellis:
-            # The structural frame seen between the port forward stations: a dark recess with two crossed grey braces.
-            wallbox(f"PilRecess{int(a)}", a, R - 0.55, HD + 1.70, 0.02, width - 0.08, 1.10, M_PanelDark(), "Walls")
-            for sgn in (-1, 1):
-                box(f"PilBrace{int(a)}{sgn}", ((R - 0.565) * c, (R - 0.565) * sn, HD + 1.70), (0.025, 0.06, 1.16), M_PanelGrey(), "Walls", yaw=a, roll=sgn * 38)
-        for sgn in (-1, 1):
-            off = width / 2 - 0.03
-            z0 = HD + 0.98; hgt = ZS - HD - 1.00
-            box(f"PilBar{int(a)}{sgn}", ((R - 0.55) * c + tc * sgn * off, (R - 0.55) * sn + ts * sgn * off, z0 + hgt / 2), (0.02, 0.035, hgt), M_Strip(), "Lights", yaw=a)
-            box(f"PilBarFoot{int(a)}{sgn}", ((R - 0.57) * c + tc * sgn * off, (R - 0.57) * sn + ts * sgn * off, HD + 0.49), (0.02, 0.035, 1.00), M_Strip(), "Lights", yaw=a, pitch=28)
-    for i in range(len(STATIONS)):
-        a0 = STATIONS[i][0]; a1 = STATIONS[(i + 1) % len(STATIONS)][0]
+            # The structural frame between the port forward stations (v13): a wider pale member with dark triangular
+            # openings in a zigzag up its face, and no light strip.
+            z0, z1 = HD + 1.10, ZS - 0.14
+            n = 3; hb = (z1 - z0) / n; hw = width / 2 - 0.06
+            for k in range(n):
+                zb, zt = z0 + k * hb + 0.03, z0 + (k + 1) * hb - 0.03
+                tri = [(-hw, zb), (hw, zb), (0.0, zt)] if k % 2 == 0 else [(-hw, zt), (hw, zt), (0.0, zb)]
+                tri_recess(f"PilTri{int(a)}{k}", a, R - 0.435, tri, 0.04, M_PanelDark(), "Walls")
+            return
+        if strip:
+            z0 = HD + 1.00; hgt = ZS - HD - 1.04
+            box(f"PilBar{int(a)}", ((R - 0.43) * c, (R - 0.43) * sn, z0 + hgt / 2), (0.02, strip, hgt), M_Strip(), "Lights", yaw=a)
+            box(f"PilBarFoot{int(a)}", ((R - 0.665) * c, (R - 0.665) * sn, HD + 0.52), (0.02, strip, 0.98), M_Strip(), "Lights", yaw=a, pitch=20)
+    def divider(a):
+        c, sn = ang(a)
+        wallbox(f"Divider{int(a)}", a, R - 0.17, HD + 0.98 + (ZS - HD - 0.98) / 2, 0.42, 0.12, ZS - HD - 0.98, M_PanelGrey(), "Walls", bevel=0.008)
+        wallbox(f"DividerPanel{int(a)}", a, R - 0.385, HD + 1.30, 0.01, 0.07, 0.14, M_PanelDark(), "Walls")
+    order = sorted(STATIONS, key=lambda st: st[0] % 360)
+    for i in range(len(order)):
+        s0, s1 = order[i], order[(i + 1) % len(order)]
+        a0, a1 = s0[0] % 360, s1[0] % 360
         if a1 < a0: a1 += 360
-        a = (a0 + a1) / 2
-        if a1 - a0 > 28 or near_lift(a, 6) or abs((a + 180) % 360 - 180) < VS + 4:
-            continue
-        pilaster(a, 0.30, trellis=abs(abs(a) - 61) < 1.0)
-    for a in (90, -90):
-        pilaster(a, 0.60)
+        if a1 - a0 > 40: continue
+        a = ((a0 + a1) / 2 + 180) % 360 - 180
+        if near_lift(a, 6) or abs(a) < VS + 4: continue
+        if s0[2] == "panel" and s1[2] == "panel":
+            divider(a)
+        else:
+            if abs(a + 61) < 1.0: pilaster(a, width=0.46, trellis=True)
+            else: pilaster(a)
+    # Either side of each turbolift alcove, flush with its side wall, and either side of the viewscreen frame.
+    W = 2 * R * math.sin(math.radians(LIFT_HALF))
+    edge = math.degrees(math.asin((W / 2 + 0.17) / R))
+    for L in LIFTS:
+        for sgn in (-1, 1):
+            pilaster(L + sgn * edge)
+    for sgn in (-1, 1):
+        pilaster(sgn * (VS + 1.6), width=0.30)
 
 def viewscreen():
     VB, VT = ZR + 0.55, ZR + 2.20
@@ -525,11 +558,8 @@ def viewscreen():
     box("FrameHi", (XW - 0.06, 0, VT + fw / 2), (0.14, WW + 2 * fw, fw), M_PanelGrey(), "Walls", bevel=0.02)
     for s in (-1, 1):
         box(f"FrameSide{s}", (XW - 0.06, s * (WW / 2 + fw / 2), (VB + VT) / 2), (0.14, fw, VT - VB + 2 * fw), M_PanelGrey(), "Walls", bevel=0.02)
-        box(f"FrameBar{s}", (XW - 0.14, s * (WW / 2 - 0.02), (VB + VT) / 2), (0.02, 0.025, VT - VB), M_Strip(), "Lights")
     light_bars("Sill", 0, XW - 0.07, ZR + 0.10, WW - 0.4)
     box("ClockFront", (XW - 0.07, 0, VT + 0.30), (0.02, 0.44, 0.10), M_Clock(), "Lights")
-    for s in (-1, 1):
-        wallbox(f"ScreenPillar{s}", s * (VS + 1.5), R + 0.01, ZS / 2, 0.34, 0.30, ZS, M_PanelGrey(), "Walls", bevel=0.012)
 
 def lifts_and_bench():
     """Each turbolift in a recessed alcove just aft of its midpoint bulkhead: pale side walls, a light panel in the
@@ -546,9 +576,6 @@ def lifts_and_bench():
             for k in range(3):
                 box(f"LiftSideBar{int(L)}{sgn}{k}", ((R + DEEP / 2) * c + tc * sgn * (W / 2 - 0.025), (R + DEEP / 2) * sn + ts * sgn * (W / 2 - 0.025), HD + 0.08 + k * 0.075), (0.40, 0.015, 0.045), M_Strip(), "Lights", yaw=L)
         box(f"LiftCeiling{int(L)}", ((R + DEEP / 2) * c, (R + DEEP / 2) * sn, HD + 2.32), (DEEP + 0.1, W + 0.1, 0.06), M_PanelGrey(), "Walls", yaw=L)
-        # Light strips up the inboard edge of each alcove wall, as on the pilasters.
-        for sgn in (-1, 1):
-            box(f"LiftEdgeBar{int(L)}{sgn}", ((R - 0.02) * c + tc * sgn * (W / 2 + 0.01), (R - 0.02) * sn + ts * sgn * (W / 2 + 0.01), HD + 0.95 + (ZS - HD - 1.05) / 2), (0.035, 0.02, ZS - HD - 1.05), M_Strip(), "Lights", yaw=L)
         box(f"LiftLightPanel{int(L)}", ((R + DEEP / 2) * c, (R + DEEP / 2) * sn, HD + 2.285), (0.36, 0.70, 0.03), M_Strip(), "Lights", yaw=L)
         box(f"LiftLintel{int(L)}", ((R + 0.10) * c, (R + 0.10) * sn, (HD + 2.35 + ZS + 0.02) / 2), (0.12, W + 0.3, ZS + 0.02 - HD - 2.35), M_PanelGrey(), "Walls", yaw=L)
         wallbox(f"LiftFrame{int(L)}", L, R + DEEP, HD + 1.05, 0.06, 1.34, 2.10, M_PostGrey(), "Walls", bevel=0.03)
@@ -607,8 +634,9 @@ def rounded_outline(w_bot, w_top, h, r_top, r_bot=0.03, steps=6):
     return pts
 
 def chair(name, pos, yaw, tall=False, headrest=False):
-    """Grey egg pad and seat on a black stem and round base, black hoop arms. The helm chairs carry a tall narrow
-    black shell behind the pad, the angular fin seen from the captain's side in v08/v09."""
+    """Round black base and stem, a grey disc seat on a black shell, a narrow grey egg pad for the back on a thin
+    black spine, and black hoop arms (v01/v02/v13). The helm chairs carry the pad higher on a narrow black fin that
+    rises from the base to the pad's top (v08/v09); the desk stations' chairs a slightly taller pad."""
     x, y, z = pos
     c, s = ang(yaw)
     base_r = 0.36 if tall else 0.27
@@ -617,18 +645,16 @@ def chair(name, pos, yaw, tall=False, headrest=False):
     box(f"{name}_SeatShell", (x - 0.02 * c, y - 0.02 * s, z + 0.47), (0.46, 0.46, 0.05), M_Black(), "Furniture", yaw=yaw, bevel=0.02)
     egg(f"{name}_Seat", (x, y, z + 0.52), yaw, (0.48, 0.46, 0.10), M_Seat())
     if tall:
-        # The fin: a narrow black shell rising from behind the seat, leaning back, with a slanted top.
-        box(f"{name}_Shell", (x - 0.26 * c, y - 0.26 * s, z + 1.00), (0.07, 0.30, 1.05), M_Black(), "Furniture", yaw=yaw, pitch=-7, bevel=0.015)
-        box(f"{name}_ShellTop", (x - 0.30 * c, y - 0.30 * s, z + 1.56), (0.07, 0.30, 0.16), M_Black(), "Furniture", yaw=yaw, pitch=-7, roll=18, bevel=0.012)
-        egg(f"{name}_Back", (x - 0.20 * c, y - 0.20 * s, z + 1.02), yaw, (0.10, 0.44, 0.70), M_Seat())
+        # The fin: a narrow black bar from the base up behind the pad, leaning back a little.
+        box(f"{name}_Shell", (x - 0.25 * c, y - 0.25 * s, z + 0.84), (0.05, 0.12, 0.74), M_Black(), "Furniture", yaw=yaw, pitch=-7, bevel=0.01)
+        egg(f"{name}_Back", (x - 0.19 * c, y - 0.19 * s, z + 0.95), yaw, (0.09, 0.30, 0.48), M_Seat())
     elif headrest:
-        # The taller back of the two larger stations: a long grey pad up a black spine, with a headrest above it.
-        box(f"{name}_Spine", (x - 0.21 * c, y - 0.21 * s, z + 0.80), (0.05, 0.12, 0.62), M_Black(), "Furniture", yaw=yaw, pitch=-8)
-        egg(f"{name}_Back", (x - 0.24 * c, y - 0.24 * s, z + 0.98), yaw, (0.10, 0.44, 0.76), M_Seat())
-        egg(f"{name}_Head", (x - 0.28 * c, y - 0.28 * s, z + 1.44), yaw, (0.10, 0.30, 0.20), M_Seat())
+        # The two larger stations' chairs: the same pad, a little taller.
+        box(f"{name}_Spine", (x - 0.21 * c, y - 0.21 * s, z + 0.78), (0.05, 0.08, 0.58), M_Black(), "Furniture", yaw=yaw, pitch=-8)
+        egg(f"{name}_Back", (x - 0.24 * c, y - 0.24 * s, z + 0.94), yaw, (0.09, 0.30, 0.54), M_Seat())
     else:
-        box(f"{name}_Spine", (x - 0.20 * c, y - 0.20 * s, z + 0.66), (0.05, 0.12, 0.34), M_Black(), "Furniture", yaw=yaw, pitch=-8)
-        egg(f"{name}_Back", (x - 0.23 * c, y - 0.23 * s, z + 0.92), yaw, (0.10, 0.42, 0.60), M_Seat())
+        box(f"{name}_Spine", (x - 0.20 * c, y - 0.20 * s, z + 0.66), (0.05, 0.08, 0.36), M_Black(), "Furniture", yaw=yaw, pitch=-8)
+        egg(f"{name}_Back", (x - 0.23 * c, y - 0.23 * s, z + 0.86), yaw, (0.09, 0.30, 0.46), M_Seat())
     tc, ts = ang(yaw + 90)
     for sgn in (-1, 1):
         box(f"{name}_Arm{sgn}", (x - 0.04 * c + tc * sgn * 0.25, y - 0.04 * s + ts * sgn * 0.25, z + 0.74), (0.36, 0.035, 0.035), M_Black(), "Furniture", yaw=yaw, bevel=0.01)
@@ -731,12 +757,15 @@ def crew_chairs():
 def fix_normals():
     """Closed shells get consistent outward normals; open screen strips face the captain's eye (the game material
     is one-sided, so a screen wound the wrong way is culled and shows the black hood behind it)."""
-    eye = B(0.12, 0.0, 1.65)
+    # The station and helm screens face an eye near the middle of the room; the pedestal's schematic faces aft, to
+    # the captain, and would be wound away from them by the same test.
+    eyes = {"Scr_Schematic": B(-2.25, 0.0, 2.05)}
     for o in bpy.data.objects:
         if o.type != 'MESH':
             continue
         bm = bmesh.new(); bm.from_mesh(o.data)
         if o.name.startswith("Scr_"):
+            eye = eyes.get(o.name, B(0.12, 0.0, 1.65))
             for f in bm.faces:
                 c = o.matrix_world @ f.calc_center_median()
                 n = (o.matrix_world.to_3x3() @ f.normal).normalized()
@@ -796,6 +825,9 @@ def previews(outdir):
         "v06": ((-3.35, 0.55, ZC + 1.70), (4.0, -0.7, ZC + 0.75), 18),
         "capt_side": ((-0.6, 2.6, ZC + 1.15), (-2.25, 0.0, ZC + 0.85), 34),
         "capt_port": ((0.3, -2.4, ZC + 1.45), (-2.0, 0.6, ZC + 0.8), 26),
+        # The truss pilaster between the port forward stations, and a station chair from the deck.
+        "truss": ((-0.6, -1.2, ZC + 1.25), (2.6, -4.9, ZR + 1.9), 24),
+        "chair": ((1.0, 1.9, ZR + 1.15), (1.65, 4.1, ZR + 0.85), 30),
     }
     only = None
     for a in ARGS:

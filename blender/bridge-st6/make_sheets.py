@@ -30,4 +30,5 @@ def sheet(pairs, out, h=300):
 sheet([("v21.jpg", "prev_ceil.png"), ("v01.jpg", "prev_v01.png"), ("v19.jpg", "prev_lift.png"), ("v13.jpg", "prev_v13.png"),
        ("v02.jpg", "prev_v02.png"), ("v09.jpg", "prev_v09.png"), ("v08.jpg", "prev_v08.png")], "compare_views.png")
 sheet([("v02.jpg", "prev_capt.png"), ("v06.jpg", "prev_v06.png"), ("v05.jpg", "prev_capt_side.png"), ("v03.jpg", "prev_capt_port.png")], "compare_captain.png", h=360)
+sheet([("v13.jpg", "prev_truss.png"), ("v19.jpg", "prev_lift.png"), ("v02.jpg", "prev_chair.png")], "compare_bulkheads.png", h=360)
 sheet([("iso_main.jpg", "prev_iso_open.png")], "compare_iso.png", h=520)
