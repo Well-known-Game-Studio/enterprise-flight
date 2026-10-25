@@ -291,26 +291,27 @@ void UBridgeInteriorComponent::BuildRefitMesh()
 		else if (Name == TEXT("TouchPanel") && Touch) { C->SetMaterial(i, Touch); }
 	}
 
-	// Crew at the helm and at the perimeter stations, matching the layout the Blender generator uses.
+	// Crew on the Blender set's chairs: the helm chairs on the platform (30 cm up) and a few of the station chairs
+	// on the deck (60 cm up), 1.15 m in from the wall; the two desk stations aft of the lifts have their chair
+	// shifted 30 cm aft of the station's bearing, away from the lift.
 	if (bShowCrew)
 	{
 		UniformMaroon = MakeLit(TEXT("UniformMaroon"), FLinearColor(0.40f, 0.07f, 0.09f), 0.85f);
-		const float R = 560.f, HD = 40.f, VS = 34.f, Step = 32.f;
-		const float Lifts[2] = { 150.f, 210.f };
 		for (int32 s = -1; s <= 1; s += 2)
 		{
-			Crew(FVector(230.f - 95.f, s * 68.f, 55.f), 0.f, UniformMaroon);
+			Crew(FVector(30.f, s * 82.f, 30.f + 55.f), 0.f, UniformMaroon);
 		}
+		const float ChairR = WallRadius - 115.f, DeckZ = 60.f + 55.f;
+		const float Seats[] = { 40.f, 68.f, -54.f, -82.f };
 		int32 k = 0;
-		for (float A = VS + Step * 0.5f + 4.f; A < 360.f - VS - Step * 0.4f; A += Step)
+		for (float A : Seats)
 		{
-			bool bLift = false;
-			for (float L : Lifts) { bLift |= FMath::Abs(FMath::FindDeltaAngleDegrees(A, L)) < 12.f + Step * 0.45f; }
-			if (bLift || FMath::Abs(FMath::FindDeltaAngleDegrees(A, 180.f)) < 8.f) { continue; }
-			if ((k++ % 3) != 1)
-			{
-				Crew(FRotator(0.f, A, 0.f).Vector() * (R - 130.f) + FVector(0, 0, HD + 55.f), A, (k % 2) ? UniformMaroon : UniformRed);
-			}
+			Crew(FRotator(0.f, A, 0.f).Vector() * ChairR + FVector(0, 0, DeckZ), A, (k++ % 2) ? UniformMaroon : UniformRed);
+		}
+		for (float A : { 126.f, -126.f })
+		{
+			const float Aft = A > 0.f ? 1.f : -1.f;
+			Crew(FRotator(0.f, A, 0.f).Vector() * ChairR + FRotator(0.f, A + 90.f, 0.f).Vector() * (30.f * Aft) + FVector(0, 0, DeckZ), A, (k++ % 2) ? UniformMaroon : UniformRed);
 		}
 	}
 

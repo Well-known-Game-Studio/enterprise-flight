@@ -52,6 +52,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
 	FVector EyeOffset = FVector(12.0, 0.0, 165.0);
 
+	/** The seated eye point on the Blender set: its captain's chair stands at x -2.25 m on the deck 0.60 m above the set's origin, seat pad 1.10 m up; the eye is set 2.05 m up, a little ahead of the back and just over the headrest, so the captain can look aft over it. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
+	FVector RefitMeshEyeOffset = FVector(-212.0, 0.0, 205.0);
+
+	/** The eye point for the current style: the Blender set has its own, the primitive sets share EyeOffset. */
+	FVector GetEyeOffset() const { return Style == EBridgeStyle::RefitMesh ? RefitMeshEyeOffset : EyeOffset; }
+
 	/** Radius of the wall / console ring. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
 	float WallRadius = 560.f;
