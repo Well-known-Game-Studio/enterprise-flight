@@ -1,6 +1,6 @@
 # Enterprise-A bridge (Star Trek VI)
 
-`build_bridge.py` builds the bridge set in Blender from code, after Donny Versiga's renders of the 2293 bridge, and
+`build_bridge.py` builds the bridge set in Blender from code, after Donny Versiga's renders of the 2293 bridge (https://www.artstation.com/artwork/YeNkG3, used as reference only), and
 exports `SM_BridgeRefit.fbx` for Unreal. Geometry is authored in the game's frame (x forward to the viewscreen,
 y starboard, z up, metres, origin on the helm floor under the captain's chair); material names are the Unreal slot
 names. The game (`UBridgeInteriorComponent`, style `RefitMesh`) binds `Screen_*` slots to the live Okudagram
