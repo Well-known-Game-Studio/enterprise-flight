@@ -360,8 +360,8 @@ public:
 	/** True while the world's Sky Atmosphere is parked on this planet (the shell atmosphere is hidden). */
 	UFUNCTION(BlueprintCallable, Category = "Planet")
 	void SetUsingSkyAtmosphere(bool bEnabled);
-	/** The game mode's volumetric cloud layer is on this planet: hide the cloud shell. */
-	void SetUsingVolumetricClouds(bool bEnabled);
+	/** How much of the cloud shell shows, 0..1: the game mode fades it out as the volumetric layer fades in. */
+	void SetCloudShellFade(float Fade);
 
 	UFUNCTION(BlueprintPure, Category = "Planet")
 	bool IsUsingSkyAtmosphere() const { return bUsingSkyAtmosphere; }
@@ -435,7 +435,7 @@ private:
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> SurfaceMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> DetailSurfaceMID;
 	bool bUsingSkyAtmosphere = false;
-	bool bUsingVolumetricClouds = false;
+	float CloudShellFade = 1.f;
 	bool bTerrainActive = false;
 	FPlanetTerrainParams TerrainParams;
 	bool bDetailActive = false;
