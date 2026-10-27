@@ -215,12 +215,32 @@ namespace SlonkTerrain
 			// Main canyon: flat floor, then the wall climbs through the outer third of the half-width as a
 			// staircase of benches and cliffs (the strata), each bench a little narrower than the last so the
 			// profile opens upward like a real cut.
-			const double T = FMath::Clamp((V - HalfWidth * 0.65) / (HalfWidth * 0.35), 0.0, 1.0);
-			const int32 Steps = 6;
-			const double Tk = T * Steps;
-			const double Bench = FMath::Floor(Tk);
-			const double Cliff = FMath::Pow(Tk - Bench, 1.0 + 7.0 * P.Strata);
-			const double Stair = (Bench + Cliff) / Steps;
+			// The wall profile is a stack of eight strata of hashed thickness; hard layers stand as cliffs,
+			// soft ones slump into scree slopes, and a slow noise along the canyon shifts the whole stack so the
+			// benches wander rather than run level for a hundred kilometres.
+			const double Shift = 0.06 * FbmN(QW * F * 20.0 + FVector(29.0, 7.0, 3.0), 3, 2.0, 0.5);
+			const double T = FMath::Clamp((V - HalfWidth * 0.65) / (HalfWidth * 0.35) + Shift, 0.0, 1.0);
+			double Stair = 0.0;
+			{
+				const int32 Layers = 8;
+				double Thick[8], Total = 0.0;
+				for (int32 L = 0; L < Layers; ++L) { Thick[L] = 0.5 + ((Hash3(L * 7 + 1, 13, (int64)(P.Seed.X * 10.0)) & 255) / 255.0) * 1.2; Total += Thick[L]; }
+				double Acc = 0.0, Y = 0.0;
+				for (int32 L = 0; L < Layers; ++L)
+				{
+					const double Th = Thick[L] / Total;
+					const double Hard = 0.35 + ((Hash3(L * 3 + 2, 29, (int64)(P.Seed.Y * 10.0)) & 255) / 255.0) * 0.65;
+					if (T >= Acc + Th) { Y += Th; Acc += Th; continue; }
+					if (T > Acc)
+					{
+						const double Fr = (T - Acc) / Th;
+						// Hard layer: bench then sheer cliff. Soft layer: an even slope.
+						Y += Th * FMath::Lerp(Fr, FMath::Pow(Fr, 1.0 + 8.0 * P.Strata), Hard);
+					}
+					break;
+				}
+				Stair = FMath::Clamp(Y, 0.0, 1.0);
+			}
 			const double Main = 1.0 - (P.Strata > 0.f ? Stair * 0.85 + T * 0.15 : SmoothStep(0.0, 1.0, T));
 			// Inner gorge: a narrow slot down the middle of the floor, a quarter of the depth again.
 			const double Gorge = (1.0 - SmoothStep(HalfWidth * 0.08, HalfWidth * 0.2, V)) * 0.25;
