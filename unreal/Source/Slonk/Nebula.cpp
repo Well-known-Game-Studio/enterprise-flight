@@ -1,4 +1,5 @@
 #include "Nebula.h"
+#include "Components/PointLightComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "EngineUtils.h"
@@ -17,9 +18,19 @@ ANebula::ANebula()
 	Volume->CastShadow = false;
 	Volume->bCastDynamicShadow = false;
 	Volume->bAffectDistanceFieldLighting = false;
-	Volume->SetTranslucentSortPriority(-5); // behind the planets' translucent shells and the star glow
+	// Sorted by distance with the other translucents (a fixed priority put the cloud under every planet's shell,
+	// so a shell behind the cloud painted over the gas in front of it).
+	Volume->SetTranslucentSortPriority(0);
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereFinder(TEXT("/Engine/ArtTools/RenderToTexture/Meshes/S_1_Unit_Sphere_HI.S_1_Unit_Sphere_HI"));
 	if (SphereFinder.Succeeded()) { Volume->SetStaticMesh(SphereFinder.Object); }
+	Glow = CreateDefaultSubobject<UPointLightComponent>(TEXT("Glow"));
+	Glow->SetupAttachment(Volume);
+	Glow->SetUsingAbsoluteScale(true);
+	Glow->SetMobility(EComponentMobility::Movable);
+	Glow->SetCastShadows(false);
+	Glow->bUseInverseSquaredFalloff = false;
+	Glow->LightFalloffExponent = 2.f;
+	Glow->bAffectsWorld = true;
 	NebulaMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_Nebula.M_Nebula")));
 }
 
@@ -59,6 +70,15 @@ void ANebula::ApplyAppearance()
 		MID->SetScalarParameterValue(TEXT("Brightness"), Brightness);
 		MID->SetScalarParameterValue(TEXT("Filaments"), Filaments);
 		MID->SetScalarParameterValue(TEXT("Seed"), Seed);
+	}
+	if (Glow)
+	{
+		// The glow's colour is the gas colours as the march mixes them, biased to the emissive.
+		const FLinearColor C = (ColorA + ColorB) * 0.25f + EmissiveColor * 0.5f;
+		Glow->SetLightColor(C);
+		Glow->SetIntensity(GlowLight);
+		Glow->SetAttenuationRadius((float)(GetRadiusCm() * 2.0));
+		Glow->SetSourceRadius((float)(GetRadiusCm() * 0.5));
 	}
 }
 

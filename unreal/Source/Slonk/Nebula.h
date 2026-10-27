@@ -7,6 +7,7 @@
 #include "Nebula.generated.h"
 
 class UStaticMeshComponent;
+class UPointLightComponent;
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
 
@@ -21,6 +22,10 @@ public:
 	/** The sphere the gas is marched inside; two-sided so the march still runs with the camera in the cloud. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> Volume;
+
+	/** The cloud's glow as a light: fills the night sides of moons and ships in and near the cloud. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UPointLightComponent> Glow;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Nebula")
 	FString NebulaName;
@@ -38,6 +43,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Nebula") float Emission = 0.5f;
 	/** Puts the gas on the scene's scale: the sun is tens of lux against a locked exposure, so a lit white surface sits near 40. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Nebula") float Brightness = 20.f;
+	/** Strength of the glow light at the cloud's centre (falls off linearly to twice the radius). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Nebula") float GlowLight = 25.f;
 	/** 0..1 how much the gas is drawn out into filaments and shells rather than lumps. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Nebula") float Filaments = 0.7f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Nebula") float Seed = 0.f;
