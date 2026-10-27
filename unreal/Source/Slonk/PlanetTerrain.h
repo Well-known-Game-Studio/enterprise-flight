@@ -36,6 +36,8 @@ struct FPlanetTerrainParams
 	float CraterScale = 1.f;
 	/** 0..1 smooth dark basins between cratered highlands. */
 	float Maria = 0.f;
+	/** 0..1 lineae: long double-ridged cracks across an icy crust (Europa). */
+	float Lineae = 0.f;
 	/** |z| of the unit normal where the polar ice begins; 2 disables caps. */
 	float IceCapStart = 0.82f;
 	/** 0..1 moisture bias (deserts are dry, ocean worlds wet). */
@@ -49,7 +51,7 @@ struct FPlanetTerrainParams
 	{
 		return Seed == O.Seed && RadiusCm == O.RadiusCm && ReliefCm == O.ReliefCm && OceanDepthCm == O.OceanDepthCm && SeaLevel == O.SeaLevel
 			&& ContinentScale == O.ContinentScale && Mountains == O.Mountains && Canyons == O.Canyons && CanyonDepthCm == O.CanyonDepthCm
-			&& CanyonWidthCm == O.CanyonWidthCm && Strata == O.Strata && Craters == O.Craters && CraterScale == O.CraterScale && Maria == O.Maria
+			&& CanyonWidthCm == O.CanyonWidthCm && Strata == O.Strata && Craters == O.Craters && CraterScale == O.CraterScale && Maria == O.Maria && Lineae == O.Lineae
 			&& IceCapStart == O.IceCapStart && Moisture == O.Moisture && bLava == O.bLava && bAirless == O.bAirless;
 	}
 	bool operator!=(const FPlanetTerrainParams& O) const { return !(*this == O); }
@@ -82,6 +84,8 @@ struct FPlanetTerrainSample
 	float Ice = 0.f;
 	/** 0..1 crater rim/floor term for the shading. */
 	float Crater = 0.f;
+	/** 0..1 inside a linea (the stained band between its ridges). */
+	float Linea = 0.f;
 	/** Rise over run of the coarse structure (0 flat, 1 is 45 degrees), set by the refinement stage. */
 	float Slope = 0.f;
 	/** Position in the canyon's stack of strata: layer index plus the fraction through it, over 8. 0 off the walls. */

@@ -76,6 +76,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
 	float CloudShadowStrength = 1.f;
 
+	/** Place an icy moon with lineae and a hazy moon around every ringed giant on the first tick, named after it. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Testing")
+	bool bSpawnShowcaseMoons = true;
+	bool bShowcaseMoonsSpawned = false;
+	void SpawnShowcaseMoons();
+
 	/** Spawn a ring of target asteroids around the origin at BeginPlay. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Testing")
 	bool bSpawnTestTargets = true;

@@ -493,7 +493,7 @@ void APlanetBody::ResolveStyleFromArchetype()
 		S.bClouds = false;
 		S.bAtmosphere = false;
 		const float K = Rng.FRand();
-		ResolvedMoonKind = K < 0.55f ? EMoonKind::Rocky : (K < 0.85f ? EMoonKind::Icy : EMoonKind::Lava);
+		ResolvedMoonKind = bForceMoonKind ? ForcedMoonKind : (K < 0.55f ? EMoonKind::Rocky : (K < 0.85f ? EMoonKind::Icy : EMoonKind::Lava));
 		switch (ResolvedMoonKind)
 		{
 		case EMoonKind::Icy:
@@ -508,6 +508,8 @@ void APlanetBody::ResolveStyleFromArchetype()
 			S.NormalStrength = 0.12f;
 			S.DetailNormalScale = 3.f;
 			S.ReliefFraction = 0.005f;
+			// Lineae on most icy moons: the long stained cracks of a Europa.
+			S.Lineae = bForceMoonKind ? 0.9f : (Rng.FRand() < 0.7f ? Rng.FRandRange(0.5f, 1.f) : 0.f);
 			break;
 		case EMoonKind::Lava:
 			// Dark basalt with molten basins glowing through.
@@ -541,7 +543,7 @@ void APlanetBody::ResolveStyleFromArchetype()
 			break;
 		}
 		// A big moon now and then keeps a deep orange haze (Titan): overcast top to bottom, thick layer.
-		if (RadiusKm > 1800.f && ResolvedMoonKind != EMoonKind::Lava && Extra.FRand() < 0.3f)
+		if (bForceHazy || (RadiusKm > 1800.f && ResolvedMoonKind != EMoonKind::Lava && Extra.FRand() < 0.3f))
 		{
 			bHazyMoon = true;
 			S.bAtmosphere = true;
@@ -921,6 +923,7 @@ FPlanetTerrainParams APlanetBody::MakeTerrainParams() const
 	P.Craters = S.CraterStrength;
 	P.CraterScale = S.CraterScale;
 	P.Maria = S.MariaStrength;
+	P.Lineae = S.Lineae;
 	P.IceCapStart = S.IceCapStart;
 	P.bLava = S.LavaEmissive > 0.f;
 	// Canyons scale with the body: an Earth gets a Grand Canyon, Mars a Valles Marineris.

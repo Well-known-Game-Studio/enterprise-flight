@@ -351,6 +351,10 @@ if (nearFade > 0.001 && water < 0.5)
     if (wAcc > 0.0) { texMod = mAcc / wAcc; texN = nAcc / wAcc; texOrm = oAcc / wAcc; }
     texMod = lerp(texMod, 1.0, snowy); texN *= 1.0 - snowy;
 }
+// Lineae on an icy crust: the band between the ridges is stained brown (hydrated salts and sulphur) and a
+// little rougher than the ice around it.
+float linea = UV3.x;
+land = lerp(land, land * float3(0.78, 0.5, 0.34), linea * 0.85);
 land *= texMod;
 float3 base = lerp(land, sea, water);
 
@@ -363,6 +367,7 @@ float seaRough = lerp(OceanRoughness, 0.12, river);
 seaRough = lerp(lerp(seaRough, 0.09, 0.5 * (1.0 - smoothstep(300000.0, 2000000.0, dist))), 0.7, foam);
 Rough = lerp(lerp(LandRoughness * (0.8 + 0.2 * rocky), 0.35, snowy), seaRough, water);
 Rough = lerp(Rough, texOrm.g, 0.6 * nearFade * (1.0 - water) * (1.0 - snowy));
+Rough = lerp(Rough, 0.8, linea * 0.5);
 AO = lerp(1.0, texOrm.r, nearFade * (1.0 - water));
 
 float night = saturate(-dot(Nn, normalize(SunDirection)) * 6.0 + 0.1);
@@ -378,7 +383,7 @@ TEX_FOLDER = "/Game/Slonk/Terrain"
 TEX_INPUTS = [f"{s}{k}" for s in TEX_SETS for k in TEX_KINDS]
 
 WPO_INPUTS = ["Fn", "LP", "Col", "OX", "OY", "OZ", "ORX", "ORY", "ORZ", "Cam", "WP", "PlanetRadiusCm", "NoisePeriodCm", "Time", "SwellCm"]
-INPUTS = ["Fn", "N", "LP", "UV0", "UV1", "UV2", "Col", "ColA", "OX", "OY", "OZ", "Cell", "ORX", "ORY", "ORZ", "Cam", "WP", "PlanetRadiusCm", "WaterNR", "Time", "SwellCm"] + TEX_INPUTS + [
+INPUTS = ["Fn", "N", "LP", "UV0", "UV1", "UV2", "UV3", "Col", "ColA", "OX", "OY", "OZ", "Cell", "ORX", "ORY", "ORZ", "Cam", "WP", "PlanetRadiusCm", "WaterNR", "Time", "SwellCm"] + TEX_INPUTS + [
           "OceanColor", "ShallowColor", "LandColor", "LandColor2", "MountainColor", "IceColor", "NightLightColor",
           "OceanRoughness", "LandRoughness", "NightLightIntensity", "LavaEmissive", "SunDirection",
           "NoisePeriodCm", "ReliefCm", "OceanDepthCm"]
@@ -390,7 +395,7 @@ def build():
     n = g.node("VertexNormalWS")
     psp = g.node("PreSkinnedPosition")
     vi = g.node("VertexInterpolator"); g.c(psp, vi, "VS")
-    uv0, uv1, uv2 = g.texcoord(0), g.texcoord(1), g.texcoord(2)
+    uv0, uv1, uv2, uv3 = g.texcoord(0), g.texcoord(1), g.texcoord(2), g.texcoord(3)
     col = g.node("VertexColor")
     ox, oy, oz, cell = g.scalar("ChunkOX", 0.0, cpd=0), g.scalar("ChunkOY", 0.0, cpd=1), g.scalar("ChunkOZ", 0.0, cpd=2), g.scalar("ChunkCell", 100.0, cpd=3)
     orx, ory, orz = g.scalar("ChunkORX", 0.0, cpd=4), g.scalar("ChunkORY", 0.0, cpd=5), g.scalar("ChunkORZ", 1.0, cpd=6)
@@ -403,7 +408,7 @@ def build():
     }
     scal = {"OceanRoughness": 0.22, "LandRoughness": 0.9, "NightLightIntensity": 0.0, "LavaEmissive": 0.0, "NoisePeriodCm": 1048576.0, "ReliefCm": 3.8e6, "OceanDepthCm": 5.0e5, "PlanetRadiusCm": 6.371e8, "SwellCm": 120.0}
     e = g.custom(CODE, INPUTS, "CMOT_Float3", "terrain layers, textures, bump, lights", extra_outputs=(("Nrm", "CMOT_Float3"), ("Rough", "CMOT_Float1"), ("Emis", "CMOT_Float3"), ("AO", "CMOT_Float1")))
-    for pin, src in [("Fn", fn), ("N", n), ("LP", vi), ("UV0", uv0), ("UV1", uv1), ("UV2", uv2), ("Col", col), ("OX", ox), ("OY", oy), ("OZ", oz), ("Cell", cell), ("ORX", orx), ("ORY", ory), ("ORZ", orz), ("Cam", cam), ("WP", wp)]:
+    for pin, src in [("Fn", fn), ("N", n), ("LP", vi), ("UV0", uv0), ("UV1", uv1), ("UV2", uv2), ("UV3", uv3), ("Col", col), ("OX", ox), ("OY", oy), ("OZ", oz), ("Cell", cell), ("ORX", orx), ("ORY", ory), ("ORZ", orz), ("Cam", cam), ("WP", wp)]:
         g.c(src, e, pin)
     wn = g.node("TextureObjectParameter", {"ParameterName": "WaterNR", "Texture": {"refPath": f"{TEX_FOLDER}/T_Water_NR.T_Water_NR"}})
     g.c(wn, e, "WaterNR")

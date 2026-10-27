@@ -1594,7 +1594,21 @@ void AStarshipPawn::ProcessDebugCommand()
 		}
 		FVector Dir; double H = 0.0;
 		const FVector SunLocal = Planet && Planet->Terrain ? Planet->Terrain->GetComponentTransform().InverseTransformVectorNoScale(Planet->GetStarDirection()) : FVector::ZeroVector;
-		if (Planet && Planet->Terrain && Planet->HasTerrain() && Planet->Terrain->FindFeature(ArgStr(2), FVector::ZeroVector, Dir, H, SunLocal))
+		// Heading "giant": land on the side of this moon that faces the nearest ringed giant, nose toward it.
+		APlanetBody* Giant = nullptr;
+		if (Planet && ArgStr(4) == TEXT("giant"))
+		{
+			double BestG = TNumericLimits<double>::Max();
+			for (TActorIterator<APlanetBody> It(GetWorld()); It; ++It)
+			{
+				if (*It == Planet || !It->Style.bRings) { continue; }
+				const double D = FVector::Dist(It->GetActorLocation(), Planet->GetActorLocation());
+				if (D < BestG) { BestG = D; Giant = *It; }
+			}
+		}
+		const FVector GiantDirW = Giant && Planet ? (Giant->GetActorLocation() - Planet->GetActorLocation()).GetSafeNormal() : FVector::ZeroVector;
+		const FVector NearLocal = Giant && Planet && Planet->Terrain ? Planet->Terrain->GetComponentTransform().InverseTransformVectorNoScale(GiantDirW) : FVector::ZeroVector;
+		if (Planet && Planet->Terrain && Planet->HasTerrain() && Planet->Terrain->FindFeature(ArgStr(2), NearLocal, Dir, H, SunLocal))
 		{
 			const FTransform& TT = Planet->Terrain->GetComponentTransform();
 			const FVector Up = TT.TransformVectorNoScale(Dir).GetSafeNormal();
@@ -1602,6 +1616,7 @@ void AStarshipPawn::ProcessDebugCommand()
 			const FVector Sun = Planet->GetStarDirection();
 			const FString Heading = ArgStr(4);
 			FVector Fwd = Heading == TEXT("sun") ? Sun : (Heading == TEXT("away") ? -Sun : FVector::CrossProduct(Up, Sun));
+			if (Giant) { Fwd = (Giant->GetActorLocation() - Pos).GetSafeNormal(); }
 			if (Heading == TEXT("along"))
 			{
 				// Along the canyon: of eight headings, the one along which the depth of the cut changes least over
