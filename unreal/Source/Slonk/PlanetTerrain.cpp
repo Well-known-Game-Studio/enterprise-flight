@@ -205,13 +205,13 @@ namespace SlonkTerrain
 		{
 			const double F = 5.0; // one valley line per ~400 km on an Earth-size world
 			const double CellCm = Lambda0 / F;
-			// |n| < HalfWidth is inside; the noise climbs at about two per unit off its zero line, so double it.
-			const double HalfWidth = P.CanyonWidthCm * 0.5 / CellCm * 2.0;
+			// |n| < HalfWidth is inside; the noise climbs at roughly 1.5 per unit off its zero line.
+			const double HalfWidth = P.CanyonWidthCm * 0.5 / CellCm * 1.5;
 			// Rough the line with finer noise so the walls are not glass smooth.
 			const double Wig = FbmN(QW * F * 9.0 + FVector(3.0, 5.0, 7.0), OctavesFor(CellCm / 9.0, MinWavelengthCm, 5), 2.0, 0.5);
 			// Finer wiggle (about 8 km down to 500 m) so the cliff lines are scalloped and gullied, not ruled.
 			const double Wig2 = FbmN(QW * F * 48.0 + FVector(11.0, 2.0, 9.0), OctavesFor(CellCm / 48.0, MinWavelengthCm, 5), 2.0, 0.55);
-			const double V = FMath::Abs(Perlin(QW * F + FVector(57.0, 0.0, 0.0)) + 0.25 * HalfWidth * Wig + 0.12 * HalfWidth * Wig2);
+			const double V = FMath::Abs(Perlin(QW * F + FVector(57.0, 0.0, 0.0)) + 0.18 * HalfWidth * Wig + 0.1 * HalfWidth * Wig2);
 			// Main canyon: flat floor, then the wall climbs through the outer third of the half-width as a
 			// staircase of benches and cliffs (the strata), each bench a little narrower than the last so the
 			// profile opens upward like a real cut.
@@ -222,12 +222,14 @@ namespace SlonkTerrain
 			const double Cliff = FMath::Pow(Tk - Bench, 1.0 + 7.0 * P.Strata);
 			const double Stair = (Bench + Cliff) / Steps;
 			const double Main = 1.0 - (P.Strata > 0.f ? Stair * 0.85 + T * 0.15 : SmoothStep(0.0, 1.0, T));
+			// Inner gorge: a narrow slot down the middle of the floor, a quarter of the depth again.
+			const double Gorge = (1.0 - SmoothStep(HalfWidth * 0.08, HalfWidth * 0.2, V)) * 0.25;
 			// Tributaries: a finer line set at a third of the width and half the depth.
 			const double V2 = FMath::Abs(Perlin(QW * F * 2.6 + FVector(0.0, 91.0, 0.0)) + 0.2 * HalfWidth * Wig);
 			const double Trib = (1.0 - SmoothStep(HalfWidth * 0.12, HalfWidth * 0.4, V2)) * 0.5;
 			// Depth varies along the canyon so it opens and narrows.
 			const double Along = 0.75 + 0.25 * (FbmN(QW * 3.0 + FVector(19.0, 0.0, 0.0), 3, 2.0, 0.5) * 0.5 + 0.5);
-			Carve = FMath::Max(Main, Trib) * CanyonZone * Along;
+			Carve = (FMath::Max(Main, Trib) + Gorge) * CanyonZone * Along;
 			// The wall band: everything between the rim and the floor.
 			Wall = SmoothStep(0.02, 0.12, Carve) * (1.0 - SmoothStep(0.88, 0.98, Carve));
 		}
@@ -313,6 +315,8 @@ namespace SlonkTerrain
 		Out.Wet = (float)Wet;
 		Out.Canyon = (float)FMath::Clamp(Carve, 0.0, 1.0);
 		Out.Wall = (float)FMath::Clamp(Wall, 0.0, 1.0);
+		Out.CutCm = (float)(Cut * P.ReliefCm);
+		Out.Table = (float)FMath::Clamp(Tableland, 0.0, 1.0);
 		Out.Crater = (float)FMath::Clamp(CraterShade, 0.0, 1.0);
 		return Out;
 	}

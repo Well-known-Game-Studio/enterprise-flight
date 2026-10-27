@@ -191,8 +191,9 @@ UDynamicMeshComponent* UPlanetTerrainComponent::AcquireMesh()
 	C->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	C->SetGenerateOverlapEvents(false);
 	C->bAffectDistanceFieldLighting = false;
+	// Shadows are switched on per chunk by size in ApplyResult; the dynamic flag has to be on for any to cast.
 	C->CastShadow = false;
-	C->bCastDynamicShadow = false;
+	C->bCastDynamicShadow = true;
 	C->SetVisibility(false);
 	C->RegisterComponent();
 	if (MID) { C->SetMaterial(0, MID); }
@@ -412,9 +413,10 @@ bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& Ne
 		if (!SunDirLocal.IsNearlyZero() && FVector::DotProduct(D, SunDirLocal.GetSafeNormal()) < 0.26) { return -1e9; }
 		// Canyons and rims prefer temperate latitudes (no snow on the plateau) and sit away from the ice.
 		const double Temperate = -3.0 * FMath::Abs(D.Z) - 6.0 * S.Ice;
-		if (K == TEXT("canyon")) { return S.bWater ? -1e9 : S.Canyon * 10.0 + Temperate + Near * 0.5; }
+		// The deepest cut wins, not merely the widest floor.
+		if (K == TEXT("canyon")) { return S.bWater ? -1e9 : S.Canyon * 4.0 + S.CutCm / FMath::Max(Params.CanyonDepthCm, 1.0) * 10.0 + Temperate + Near * 0.5; }
 		// The rim: top of a wall, just outside the cut, high up.
-		if (K == TEXT("rim")) { return S.bWater ? -1e9 : S.Wall * 6.0 - S.Canyon * 8.0 + S.HeightCm / FMath::Max(Params.ReliefCm, 1.0) * 4.0 + Temperate + Near * 0.5; }
+		if (K == TEXT("rim")) { return S.bWater ? -1e9 : S.Wall * 6.0 - S.Canyon * 8.0 + S.HeightCm / FMath::Max(Params.ReliefCm, 1.0) * 4.0 + S.CutCm / FMath::Max(Params.CanyonDepthCm, 1.0) * 4.0 + Temperate + Near * 0.5; }
 		if (K == TEXT("mountain")) { return S.bWater ? -1e9 : S.HeightCm / FMath::Max(Params.ReliefCm, 1.0) * 10.0 + Near * 0.5; }
 		if (K == TEXT("coast")) { return S.bWater ? -1e9 : -FMath::Abs(S.HeightCm) / FMath::Max(Params.ReliefCm, 1.0) * 10.0 + Near * 3.0; }
 		return S.bWater ? -1e9 : Near * 10.0 + (S.HeightCm > 0.0 ? 1.0 : 0.0);
@@ -430,8 +432,43 @@ bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& Ne
 		if (Sc > BestScore) { BestScore = Sc; Best = D; }
 	}
 	if (BestScore <= -1e8) { return false; }
+	// Canyons are thin lines on broad tablelands and the coarse pass mostly misses them: around the best few
+	// tableland samples, comb a fine grid (2 km spacing, 80 km across) for the deepest cut.
+	if (K == TEXT("canyon") || K == TEXT("rim"))
+	{
+		struct FCand { double Score; FVector D; };
+		TArray<FCand> Cands;
+		for (int32 i = 0; i < N; ++i)
+		{
+			const double Z = 1.0 - 2.0 * (i + 0.5) / N;
+			const double Rr = FMath::Sqrt(FMath::Max(0.0, 1.0 - Z * Z));
+			const double Phi = Golden * i;
+			const FVector D(Rr * FMath::Cos(Phi), Rr * FMath::Sin(Phi), Z);
+			if (!SunDirLocal.IsNearlyZero() && FVector::DotProduct(D, SunDirLocal.GetSafeNormal()) < 0.3) { continue; }
+			const FPlanetTerrainSample S = SlonkTerrain::Sample(Params, D, CoarseWavelength);
+			if (S.bWater || S.Table < 0.3f) { continue; }
+			Cands.Add({ S.Table - 2.0 * FMath::Abs(D.Z) - 4.0 * S.Ice, D });
+		}
+		Cands.Sort([](const FCand& A, const FCand& B) { return A.Score > B.Score; });
+		const double Spacing = 2.0e5 / Params.RadiusCm;
+		for (int32 c = 0; c < FMath::Min(Cands.Num(), 12); ++c)
+		{
+			const FVector Ctr = Cands[c].D;
+			const FVector E = FVector::CrossProduct(FVector::ZAxisVector, Ctr).GetSafeNormal();
+			const FVector Nn = FVector::CrossProduct(Ctr, E).GetSafeNormal();
+			for (int32 j = -20; j <= 20; ++j)
+			{
+				for (int32 i = -20; i <= 20; ++i)
+				{
+					const FVector D = (Ctr + E * (i * Spacing) + Nn * (j * Spacing)).GetSafeNormal();
+					const double Sc = Score(D, SlonkTerrain::Sample(Params, D, 1.0e5));
+					if (Sc > BestScore) { BestScore = Sc; Best = D; }
+				}
+			}
+		}
+	}
 	// Refine: hill-climb on a shrinking step so the result sits on the feature, not 30 km from it.
-	double Step = CoarseWavelength / Params.RadiusCm;
+	double Step = (K == TEXT("canyon") || K == TEXT("rim")) ? 2.0e5 / Params.RadiusCm : CoarseWavelength / Params.RadiusCm;
 	for (int32 It = 0; It < 6; ++It)
 	{
 		bool bMoved = true;

@@ -16,7 +16,7 @@ static FPlanetTerrainParams Earthlike()
 	P.OceanDepthCm = 0.0008 * P.RadiusCm;
 	P.SeaLevel = 0.59f; P.ContinentScale = 3.f;
 	P.Mountains = 0.6f; P.Canyons = 0.5f; P.Strata = 0.6f; P.Moisture = 0.55f;
-	P.CanyonDepthCm = 1.6e5 * (P.RadiusCm / 6.371e8); P.CanyonWidthCm = 1.8e6 * (P.RadiusCm / 6.371e8);
+	P.CanyonDepthCm = 1.6e5 * (P.RadiusCm / 6.371e8); P.CanyonWidthCm = 7.0e5 * (P.RadiusCm / 6.371e8);
 	P.Craters = 0.1f;
 	return P;
 }
@@ -27,6 +27,7 @@ int main(int argc, char** argv)
 	std::mt19937_64 rng(7);
 	std::uniform_real_distribution<double> U(-1.0, 1.0);
 	const int N = 20000;
+	FVector C;
 	int land = 0, canyon = 0, table = 0; double hmax = 0, hsum = 0; FVector bestCanyon; double bestC = -1; FVector bestMtn; double bestH = -1;
 	for (int i = 0; i < N; ++i)
 	{
@@ -36,9 +37,25 @@ int main(int argc, char** argv)
 		if (S.Canyon > 0.5) ++canyon;
 		if (S.Canyon > bestC) { bestC = S.Canyon; bestCanyon = d; }
 	}
+	// Deepest cut on the globe and the canyon width there (rim to rim, where the cut exceeds a tenth of its depth).
+	{
+		double bestCut = 0; FVector at;
+		for (int i = 0; i < N * 3; ++i)
+		{
+			FVector d(U(rng), U(rng), U(rng)); if (d.Size() < 0.1) continue; d = d.GetSafeNormal();
+			FPlanetTerrainSample S = SlonkTerrain::Sample(P, d, 2000.0 * 100.0);
+			if (!S.bWater && S.CutCm > bestCut) { bestCut = S.CutCm; at = d; }
+		}
+		FVector E2 = FVector::CrossProduct(FVector::ZAxisVector, at).GetSafeNormal();
+		double wE = 0; for (int k = -200; k <= 200; ++k) { FVector d = (at + E2 * (k * 100.0 * 100.0 / P.RadiusCm)).GetSafeNormal(); if (SlonkTerrain::Sample(P, d, 0.0).CutCm > bestCut * 0.1) wE += 0.1; }
+		FVector N2 = FVector::CrossProduct(at, E2).GetSafeNormal();
+		double wN = 0; for (int k = -200; k <= 200; ++k) { FVector d = (at + N2 * (k * 100.0 * 100.0 / P.RadiusCm)).GetSafeNormal(); if (SlonkTerrain::Sample(P, d, 0.0).CutCm > bestCut * 0.1) wN += 0.1; }
+		printf("deepest cut %.0f m; width of the cut there E-W %.1f km, N-S %.1f km (the smaller is the trunk)\n", bestCut / 100.0, wE, wN);
+		C = at;
+	}
 	printf("land %.1f%%  mean land height %.0f m  max %.0f m  canyon-floor fraction %.2f%%  best canyon mask %.2f\n", 100.0 * land / N, hsum / std::max(land, 1) / 100.0, hmax / 100.0, 100.0 * canyon / N, bestC);
 	// Profile across the best canyon point: walk east-west and north-south 25 km each way in 250 m steps.
-	FVector C = bestCanyon;
+	if (C.IsNearlyZero()) C = bestCanyon;
 	FVector E = FVector::CrossProduct(FVector::ZAxisVector, C).GetSafeNormal();
 	FVector Nn = FVector::CrossProduct(C, E).GetSafeNormal();
 	for (int axis = 0; axis < 2; ++axis)

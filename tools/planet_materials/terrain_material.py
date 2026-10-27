@@ -93,7 +93,7 @@ soil = lerp(soil, soil * float3(1.15, 1.1, 1.0), saturate(-patch * 3.0));
 float3 land = lerp(soil, rockc, rocky);
 land = lerp(land, land * float3(1.08, 1.0, 0.9), sediment * 0.5);
 land *= 0.8 * (0.94 + 0.12 * (fb0 + 0.5));
-land *= 1.0 - rocky * 0.45 * smoothstep(0.72, 1.0, crack);
+land *= 1.0 - saturate(rocky - sediment) * 0.45 * smoothstep(0.72, 1.0, crack);
 float snowy = ice * (1.0 - saturate(slope * 3.0)) ;
 land = lerp(land, IceColor, snowy);
 float depth = saturate(-hN * 2.5);
@@ -101,7 +101,7 @@ float3 sea = lerp(ShallowColor, OceanColor, depth);
 float3 base = lerp(land, sea, water);
 
 // Detail bump: finite differences of the noise, scaled by a height that grows with rockiness.
-float bumpCm = (300.0 + 2500.0 * rocky) * (1.0 - water) * (1.0 - snowy * 0.6);
+float bumpCm = (120.0 + 2600.0 * rocky) * (1.0 - water) * (1.0 - snowy * 0.6);
 float dh1 = (fb1 - fb0) * bumpCm / eps;
 float dh2 = (fb2 - fb0) * bumpCm / eps;
 Nrm = normalize(Nn - T1 * dh1 - T2 * dh2);

@@ -70,6 +70,10 @@ struct FPlanetTerrainSample
 	float Canyon = 0.f;
 	/** 0..1 canyon wall (peaks halfway down the wall). */
 	float Wall = 0.f;
+	/** How deep the canyon is cut here below the surrounding plateau, cm. */
+	float CutCm = 0.f;
+	/** 0..1 uplifted tableland (where canyons are cut). */
+	float Table = 0.f;
 	/** 0..1 ice. */
 	float Ice = 0.f;
 	/** 0..1 crater rim/floor term for the shading. */

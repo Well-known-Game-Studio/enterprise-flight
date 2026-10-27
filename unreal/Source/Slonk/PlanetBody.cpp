@@ -902,14 +902,14 @@ FPlanetTerrainParams APlanetBody::MakeTerrainParams() const
 	const double Earth = R / 6.371e8;
 	switch (ResolvedArchetype)
 	{
-	case EPlanetArchetype::Ocean:   P.Mountains = 0.4f; P.Canyons = 0.3f; P.Strata = 0.3f; P.Moisture = 0.8f; P.CanyonDepthCm = 1.2e5 * Earth; P.CanyonWidthCm = 1.5e6 * Earth; break;
-	case EPlanetArchetype::Desert:  P.Mountains = 0.5f; P.Canyons = 0.9f; P.Strata = 0.9f; P.Moisture = 0.05f; P.CanyonDepthCm = 2.0e5 * Earth; P.CanyonWidthCm = 2.2e6 * Earth; break;
-	case EPlanetArchetype::Ice:     P.Mountains = 0.35f; P.Canyons = 0.2f; P.Strata = 0.3f; P.Moisture = 0.5f; P.CanyonDepthCm = 1.0e5 * Earth; P.CanyonWidthCm = 1.5e6 * Earth; break;
-	case EPlanetArchetype::Lava:    P.Mountains = 0.5f; P.Canyons = 0.3f; P.Strata = 0.3f; P.Moisture = 0.f; P.CanyonDepthCm = 1.5e5 * Earth; P.CanyonWidthCm = 1.5e6 * Earth; break;
+	case EPlanetArchetype::Ocean:   P.Mountains = 0.4f; P.Canyons = 0.3f; P.Strata = 0.3f; P.Moisture = 0.8f; P.CanyonDepthCm = 1.2e5 * Earth; P.CanyonWidthCm = 6.0e5 * Earth; break;
+	case EPlanetArchetype::Desert:  P.Mountains = 0.5f; P.Canyons = 0.9f; P.Strata = 0.9f; P.Moisture = 0.05f; P.CanyonDepthCm = 2.0e5 * Earth; P.CanyonWidthCm = 9.0e5 * Earth; break;
+	case EPlanetArchetype::Ice:     P.Mountains = 0.35f; P.Canyons = 0.2f; P.Strata = 0.3f; P.Moisture = 0.5f; P.CanyonDepthCm = 1.0e5 * Earth; P.CanyonWidthCm = 6.0e5 * Earth; break;
+	case EPlanetArchetype::Lava:    P.Mountains = 0.5f; P.Canyons = 0.3f; P.Strata = 0.3f; P.Moisture = 0.f; P.CanyonDepthCm = 1.5e5 * Earth; P.CanyonWidthCm = 7.0e5 * Earth; break;
 	case EPlanetArchetype::Mars:    P.Mountains = 0.7f; P.Canyons = 1.0f; P.Strata = 0.8f; P.Moisture = 0.f; P.bAirless = true; P.CanyonDepthCm = 6.0e5 * Earth * 1.9; P.CanyonWidthCm = 1.2e7 * Earth * 1.9; break;
-	case EPlanetArchetype::Venus:   P.Mountains = 0.5f; P.Canyons = 0.3f; P.Strata = 0.3f; P.Moisture = 0.f; P.bAirless = true; P.CanyonDepthCm = 1.5e5 * Earth; P.CanyonWidthCm = 2.0e6 * Earth; break;
+	case EPlanetArchetype::Venus:   P.Mountains = 0.5f; P.Canyons = 0.3f; P.Strata = 0.3f; P.Moisture = 0.f; P.bAirless = true; P.CanyonDepthCm = 1.5e5 * Earth; P.CanyonWidthCm = 8.0e5 * Earth; break;
 	case EPlanetArchetype::Moon:    P.Mountains = 0.3f; P.Canyons = 0.f; P.Strata = 0.2f; P.Moisture = 0.f; P.bAirless = true; break;
-	default:                        P.Mountains = 0.6f; P.Canyons = 0.5f; P.Strata = 0.6f; P.Moisture = 0.55f; P.CanyonDepthCm = 1.6e5 * Earth; P.CanyonWidthCm = 1.8e6 * Earth; break;
+	default:                        P.Mountains = 0.6f; P.Canyons = 0.5f; P.Strata = 0.6f; P.Moisture = 0.55f; P.CanyonDepthCm = 1.6e5 * Earth; P.CanyonWidthCm = 7.0e5 * Earth; break;
 	}
 	return P;
 }
