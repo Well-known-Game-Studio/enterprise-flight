@@ -150,7 +150,16 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 		// alongside a station or back out of a dock, nothing like the drive itself.
 		const FVector Right = NewQuat.GetRightVector();
 		const FVector Thrusters = (Forward * ThrusterInput.X + Right * ThrusterInput.Y + Up * ThrusterInput.Z) * ThrusterMaxSpeed;
-		const FVector TargetVelocity = Forward * GetImpulseTargetSpeed() + Up * (VerticalInput * VerticalThrustFraction * FullImpulseSpeed) + Thrusters;
+		// Vertical thrust: a fraction of full impulse in deep space (1500 km/s), but near a planet a climb rate that
+		// grows with the square root of the height above ground: 60 m/s at 100 m, 190 at 1 km, 600 at 10 km. The
+		// fixed fraction was 1500 km/s next to the ground, and only felt fine going down because the terrain
+		// floor swallowed it at the clearance height.
+		double VerticalSpeed = VerticalThrustFraction * FullImpulseSpeed;
+		if (AltitudeAGLCm >= 0.0)
+		{
+			VerticalSpeed = FMath::Min(VerticalSpeed, 6000.0 * FMath::Sqrt(FMath::Max(AltitudeAGLCm, 3000.0) / 10000.0));
+		}
+		const FVector TargetVelocity = Forward * GetImpulseTargetSpeed() + Up * (VerticalInput * VerticalSpeed) + Thrusters;
 		const FVector DeltaV = TargetVelocity - Velocity;
 		Velocity += DeltaV.GetClampedToMaxSize(ImpulseAcceleration * DeltaTime);
 	}
@@ -281,10 +290,12 @@ void UStarshipMovementComponent::ApplyTerrainFloor(float DeltaTime)
 				}
 			}
 		}
-		// Vertical thrust moves the hover height; rate scales with the height so 100 m and 10 km both feel right.
+		// Vertical thrust moves the hover height at the same square-root rate as free flight (the old 60% of the
+		// height per second compounded: a climb doubled every second and a descent crawled).
 		if (!FMath::IsNearlyZero(VerticalInput))
 		{
-			HoverAltitudeCm = FMath::Max(HoverAltitudeCm + VerticalInput * (HoverAltitudeCm * 0.6 + 2000.0) * DeltaTime, GroundClearanceCm);
+			const double Rate = 6000.0 * FMath::Sqrt(FMath::Max(HoverAltitudeCm, 3000.0) / 10000.0);
+			HoverAltitudeCm = FMath::Max(HoverAltitudeCm + VerticalInput * Rate * DeltaTime, GroundClearanceCm);
 		}
 		const double Target = SurfR + HoverAltitudeCm;
 		// Ease onto the contour over about half a second: the ground is sampled at the ship, so a cliff ahead
