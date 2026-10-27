@@ -368,6 +368,42 @@ namespace SlonkTerrain
 			H += CraterH * 0.35 * P.Craters;
 		}
 
+		// ---- lineae: the long cracks of an icy crust, a trough between a pair of ridges, stained inside ----
+		double Linea = 0.0;
+		if (P.Lineae > 0.f)
+		{
+			// Three line sets at 3, 8 and 20 cycles round the globe (1,500, 600 and 250 km apart on a Europa), bands
+			// 10, 6 and 3 km wide with ridges along their edges and a trough down the middle, bent by the domain
+			// warp and a finer wiggle so none runs straight. The band stays a small fraction of its noise cell, or
+			// the lines merge into a stain over everything.
+			// A zero set covers a strip about twice the band width per noise cell, so even narrow bands cover a lot;
+			// a slow gate keeps whole regions clear, as Europa's lineae crowd some provinces and skip others.
+			const double Scales[3] = { 3.0, 8.0, 20.0 };
+			const double Bands[3] = { 6.0e5, 3.0e5, 1.5e5 };
+			const double RidgeCm[3] = { 1.5e4, 8.0e3, 4.0e3 };
+			const double Gate = SmoothStep(0.42, 0.58, FbmN(QW * 1.7 + FVector(3.0, 47.0, 5.0), 2, 2.0, 0.5) * 0.5 + 0.5);
+			for (int32 i = 0; i < 3 && Gate > 0.001; ++i)
+			{
+				// The mask is computed at every wavelength (a line is long even if it is narrow, and the feature
+				// search samples coarsely); only the ridges wait for a mesh fine enough to carry them.
+				const double BandCm = Bands[i];
+				const double CellCm = Lambda0 / Scales[i];
+				// Half the band in noise units: the noise climbs about 1.5 per cell off its zero line.
+				const double W = 0.5 * BandCm / CellCm * 1.5;
+				// The noise is squashed along one axis per set (from the seed), so its zero set runs as long arcs
+				// across the globe along that axis instead of closing into loops a cell across.
+				const FVector Ax = FVector(FMath::Sin(P.Seed.X * 0.37 + i * 2.1), FMath::Cos(P.Seed.Y * 0.53 + i * 1.3), FMath::Sin(P.Seed.Z * 0.29 + i * 0.7)).GetSafeNormal();
+				const FVector Qs = QW - Ax * (FVector::DotProduct(QW, Ax) * 0.8);
+				const double Wig = FbmN(QW * Scales[i] * 7.0 + FVector(23.0 + i * 9.0, 4.0, 61.0), OctavesFor(CellCm / 7.0, MinWavelengthCm, 4), 2.0, 0.5);
+				const double V = FMath::Abs(Perlin(Qs * Scales[i] + FVector(31.0 * i, 0.0, 17.0 + i)) + 0.3 * W * Wig);
+				const double T = FMath::Clamp(V / W, 0.0, 1.0);
+				const double Ridge = SmoothStep(0.45, 0.7, T) * (1.0 - SmoothStep(0.8, 1.0, T));
+				const double Trough = 1.0 - SmoothStep(0.0, 0.45, T);
+				if (MinWavelengthCm <= BandCm) { H += (Ridge * RidgeCm[i] - Trough * RidgeCm[i] * 0.35) / FMath::Max(P.ReliefCm, 1.0) * P.Lineae * Gate; }
+				Linea = FMath::Max(Linea, (1.0 - SmoothStep(0.75, 1.0, T)) * Gate);
+			}
+		}
+
 		// ---- hills: the last of the structure, from a few kilometres down to the refinement floor ----
 		{
 			const double DetailLambda = Lambda0 / 60.0;
@@ -422,6 +458,7 @@ namespace SlonkTerrain
 		Out.CutCm = (float)(Cut * P.ReliefCm);
 		Out.Table = (float)FMath::Clamp(Tableland, 0.0, 1.0);
 		Out.Crater = (float)FMath::Clamp(CraterShade, 0.0, 1.0);
+		Out.Linea = (float)FMath::Clamp(Linea * P.Lineae, 0.0, 1.0);
 		return Out;
 	}
 

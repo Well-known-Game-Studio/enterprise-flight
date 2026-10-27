@@ -477,6 +477,7 @@ bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& Ne
 		// The river: the gorge's deepest cut leads to within a bend of it, then the river mask takes over.
 		if (K == TEXT("river")) { return S.River * 10.0 + S.Canyon * 2.0 + S.CutCm / FMath::Max(Params.CanyonDepthCm, 1.0) * 4.0 + Temperate + Near * 0.5; }
 		if (K == TEXT("mountain")) { return S.bWater ? -1e9 : S.HeightCm / FMath::Max(Params.ReliefCm, 1.0) * 10.0 + Near * 0.5; }
+		if (K == TEXT("linea")) { return S.Linea * 10.0 + Near * 3.0; }
 		if (K == TEXT("coast"))
 		{
 			if (S.bWater) { return -1e9; }
@@ -648,24 +649,26 @@ void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, int32 Fa
 
 	TUniquePtr<FDynamicMesh3> M = MakeUnique<FDynamicMesh3>();
 	M->EnableAttributes();
-	M->Attributes()->SetNumUVLayers(3);
+	M->Attributes()->SetNumUVLayers(4);
 	M->Attributes()->EnablePrimaryColors();
 	FDynamicMeshNormalOverlay* NO = M->Attributes()->PrimaryNormals();
 	FDynamicMeshUVOverlay* UV0 = M->Attributes()->GetUVLayer(0);
 	FDynamicMeshUVOverlay* UV1 = M->Attributes()->GetUVLayer(1);
 	FDynamicMeshUVOverlay* UV2 = M->Attributes()->GetUVLayer(2);
+	FDynamicMeshUVOverlay* UV3 = M->Attributes()->GetUVLayer(3);
 	FDynamicMeshColorOverlay* CO = M->Attributes()->PrimaryColors();
 
 	const int32 GW = Steps + 1;
 	TArray<int32> Vid; Vid.SetNumUninitialized(GW * GW);
 	TArray<FVector3f> Normals; Normals.SetNumUninitialized(GW * GW);
-	auto AddVert = [&](const FVector& Pv, const FVector3f& Nv, const FVector2f& A, const FVector2f& B, const FVector2f& C, const FVector4f& Col)
+	auto AddVert = [&](const FVector& Pv, const FVector3f& Nv, const FVector2f& A, const FVector2f& B, const FVector2f& C, const FVector2f& D, const FVector4f& Col)
 	{
 		const int32 V = M->AppendVertex(Pv);
 		NO->AppendElement(Nv);
 		UV0->AppendElement(A);
 		UV1->AppendElement(B);
 		UV2->AppendElement(C);
+		UV3->AppendElement(D);
 		CO->AppendElement(Col);
 		return V;
 	};
@@ -694,7 +697,7 @@ void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, int32 Fa
 			const float HeightN = (float)(S.HeightCm / FMath::Max(S.HeightCm >= 0.0 ? P.ReliefCm : P.OceanDepthCm, 1.0));
 			const FVector3f Nf(N);
 			Normals[j * GW + i] = Nf;
-			Vid[j * GW + i] = AddVert(Pos[k], Nf, FVector2f(HeightN, Slope), FVector2f(S.Wet, S.Rock), FVector2f(S.Ice, S.Canyon),
+			Vid[j * GW + i] = AddVert(Pos[k], Nf, FVector2f(HeightN, Slope), FVector2f(S.Wet, S.Rock), FVector2f(S.Ice, S.Canyon), FVector2f(S.Linea, 0.f),
 				FVector4f(S.Crater, S.bWater ? 1.f : 0.f, S.Wall, S.Stratum));
 			Bounds += Pos[k];
 		}
@@ -709,6 +712,7 @@ void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, int32 Fa
 			UV0->SetTriangle(T, FIndex3i(A, B, C));
 			UV1->SetTriangle(T, FIndex3i(A, B, C));
 			UV2->SetTriangle(T, FIndex3i(A, B, C));
+			UV3->SetTriangle(T, FIndex3i(A, B, C));
 			CO->SetTriangle(T, FIndex3i(A, B, C));
 			Tris.Add(T);
 		}
@@ -737,7 +741,7 @@ void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, int32 Fa
 		const int32 i = G % GW, j = G / GW;
 		const int32 k = (j + Margin) * W + (i + Margin);
 		const FVector Pv = M->GetVertex(V) - Dirs[k] * SkirtCm;
-		Lower.Add(AddVert(Pv, Normals[G], UV0->GetElement(V), UV1->GetElement(V), UV2->GetElement(V), CO->GetElement(V)));
+		Lower.Add(AddVert(Pv, Normals[G], UV0->GetElement(V), UV1->GetElement(V), UV2->GetElement(V), UV3->GetElement(V), CO->GetElement(V)));
 	}
 	for (int32 k = 0; k < Loop.Num(); ++k)
 	{

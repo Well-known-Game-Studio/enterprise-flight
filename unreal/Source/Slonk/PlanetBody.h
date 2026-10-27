@@ -99,6 +99,8 @@ struct FPlanetStyle
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rings") float RingDetail = 1.f;
 
 	// Clouds
+	/** 0..1 lineae on an icy moon: long double-ridged cracks in the ice, stained brown (Europa). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface", meta = (ClampMin = "0", ClampMax = "1")) float Lineae = 0.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Clouds") bool bClouds = true;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Clouds", meta = (ClampMin = "0", ClampMax = "1")) float CloudCoverage = 0.45f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Clouds") float CloudScale = 4.f;
@@ -218,6 +220,11 @@ public:
 	/** PCG can set this (0..1) to pick the archetype deterministically instead of hashing the location. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (ClampMin = "0", ClampMax = "1"))
 	float ArchetypeSelector = -1.f;
+
+	/** For placed showcase moons: fix the moon kind and the haze instead of rolling them from the seed. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet") bool bForceMoonKind = false;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (EditCondition = "bForceMoonKind")) EMoonKind ForcedMoonKind = EMoonKind::Icy;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet") bool bForceHazy = false;
 
 	/** When true, Style is (re)filled from the archetype on construction; set false to hand-tune Style. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")

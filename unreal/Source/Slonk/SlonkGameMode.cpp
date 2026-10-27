@@ -68,6 +68,44 @@ void ASlonkGameMode::DisableWorldBoundsChecks()
 	}
 }
 
+void ASlonkGameMode::SpawnShowcaseMoons()
+{
+	// After the planets' first appearance pass, so each giant's rings are resolved. An icy moon the size of
+	// Europa sits just outside the rings in their plane, a hazy moon the size of Titan further out.
+	UWorld* World = GetWorld();
+	if (!World) { return; }
+	TArray<APlanetBody*> Giants;
+	for (TActorIterator<APlanetBody> It(World); It; ++It)
+	{
+		if (It->Style.bRings && (It->ResolvedArchetype == EPlanetArchetype::GasGiant || It->ResolvedArchetype == EPlanetArchetype::IceGiant)) { Giants.Add(*It); }
+	}
+	int32 N = 0;
+	for (APlanetBody* G : Giants)
+	{
+		const FString GiantName = G->GetDisplayName();
+		const FVector Centre = G->GetActorLocation();
+		const double R = G->GetRadiusCm();
+		const FVector Plane1 = G->GetActorRightVector(), Plane2 = G->GetActorForwardVector();
+		struct FMoon { const TCHAR* Suffix; float RadiusKm; EMoonKind Kind; bool bHazy; double Radii; double Angle; };
+		const FMoon Moons[] = {
+			{ TEXT(" I"), 1561.f, EMoonKind::Icy, false, FMath::Max(G->Style.RingOuter * 1.7, 3.2), 0.6 },
+			{ TEXT(" II"), 2575.f, EMoonKind::Rocky, true, FMath::Max(G->Style.RingOuter * 3.0, 6.0), 2.4 } };
+		for (const FMoon& M : Moons)
+		{
+			const FVector Loc = Centre + (Plane1 * FMath::Cos(M.Angle) + Plane2 * FMath::Sin(M.Angle)) * (M.Radii * R);
+			APlanetBody* P = World->SpawnActorDeferred<APlanetBody>(APlanetBody::StaticClass(), FTransform(Loc), nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+			if (!P) { continue; }
+			P->Archetype = EPlanetArchetype::Moon; P->RadiusKm = M.RadiusKm;
+			P->bForceMoonKind = true; P->ForcedMoonKind = M.Kind; P->bForceHazy = M.bHazy;
+			P->PlanetName = GiantName + M.Suffix;
+			P->SeedLocation = Loc; P->bSeedLocationSet = true;
+			P->FinishSpawning(FTransform(Loc));
+			++N;
+		}
+	}
+	UE_LOG(LogTemp, Log, TEXT("Showcase moons: %d around %d ringed giants"), N, Giants.Num());
+}
+
 void ASlonkGameMode::SpawnTestTargets()
 {
 	UWorld* World = GetWorld();
@@ -102,6 +140,11 @@ void ASlonkGameMode::Tick(float DeltaTime)
 	if (bTrackStarLighting)
 	{
 		UpdateStarLighting();
+	}
+	if (bSpawnShowcaseMoons && !bShowcaseMoonsSpawned)
+	{
+		bShowcaseMoonsSpawned = true;
+		SpawnShowcaseMoons();
 	}
 	if (bUseSkyAtmosphere)
 	{
