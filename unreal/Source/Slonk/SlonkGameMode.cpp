@@ -1,4 +1,6 @@
 #include "SlonkGameMode.h"
+#include "Kismet/GameplayStatics.h"
+#include "StarshipPawn.h"
 #include "SlonkTiming.h"
 
 #include "Engine/DirectionalLight.h"
@@ -207,14 +209,19 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 	// The atmosphere's ground sits a little below the rendered surface: pixels at or under the ground radius get
 	// the full-atmosphere transmittance (black) from the aerial perspective LUT, which blacked out the un-displaced
 	// far sphere and every ocean.
-	SkyAtmosphere->SetBottomRadius(RadiusKm * 0.992f);
+	// 0.05% of the radius (3 km on an Earth) keeps the sea off the LUT's ground while the air at the surface stays
+	// near full density; the old 0.8% put the surface 45 km up a real atmosphere.
+	SkyAtmosphere->SetBottomRadius(RadiusKm * 0.9995f);
 	SkyAtmosphere->SetAtmosphereHeight(HeightKm);
 	// Scale heights proportional to the atmosphere thickness (Earth: 60 km / 8 km / 1.2 km).
 	SkyAtmosphere->SetRayleighExponentialDistribution(ScaleKm);
 	SkyAtmosphere->SetMieExponentialDistribution(ScaleKm * 0.25f);
 	// Artistic Rayleigh: the planet's atmosphere colour decides which wavelengths scatter most.
-	const FLinearColor Col = S.AtmosphereColor / FMath::Max(S.AtmosphereColor.GetMax(), KINDA_SMALL_NUMBER);
-	SkyAtmosphere->SetRayleighScattering(FLinearColor(FMath::Max(Col.R, 0.1f), FMath::Max(Col.G, 0.1f), FMath::Max(Col.B, 0.1f)));
+	// Raised to the 1.6 so the style's sky-blue (0.35, 0.6, 1) becomes the real Rayleigh ratio (0.18, 0.41, 1);
+	// taken straight it scatters too much red and the sky goes grey.
+	const FLinearColor Col0 = S.AtmosphereColor / FMath::Max(S.AtmosphereColor.GetMax(), KINDA_SMALL_NUMBER);
+	const FLinearColor Col(FMath::Pow(Col0.R, 1.6f), FMath::Pow(Col0.G, 1.6f), FMath::Pow(Col0.B, 1.6f));
+	SkyAtmosphere->SetRayleighScattering(FLinearColor(FMath::Max(Col.R, 0.08f), FMath::Max(Col.G, 0.08f), FMath::Max(Col.B, 0.08f)));
 	// Thinner atmospheres need stronger coefficients to show at all; Earth is 0.0331 at 60 km.
 	// Earth is 0.0331 / 0.004 at 60 km; keep that density regardless of planet size, scaled by the style's intensity.
 	// A deeper layer gets a proportionally weaker coefficient (optical depth grows only as the 0.4 power of the
@@ -236,6 +243,18 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 	// The captured sky is full daylight wherever the sky light sits, so in orbit it floods everything with
 	// ambient (no dark sides, no visible sun glint). Fade it out with altitude; a trace stays as planetshine.
 	ApplySkyLightIntensity(SkyLightIntensityNearPlanet * FMath::Lerp(1.f, 0.04f, Blend));
+	// Daylight: inside the atmosphere with the sun up, the sky outshines the star field, so hide it (the
+	// sprites are sized for space and would burn through the blue).
+	if (APawn* ViewPawn = UGameplayStatics::GetPlayerPawn(this, 0))
+	{
+		if (AStarshipPawn* Ship = Cast<AStarshipPawn>(ViewPawn))
+		{
+			const FVector Up = (ViewLoc - AtmospherePlanet->GetActorLocation()).GetSafeNormal();
+			const float SunUp = (float)FVector::DotProduct(Up, AtmospherePlanet->GetStarDirection());
+			const float Daylight = (1.f - FMath::Clamp((float)(AltitudeKm / (HeightKm * 1.2)), 0.f, 1.f)) * FMath::Clamp(SunUp * 6.f + 0.3f, 0.f, 1.f);
+			Ship->SetStarFieldHidden(Daylight > 0.5f);
+		}
+	}
 	SkyAtmosphere->SetSkyLuminanceFactor(FLinearColor(Boost, Boost, Boost));
 	SkyAtmosphere->SetSkyAndAerialPerspectiveLuminanceFactor(FLinearColor(ApBoost, ApBoost, ApBoost));
 	SkyAtmosphere->SetMultiScatteringFactor(1.f);

@@ -161,6 +161,41 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Starship|Movement")
 	double GetOrbitPeriod() const { const double V = FMath::Abs(GetOrbitSpeed()); return V > 1.0 ? 2.0 * PI * OrbitRadius / V : 0.0; }
 
+	// ---- Terrain -----------------------------------------------------------------------------
+
+	/** The ship never gets closer to the ground than this, cm (planets with terrain; the sea-level sphere still blocks). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Terrain")
+	double GroundClearanceCm = 3000.0;
+
+	/** Terrain following: hold HoverAltitudeCm above the ground under the ship; PgUp/PgDn (vertical) change it. */
+	UPROPERTY(BlueprintReadOnly, Category = "Terrain")
+	bool bTerrainFollow = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Terrain")
+	double HoverAltitudeCm = 0.0;
+
+	/** Nearest planet with a ground under us (within 1.5 radii), else null. */
+	UPROPERTY(BlueprintReadOnly, Category = "Terrain")
+	TObjectPtr<AActor> GroundBody;
+
+	/** Ground height under the ship above that planet's sea level, cm. */
+	UPROPERTY(BlueprintReadOnly, Category = "Terrain")
+	double GroundHeightCm = 0.0;
+
+	/** Altitude above the ground under the ship, cm; negative when no planet is near. */
+	UPROPERTY(BlueprintReadOnly, Category = "Terrain")
+	double AltitudeAGLCm = -1.0;
+
+	UFUNCTION(BlueprintCallable, Category = "Starship|Movement")
+	void SetTerrainFollow(double AltitudeCm);
+
+	UFUNCTION(BlueprintCallable, Category = "Starship|Movement")
+	void ClearTerrainFollow() { bTerrainFollow = false; bCanyonFollow = false; }
+	/** With terrain following on, steer along the canyon: yaw each tick toward the deeper cut ahead. */
+	void SetCanyonFollow(bool bOn) { bCanyonFollow = bOn; }
+	UPROPERTY(BlueprintReadOnly, Category = "Terrain")
+	bool bCanyonFollow = false;
+
 	// ---- Proximity governor -------------------------------------------------------------------
 
 	/**
@@ -254,6 +289,9 @@ public:
 private:
 	/** Evaluate every body against the heading; returns the unit direction to the governing body (zero if none threatens). */
 	FVector UpdateProximity(const FVector& Here, const FVector& Dir);
+	void ApplyTerrainFloor(float DeltaTime);
+	TArray<TWeakObjectPtr<class APlanetBody>> TerrainBodies;
+	float TerrainScanTimer = 0.f;
 
 	/** (Pitch, Yaw, Roll) in [-1, 1], consumed each tick. */
 	FVector SteeringInput = FVector::ZeroVector;

@@ -155,6 +155,9 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|FX")
 	TObjectPtr<UStaticMeshComponent> StarSphere;
 
+	/** Daylight inside an atmosphere: the sky outshines the stars, so the game mode hides the star field. */
+	void SetStarFieldHidden(bool bHidden);
+
 	/** Stand-in sprites for stars beyond the star sphere (the real sun from across the system). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|FX")
 	TObjectPtr<UDistantStarsComponent> DistantStars;
@@ -329,6 +332,7 @@ public:
 	/** Radius of the ship-following star sphere (cm). 5 million km by default. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sky")
 	double StarSphereRadius = 5.0e11;
+	bool bStarFieldHidden = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sky")
 	TSoftObjectPtr<UMaterialInterface> StarMaterial;

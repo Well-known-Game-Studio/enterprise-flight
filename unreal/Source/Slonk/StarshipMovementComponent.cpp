@@ -2,6 +2,7 @@
 
 #include "EngineUtils.h"
 #include "PlanetBody.h"
+#include "PlanetTerrainComponent.h"
 #include "StarBody.h"
 #include "SpaceVessel.h"
 
@@ -190,10 +191,124 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 		}
 	}
 
+	ApplyTerrainFloor(DeltaTime);
+
 	UpdateComponentVelocity();
 	SteeringInput = FVector::ZeroVector;
 	VerticalInput = 0.f;
 	ThrusterInput = FVector::ZeroVector;
+}
+
+void UStarshipMovementComponent::SetTerrainFollow(double AltitudeCm)
+{
+	bTerrainFollow = true;
+	HoverAltitudeCm = FMath::Max(AltitudeCm, GroundClearanceCm);
+	ClearOrbitHold();
+}
+
+void UStarshipMovementComponent::ApplyTerrainFloor(float DeltaTime)
+{
+	GroundBody = nullptr;
+	AltitudeAGLCm = -1.0;
+	if (!UpdatedComponent) { return; }
+	TerrainScanTimer -= DeltaTime;
+	if (TerrainScanTimer <= 0.f)
+	{
+		TerrainScanTimer = 1.f;
+		TerrainBodies.Reset();
+		if (UWorld* World = GetWorld())
+		{
+			for (TActorIterator<APlanetBody> It(World); It; ++It) { TerrainBodies.Add(*It); }
+		}
+	}
+	const FVector Here = UpdatedComponent->GetComponentLocation();
+	APlanetBody* Near = nullptr;
+	double NearDist = TNumericLimits<double>::Max();
+	for (const TWeakObjectPtr<APlanetBody>& W : TerrainBodies)
+	{
+		APlanetBody* P = W.Get();
+		if (!P) { continue; }
+		const double D = FVector::Dist(Here, P->GetActorLocation());
+		if (D < P->GetRadiusCm() * 1.5 && D < NearDist) { Near = P; NearDist = D; }
+	}
+	if (!Near) { return; }
+	const FVector Centre = Near->GetActorLocation();
+	const FVector Rv = Here - Centre;
+	const double Dist = Rv.Size();
+	if (Dist < 1.0) { return; }
+	const FVector Radial = Rv / Dist;
+	const double SurfR = Near->GetSurfaceRadiusCm(Here);
+	GroundBody = Near;
+	GroundHeightCm = SurfR - Near->GetRadiusCm();
+	AltitudeAGLCm = Dist - SurfR;
+	if (bWarpActive || bOrbitHold) { return; }
+
+	double WantDist = -1.0;
+	if (bTerrainFollow)
+	{
+		// Ride the ground: the planet turns under us, so turn with it (its spin is about its local Z).
+		const double SpinRad = FMath::DegreesToRadians(Near->SpinDegPerSec) * DeltaTime;
+		if (!FMath::IsNearlyZero(SpinRad))
+		{
+			const FVector Axis = Near->GetActorQuat().GetAxisZ();
+			const FVector Turned = Rv.RotateAngleAxisRad(SpinRad, Axis);
+			UpdatedComponent->SetWorldLocation(Centre + Turned, false, nullptr, ETeleportType::TeleportPhysics);
+		}
+		// Canyon autopilot: compare the depth of the cut 400 m ahead-left, ahead and ahead-right, and yaw the hull
+		// (and the velocity with it) toward the deeper side, up to 20 degrees a second. The gorge bends a few
+		// hundred metres per kilometre, which a straight run leaves within seconds.
+		if (bCanyonFollow && Near->Terrain && Velocity.SizeSquared() > 1.0e6)
+		{
+			const FVector Up = Rv.GetSafeNormal();
+			const FVector Fwd = (Velocity - Up * FVector::DotProduct(Velocity, Up)).GetSafeNormal();
+			if (!Fwd.IsNearlyZero())
+			{
+				const FVector Right = FVector::CrossProduct(Up, Fwd).GetSafeNormal();
+				const double W = 4.0e4;
+				auto CutAt = [&](const FVector& Pw) { return (double)Near->Terrain->SampleAtWorld(Pw, 1.0e4).CutCm; };
+				const double CutL = CutAt(Here + Fwd * W - Right * W), CutC = CutAt(Here + Fwd * W), CutR = CutAt(Here + Fwd * W + Right * W);
+				const double Deepest = FMath::Max3(CutL, CutC, CutR);
+				if (Deepest > 1.0)
+				{
+					const double Diff = FMath::Clamp((CutR - CutL) / Deepest * 2.0, -1.0, 1.0);
+					const double Turn = Diff * FMath::DegreesToRadians(20.0) * DeltaTime;
+					if (!FMath::IsNearlyZero(Turn))
+					{
+						const FQuat Q(Up, Turn);
+						UpdatedComponent->SetWorldRotation(Q * UpdatedComponent->GetComponentQuat(), false, nullptr, ETeleportType::TeleportPhysics);
+						Velocity = Q.RotateVector(Velocity);
+					}
+				}
+			}
+		}
+		// Vertical thrust moves the hover height; rate scales with the height so 100 m and 10 km both feel right.
+		if (!FMath::IsNearlyZero(VerticalInput))
+		{
+			HoverAltitudeCm = FMath::Max(HoverAltitudeCm + VerticalInput * (HoverAltitudeCm * 0.6 + 2000.0) * DeltaTime, GroundClearanceCm);
+		}
+		const double Target = SurfR + HoverAltitudeCm;
+		// Ease onto the contour over about half a second: the ground is sampled at the ship, so a cliff ahead
+		// becomes a climb as it passes under the hull rather than a wall.
+		WantDist = FMath::Lerp(Dist, Target, 1.0 - FMath::Exp(-2.5 * DeltaTime));
+	}
+	else if (Dist < SurfR + GroundClearanceCm)
+	{
+		WantDist = SurfR + GroundClearanceCm;
+	}
+	if (WantDist > 0.0)
+	{
+		const FVector RvNow = UpdatedComponent->GetComponentLocation() - Centre;
+		const FVector RadialNow = RvNow.GetSafeNormal();
+		const FVector NewPos = Centre + RadialNow * WantDist;
+		UpdatedComponent->SetWorldLocation(NewPos, false, nullptr, ETeleportType::TeleportPhysics);
+		// Keep the along-ground speed; drop whatever was carrying us into the ground.
+		const double Inward = FVector::DotProduct(Velocity, Radial);
+		if (bTerrainFollow || Inward < 0.0)
+		{
+			Velocity -= Radial * Inward;
+		}
+		AltitudeAGLCm = WantDist - SurfR;
+	}
 }
 
 void UStarshipMovementComponent::SetOrbitHold(AActor* Body, double BodyRadiusCm, const FString& BodyName)

@@ -5,6 +5,7 @@
 #include "GameFramework/PlayerController.h"
 #include "StarshipHUD.h"
 #include "PlanetBody.h"
+#include "PlanetTerrainComponent.h"
 #include "StarBody.h"
 #include "SpaceVessel.h"
 #include "EngineUtils.h"
@@ -1399,6 +1400,15 @@ void AStarshipPawn::UpdateCameras(float DeltaTime)
 	}
 }
 
+void AStarshipPawn::SetStarFieldHidden(bool bHidden)
+{
+	if (bStarFieldHidden != bHidden)
+	{
+		bStarFieldHidden = bHidden;
+		if (StarSphere) { StarSphere->SetVisibility(!bHidden); }
+	}
+}
+
 void AStarshipPawn::ProcessDebugCommand()
 {
 	if (DebugCommand.IsEmpty())
@@ -1484,6 +1494,117 @@ void AStarshipPawn::ProcessDebugCommand()
 	{
 		DebugVertical = Arg(1, 0.f);
 		DebugVerticalTime = Arg(2, 1.f);
+	}
+	else if (Op == TEXT("hover") && Movement)
+	{
+		// hover <metres> [canyon] follows the ground at that height, steering along the canyon if asked; hover off releases.
+		if (ArgStr(1) == TEXT("off")) { Movement->ClearTerrainFollow(); }
+		else { Movement->SetTerrainFollow(Arg(1, 300.f) * 100.f); Movement->SetCanyonFollow(ArgStr(2) == TEXT("canyon")); }
+	}
+	else if (Op == TEXT("terrain") && Movement && ArgStr(1) == TEXT("goto"))
+	{
+		// terrain goto <canyon|mountain|coast|land> <altitude m> [heading: across|sun|away]: park over that feature of
+		// the nearest planet, level, nose along the horizon. "across" flies with the sun on the beam.
+		APlanetBody* Planet = Cast<APlanetBody>(Movement->GroundBody.Get());
+		if (!Planet)
+		{
+			double BestD = TNumericLimits<double>::Max();
+			for (TActorIterator<APlanetBody> It(GetWorld()); It; ++It)
+			{
+				const double D = FVector::Dist(It->GetActorLocation(), GetActorLocation());
+				if (It->HasTerrain() && D < BestD) { BestD = D; Planet = *It; }
+			}
+		}
+		FVector Dir; double H = 0.0;
+		const FVector SunLocal = Planet && Planet->Terrain ? Planet->Terrain->GetComponentTransform().InverseTransformVectorNoScale(Planet->GetStarDirection()) : FVector::ZeroVector;
+		if (Planet && Planet->Terrain && Planet->HasTerrain() && Planet->Terrain->FindFeature(ArgStr(2), FVector::ZeroVector, Dir, H, SunLocal))
+		{
+			const FTransform& TT = Planet->Terrain->GetComponentTransform();
+			const FVector Up = TT.TransformVectorNoScale(Dir).GetSafeNormal();
+			const FVector Pos = TT.TransformPositionNoScale(Dir * (Planet->GetRadiusCm() + H)) + Up * (Arg(3, 1000.f) * 100.f);
+			const FVector Sun = Planet->GetStarDirection();
+			const FString Heading = ArgStr(4);
+			FVector Fwd = Heading == TEXT("sun") ? Sun : (Heading == TEXT("away") ? -Sun : FVector::CrossProduct(Up, Sun));
+			if (Heading == TEXT("along"))
+			{
+				// Along the canyon: of eight headings, the one along which the depth of the cut changes least over
+				// 400 m each way (a gradient is useless mid-gorge, where the cut is flat on both sides).
+				const FPlanetTerrainParams& TP = Planet->Terrain->GetParams();
+				const FVector E = FVector::CrossProduct(FVector::ZAxisVector, Dir).GetSafeNormal();
+				const FVector Nn = FVector::CrossProduct(Dir, E).GetSafeNormal();
+				const double Step = 4.0e4 / TP.RadiusCm;
+				const double Cut0 = SlonkTerrain::Sample(TP, Dir, 1.0e4).CutCm;
+				double BestVar = TNumericLimits<double>::Max(), BestA = 0.0;
+				auto Try = [&](double A)
+				{
+					const FVector Hd = E * FMath::Cos(A) + Nn * FMath::Sin(A);
+					const double C1 = SlonkTerrain::Sample(TP, (Dir + Hd * Step).GetSafeNormal(), 1.0e4).CutCm;
+					const double C2 = SlonkTerrain::Sample(TP, (Dir - Hd * Step).GetSafeNormal(), 1.0e4).CutCm;
+					const double Var = FMath::Abs(C1 - Cut0) + FMath::Abs(C2 - Cut0);
+					if (Var < BestVar) { BestVar = Var; BestA = A; }
+				};
+				// Every five degrees over the half circle, then every degree around the best: a few degrees off
+				// is a kilometre off after a minute at 250 m/s.
+				for (int32 k = 0; k < 36; ++k) { Try(k * UE_DOUBLE_PI / 36.0); }
+				const double Centre = BestA;
+				for (int32 k = -5; k <= 5; ++k) { Try(Centre + k * UE_DOUBLE_PI / 180.0); }
+				const FVector AlongLocal = E * FMath::Cos(BestA) + Nn * FMath::Sin(BestA);
+				Fwd = TT.TransformVectorNoScale(AlongLocal);
+			}
+			Fwd = (Fwd - Up * FVector::DotProduct(Fwd, Up)).GetSafeNormal();
+			if (Fwd.IsNearlyZero()) { Fwd = FVector::CrossProduct(Up, FVector::ZAxisVector).GetSafeNormal(); }
+			if (Movement) { Movement->SetThrottle(0.0); Movement->Velocity = FVector::ZeroVector; Movement->AngularVelocity = FRotator::ZeroRotator; }
+			SetActorLocationAndRotation(Pos, FRotationMatrix::MakeFromXZ(Fwd, Up).ToQuat(), false, nullptr, ETeleportType::TeleportPhysics);
+			// Ride the ground from here: with the velocity zeroed the planet would otherwise turn under the ship at
+			// its surface speed (close to a kilometre a second on an Earth-size world) and carry the feature away.
+			if (Movement) { Movement->SetTerrainFollow(Arg(3, 1000.f) * 100.0); }
+			UE_LOG(LogTemp, Log, TEXT("Terrain goto %s on %s: ground %.1f m, parked %.0f m above it"), *ArgStr(2), *Planet->GetDisplayName(), H / 100.0, Arg(3, 1000.f));
+		}
+		else { UE_LOG(LogTemp, Log, TEXT("Terrain goto: no %s found"), *ArgStr(2)); }
+	}
+	else if (Op == TEXT("terrain") && Movement && ArgStr(1) == TEXT("find"))
+	{
+		// terrain find <canyon|mountain|coast|land> [planet name]: logs a world location on that feature.
+		APlanetBody* Planet = Cast<APlanetBody>(Movement->GroundBody.Get());
+		const FString Want = Args.IsValidIndex(3) ? Args[3] : FString();
+		if (!Planet || !Want.IsEmpty())
+		{
+			double BestD = TNumericLimits<double>::Max();
+			for (TActorIterator<APlanetBody> It(GetWorld()); It; ++It)
+			{
+				if (!Want.IsEmpty() && !It->GetDisplayName().Contains(Want)) { continue; }
+				const double D = FVector::Dist(It->GetActorLocation(), GetActorLocation());
+				if (D < BestD) { BestD = D; Planet = *It; }
+			}
+		}
+		if (Planet && Planet->Terrain && Planet->HasTerrain())
+		{
+			const FVector Local = Planet->Terrain->GetComponentTransform().InverseTransformPositionNoScale(GetActorLocation()).GetSafeNormal();
+			FVector Dir; double H = 0.0;
+			if (Planet->Terrain->FindFeature(ArgStr(2), Local, Dir, H))
+			{
+				const FVector World = Planet->Terrain->GetComponentTransform().TransformPositionNoScale(Dir * (Planet->GetRadiusCm() + H));
+				const FVector Up = Planet->Terrain->GetComponentTransform().TransformVectorNoScale(Dir);
+				UE_LOG(LogTemp, Log, TEXT("Terrain feature %s on %s: world %.1f %.1f %.1f up %.6f %.6f %.6f ground %.1f m  local %.6f %.6f %.6f  roundtrip %.1f m  planet %s at %.1f %.1f %.1f"),
+					*ArgStr(2), *Planet->GetDisplayName(), World.X, World.Y, World.Z, Up.X, Up.Y, Up.Z, H / 100.0, Dir.X, Dir.Y, Dir.Z,
+					Planet->Terrain->SurfaceHeightAtWorld(World) / 100.0, *Planet->GetName(), Planet->GetActorLocation().X, Planet->GetActorLocation().Y, Planet->GetActorLocation().Z);
+			}
+			else { UE_LOG(LogTemp, Log, TEXT("Terrain feature %s: none found on %s"), *ArgStr(2), *Planet->GetDisplayName()); }
+		}
+		else { UE_LOG(LogTemp, Log, TEXT("Terrain feature: no terrain planet")); }
+	}
+	else if (Op == TEXT("terrain") && Movement)
+	{
+		if (const APlanetBody* Planet = Cast<APlanetBody>(Movement->GroundBody.Get()))
+		{
+			const UPlanetTerrainComponent* T = Planet->Terrain;
+			const FVector Local = T ? T->GetComponentTransform().InverseTransformPositionNoScale(GetActorLocation()) : FVector::ZeroVector;
+			UE_LOG(LogTemp, Log, TEXT("Terrain %s: visible %d built %d pending+inflight %d deepest %d parked %d  ground %.1f m  altitude %.1f m  (%s dist %.1f km R %.1f km spin %.4f local %.6f %.6f %.6f)"), *Planet->GetDisplayName(),
+				T ? T->GetVisibleChunkCount() : -1, T ? T->GetBuiltChunkCount() : -1, T ? T->GetPendingBuildCount() : -1, T ? T->GetDeepestVisibleDepth() : -1, T ? T->GetParkedChunkCount() : -1,
+				Movement->GroundHeightCm / 100.0, Movement->AltitudeAGLCm / 100.0, *Planet->GetName(), FVector::Dist(GetActorLocation(), Planet->GetActorLocation()) / 1e5, Planet->GetRadiusCm() / 1e5, Planet->SpinDegPerSec,
+				Local.GetSafeNormal().X, Local.GetSafeNormal().Y, Local.GetSafeNormal().Z);
+		}
+		else { UE_LOG(LogTemp, Log, TEXT("Terrain: no planet within 1.5 radii")); }
 	}
 	else if (Op == TEXT("orbit"))
 	{
