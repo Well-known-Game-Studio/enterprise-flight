@@ -18,9 +18,11 @@ ANebula::ANebula()
 	Volume->CastShadow = false;
 	Volume->bCastDynamicShadow = false;
 	Volume->bAffectDistanceFieldLighting = false;
-	// Sorted by distance with the other translucents (a fixed priority put the cloud under every planet's shell,
-	// so a shell behind the cloud painted over the gas in front of it).
-	Volume->SetTranslucentSortPriority(0);
+	// Level with the rings and the star's corona (2), above the atmosphere shells and the distant-star sprites
+	// (1): among equals distance sorts, and the cloud's origin is nearest whenever the camera is inside it, so
+	// it composites last. At 0 the sprites and rings drew over the gas, which brightened every sky pixel except
+	// where an opaque moon blocked them: a dark disc where the gas alone should have shown.
+	Volume->SetTranslucentSortPriority(2);
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereFinder(TEXT("/Engine/ArtTools/RenderToTexture/Meshes/S_1_Unit_Sphere_HI.S_1_Unit_Sphere_HI"));
 	if (SphereFinder.Succeeded()) { Volume->SetStaticMesh(SphereFinder.Object); }
 	Glow = CreateDefaultSubobject<UPointLightComponent>(TEXT("Glow"));
