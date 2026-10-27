@@ -14,6 +14,8 @@
 #include "StarBody.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Components/SkyAtmosphereComponent.h"
+#include "Components/VolumetricCloudComponent.h"
+#include "Materials/MaterialInterface.h"
 #include "GameFramework/WorldSettings.h"
 #include "SpaceTarget.h"
 #include "StarshipHUD.h"
@@ -144,6 +146,7 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 		if (AtmospherePlanet)
 		{
 			AtmospherePlanet->SetUsingSkyAtmosphere(false);
+			AtmospherePlanet->SetUsingVolumetricClouds(false);
 		}
 		AtmospherePlanet = Best;
 	}
@@ -156,6 +159,10 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 		if (SkyAtmosphere && SkyAtmosphere->IsVisible())
 		{
 			SkyAtmosphere->SetVisibility(false);
+		}
+		if (VolumetricCloud && VolumetricCloud->IsVisible())
+		{
+			VolumetricCloud->SetVisibility(false);
 		}
 		return;
 	}
@@ -176,6 +183,21 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 		SkyAtmosphere->TransformMode = ESkyAtmosphereTransformMode::PlanetCenterAtComponentTransform;
 		SkyAtmosphere->SetupAttachment(Root);
 		SkyAtmosphere->RegisterComponent();
+		// Volumetric clouds ride the same planet: with a Sky Atmosphere in the scene the renderer takes the
+		// cloud layer's centre and ground radius from it, so the layer wraps this planet wherever it is.
+		VolumetricCloud = NewObject<UVolumetricCloudComponent>(AtmosphereHolder, TEXT("VolumetricCloud"));
+		VolumetricCloud->SetupAttachment(Root);
+		if (UMaterialInterface* CloudMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/EngineSky/VolumetricClouds/m_SimpleVolumetricCloud_Inst.m_SimpleVolumetricCloud_Inst")))
+		{
+			VolumetricCloud->SetMaterial(CloudMat);
+		}
+		VolumetricCloud->SetLayerBottomAltitude(CloudLayerBottomKm);
+		VolumetricCloud->SetLayerHeight(CloudLayerHeightKm);
+		VolumetricCloud->SetbUsePerSampleAtmosphericLightTransmittance(true);
+		VolumetricCloud->SetViewSampleCountScale(0.6f);
+		VolumetricCloud->SetShadowViewSampleCountScale(0.5f);
+		VolumetricCloud->SetVisibility(false);
+		VolumetricCloud->RegisterComponent();
 	}
 
 	// Sunlight must be flagged as an atmosphere light for the scattering to pick it up.
@@ -193,6 +215,21 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 			if (!LightComp->bPerPixelAtmosphereTransmittance)
 			{
 				LightComp->bPerPixelAtmosphereTransmittance = true;
+				LightComp->MarkRenderStateDirty();
+			}
+			// The clouds throw their shadows on the ground and take the ship's and the terrain's; the sun also
+			// shades the atmosphere through them.
+			if (!LightComp->bCastCloudShadows || !LightComp->bCastShadowsOnClouds)
+			{
+				LightComp->bCastCloudShadows = true;
+				LightComp->bCastShadowsOnClouds = true;
+				LightComp->bCastShadowsOnAtmosphere = true;
+				LightComp->CloudShadowStrength = CloudShadowStrength;
+				LightComp->CloudShadowExtent = 150.f;
+				// The shadow map ray-marches the layer per texel: 512 square cost 10 ms on an M1 Pro, 256 costs 3,
+				// and cloud shadows are soft anyway.
+				LightComp->CloudShadowMapResolutionScale = 0.5f;
+				LightComp->CloudShadowRaySampleCountScale = 0.5f;
 				LightComp->MarkRenderStateDirty();
 			}
 		}
@@ -263,6 +300,17 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 		SkyAtmosphere->SetVisibility(true);
 	}
 	AtmospherePlanet->SetUsingSkyAtmosphere(true);
+	// Volumetric clouds near the planet, the shell further out (the shell reads from orbit; the ray-marched
+	// layer is for the sky overhead and the shadows it throws).
+	if (VolumetricCloud)
+	{
+		const bool bVolumetric = bUseVolumetricClouds && S.bClouds && BestRadii < VolumetricCloudRadii;
+		if (VolumetricCloud->IsVisible() != bVolumetric)
+		{
+			VolumetricCloud->SetVisibility(bVolumetric);
+		}
+		AtmospherePlanet->SetUsingVolumetricClouds(bVolumetric);
+	}
 }
 
 void ASlonkGameMode::ApplySkyLightIntensity(float Intensity)

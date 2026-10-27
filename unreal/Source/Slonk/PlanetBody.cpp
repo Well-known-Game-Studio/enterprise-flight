@@ -1003,7 +1003,7 @@ void APlanetBody::UpdateShellVisibility()
 		Body->SetVisibility(false);
 		Clouds->SetVisibility(false);
 		FarBody->SetVisibility(bShow && !bDetailActive && !bTerrainActive);
-		CloudsMesh->SetVisibility(bShow && Style.bClouds);
+		CloudsMesh->SetVisibility(bShow && Style.bClouds && !bUsingVolumetricClouds);
 	}
 	else
 	{
@@ -1222,6 +1222,15 @@ void APlanetBody::SetUsingSkyAtmosphere(bool bEnabled)
 	if (bUsingSkyAtmosphere != bEnabled)
 	{
 		bUsingSkyAtmosphere = bEnabled;
+		UpdateShellVisibility();
+	}
+}
+
+void APlanetBody::SetUsingVolumetricClouds(bool bEnabled)
+{
+	if (bUsingVolumetricClouds != bEnabled)
+	{
+		bUsingVolumetricClouds = bEnabled;
 		UpdateShellVisibility();
 	}
 }
