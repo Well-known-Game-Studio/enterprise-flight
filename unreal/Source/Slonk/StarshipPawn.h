@@ -39,7 +39,13 @@ enum class EStarshipCameraMode : uint8
 {
 	Chase,
 	Bridge,
-	Cinematic
+	Cinematic,
+	/** Fixed views in the ship's own frame, at the cinematic distance scaled by the chase zoom. */
+	Front,
+	Port,
+	Starboard,
+	Top,
+	Bottom
 };
 
 /** A running / engine light on the hull, positioned relative to the ship root (cm). */

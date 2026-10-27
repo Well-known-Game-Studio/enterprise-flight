@@ -117,7 +117,9 @@ AStarshipPawn::AStarshipPawn()
 
 	OrbitPivot = CreateDefaultSubobject<USceneComponent>(TEXT("OrbitPivot"));
 	OrbitPivot->SetupAttachment(CollisionBox);
-	OrbitPivot->SetUsingAbsoluteRotation(true); // orbit in world space so the ship's own roll doesn't swing the shot
+	// The pivot turns in the ship's frame: the orbit is about the ship's own up axis and the fixed views sit
+	// off its nose, sides, dorsal and ventral. (It used to be absolute, so the orbit was about the world's Z,
+	// which is an arbitrary axis for a ship anywhere but the ecliptic.)
 
 	CinematicCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("CinematicCamera"));
 	CinematicCamera->SetupAttachment(OrbitPivot);
@@ -1123,8 +1125,8 @@ UCameraComponent* AStarshipPawn::GetActiveCamera() const
 	switch (CameraMode)
 	{
 	case EStarshipCameraMode::Bridge: return BridgeCamera;
-	case EStarshipCameraMode::Cinematic: return CinematicCamera;
-	default: return ChaseCamera;
+	case EStarshipCameraMode::Chase: return ChaseCamera;
+	default: return CinematicCamera;
 	}
 }
 
@@ -1133,7 +1135,7 @@ void AStarshipPawn::SetCameraMode(EStarshipCameraMode Mode)
 	CameraMode = Mode;
 	ChaseCamera->SetActive(Mode == EStarshipCameraMode::Chase);
 	BridgeCamera->SetActive(Mode == EStarshipCameraMode::Bridge);
-	CinematicCamera->SetActive(Mode == EStarshipCameraMode::Cinematic);
+	CinematicCamera->SetActive(Mode != EStarshipCameraMode::Chase && Mode != EStarshipCameraMode::Bridge);
 	// Hide the hull from the bridge so the saucer doesn't fill the lens.
 	ShipMesh->SetOwnerNoSee(false);
 	ShipMesh->SetVisibility(Mode != EStarshipCameraMode::Bridge);
@@ -1148,6 +1150,11 @@ void AStarshipPawn::CycleCameraMode()
 	{
 	case EStarshipCameraMode::Chase: SetCameraMode(EStarshipCameraMode::Bridge); break;
 	case EStarshipCameraMode::Bridge: SetCameraMode(EStarshipCameraMode::Cinematic); break;
+	case EStarshipCameraMode::Cinematic: SetCameraMode(EStarshipCameraMode::Front); break;
+	case EStarshipCameraMode::Front: SetCameraMode(EStarshipCameraMode::Port); break;
+	case EStarshipCameraMode::Port: SetCameraMode(EStarshipCameraMode::Starboard); break;
+	case EStarshipCameraMode::Starboard: SetCameraMode(EStarshipCameraMode::Top); break;
+	case EStarshipCameraMode::Top: SetCameraMode(EStarshipCameraMode::Bottom); break;
 	default: SetCameraMode(EStarshipCameraMode::Chase); break;
 	}
 }
@@ -1389,11 +1396,31 @@ void AStarshipPawn::UpdateCameras(float DeltaTime)
 	{
 		OrbitAngle += CinematicOrbitRate * DeltaTime;
 		const float Pitch = 8.f * FMath::Sin(OrbitAngle * 0.02f);
-		OrbitPivot->SetWorldRotation(FRotator(Pitch, OrbitAngle, 0.f));
+		OrbitPivot->SetRelativeRotation(FRotator(Pitch, OrbitAngle, 0.f));
 		const float OrbitDistance = LengthCm * CinematicDistanceFactor * (1.f + 0.4f * Streak);
 		const FVector OrbitOffset(-OrbitDistance, 0.0, OrbitDistance * 0.18);
 		CinematicCamera->SetRelativeLocation(OrbitOffset + ShakeOffset * Amp * LengthCm * 0.005f);
 		CinematicCamera->SetRelativeRotation((-OrbitOffset).Rotation() + FRotator(0.f, 0.f, ShakeRoll * 0.3f));
+		CinematicCamera->SetFieldOfView(CinematicFOV + 6.f * Flash);
+		break;
+	}
+	default:
+	{
+		// Fixed views in the ship's frame: off the nose looking aft, off each beam, above and below. The chase
+		// zoom (mouse wheel, `zoom`) scales the distance. The camera roll follows the hull.
+		OrbitPivot->SetRelativeRotation(FRotator::ZeroRotator);
+		const float D = LengthCm * CinematicDistanceFactor * ChaseZoom * (1.f + 0.4f * Streak);
+		FVector Off; FRotator Rot;
+		switch (CameraMode)
+		{
+		case EStarshipCameraMode::Front: Off = FVector(D, 0.0, D * 0.08); Rot = FRotator(0.f, 180.f, 0.f); break;
+		case EStarshipCameraMode::Port: Off = FVector(0.0, -D, D * 0.08); Rot = FRotator(0.f, 90.f, 0.f); break;
+		case EStarshipCameraMode::Starboard: Off = FVector(0.0, D, D * 0.08); Rot = FRotator(0.f, -90.f, 0.f); break;
+		case EStarshipCameraMode::Top: Off = FVector(0.0, 0.0, D); Rot = FRotator(-90.f, 0.f, 0.f); break;
+		default: Off = FVector(0.0, 0.0, -D); Rot = FRotator(90.f, 0.f, 0.f); break;
+		}
+		CinematicCamera->SetRelativeLocation(Off + ShakeOffset * Amp * LengthCm * 0.005f);
+		CinematicCamera->SetRelativeRotation(Rot + FRotator(0.f, 0.f, ShakeRoll * 0.3f));
 		CinematicCamera->SetFieldOfView(CinematicFOV + 6.f * Flash);
 		break;
 	}
@@ -1478,6 +1505,11 @@ void AStarshipPawn::ProcessDebugCommand()
 		if (Mode == TEXT("bridge")) { SetCameraMode(EStarshipCameraMode::Bridge); }
 		else if (Mode == TEXT("cinematic")) { SetCameraMode(EStarshipCameraMode::Cinematic); }
 		else if (Mode == TEXT("chase")) { SetCameraMode(EStarshipCameraMode::Chase); }
+		else if (Mode == TEXT("front")) { SetCameraMode(EStarshipCameraMode::Front); }
+		else if (Mode == TEXT("port")) { SetCameraMode(EStarshipCameraMode::Port); }
+		else if (Mode == TEXT("starboard")) { SetCameraMode(EStarshipCameraMode::Starboard); }
+		else if (Mode == TEXT("top")) { SetCameraMode(EStarshipCameraMode::Top); }
+		else if (Mode == TEXT("bottom")) { SetCameraMode(EStarshipCameraMode::Bottom); }
 		else { CycleCameraMode(); }
 	}
 	else if (Op == TEXT("steer"))
