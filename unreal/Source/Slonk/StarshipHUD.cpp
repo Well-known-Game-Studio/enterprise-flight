@@ -11,6 +11,7 @@
 #include "BorgCube.h"
 #include "TractorBeamComponent.h"
 #include "StarBody.h"
+#include "Nebula.h"
 #include "Engine/Engine.h"
 #include "Engine/Font.h"
 #include "GameFramework/PlayerController.h"
@@ -352,6 +353,7 @@ FLinearColor AStarshipHUD::KindColor(ENavObjectKind Kind) const
 	case ENavObjectKind::Station: return FLinearColor(0.6f, 1.f, 0.7f);
 	case ENavObjectKind::Ship: return FLinearColor(1.f, 0.95f, 0.6f);
 	case ENavObjectKind::Hostile: return FLinearColor(1.f, 0.3f, 0.25f);
+	case ENavObjectKind::Nebula: return FLinearColor(0.9f, 0.55f, 0.95f);
 	default: return Warning;
 	}
 }
@@ -425,6 +427,17 @@ void AStarshipHUD::GatherNavObjects(bool bForce)
 		O.Actor = *It;
 		O.Label = It->GetDisplayName();
 		O.Kind = It->IsMoon() ? ENavObjectKind::Moon : ENavObjectKind::Planet;
+		O.Location = It->GetActorLocation();
+		O.RadiusCm = It->GetRadiusCm();
+		NavObjects.Add(O);
+	}
+
+	for (TActorIterator<ANebula> It(World); It; ++It)
+	{
+		FNavObject O;
+		O.Actor = *It;
+		O.Label = It->GetDisplayName();
+		O.Kind = ENavObjectKind::Nebula;
 		O.Location = It->GetActorLocation();
 		O.RadiusCm = It->GetRadiusCm();
 		NavObjects.Add(O);
