@@ -53,6 +53,25 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
 	float SkyLightIntensityNearPlanet = 0.5f;
 
+	/** Volumetric clouds on the atmosphere planet, replacing its cloud shell while the view is within VolumetricCloudRadii. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
+	bool bUseVolumetricClouds = true;
+
+	/** Radii from the planet centre within which the volumetric clouds show and the shell hides (1.02 is 130 km up on an Earth; the ray-marched layer streaks from higher). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
+	float VolumetricCloudRadii = 1.02f;
+
+	/** Cloud layer bottom and thickness, km (Earth: cumulus from 1.5 km, tops by 6). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
+	float CloudLayerBottomKm = 1.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
+	float CloudLayerHeightKm = 5.f;
+
+	/** How dark the clouds' shadows fall on the ground (0 none, 1 full). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
+	float CloudShadowStrength = 1.f;
+
 	/** Spawn a ring of target asteroids around the origin at BeginPlay. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Testing")
 	bool bSpawnTestTargets = true;
@@ -85,6 +104,7 @@ private:
 
 	UPROPERTY() TObjectPtr<AActor> AtmosphereHolder;
 	UPROPERTY() TObjectPtr<class USkyAtmosphereComponent> SkyAtmosphere;
+	UPROPERTY() TObjectPtr<class UVolumetricCloudComponent> VolumetricCloud;
 	UPROPERTY() TObjectPtr<class APlanetBody> AtmospherePlanet;
 	void SpawnTestTargets();
 };
