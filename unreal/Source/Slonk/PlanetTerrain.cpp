@@ -220,7 +220,9 @@ namespace SlonkTerrain
 			const double Wig = FbmN(QW * F * 9.0 + FVector(3.0, 5.0, 7.0), OctavesFor(CellCm / 9.0, MinWavelengthCm, 5), 2.0, 0.5);
 			// Finer wiggle (about 8 km down to 500 m) so the cliff lines are scalloped and gullied, not ruled.
 			const double Wig2 = FbmN(QW * F * 48.0 + FVector(11.0, 2.0, 9.0), OctavesFor(CellCm / 48.0, MinWavelengthCm, 5), 2.0, 0.55);
-			const double V0 = FMath::Abs(Perlin(QW * F + FVector(57.0, 0.0, 0.0)) + 0.18 * HalfWidth * Wig + 0.16 * HalfWidth * Wig2);
+			// And finer again (2 km down), so the floor edge and the side canyons wander by hundreds of metres.
+			const double Wig3 = FbmN(QW * F * 200.0 + FVector(5.0, 23.0, 1.0), OctavesFor(CellCm / 200.0, MinWavelengthCm, 4), 2.0, 0.5);
+			const double V0 = FMath::Abs(Perlin(QW * F + FVector(57.0, 0.0, 0.0)) + 0.18 * HalfWidth * Wig + 0.3 * HalfWidth * Wig2 + 0.08 * HalfWidth * Wig3);
 			// Fluting: noise from 200 m down to the cell moves the wall line in and out, so the cliffs stand in
 			// buttresses and alcoves instead of ruled faces. It is keyed to the coarse position across the wall as
 			// well as along it, so each stratum weathers to its own pattern.
@@ -237,7 +239,12 @@ namespace SlonkTerrain
 			// benches wander rather than run level for a hundred kilometres.
 			const double Shift = 0.1 * FbmN(QW * F * 20.0 + FVector(29.0, 7.0, 3.0), 3, 2.0, 0.5);
 			const double T = FMath::Clamp((V - HalfWidth * 0.65) / (HalfWidth * 0.35) + Shift, 0.0, 1.0);
-			double Stair = 0.0;
+			// Two slow noises along the canyon (about 3 km and 1.5 km on an Earth); each stratum takes its own
+			// mix of them as a lateral shift, so the benches vary in width independently instead of running as
+			// parallel ledges.
+			const double Sh1 = FbmN(QW * F * 120.0 + FVector(2.0, 61.0, 17.0), OctavesFor(CellCm / 120.0, MinWavelengthCm, 3), 2.0, 0.5);
+			const double Sh2 = FbmN(QW * F * 250.0 + FVector(43.0, 3.0, 29.0), OctavesFor(CellCm / 250.0, MinWavelengthCm, 3), 2.0, 0.5);
+			auto StairAt = [&](double Tt, float& StratumOut) -> double
 			{
 				const int32 Layers = 8;
 				double Thick[8], Total = 0.0;
@@ -247,25 +254,58 @@ namespace SlonkTerrain
 				{
 					const double Th = Thick[L] / Total;
 					const double Hard = 0.35 + ((Hash3(L * 3 + 2, 29, (int64)(P.Seed.Y * 10.0)) & 255) / 255.0) * 0.65;
-					if (T >= Acc + Th) { Y += Th; Acc += Th; continue; }
-					if (T > Acc)
+					const double A = ((Hash3(L * 5 + 3, 41, 7) & 255) / 127.5 - 1.0), B = ((Hash3(L * 11 + 5, 53, 9) & 255) / 127.5 - 1.0);
+					const double Tl = Tt + 0.06 * (A * Sh1 + B * Sh2);
+					if (Tl >= Acc + Th) { Y += Th; Acc += Th; continue; }
+					if (Tl > Acc)
 					{
-						const double Fr = (T - Acc) / Th;
+						const double Fr = (Tl - Acc) / Th;
 						// Hard layer: bench then sheer cliff. Soft layer: an even slope.
 						Y += Th * FMath::Lerp(Fr, FMath::Pow(Fr, 1.0 + 8.0 * P.Strata), Hard);
-						Out.Stratum = (float)((L + Fr) / Layers);
+						StratumOut = (float)((L + Fr) / Layers);
 					}
-					else { Out.Stratum = (float)((double)L / Layers); }
+					else { StratumOut = (float)((double)L / Layers); }
 					break;
 				}
-				Stair = FMath::Clamp(Y, 0.0, 1.0);
-			}
+				return FMath::Clamp(Y, 0.0, 1.0);
+			};
+			float StratumMain = 0.f, StratumTrib = 0.f;
+			const double Stair = StairAt(T, StratumMain);
+			Out.Stratum = StratumMain;
 			const double Main = 1.0 - (P.Strata > 0.f ? Stair * 0.85 + T * 0.15 : SmoothStep(0.0, 1.0, T));
 			// Inner gorge: a narrow slot down the middle of the floor, a quarter of the depth again.
 			const double Gorge = (1.0 - SmoothStep(HalfWidth * 0.08, HalfWidth * 0.2, V)) * 0.25;
-			// Tributaries: a finer line set at a third of the width and half the depth.
-			const double V2 = FMath::Abs(Perlin(QW * F * 2.6 + FVector(0.0, 91.0, 0.0)) + 0.2 * HalfWidth * Wig);
-			const double Trib = (1.0 - SmoothStep(HalfWidth * 0.12, HalfWidth * 0.4, V2)) * 0.5;
+			// Side canyons: a second, much denser line set, a third of the width and four fifths of the
+			// depth, cut into the walls and the plateau beside the canyon. Each fades out two widths from the
+			// main line, its floor climbing back through the strata, so it ends in an amphitheatre. Lines that
+			// run along the canyon rather than into it are held back by the angle between the two fields'
+			// gradients (taken by central differences along two tangents of the direction).
+			double Trib = 0.0;
+			{
+				// Sixty times the trunk's line density: a side canyon every five kilometres or so on an Earth.
+				const double Kt = 60.0;
+				const double HWt = HalfWidth * 0.3 * Kt;
+				const FVector Q1 = QW * F + FVector(57.0, 0.0, 0.0);
+				const FVector Qt = QW * F * Kt + FVector(0.0, 91.0, 0.0);
+				const FVector Ta = FVector::CrossProduct(FMath::Abs(Dir.Z) < 0.9 ? FVector::ZAxisVector : FVector::XAxisVector, Dir).GetSafeNormal();
+				const FVector Tb = FVector::CrossProduct(Dir, Ta);
+				// A step of a few hundredths of each field's own cell.
+				const double E1 = 0.03, E2 = 0.03;
+				const double G1a = Perlin(Q1 + Ta * E1) - Perlin(Q1 - Ta * E1), G1b = Perlin(Q1 + Tb * E1) - Perlin(Q1 - Tb * E1);
+				const double G2a = Perlin(Qt + Ta * E2) - Perlin(Qt - Ta * E2), G2b = Perlin(Qt + Tb * E2) - Perlin(Qt - Tb * E2);
+				const double CosAng = FMath::Abs(G1a * G2a + G1b * G2b) / (FMath::Sqrt(G1a * G1a + G1b * G1b) * FMath::Sqrt(G2a * G2a + G2b * G2b) + 1e-12);
+				const double Across = 1.0 - SmoothStep(0.45, 0.85, CosAng);
+				const double V2 = FMath::Abs(Perlin(Qt) + 0.5 * HWt * Wig2 + 0.3 * HWt * Wig3 + 0.0045 * HWt * Flute * 0.6);
+				const double T2 = FMath::Clamp((V2 - HWt * 0.5) / (HWt * 0.5) + Shift, 0.0, 1.0);
+				const double StairT = StairAt(T2, StratumTrib);
+				const double Profile = 1.0 - (P.Strata > 0.f ? StairT * 0.85 + T2 * 0.15 : SmoothStep(0.0, 1.0, T2));
+				// How far each side canyon reaches into the plateau varies along the trunk, so the heads do not
+				// line up.
+				const double ReachEnd = HalfWidth * (1.5 + 1.2 * (FbmN(QW * F * 30.0 + FVector(0.0, 0.0, 41.0), 2, 2.0, 0.5) * 0.5 + 0.5));
+				const double Reach = 1.0 - SmoothStep(ReachEnd, ReachEnd + HalfWidth * 0.5, V0);
+				Trib = Profile * 0.8 * Reach * Across;
+				if (Trib > Main) { Out.Stratum = StratumTrib; }
+			}
 			// Depth varies along the canyon so it opens and narrows.
 			const double Along = 0.75 + 0.25 * (FbmN(QW * 3.0 + FVector(19.0, 0.0, 0.0), 3, 2.0, 0.5) * 0.5 + 0.5);
 			Carve = (FMath::Max(Main, Trib) + Gorge) * CanyonZone * Along;

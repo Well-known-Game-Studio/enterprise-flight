@@ -82,12 +82,27 @@ int main(int argc, char** argv)
 	}
 	// Deepest cut on the globe and the canyon width there (rim to rim, where the cut exceeds a tenth of its depth).
 	{
+		// Two stages: the random sweep finds tableland near the canyon lines, then a 1 km grid 40 km across the
+		// best twenty candidates finds the deepest cut itself (a 7 km trunk hides from a random sweep).
 		double bestCut = 0; FVector at;
+		std::vector<std::pair<double, FVector>> cands;
 		for (int i = 0; i < N * 3; ++i)
 		{
 			FVector d(U(rng), U(rng), U(rng)); if (d.Size() < 0.1) continue; d = d.GetSafeNormal();
 			FPlanetTerrainSample S = SlonkTerrain::Sample(P, d, 2000.0 * 100.0);
-			if (!S.bWater && S.CutCm > bestCut) { bestCut = S.CutCm; at = d; }
+			if (!S.bWater && S.Table > 0.3) cands.push_back({S.CutCm + S.Table * 1e4, d});
+		}
+		std::sort(cands.begin(), cands.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+		for (size_t c = 0; c < std::min<size_t>(20, cands.size()); ++c)
+		{
+			const FVector& g = cands[c].second;
+			FVector e = FVector::CrossProduct(FVector::ZAxisVector, g).GetSafeNormal(), n = FVector::CrossProduct(g, e).GetSafeNormal();
+			for (int i = -20; i <= 20; ++i) for (int j = -20; j <= 20; ++j)
+			{
+				FVector d = (g + e * (i * 1.0e5 / P.RadiusCm) + n * (j * 1.0e5 / P.RadiusCm)).GetSafeNormal();
+				FPlanetTerrainSample S = SlonkTerrain::Sample(P, d, 2000.0 * 100.0);
+				if (!S.bWater && S.CutCm > bestCut) { bestCut = S.CutCm; at = d; }
+			}
 		}
 		FVector E2 = FVector::CrossProduct(FVector::ZAxisVector, at).GetSafeNormal();
 		double wE = 0; for (int k = -200; k <= 200; ++k) { FVector d = (at + E2 * (k * 100.0 * 100.0 / P.RadiusCm)).GetSafeNormal(); if (SlonkTerrain::Sample(P, d, 0.0).CutCm > bestCut * 0.1) wE += 0.1; }
@@ -176,6 +191,9 @@ int main(int argc, char** argv)
 		Patch(P, wall, 100.0, 512, (out + "/patch_wall_1m_structure.pgm").c_str(), false);
 		Patch(P, wall, 400.0, 512, (out + "/patch_wall_4m.pgm").c_str());
 		Patch(P, C, 400.0, 512, (out + "/patch_floor_4m.pgm").c_str());
+		// The canyon at the plateau scale: 20 km across at 40 m cells, structure only, for the side canyons.
+		Patch(P, C, 4000.0, 512, (out + "/patch_canyon_40m.pgm").c_str(), false);
+		Patch(P, C, 1600.0, 512, (out + "/patch_canyon_16m.pgm").c_str(), false);
 		Patch(P, bestMtn, 100.0, 512, (out + "/patch_mtn_1m.pgm").c_str());
 		// River: the first sample with the river mask high, then the hillshade across it at 4 m and 1 m.
 		{
