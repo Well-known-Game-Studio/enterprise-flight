@@ -16,6 +16,7 @@ enum class ENavObjectKind : uint8
 	Ship,
 	Hostile,
 	Belt,
+	Nebula,
 	Target
 };
 

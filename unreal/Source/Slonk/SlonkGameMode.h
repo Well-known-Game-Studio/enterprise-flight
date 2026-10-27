@@ -82,6 +82,11 @@ public:
 	bool bShowcaseMoonsSpawned = false;
 	void SpawnShowcaseMoons();
 
+	/** Place a nebula out beyond each ringed giant on the first tick, named after it. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Testing")
+	bool bSpawnNebulae = true;
+	void SpawnNebulae();
+
 	/** Spawn a ring of target asteroids around the origin at BeginPlay. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Testing")
 	bool bSpawnTestTargets = true;

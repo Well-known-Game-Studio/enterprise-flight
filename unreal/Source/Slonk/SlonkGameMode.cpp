@@ -11,6 +11,7 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "PlanetBody.h"
+#include "Nebula.h"
 #include "StarBody.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Components/SkyAtmosphereComponent.h"
@@ -106,6 +107,34 @@ void ASlonkGameMode::SpawnShowcaseMoons()
 	UE_LOG(LogTemp, Log, TEXT("Showcase moons: %d around %d ringed giants"), N, Giants.Num());
 }
 
+void ASlonkGameMode::SpawnNebulae()
+{
+	// One cloud a light-second across beyond each ringed giant, on the far side from the star so the giant and
+	// its moons sit between; the first is the pink-and-blue emission cloud, the second cooler and greener.
+	UWorld* World = GetWorld();
+	if (!World) { return; }
+	int32 N = 0;
+	for (TActorIterator<APlanetBody> It(World); It; ++It)
+	{
+		if (!It->Style.bRings || !(It->ResolvedArchetype == EPlanetArchetype::GasGiant || It->ResolvedArchetype == EPlanetArchetype::IceGiant)) { continue; }
+		const FVector Centre = It->GetActorLocation();
+		const FVector Away = (Centre - FVector::ZeroVector).GetSafeNormal();
+		const double RadiusCm = 1.5e10;
+		const FVector Loc = Centre + Away * (RadiusCm * 2.5) + It->GetActorRightVector() * (RadiusCm * 0.8);
+		FActorSpawnParameters SP; SP.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		ANebula* Neb = World->SpawnActor<ANebula>(ANebula::StaticClass(), Loc, FRotator::ZeroRotator, SP);
+		if (!Neb) { continue; }
+		Neb->NebulaName = It->GetDisplayName() + TEXT(" Nebula");
+		Neb->RadiusKm = (float)(RadiusCm / 1.0e5);
+		if (N == 0) { Neb->ColorA = FLinearColor(0.95f, 0.35f, 0.55f); Neb->ColorB = FLinearColor(0.3f, 0.45f, 1.0f); Neb->EmissiveColor = FLinearColor(1.0f, 0.5f, 0.8f); }
+		else { Neb->ColorA = FLinearColor(0.35f, 0.9f, 0.7f); Neb->ColorB = FLinearColor(0.2f, 0.35f, 0.8f); Neb->EmissiveColor = FLinearColor(0.5f, 0.95f, 0.8f); }
+		Neb->Seed = 17.f * N + 3.f;
+		Neb->ApplyAppearance();
+		++N;
+	}
+	UE_LOG(LogTemp, Log, TEXT("Nebulae: %d"), N);
+}
+
 void ASlonkGameMode::SpawnTestTargets()
 {
 	UWorld* World = GetWorld();
@@ -145,6 +174,7 @@ void ASlonkGameMode::Tick(float DeltaTime)
 	{
 		bShowcaseMoonsSpawned = true;
 		SpawnShowcaseMoons();
+		if (bSpawnNebulae) { SpawnNebulae(); }
 	}
 	if (bUseSkyAtmosphere)
 	{
