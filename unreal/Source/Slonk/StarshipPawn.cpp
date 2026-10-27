@@ -1527,6 +1527,51 @@ void AStarshipPawn::ProcessDebugCommand()
 		DebugVertical = Arg(1, 0.f);
 		DebugVerticalTime = Arg(2, 1.f);
 	}
+	else if (Op == TEXT("spawnplanet"))
+	{
+		// spawnplanet <archetype> [radius km] [hazy]: a planet of that archetype four radii ahead, for looking at
+		// worlds the system did not roll. "hazy" re-rolls a moon's seed until it comes out with the orange haze.
+		const FString Kind = ArgStr(1);
+		static const TMap<FString, TPair<EPlanetArchetype, float>> Kinds = {
+			{ TEXT("terrestrial"), { EPlanetArchetype::Terrestrial, 6371.f } }, { TEXT("ocean"), { EPlanetArchetype::Ocean, 6800.f } },
+			{ TEXT("desert"), { EPlanetArchetype::Desert, 5900.f } }, { TEXT("ice"), { EPlanetArchetype::Ice, 5000.f } },
+			{ TEXT("lava"), { EPlanetArchetype::Lava, 7000.f } }, { TEXT("gasgiant"), { EPlanetArchetype::GasGiant, 60000.f } },
+			{ TEXT("moon"), { EPlanetArchetype::Moon, 2575.f } }, { TEXT("venus"), { EPlanetArchetype::Venus, 6052.f } },
+			{ TEXT("mars"), { EPlanetArchetype::Mars, 3390.f } }, { TEXT("icegiant"), { EPlanetArchetype::IceGiant, 25000.f } } };
+		if (const TPair<EPlanetArchetype, float>* K = Kinds.Find(Kind))
+		{
+			const float RadiusKm = Arg(2, 0.f) > 0.f ? Arg(2, 0.f) : K->Value;
+			const bool bHazy = ArgStr(3) == TEXT("hazy");
+			// Four radii ahead, stepped sideways until it is clear of every other body by three radii (three
+			// worlds spawned in a row otherwise sat inside each other and shared one sky).
+			FVector Loc = GetActorLocation() + GetActorForwardVector() * (RadiusKm * 1.0e5 * 4.0);
+			for (int32 Side = 0; Side < 20; ++Side)
+			{
+				bool bClear = true;
+				for (TActorIterator<APlanetBody> It(GetWorld()); It; ++It)
+				{
+					if (FVector::Dist(It->GetActorLocation(), Loc) < (It->GetRadiusCm() + RadiusKm * 1.0e5) * 3.0) { bClear = false; break; }
+				}
+				if (bClear) { break; }
+				Loc += GetActorRightVector() * (RadiusKm * 1.0e5 * 8.0);
+			}
+			for (int32 Attempt = 0; Attempt < 40; ++Attempt)
+			{
+				FActorSpawnParameters SP; SP.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+				APlanetBody* P = GetWorld()->SpawnActorDeferred<APlanetBody>(APlanetBody::StaticClass(), FTransform(Loc), nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+				if (!P) { break; }
+				P->Archetype = K->Key; P->RadiusKm = RadiusKm;
+				P->SeedLocation = Loc + FVector(Attempt * 1.0e9, 0.0, 0.0); P->bSeedLocationSet = true;
+				P->FinishSpawning(FTransform(Loc));
+				if (!bHazy || P->bHazyMoon)
+				{
+					UE_LOG(LogTemp, Log, TEXT("spawnplanet: %s %.0f km at %s (hazy %d, attempt %d)"), *Kind, RadiusKm, *Loc.ToString(), P->bHazyMoon ? 1 : 0, Attempt);
+					break;
+				}
+				P->Destroy();
+			}
+		}
+	}
 	else if (Op == TEXT("hover") && Movement)
 	{
 		// hover <metres> [canyon] follows the ground at that height, steering along the canyon if asked; hover off releases.
