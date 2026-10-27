@@ -601,6 +601,8 @@ void APlanetBody::ResolveStyleFromArchetype()
 		case EPlanetArchetype::Venus: S.CloudBaseKm = 48.f; S.CloudThicknessKm = 22.f; S.CloudDensity = 2.f; S.CloudDeck = 1.f; break;
 		// Mars: thin water-ice clouds 10 to 20 km up, wisps.
 		case EPlanetArchetype::Mars: S.CloudBaseKm = 10.f; S.CloudThicknessKm = 10.f; S.CloudDensity = 0.6f; S.CloudDeck = 0.f; break;
+		// The giants are all cloud: the shell is the look and there is no ray-marched layer (the sky never parks on them).
+		case EPlanetArchetype::GasGiant: case EPlanetArchetype::IceGiant: S.CloudThicknessKm = 0.f; break;
 		default:
 			// A hazy moon (Titan): a photochemical haze from 30 km up to 90, thin and continuous.
 			if (S.bClouds) { S.CloudBaseKm = 30.f; S.CloudThicknessKm = 60.f; S.CloudDensity = 0.15f; S.CloudDeck = 1.f; }
@@ -787,6 +789,7 @@ void APlanetBody::ApplyMaterials()
 	}
 	if (CloudMID)
 	{
+		CloudMID->SetScalarParameterValue(TEXT("CloudOpacity"), 0.85f * CloudShellFade);
 		// Unlit clouds: match the radiance a white lit surface would have under the scene's sunlight (E / pi).
 		CloudMID->SetScalarParameterValue(TEXT("RingInner"), RingInner);
 		CloudMID->SetScalarParameterValue(TEXT("RingOuter"), RingOuter);
@@ -1025,7 +1028,7 @@ void APlanetBody::UpdateShellVisibility()
 		Body->SetVisibility(false);
 		Clouds->SetVisibility(false);
 		FarBody->SetVisibility(bShow && !bDetailActive && !bTerrainActive);
-		CloudsMesh->SetVisibility(bShow && Style.bClouds && !bUsingVolumetricClouds);
+		CloudsMesh->SetVisibility(bShow && Style.bClouds && CloudShellFade > 0.001f);
 	}
 	else
 	{
@@ -1248,13 +1251,14 @@ void APlanetBody::SetUsingSkyAtmosphere(bool bEnabled)
 	}
 }
 
-void APlanetBody::SetUsingVolumetricClouds(bool bEnabled)
+void APlanetBody::SetCloudShellFade(float Fade)
 {
-	if (bUsingVolumetricClouds != bEnabled)
-	{
-		bUsingVolumetricClouds = bEnabled;
-		UpdateShellVisibility();
-	}
+	Fade = FMath::Clamp(Fade, 0.f, 1.f);
+	if (FMath::IsNearlyEqual(CloudShellFade, Fade, 1e-3f)) { return; }
+	const bool bWasShown = CloudShellFade > 0.001f;
+	CloudShellFade = Fade;
+	if (CloudMID) { CloudMID->SetScalarParameterValue(TEXT("CloudOpacity"), 0.85f * CloudShellFade); }
+	if (bWasShown != (Fade > 0.001f)) { UpdateShellVisibility(); }
 }
 
 void APlanetBody::BuildDetailMesh()

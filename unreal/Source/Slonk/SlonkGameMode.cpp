@@ -147,7 +147,7 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 		if (AtmospherePlanet)
 		{
 			AtmospherePlanet->SetUsingSkyAtmosphere(false);
-			AtmospherePlanet->SetUsingVolumetricClouds(false);
+			AtmospherePlanet->SetCloudShellFade(1.f);
 		}
 		AtmospherePlanet = Best;
 	}
@@ -307,12 +307,21 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 	// layer is for the sky overhead and the shadows it throws).
 	if (VolumetricCloud)
 	{
-		const bool bVolumetric = bUseVolumetricClouds && S.bClouds && S.CloudThicknessKm > 0.f && BestRadii < VolumetricCloudRadii;
+		// Crossfade between the ray-marched layer and the cloud shell over a band of altitude: the layer at full
+		// density below VolumetricCloudRadii, the shell at full opacity VolumetricCloudFadeRadii further out, and
+		// in between the layer thins as the shell comes in, so nothing pops at the hand-over.
+		const bool bHasLayer = bUseVolumetricClouds && S.bClouds && S.CloudThicknessKm > 0.f;
+		const float Shell = bHasLayer ? FMath::SmoothStep(VolumetricCloudRadii, VolumetricCloudRadii + VolumetricCloudFadeRadii, (float)BestRadii) : 1.f;
+		const bool bVolumetric = bHasLayer && Shell < 0.999f;
 		if (VolumetricCloud->IsVisible() != bVolumetric)
 		{
 			VolumetricCloud->SetVisibility(bVolumetric);
 		}
-		AtmospherePlanet->SetUsingVolumetricClouds(bVolumetric);
+		AtmospherePlanet->SetCloudShellFade(Shell);
+		if (bVolumetric && CloudMID)
+		{
+			CloudMID->SetScalarParameterValue(TEXT("Cloud_GlobalDensity"), 0.008f * S.CloudDensity * (1.f - Shell));
+		}
 		if (bVolumetric && CloudStyledPlanet.Get() != AtmospherePlanet)
 		{
 			// The layer from the style: where it sits, how thick, how dense, how continuous, what colour. The
@@ -325,7 +334,6 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 			if (CloudMID)
 			{
 				CloudMID->SetScalarParameterValue(TEXT("Cloud_GlobalCoverage"), S.CloudCoverage * 1.2f - 0.7f + S.CloudDeck * 0.3f);
-				CloudMID->SetScalarParameterValue(TEXT("Cloud_GlobalDensity"), 0.008f * S.CloudDensity);
 				CloudMID->SetVectorParameterValue(TEXT("Cloud_AlbedoColor"), FLinearColor(S.CloudColor.R, S.CloudColor.G, S.CloudColor.B, 0.5f));
 			}
 		}

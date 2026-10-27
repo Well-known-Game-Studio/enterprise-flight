@@ -57,9 +57,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
 	bool bUseVolumetricClouds = true;
 
-	/** Radii from the planet centre within which the volumetric clouds show and the shell hides (1.02 is 130 km up on an Earth; the ray-marched layer streaks from higher). */
+	/** Radii from the planet centre below which the volumetric layer is at full density (1.015 is 95 km up on an Earth). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
-	float VolumetricCloudRadii = 1.02f;
+	float VolumetricCloudRadii = 1.015f;
+
+	/** Over this many further radii the layer thins out and the cloud shell fades in (0.03 is 190 km on an Earth; the ray-marched layer streaks from a few hundred km up). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
+	float VolumetricCloudFadeRadii = 0.03f;
 
 	/** Cloud layer bottom and thickness, km (Earth: cumulus from 1.5 km, tops by 6). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
