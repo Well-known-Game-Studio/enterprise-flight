@@ -6,6 +6,12 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
 #include "UDynamicMesh.h"
+#include "HAL/IConsoleManager.h"
+
+// The sine of the sun elevation the canyon, rim and river searches prefer, and the half-width of the band that
+// earns full marks: low by default so one wall is lit and the other in shadow; raise it for a sunlit floor.
+static TAutoConsoleVariable<float> CVarTerrainSunUp(TEXT("slonk.TerrainSunUp"), 0.45f, TEXT("Preferred sine of sun elevation for terrain goto canyon/rim/river"));
+static TAutoConsoleVariable<float> CVarTerrainSunUpWidth(TEXT("slonk.TerrainSunUpWidth"), 0.25f, TEXT("Half-width of the preferred band"));
 
 using namespace UE::Geometry;
 
@@ -395,6 +401,12 @@ void UPlanetTerrainComponent::ApplyResult(FNode& N)
 	C->SetCustomPrimitiveDataFloat(1, Wrap(O.Y));
 	C->SetCustomPrimitiveDataFloat(2, Wrap(O.Z));
 	C->SetCustomPrimitiveDataFloat(3, (float)(N.EdgeCm / FMath::Max(GridSteps, 1)));
+	// The chunk origin over the planet radius: the material rebuilds the radial direction from it (the origin
+	// itself is a 6e8 cm float) to lay its texture projections in a frame tied to the ground, not the world axes.
+	const FVector OR = O / Params.RadiusCm;
+	C->SetCustomPrimitiveDataFloat(4, (float)OR.X);
+	C->SetCustomPrimitiveDataFloat(5, (float)OR.Y);
+	C->SetCustomPrimitiveDataFloat(6, (float)OR.Z);
 	if (MID && C->GetMaterial(0) != MID) { C->SetMaterial(0, MID); }
 	N.Result.Reset();
 	N.bReady = true;
@@ -456,7 +468,7 @@ bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& Ne
 		if (!SunDirLocal.IsNearlyZero())
 		{
 			const double SunUp = FVector::DotProduct(D, SunDirLocal.GetSafeNormal());
-			Temperate += 3.0 * (1.0 - FMath::Clamp(FMath::Abs(SunUp - 0.45) / 0.25 - 1.0, 0.0, 1.0));
+			Temperate += 3.0 * (1.0 - FMath::Clamp(FMath::Abs(SunUp - CVarTerrainSunUp.GetValueOnGameThread()) / CVarTerrainSunUpWidth.GetValueOnGameThread() - 1.0, 0.0, 1.0));
 		}
 		// The deepest cut wins, not merely the widest floor.
 		if (K == TEXT("canyon")) { return S.bWater ? -1e9 : S.Canyon * 4.0 + S.CutCm / FMath::Max(Params.CanyonDepthCm, 1.0) * 10.0 + Temperate + Near * 0.5; }
