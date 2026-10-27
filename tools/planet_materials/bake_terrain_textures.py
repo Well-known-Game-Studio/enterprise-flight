@@ -4,7 +4,7 @@ Runs headless in Blender (5.x):
     /Applications/Blender.app/Contents/MacOS/Blender -b --factory-startup --python tools/planet_materials/bake_terrain_textures.py -- \
         --out <dir> [--size 2048] [--sets cliff,talus,soil,scrub]
 
-Every set is a procedural Cycles material evaluated on a 4-D torus (u and v each map to a circle, so the noise
+Four ground sets plus the water (normal + foam only). Every set is a procedural Cycles material evaluated on a 4-D torus (u and v each map to a circle, so the noise
 wraps seamlessly at the tile edge) and baked from a unit plane into two packed images:
     T_<Set>_BC.png   RGB base colour, sRGB (the terrain material tints it per biome / stratum); A height
     T_<Set>_NR.png   RG tangent-space normal xy (+Y is +V as Blender bakes it; the material rebuilds z and its
@@ -21,7 +21,7 @@ def arg(name, default):
     return default
 OUT = arg("--out", os.path.join(os.getcwd(), "tex_out"))
 SIZE = int(arg("--size", "2048"))
-SETS = arg("--sets", "cliff,talus,soil,scrub").split(",")
+SETS = arg("--sets", "cliff,talus,soil,scrub,water").split(",")
 os.makedirs(OUT, exist_ok=True)
 
 TWO_PI = 2.0 * math.pi
@@ -308,7 +308,31 @@ def build_scrub(g):
     return dict(height=h, albedo=albedo, rough=rough, ao=ao, bump=0.04)
 
 
-BUILDERS = dict(cliff=build_cliff, talus=build_talus, soil=build_soil, scrub=build_scrub)
+def build_water(g):
+    """Wind waves for the sea surface: a few directional trains with integer periods across the tile (so they
+    wrap), choppy and bent by noise, plus a foam mask on the crests. Only the normal is used."""
+    uv = g.node("ShaderNodeUVMap").outputs["UV"]
+    sep = g.node("ShaderNodeSeparateXYZ"); g.link(uv, sep.inputs[0])
+    u, v = sep.outputs[0], sep.outputs[1]
+    warp = g.noise(3.0, detail=2.0, rough=0.5, ou=0.2)
+    h = None
+    # (cycles along u, cycles along v, amplitude, phase)
+    for cu, cv, amp, ph in ((7, 3, 0.30, 0.0), (4, -6, 0.22, 1.1), (11, 5, 0.12, 2.3), (-9, 8, 0.10, 0.7), (16, -3, 0.06, 3.0), (5, 14, 0.05, 1.9)):
+        phase = g.add(g.add(g.mul(u, TWO_PI * cu), g.mul(v, TWO_PI * cv)), ph)
+        phase = g.add(phase, g.mul(g.sub(warp, 0.5), 2.5))
+        # a sharpened crest: (1 - |sin|)^1.5 style, so the trains are not pure sines
+        crest = g.math("POWER", g.mad(g.math("SINE", phase), 0.5, 0.5), 1.6)
+        term = g.mul(crest, amp)
+        h = term if h is None else g.add(h, term)
+    ripple = g.noise(40.0, detail=5.0, rough=0.6, ou=0.7)
+    h = g.add(h, g.mul(g.sub(ripple, 0.5), 0.1))
+    h = g.math("MULTIPLY", h, 1.0, clamp=True)
+    foam = g.smooth(0.62, 0.8, g.add(h, g.mul(g.sub(g.noise(25.0, detail=3.0, rough=0.5, ou=0.4), 0.5), 0.2)))
+    albedo = g.scale_rgb((0.5, 0.5, 0.5, 1.0), 1.0)
+    return dict(height=h, albedo=albedo, rough=foam, ao=1.0, bump=0.06)
+
+
+BUILDERS = dict(cliff=build_cliff, talus=build_talus, soil=build_soil, scrub=build_scrub, water=build_water)
 
 
 # --------------------------------------------------------------------------------------------------------- bake
@@ -384,5 +408,7 @@ for name in SETS:
                     "-channel", "RGBA", "-combine", "-define", "png:color-type=6", f"{o}T_{Set}_NR.png"], check=True)
     for part in ("bc", "orm", "n", "h", "nx", "ny", "ao", "ro"):
         os.remove(f"{o}_{Set}_{part}.png")
+    if name == "water":
+        os.remove(f"{o}T_{Set}_BC.png")   # the sea is coloured in the material; NR is normal xy, 1, foam
     print(f"BAKED {name}", flush=True)
 print("ALL BAKED", flush=True)
