@@ -1542,6 +1542,9 @@ void AStarshipPawn::ProcessDebugCommand()
 			if (Fwd.IsNearlyZero()) { Fwd = FVector::CrossProduct(Up, FVector::ZAxisVector).GetSafeNormal(); }
 			if (Movement) { Movement->SetThrottle(0.0); Movement->Velocity = FVector::ZeroVector; Movement->AngularVelocity = FRotator::ZeroRotator; }
 			SetActorLocationAndRotation(Pos, FRotationMatrix::MakeFromXZ(Fwd, Up).ToQuat(), false, nullptr, ETeleportType::TeleportPhysics);
+			// Ride the ground from here: with the velocity zeroed the planet would otherwise turn under the ship at
+			// its surface speed (close to a kilometre a second on an Earth-size world) and carry the feature away.
+			if (Movement) { Movement->SetTerrainFollow(Arg(3, 1000.f) * 100.0); }
 			UE_LOG(LogTemp, Log, TEXT("Terrain goto %s on %s: ground %.1f m, parked %.0f m above it"), *ArgStr(2), *Planet->GetDisplayName(), H / 100.0, Arg(3, 1000.f));
 		}
 		else { UE_LOG(LogTemp, Log, TEXT("Terrain goto: no %s found"), *ArgStr(2)); }
@@ -1583,8 +1586,8 @@ void AStarshipPawn::ProcessDebugCommand()
 		{
 			const UPlanetTerrainComponent* T = Planet->Terrain;
 			const FVector Local = T ? T->GetComponentTransform().InverseTransformPositionNoScale(GetActorLocation()) : FVector::ZeroVector;
-			UE_LOG(LogTemp, Log, TEXT("Terrain %s: visible %d built %d pending+inflight %d deepest %d  ground %.1f m  altitude %.1f m  (%s dist %.1f km R %.1f km spin %.4f local %.6f %.6f %.6f)"), *Planet->GetDisplayName(),
-				T ? T->GetVisibleChunkCount() : -1, T ? T->GetBuiltChunkCount() : -1, T ? T->GetPendingBuildCount() : -1, T ? T->GetDeepestVisibleDepth() : -1,
+			UE_LOG(LogTemp, Log, TEXT("Terrain %s: visible %d built %d pending+inflight %d deepest %d parked %d  ground %.1f m  altitude %.1f m  (%s dist %.1f km R %.1f km spin %.4f local %.6f %.6f %.6f)"), *Planet->GetDisplayName(),
+				T ? T->GetVisibleChunkCount() : -1, T ? T->GetBuiltChunkCount() : -1, T ? T->GetPendingBuildCount() : -1, T ? T->GetDeepestVisibleDepth() : -1, T ? T->GetParkedChunkCount() : -1,
 				Movement->GroundHeightCm / 100.0, Movement->AltitudeAGLCm / 100.0, *Planet->GetName(), FVector::Dist(GetActorLocation(), Planet->GetActorLocation()) / 1e5, Planet->GetRadiusCm() / 1e5, Planet->SpinDegPerSec,
 				Local.GetSafeNormal().X, Local.GetSafeNormal().Y, Local.GetSafeNormal().Z);
 		}

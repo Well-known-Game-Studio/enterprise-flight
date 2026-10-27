@@ -70,6 +70,13 @@ namespace
 		return Norm > 0.0 ? Sum / Norm : 0.0;
 	}
 
+	/** Noise for ridges: Perlin is zero at every lattice point, so ridges folded from |Perlin| run along the lattice
+	 *  diagonals. Adding a second Perlin at an incommensurate scale frees the zero set. Output about -1..1. */
+	FORCEINLINE double RidgeBase(const FVector& Q)
+	{
+		return (Perlin(Q) + 0.6 * Perlin(FVector(Q.Y * 0.613 + 3.17, Q.Z * 0.587 - 7.9, Q.X * 0.641 + 1.3))) / 1.25;
+	}
+
 	/** Musgrave ridged multifractal, 0..1 with sharp ridges at 1. */
 	double Ridged(const FVector& P, int32 Octaves, double Lacunarity = 2.1, double Gain = 0.5, double Sharp = 1.0)
 	{
@@ -77,7 +84,7 @@ namespace
 		FVector Q = P;
 		for (int32 i = 0; i < Octaves; ++i)
 		{
-			double S = 1.0 - FMath::Abs(Perlin(Q));
+			double S = 1.0 - FMath::Abs(RidgeBase(Q));
 			S = FMath::Pow(FMath::Max(S, 0.0), 1.0 + Sharp);
 			S *= Weight;
 			Weight = FMath::Clamp(S * 2.0, 0.0, 1.0);
@@ -151,9 +158,11 @@ namespace SlonkTerrain
 	double Noise3(const FVector& P) { return Perlin(P); }
 	double Fbm(const FVector& P, int32 Octaves, double Lacunarity, double Gain) { return FbmN(P, Octaves, Lacunarity, Gain); }
 
-	FPlanetTerrainSample Sample(const FPlanetTerrainParams& P, const FVector& Dir, double MinWavelengthCm)
+	FPlanetTerrainSample SampleStructure(const FPlanetTerrainParams& P, const FVector& Dir, double MinWavelengthCm)
 	{
 		FPlanetTerrainSample Out;
+		// The structure stops at the refinement's first wavelength whatever the caller asks for.
+		MinWavelengthCm = FMath::Max(MinWavelengthCm, RefineStartCm);
 		const double R = P.RadiusCm;
 		const double CS = FMath::Max((double)P.ContinentScale, 0.1);
 		// Wavelength of one noise cell of the base field.
@@ -181,7 +190,7 @@ namespace SlonkTerrain
 		{
 			// Ridges every ~50 km on an Earth (base wavelength Lambda0/40), twelve octaves at gain 0.6: about a
 			// kilometre of relief per 5 km, which is what a real range has. The range mask above sets where.
-			Mtn = Ridged(QW * 40.0 + FVector(3.0, 71.0, 0.0), OctavesFor(Lambda0 / 40.0, MinWavelengthCm, 12, 2.1), 2.1, 0.6, 0.9);
+			Mtn = Ridged(QW * 40.0 + FVector(3.0, 71.0, 0.0), OctavesFor(Lambda0 / 40.0, MinWavelengthCm, 14, 2.1), 2.1, 0.6, 0.9);
 			Mtn = FMath::Pow(Mtn, 1.3);
 		}
 
@@ -211,7 +220,15 @@ namespace SlonkTerrain
 			const double Wig = FbmN(QW * F * 9.0 + FVector(3.0, 5.0, 7.0), OctavesFor(CellCm / 9.0, MinWavelengthCm, 5), 2.0, 0.5);
 			// Finer wiggle (about 8 km down to 500 m) so the cliff lines are scalloped and gullied, not ruled.
 			const double Wig2 = FbmN(QW * F * 48.0 + FVector(11.0, 2.0, 9.0), OctavesFor(CellCm / 48.0, MinWavelengthCm, 5), 2.0, 0.55);
-			const double V = FMath::Abs(Perlin(QW * F + FVector(57.0, 0.0, 0.0)) + 0.18 * HalfWidth * Wig + 0.1 * HalfWidth * Wig2);
+			const double V0 = FMath::Abs(Perlin(QW * F + FVector(57.0, 0.0, 0.0)) + 0.18 * HalfWidth * Wig + 0.1 * HalfWidth * Wig2);
+			// Fluting: noise from 200 m down to the cell moves the wall line in and out, so the cliffs stand in
+			// buttresses and alcoves instead of ruled faces. It is keyed to the coarse position across the wall as
+			// well as along it, so each stratum weathers to its own pattern.
+			const double T0 = FMath::Clamp((V0 - HalfWidth * 0.65) / (HalfWidth * 0.35), 0.0, 1.0);
+			const double F3 = CellCm / (RefineStartCm * 2.0);
+			const double Flute = FbmN(QW * F * F3 + FVector(T0 * 0.8, 0.0, 13.0), OctavesFor(RefineStartCm * 2.0, MinWavelengthCm, 10), 2.0, 0.68);
+			// About fifteen metres at the 400 m wavelength on an Earth-size canyon, a metre at 3 m.
+			const double V = FMath::Abs(V0 + 0.0045 * HalfWidth * Flute * (0.3 + T0));
 			// Main canyon: flat floor, then the wall climbs through the outer third of the half-width as a
 			// staircase of benches and cliffs (the strata), each bench a little narrower than the last so the
 			// profile opens upward like a real cut.
@@ -236,7 +253,9 @@ namespace SlonkTerrain
 						const double Fr = (T - Acc) / Th;
 						// Hard layer: bench then sheer cliff. Soft layer: an even slope.
 						Y += Th * FMath::Lerp(Fr, FMath::Pow(Fr, 1.0 + 8.0 * P.Strata), Hard);
+						Out.Stratum = (float)((L + Fr) / Layers);
 					}
+					else { Out.Stratum = (float)((double)L / Layers); }
 					break;
 				}
 				Stair = FMath::Clamp(Y, 0.0, 1.0);
@@ -278,11 +297,12 @@ namespace SlonkTerrain
 		if (P.Craters > 0.f)
 		{
 			const FVector QC = Dir * P.CraterScale + P.Seed * 0.31;
-			const double Scales[4] = { 1.5, 5.0, 15.0, 45.0 };
-			const double Gates[4] = { 0.78, 0.62, 0.55, 0.5 };
-			const double Amps[4] = { 0.5, 0.25, 0.12, 0.06 };
+			// Six scales: on a moon the first is 400 km basins, the last 1 km bowls that only the near chunks carry.
+			const double Scales[6] = { 1.5, 5.0, 15.0, 45.0, 135.0, 405.0 };
+			const double Gates[6] = { 0.78, 0.62, 0.55, 0.5, 0.45, 0.42 };
+			const double Amps[6] = { 0.5, 0.25, 0.12, 0.06, 0.03, 0.015 };
 			double CraterH = 0.0;
-			for (int32 i = 0; i < 4; ++i)
+			for (int32 i = 0; i < 6; ++i)
 			{
 				const double CellCm = R / (P.CraterScale * Scales[i]);
 				if (MinWavelengthCm > 0.0 && CellCm * 0.3 < MinWavelengthCm) { break; }
@@ -294,14 +314,14 @@ namespace SlonkTerrain
 			H += CraterH * 0.35 * P.Craters;
 		}
 
-		// ---- detail: hills and rock down to the metre ----
+		// ---- hills: the last of the structure, from a few kilometres down to the refinement floor ----
 		{
 			const double DetailLambda = Lambda0 / 60.0;
-			const int32 Oct = OctavesFor(DetailLambda, MinWavelengthCm, 15, 2.0);
+			const int32 Oct = OctavesFor(DetailLambda, MinWavelengthCm, 8, 2.0);
 			const double Rocky = FMath::Clamp(MtnMask * Mtn * 2.0 + Wall * 0.8 + Carve * 0.5 + (P.bAirless ? 0.3 : 0.0), 0.0, 1.0);
-			// Rock keeps its roughness down the octaves (gain near 0.7), plains smooth out (0.5).
-			const double D = FbmN(QW * 60.0 + FVector(0.0, 0.0, 41.0), Oct, 2.0, 0.6 + 0.14 * Rocky);
-			H += D * (0.01 + 0.03 * Rocky) * (0.3 + 0.7 * Land);
+			// Rock keeps its roughness down the octaves, plains smooth out.
+			const double D = FbmN(QW * 60.0 + FVector(0.0, 0.0, 41.0), Oct, 2.0, 0.5 + 0.12 * Rocky);
+			H += D * (0.01 + 0.02 * Rocky) * (0.3 + 0.7 * Land);
 		}
 
 		// ---- ocean floor ----
@@ -339,6 +359,80 @@ namespace SlonkTerrain
 		Out.Table = (float)FMath::Clamp(Tableland, 0.0, 1.0);
 		Out.Crater = (float)FMath::Clamp(CraterShade, 0.0, 1.0);
 		return Out;
+	}
+
+	void Refine(const FPlanetTerrainParams& P, const FVector& Dir, double Slope, double MinWavelengthCm, FPlanetTerrainSample& S)
+	{
+		S.Slope = (float)FMath::Min(Slope, 4.0);
+		if (S.bWater || (MinWavelengthCm > 0.0 && MinWavelengthCm >= RefineStartCm)) { return; }
+		const double R = P.RadiusCm;
+		// Lattice coordinate with 200 m cells; the seed keeps it off the structure's lattices.
+		const FVector Q = Dir * (R / RefineStartCm) + P.Seed * 7.3;
+		// Three regimes of the coarse slope: cliff (over about 40 degrees), the slopes under it, the flats.
+		const double Cliff = SmoothStep(0.7, 1.3, Slope);
+		const double Talus = SmoothStep(0.18, 0.5, Slope) * (1.0 - Cliff);
+		const double Flat = 1.0 - SmoothStep(0.12, 0.4, Slope);
+		// Mountain and crater rock is rock on gentler ground too.
+		const double Rocky = FMath::Max(Cliff, SmoothStep(0.45, 0.9, (double)S.Rock) * SmoothStep(0.3, 0.7, Slope));
+		// Erosion smooths an atmosphere's flats; airless regolith stays lumpier.
+		const double Air = P.bAirless ? 1.4 : 1.0;
+		double Add = 0.0;
+		// Fractured rock: ridged noise from 50 m down, sharp creases, about four metres at the top octave.
+		if (Rocky > 0.002)
+		{
+			const int32 Oct = OctavesFor(RefineStartCm / 4.0, MinWavelengthCm, 12, 2.0);
+			const double Rk = Ridged(Q * 4.0 + FVector(3.7, 1.1, 9.2), Oct, 2.0, 0.62, 0.8) - 0.45;
+			Add += Rk * 450.0 * Rocky;
+		}
+		// Talus and colluvium: smooth lumps from 60 m down, with boulders where the cell can show them.
+		if (Talus > 0.002)
+		{
+			const int32 Oct = OctavesFor(RefineStartCm / 3.3, MinWavelengthCm, 10, 2.0);
+			Add += FbmN(Q * 3.3 + FVector(0.0, 5.5, 2.2), Oct, 2.0, 0.5) * 320.0 * Talus * Air;
+			if (MinWavelengthCm > 0.0 && MinWavelengthCm < 800.0)
+			{
+				// Boulders: the crater field's feature points with an upturned profile, in two sizes, and only in
+				// the patches a slow noise picks out so they lie in fans and trains rather than evenly.
+				const double Field = SmoothStep(-0.05, 0.35, FbmN(Q * 2.0 + FVector(1.0, 9.0, 4.0), 2, 2.0, 0.5)) * Talus;
+				if (Field > 0.01)
+				{
+					const FCraterHit Big = NearestCrater(Dir * (R / 2200.0) + P.Seed * 3.1, 0.12 * Field);
+					if (Big.Dist < Big.Radius) { const double r = Big.Dist / Big.Radius; Add += FMath::Pow(FMath::Max(1.0 - r * r, 0.0), 0.6) * Big.Depth * 450.0 * Field; }
+					if (MinWavelengthCm < 300.0)
+					{
+						const FCraterHit Small = NearestCrater(Dir * (R / 600.0) + P.Seed * 5.7, 0.3 * Field);
+						if (Small.Dist < Small.Radius) { const double r = Small.Dist / Small.Radius; Add += FMath::Pow(FMath::Max(1.0 - r * r, 0.0), 0.6) * Small.Depth * 140.0 * Field; }
+					}
+				}
+			}
+		}
+		// Soil, sand and regolith: gentle hummocks from 200 m down to the decimetre.
+		if (Flat > 0.002)
+		{
+			const int32 Oct = OctavesFor(RefineStartCm, MinWavelengthCm, 11, 2.0);
+			const double Dry = 1.0 - 0.5 * S.Wet;
+			Add += FbmN(Q + FVector(7.7, 0.0, 4.4), Oct, 2.0, 0.45) * 150.0 * Flat * Dry * Air;
+		}
+		// Keep the coast where it is: the refinement fades out over the first few metres above the sea.
+		if (!P.bAirless) { Add *= SmoothStep(0.0, 600.0, S.HeightCm); }
+		S.HeightCm += Add;
+		S.GroundCm += Add;
+		S.Rock = (float)FMath::Clamp(FMath::Max((double)S.Rock, Rocky * 0.9 + Talus * 0.35), 0.0, 1.0);
+	}
+
+	FPlanetTerrainSample Sample(const FPlanetTerrainParams& P, const FVector& Dir, double MinWavelengthCm)
+	{
+		FPlanetTerrainSample S = SampleStructure(P, Dir, MinWavelengthCm);
+		if (S.bWater || (MinWavelengthCm > 0.0 && MinWavelengthCm >= RefineStartCm)) { return S; }
+		// Slope from two more structure samples a metre (or half a cell) away along the tangent plane.
+		const double EpsCm = FMath::Max(MinWavelengthCm * 0.5, 100.0);
+		const FVector E = FVector::CrossProduct(FMath::Abs(Dir.Z) < 0.9 ? FVector::ZAxisVector : FVector::XAxisVector, Dir).GetSafeNormal();
+		const FVector N = FVector::CrossProduct(Dir, E).GetSafeNormal();
+		const double He = SampleStructure(P, (Dir + E * (EpsCm / P.RadiusCm)).GetSafeNormal(), MinWavelengthCm).HeightCm;
+		const double Hn = SampleStructure(P, (Dir + N * (EpsCm / P.RadiusCm)).GetSafeNormal(), MinWavelengthCm).HeightCm;
+		const double Gx = (He - S.HeightCm) / EpsCm, Gy = (Hn - S.HeightCm) / EpsCm;
+		Refine(P, Dir, FMath::Sqrt(Gx * Gx + Gy * Gy), MinWavelengthCm, S);
+		return S;
 	}
 
 	double SurfaceHeightCm(const FPlanetTerrainParams& P, const FVector& Dir)

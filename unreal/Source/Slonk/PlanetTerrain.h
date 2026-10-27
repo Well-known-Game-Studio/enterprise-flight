@@ -78,17 +78,40 @@ struct FPlanetTerrainSample
 	float Ice = 0.f;
 	/** 0..1 crater rim/floor term for the shading. */
 	float Crater = 0.f;
+	/** Rise over run of the coarse structure (0 flat, 1 is 45 degrees), set by the refinement stage. */
+	float Slope = 0.f;
+	/** Position in the canyon's stack of strata: layer index plus the fraction through it, over 8. 0 off the walls. */
+	float Stratum = 0.f;
 	bool bWater = false;
 };
 
 namespace SlonkTerrain
 {
 	/**
-	 * Height and biome at a unit direction (planet local frame). MaxWavelengthCm bounds the finest octave that is
-	 * evaluated: features smaller than a mesh cell only alias, so each LOD level passes its cell size and the
-	 * coarser levels stay cheap. 0 evaluates everything down to the metre.
+	 * The field has two stages, the way Outerra layers fractal detail over its elevation model. The structure is
+	 * everything from continents down to RefineStartCm (ranges, canyons and their strata, craters, hills). The
+	 * refinement synthesises what lies below that from the structure's local slope: fractured rock on cliffs,
+	 * talus and boulders on the slopes beneath them, hummocky soil on the flats, down to the mesh cell. Both are
+	 * deterministic functions of the direction, so nothing has to be stored for a place to look the same twice,
+	 * and a measured elevation model could stand in for the structure later without touching the refinement.
+	 */
+	constexpr double RefineStartCm = 2.0e4;
+
+	/**
+	 * Height and biome at a unit direction (planet local frame), both stages. MinWavelengthCm bounds the finest
+	 * octave that is evaluated: features smaller than a mesh cell only alias, so each LOD level passes its cell
+	 * size and the coarser levels stay cheap. 0 evaluates everything down to the centimetre. The slope the
+	 * refinement needs comes from two extra structure samples a metre away, so prefer SampleStructure plus Refine
+	 * when sampling a grid.
 	 */
 	SLONK_API FPlanetTerrainSample Sample(const FPlanetTerrainParams& P, const FVector& Dir, double MinWavelengthCm = 0.0);
+
+	/** The structure stage alone: nothing finer than RefineStartCm. */
+	SLONK_API FPlanetTerrainSample SampleStructure(const FPlanetTerrainParams& P, const FVector& Dir, double MinWavelengthCm = 0.0);
+
+	/** The refinement stage: adds detail from RefineStartCm down to MinWavelengthCm to a structure sample, given the
+	 *  structure's slope there as rise over run. Does nothing under water or when MinWavelengthCm is coarser. */
+	SLONK_API void Refine(const FPlanetTerrainParams& P, const FVector& Dir, double SlopeRiseOverRun, double MinWavelengthCm, FPlanetTerrainSample& S);
 
 	/** Just the surface height (cm above the sea-level sphere; the sea itself is 0) at full detail. */
 	SLONK_API double SurfaceHeightCm(const FPlanetTerrainParams& P, const FVector& Dir);

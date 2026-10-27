@@ -27,18 +27,22 @@ public:
 
 	/** Vertices per chunk edge (cells = steps, vertices = steps + 1). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Terrain", meta = (ClampMin = "8", ClampMax = "128"))
-	int32 GridSteps = 32;
+	int32 GridSteps = 64;
 
 	/** A chunk splits while the camera is closer than this many chunk edges. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Terrain")
-	float SplitFactor = 2.6f;
+	float SplitFactor = 1.6f;
 
 	/** Finest cell the quadtree will go to, cm. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Terrain")
-	float MinCellCm = 150.f;
+	float MinCellCm = 25.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Terrain", meta = (ClampMin = "1", ClampMax = "24"))
-	int32 MaxDepth = 20;
+	int32 MaxDepth = 22;
+
+	/** Built chunks that have scrolled out of use are kept hidden, up to this many, so coming back is instant. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Terrain", meta = (ClampMin = "0", ClampMax = "4000"))
+	int32 ParkedBudget = 320;
 
 	/** Chunks with edges shorter than this cast shadows (the far ones only churn the shadow maps). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Terrain")
@@ -50,7 +54,7 @@ public:
 
 	/** Meshes handed to the renderer per update. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Terrain", meta = (ClampMin = "1", ClampMax = "32"))
-	int32 MaxUploadsPerUpdate = 16;
+	int32 MaxUploadsPerUpdate = 6;
 
 	/** Set the field, material and radius; clears any built chunks. */
 	void Configure(const FPlanetTerrainParams& InParams, UMaterialInterface* InMaterial);
@@ -78,6 +82,7 @@ public:
 	int32 GetBuiltChunkCount() const { return BuiltChunks; }
 	int32 GetPendingBuildCount() const { return PendingBuilds; }
 	int32 GetDeepestVisibleDepth() const { return DeepestVisible; }
+	int32 GetParkedChunkCount() const { return ParkedChunks; }
 
 	/** Every surface material parameter set so far is also applied to new chunk instances. */
 	void SetScalarParameter(FName Name, float Value);
@@ -115,6 +120,8 @@ private:
 
 	void ResetTree();
 	void FreeSubtree(FNode& N);
+	void ReleaseSubtree(FNode& N);
+	void EvictParked();
 	void ReleaseMesh(FNode& N);
 	bool AllChildrenReady(const FNode& N) const;
 	void MakeChildren(FNode& N);
@@ -145,5 +152,6 @@ private:
 	int32 BuiltChunks = 0;
 	int32 PendingBuilds = 0;
 	int32 DeepestVisible = 0;
+	int32 ParkedChunks = 0;
 	FVector LastCamLocal = FVector::ZeroVector;
 };

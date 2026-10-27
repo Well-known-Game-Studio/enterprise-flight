@@ -82,9 +82,20 @@ void UPlanetTerrainComponent::ResetTree()
 	Requests.Reset();
 	for (int32 F = 0; F < 6; ++F)
 	{
-		if (Roots[F]) { FreeSubtree(*Roots[F]); ReleaseMesh(*Roots[F]); Roots[F].Reset(); }
+		if (Roots[F]) { ReleaseSubtree(*Roots[F]); Roots[F].Reset(); }
 	}
-	VisibleChunks = BuiltChunks = PendingBuilds = DeepestVisible = 0;
+	VisibleChunks = BuiltChunks = PendingBuilds = DeepestVisible = ParkedChunks = 0;
+}
+
+void UPlanetTerrainComponent::ReleaseSubtree(FNode& N)
+{
+	for (int32 i = 0; i < 4; ++i)
+	{
+		if (N.Children[i]) { ReleaseSubtree(*N.Children[i]); N.Children[i].Reset(); }
+	}
+	ReleaseMesh(N);
+	N.bBuilding = false;
+	N.Task = UE::Tasks::TTask<void>();
 }
 
 void UPlanetTerrainComponent::ReleaseMesh(FNode& N)
@@ -100,8 +111,8 @@ void UPlanetTerrainComponent::ReleaseMesh(FNode& N)
 	N.Result.Reset();
 }
 
-/** Hides the subtree under N and frees whatever is not still being built (builds in flight keep their node
- *  alive; the next update frees them once they land). */
+/** Hides the subtree under N. The chunks stay built and parked: flying back over them costs nothing, and
+ *  EvictParked lets the oldest go once more than ParkedBudget are parked. */
 void UPlanetTerrainComponent::FreeSubtree(FNode& N)
 {
 	for (int32 i = 0; i < 4; ++i)
@@ -109,15 +120,42 @@ void UPlanetTerrainComponent::FreeSubtree(FNode& N)
 		if (!N.Children[i]) { continue; }
 		FNode& C = *N.Children[i];
 		FreeSubtree(C);
-		if (C.Mesh) { C.Mesh->SetVisibility(false); }
-		bool bBusy = C.bBuilding;
-		for (int32 k = 0; k < 4 && !bBusy; ++k) { bBusy = C.Children[k].IsValid(); }
-		if (!bBusy)
-		{
-			ReleaseMesh(C);
-			N.Children[i].Reset();
-		}
+		if (C.Mesh && C.Mesh->IsVisible()) { C.Mesh->SetVisibility(false); }
 	}
+}
+
+void UPlanetTerrainComponent::EvictParked()
+{
+	// Gather the hidden, finished chunks nobody asked for this update, oldest first.
+	struct FParked { uint32 Wanted; FNode* Node; };
+	TArray<FParked> Parked;
+	TFunction<void(FNode&)> Gather = [&](FNode& N)
+	{
+		if (N.Mesh && N.bReady && !N.Mesh->IsVisible() && N.LastWanted != Stamp) { Parked.Add({ N.LastWanted, &N }); }
+		for (int32 i = 0; i < 4; ++i) { if (N.Children[i]) { Gather(*N.Children[i]); } }
+	};
+	for (int32 F = 0; F < 6; ++F) { if (Roots[F]) { Gather(*Roots[F]); } }
+	ParkedChunks = Parked.Num();
+	if (Parked.Num() > ParkedBudget)
+	{
+		Parked.Sort([](const FParked& A, const FParked& B) { return A.Wanted < B.Wanted; });
+		for (int32 i = 0; i < Parked.Num() - ParkedBudget; ++i) { ReleaseMesh(*Parked[i].Node); }
+		ParkedChunks = ParkedBudget;
+	}
+	// Prune the nodes that hold nothing any more (no mesh, no build, nothing wanted below) so the tree does not
+	// keep every chunk ever visited. Roots and anything touched this update stay.
+	TFunction<bool(FNode&)> Prune = [&](FNode& N) -> bool
+	{
+		bool bEmpty = !N.Mesh && !N.bBuilding && N.LastWanted != Stamp;
+		for (int32 i = 0; i < 4; ++i)
+		{
+			if (!N.Children[i]) { continue; }
+			if (Prune(*N.Children[i])) { N.Children[i].Reset(); }
+			else { bEmpty = false; }
+		}
+		return bEmpty;
+	};
+	for (int32 F = 0; F < 6; ++F) { if (Roots[F]) { Prune(*Roots[F]); } }
 }
 
 bool UPlanetTerrainComponent::AllChildrenReady(const FNode& N) const
@@ -381,6 +419,7 @@ void UPlanetTerrainComponent::UpdateView(const FVector& ViewLocationWorld)
 		if (Roots[F]) { Select(*Roots[F], CamLocal, CamDist, CamDir, HorizonCos); }
 	}
 	LaunchBuilds();
+	if ((Stamp % 8) == 0) { EvictParked(); }
 }
 
 double UPlanetTerrainComponent::SurfaceHeightAtWorld(const FVector& WorldPos) const
@@ -411,8 +450,14 @@ bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& Ne
 		const double Near = NearDir.IsNearlyZero() ? 0.0 : FVector::DotProduct(D, NearDir.GetSafeNormal());
 		// With a sun given, only daylit ground qualifies (the sun at least 15 degrees up).
 		if (!SunDirLocal.IsNearlyZero() && FVector::DotProduct(D, SunDirLocal.GetSafeNormal()) < 0.26) { return -1e9; }
-		// Canyons and rims prefer temperate latitudes (no snow on the plateau) and sit away from the ice.
-		const double Temperate = -3.0 * FMath::Abs(D.Z) - 6.0 * S.Ice;
+		// Canyons and rims prefer temperate latitudes (no snow on the plateau) and sit away from the ice, and a
+		// sun 12 to 40 degrees up, which throws the walls into relief instead of lighting them flat from above.
+		double Temperate = -3.0 * FMath::Abs(D.Z) - 6.0 * S.Ice;
+		if (!SunDirLocal.IsNearlyZero())
+		{
+			const double SunUp = FVector::DotProduct(D, SunDirLocal.GetSafeNormal());
+			Temperate += 3.0 * (1.0 - FMath::Clamp(FMath::Abs(SunUp - 0.45) / 0.25 - 1.0, 0.0, 1.0));
+		}
 		// The deepest cut wins, not merely the widest floor.
 		if (K == TEXT("canyon")) { return S.bWater ? -1e9 : S.Canyon * 4.0 + S.CutCm / FMath::Max(Params.CanyonDepthCm, 1.0) * 10.0 + Temperate + Near * 0.5; }
 		// The rim: top of a wall, just outside the cut, high up.
@@ -523,23 +568,42 @@ void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, int32 Fa
 	const double CellCm = FMath::Acos(FMath::Clamp(FVector::DotProduct(Dir(0, Steps / 2), Dir(1, Steps / 2)), -1.0, 1.0)) * R;
 	const double MinWavelength = CellCm * 2.0;
 
-	// Sample a grid with a one-cell margin so the normals at the border use real neighbours.
-	const int32 W = Steps + 3;
+	// Sample the structure on a grid with a two-cell margin: the refinement wants the structure's slope at every
+	// vertex, and the border normals want refined neighbours, so the slope needs one more ring beyond that.
+	const int32 Margin = 2;
+	const int32 W = Steps + 1 + 2 * Margin;
 	TArray<FVector> Pos; Pos.SetNumUninitialized(W * W);
 	TArray<FPlanetTerrainSample> Smp; Smp.SetNumUninitialized(W * W);
 	TArray<FVector> Dirs; Dirs.SetNumUninitialized(W * W);
-	for (int32 j = -1; j <= Steps + 1; ++j)
+	for (int32 j = -Margin; j <= Steps + Margin; ++j)
 	{
-		for (int32 i = -1; i <= Steps + 1; ++i)
+		for (int32 i = -Margin; i <= Steps + Margin; ++i)
 		{
-			const int32 k = (j + 1) * W + (i + 1);
-			const FVector D = Dir(i, j);
-			const FPlanetTerrainSample S = SlonkTerrain::Sample(P, D, MinWavelength);
-			const double H = S.bWater ? 0.0 : S.HeightCm;
-			Dirs[k] = D;
-			Smp[k] = S;
-			Pos[k] = D * (R + H) - Origin;
+			const int32 k = (j + Margin) * W + (i + Margin);
+			Dirs[k] = Dir(i, j);
+			Smp[k] = SlonkTerrain::SampleStructure(P, Dirs[k], MinWavelength);
 		}
+	}
+	// Refinement from the slope of the structure (rise over run by central differences), as Outerra adds its
+	// fractal detail from the slope of its elevation model: every level finer than 200 m cells runs it.
+	if (MinWavelength < SlonkTerrain::RefineStartCm)
+	{
+		for (int32 j = -1; j <= Steps + 1; ++j)
+		{
+			for (int32 i = -1; i <= Steps + 1; ++i)
+			{
+				const int32 k = (j + Margin) * W + (i + Margin);
+				if (Smp[k].bWater) { continue; }
+				const double Gx = (Smp[k + 1].HeightCm - Smp[k - 1].HeightCm) / (2.0 * CellCm);
+				const double Gy = (Smp[k + W].HeightCm - Smp[k - W].HeightCm) / (2.0 * CellCm);
+				SlonkTerrain::Refine(P, Dirs[k], FMath::Sqrt(Gx * Gx + Gy * Gy), MinWavelength, Smp[k]);
+			}
+		}
+	}
+	for (int32 k = 0; k < W * W; ++k)
+	{
+		const double H = Smp[k].bWater ? 0.0 : Smp[k].HeightCm;
+		Pos[k] = Dirs[k] * (R + H) - Origin;
 	}
 
 	TUniquePtr<FDynamicMesh3> M = MakeUnique<FDynamicMesh3>();
@@ -570,7 +634,7 @@ void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, int32 Fa
 	{
 		for (int32 i = 0; i <= Steps; ++i)
 		{
-			const int32 k = (j + 1) * W + (i + 1);
+			const int32 k = (j + Margin) * W + (i + Margin);
 			const FPlanetTerrainSample& S = Smp[k];
 			const FVector& D = Dirs[k];
 			FVector N;
@@ -591,7 +655,7 @@ void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, int32 Fa
 			const FVector3f Nf(N);
 			Normals[j * GW + i] = Nf;
 			Vid[j * GW + i] = AddVert(Pos[k], Nf, FVector2f(HeightN, Slope), FVector2f(S.Wet, S.Rock), FVector2f(S.Ice, S.Canyon),
-				FVector4f(S.Crater, S.bWater ? 1.f : 0.f, (float)FMath::Abs(D.Z), 1.f));
+				FVector4f(S.Crater, S.bWater ? 1.f : 0.f, S.Wall, S.Stratum));
 			Bounds += Pos[k];
 		}
 	}
@@ -631,7 +695,7 @@ void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, int32 Fa
 	{
 		const int32 V = Vid[G];
 		const int32 i = G % GW, j = G / GW;
-		const int32 k = (j + 1) * W + (i + 1);
+		const int32 k = (j + Margin) * W + (i + Margin);
 		const FVector Pv = M->GetVertex(V) - Dirs[k] * SkirtCm;
 		Lower.Add(AddVert(Pv, Normals[G], UV0->GetElement(V), UV1->GetElement(V), UV2->GetElement(V), CO->GetElement(V)));
 	}
