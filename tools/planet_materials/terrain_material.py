@@ -150,6 +150,9 @@ float snowy = ice * (1.0 - saturate(slope * 3.0)) ;
 land = lerp(land, IceColor, snowy);
 float depth = saturate(-hN * 2.5);
 float3 sea = lerp(ShallowColor, OceanColor, depth);
+// Rivers (water above sea level): darker, greener, silt in the shallows along the banks.
+float river = water * saturate(hN * ReliefCm / 500.0);
+sea = lerp(sea, float3(0.06, 0.16, 0.17) * (0.9 + 0.3 * (fb0 + 0.5)), river);
 float3 base = lerp(land, sea, water);
 
 // Detail bump from the analytic gradient, scaled by a height that grows with rockiness.
@@ -157,7 +160,7 @@ float bumpCm = (25.0 + 320.0 * rocky) * (1.0 - water) * (1.0 - snowy * 0.6);
 float dh1 = dot(gfb, T1) * bumpCm;
 float dh2 = dot(gfb, T2) * bumpCm;
 Nrm = normalize(Nn - T1 * dh1 - T2 * dh2);
-Rough = lerp(lerp(LandRoughness * (0.8 + 0.2 * rocky), 0.35, snowy), OceanRoughness, water);
+Rough = lerp(lerp(LandRoughness * (0.8 + 0.2 * rocky), 0.35, snowy), lerp(OceanRoughness, 0.12, river), water);
 
 float night = saturate(-dot(Nn, normalize(SunDirection)) * 6.0 + 0.1);
 float lowland = 1.0 - saturate(hN * ReliefCm / 250000.0);

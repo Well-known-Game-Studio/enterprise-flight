@@ -31,7 +31,7 @@ static void Patch(const FPlanetTerrainParams& P, const FVector& Centre, double C
 		smax = std::max(smax, std::sqrt(gx * gx + gy * gy));
 	}
 	std::vector<double> Hf(W * W);
-	for (int k = 0; k < W * W; ++k) { Hf[k] = S[k].bWater ? 0.0 : S[k].HeightCm; hmin = std::min(hmin, Hf[k]); hmax = std::max(hmax, Hf[k]); }
+	for (int k = 0; k < W * W; ++k) { Hf[k] = S[k].bWater ? S[k].WaterCm : S[k].HeightCm; hmin = std::min(hmin, Hf[k]); hmax = std::max(hmax, Hf[k]); }
 	FILE* f = fopen(File, "wb"); fprintf(f, "P5\n%d %d\n255\n", N, N);
 	int steep = 0;
 	for (int j = 2; j < W - 2; ++j) for (int i = 2; i < W - 2; ++i)
@@ -177,6 +177,51 @@ int main(int argc, char** argv)
 		Patch(P, wall, 400.0, 512, (out + "/patch_wall_4m.pgm").c_str());
 		Patch(P, C, 400.0, 512, (out + "/patch_floor_4m.pgm").c_str());
 		Patch(P, bestMtn, 100.0, 512, (out + "/patch_mtn_1m.pgm").c_str());
+		// River: the first sample with the river mask high, then the hillshade across it at 4 m and 1 m.
+		{
+			// Rivers are 140 m wide: random sampling never lands on one. Comb tablelands for the deepest cut (the
+			// inner gorge), then comb 50 m cells around it for the river.
+			FVector river; bool found = false;
+			std::vector<FVector> tables;
+			for (int i = 0; i < N && tables.size() < 12; ++i)
+			{
+				FVector d(U(rng), U(rng), U(rng)); if (d.Size() < 0.1) continue; d = d.GetSafeNormal();
+				FPlanetTerrainSample S = SlonkTerrain::SampleStructure(P, d, 2.0e5);
+				if (!S.bWater && S.Table > 0.6f && std::fabs(d.Z) < 0.6) tables.push_back(d);
+			}
+			double bestCut = 0; FVector gorge;
+			for (const FVector& t : tables)
+			{
+				FVector e = FVector::CrossProduct(FVector::ZAxisVector, t).GetSafeNormal(), n = FVector::CrossProduct(t, e).GetSafeNormal();
+				for (int j = -20; j <= 20; ++j) for (int i = -20; i <= 20; ++i)
+				{
+					FVector d = (t + e * (i * 2.0e5 / P.RadiusCm) + n * (j * 2.0e5 / P.RadiusCm)).GetSafeNormal();
+					FPlanetTerrainSample S = SlonkTerrain::SampleStructure(P, d, 1.0e5);
+					if (S.CutCm > bestCut) { bestCut = S.CutCm; gorge = d; }
+				}
+			}
+			if (bestCut > 0)
+			{
+				FVector e = FVector::CrossProduct(FVector::ZAxisVector, gorge).GetSafeNormal(), n = FVector::CrossProduct(gorge, e).GetSafeNormal();
+				double bestR = 0;
+				for (int j = -40; j <= 40; ++j) for (int i = -40; i <= 40; ++i)
+				{
+					FVector d = (gorge + e * (i * 5.0e3 / P.RadiusCm) + n * (j * 5.0e3 / P.RadiusCm)).GetSafeNormal();
+					FPlanetTerrainSample S = SlonkTerrain::SampleStructure(P, d, 1.0e4);
+					if (S.River > bestR) { bestR = S.River; river = d; }
+				}
+				printf("deepest gorge cut %.0f m; best river mask near it %.2f\n", bestCut / 100.0, bestR);
+				found = bestR > 0.5;
+			}
+			if (found)
+			{
+				FPlanetTerrainSample S = SlonkTerrain::Sample(P, river, 0.0);
+				printf("river at (%.4f %.4f %.4f): bed %.0f m, water %.0f m, river %.2f\n", river.X, river.Y, river.Z, S.HeightCm / 100.0, S.WaterCm / 100.0, S.River);
+				Patch(P, river, 400.0, 512, (out + "/patch_river_4m.pgm").c_str());
+				Patch(P, river, 100.0, 512, (out + "/patch_river_1m.pgm").c_str());
+			}
+			else printf("no river found\n");
+		}
 		FVector cliff = (C + E * (kSteep * 100.0 / P.RadiusCm)).GetSafeNormal();
 		Patch(P, cliff, 50.0, 512, (out + "/patch_cliff_05m.pgm").c_str());
 		Patch(P, cliff, 50.0, 512, (out + "/patch_cliff_05m_structure.pgm").c_str(), false);

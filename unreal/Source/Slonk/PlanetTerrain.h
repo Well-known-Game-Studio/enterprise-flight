@@ -62,6 +62,10 @@ struct FPlanetTerrainSample
 	double HeightCm = 0.0;
 	/** Height of the solid ground; equals HeightCm on land, the sea floor under water. */
 	double GroundCm = 0.0;
+	/** Height of the water surface where bWater: 0 for the sea, the river's own level in a canyon. */
+	double WaterCm = 0.0;
+	/** 0..1 river in the inner gorge (1 mid-stream). */
+	float River = 0.f;
 	/** 0..1 how mountainous the ground is here (drives rock vs soil). */
 	float Rock = 0.f;
 	/** 0..1 moisture (drives vegetation vs desert). */

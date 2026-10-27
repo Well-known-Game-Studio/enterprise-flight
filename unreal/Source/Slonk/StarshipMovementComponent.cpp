@@ -2,6 +2,7 @@
 
 #include "EngineUtils.h"
 #include "PlanetBody.h"
+#include "PlanetTerrainComponent.h"
 #include "StarBody.h"
 #include "SpaceVessel.h"
 
@@ -252,6 +253,33 @@ void UStarshipMovementComponent::ApplyTerrainFloor(float DeltaTime)
 			const FVector Axis = Near->GetActorQuat().GetAxisZ();
 			const FVector Turned = Rv.RotateAngleAxisRad(SpinRad, Axis);
 			UpdatedComponent->SetWorldLocation(Centre + Turned, false, nullptr, ETeleportType::TeleportPhysics);
+		}
+		// Canyon autopilot: compare the depth of the cut 400 m ahead-left, ahead and ahead-right, and yaw the hull
+		// (and the velocity with it) toward the deeper side, up to 20 degrees a second. The gorge bends a few
+		// hundred metres per kilometre, which a straight run leaves within seconds.
+		if (bCanyonFollow && Near->Terrain && Velocity.SizeSquared() > 1.0e6)
+		{
+			const FVector Up = Rv.GetSafeNormal();
+			const FVector Fwd = (Velocity - Up * FVector::DotProduct(Velocity, Up)).GetSafeNormal();
+			if (!Fwd.IsNearlyZero())
+			{
+				const FVector Right = FVector::CrossProduct(Up, Fwd).GetSafeNormal();
+				const double W = 4.0e4;
+				auto CutAt = [&](const FVector& Pw) { return (double)Near->Terrain->SampleAtWorld(Pw, 1.0e4).CutCm; };
+				const double CutL = CutAt(Here + Fwd * W - Right * W), CutC = CutAt(Here + Fwd * W), CutR = CutAt(Here + Fwd * W + Right * W);
+				const double Deepest = FMath::Max3(CutL, CutC, CutR);
+				if (Deepest > 1.0)
+				{
+					const double Diff = FMath::Clamp((CutR - CutL) / Deepest * 2.0, -1.0, 1.0);
+					const double Turn = Diff * FMath::DegreesToRadians(20.0) * DeltaTime;
+					if (!FMath::IsNearlyZero(Turn))
+					{
+						const FQuat Q(Up, Turn);
+						UpdatedComponent->SetWorldRotation(Q * UpdatedComponent->GetComponentQuat(), false, nullptr, ETeleportType::TeleportPhysics);
+						Velocity = Q.RotateVector(Velocity);
+					}
+				}
+			}
 		}
 		// Vertical thrust moves the hover height; rate scales with the height so 100 m and 10 km both feel right.
 		if (!FMath::IsNearlyZero(VerticalInput))

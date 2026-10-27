@@ -73,7 +73,7 @@ public:
 	const FPlanetTerrainParams& GetParams() const { return Params; }
 
 	/**
-	 * Searches the globe for a landmark: "canyon" (deepest canyon floor), "mountain" (highest ground), "land" (any
+	 * Searches the globe for a landmark: "canyon" (deepest canyon floor), "rim", "river", "mountain" (highest ground), "land" (any
 	 * ground above sea near the given direction), "coast". Returns the planet-local unit direction and the ground
 	 * height there; false if nothing qualifies. Coarse (a few thousand samples) and synchronous: debug use.
 	 */

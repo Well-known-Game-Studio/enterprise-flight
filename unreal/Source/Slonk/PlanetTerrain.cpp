@@ -202,7 +202,7 @@ namespace SlonkTerrain
 		H *= (1.0 - 0.88 * Maria);
 
 		// ---- canyons: valley lines where a noise field crosses zero, cut into uplifted tablelands ----
-		double Carve = 0.0, Wall = 0.0;
+		double Carve = 0.0, Wall = 0.0, River = 0.0, Banks = 0.0;
 		const double TableField = FbmN(Q * 1.1 + FVector(0.0, 23.0, 0.0), 3, 2.0, 0.5) * 0.5 + 0.5;
 		// Canyons sets how much of the land is tableland (threshold), never the depth of the cut.
 		const double TableLo = 0.68 - 0.2 * FMath::Clamp((double)P.Canyons, 0.0, 1.0);
@@ -220,13 +220,13 @@ namespace SlonkTerrain
 			const double Wig = FbmN(QW * F * 9.0 + FVector(3.0, 5.0, 7.0), OctavesFor(CellCm / 9.0, MinWavelengthCm, 5), 2.0, 0.5);
 			// Finer wiggle (about 8 km down to 500 m) so the cliff lines are scalloped and gullied, not ruled.
 			const double Wig2 = FbmN(QW * F * 48.0 + FVector(11.0, 2.0, 9.0), OctavesFor(CellCm / 48.0, MinWavelengthCm, 5), 2.0, 0.55);
-			const double V0 = FMath::Abs(Perlin(QW * F + FVector(57.0, 0.0, 0.0)) + 0.18 * HalfWidth * Wig + 0.1 * HalfWidth * Wig2);
+			const double V0 = FMath::Abs(Perlin(QW * F + FVector(57.0, 0.0, 0.0)) + 0.18 * HalfWidth * Wig + 0.16 * HalfWidth * Wig2);
 			// Fluting: noise from 200 m down to the cell moves the wall line in and out, so the cliffs stand in
 			// buttresses and alcoves instead of ruled faces. It is keyed to the coarse position across the wall as
 			// well as along it, so each stratum weathers to its own pattern.
 			const double T0 = FMath::Clamp((V0 - HalfWidth * 0.65) / (HalfWidth * 0.35), 0.0, 1.0);
 			const double F3 = CellCm / (RefineStartCm * 2.0);
-			const double Flute = FbmN(QW * F * F3 + FVector(T0 * 0.8, 0.0, 13.0), OctavesFor(RefineStartCm * 2.0, MinWavelengthCm, 10), 2.0, 0.68);
+			const double Flute = FbmN(QW * F * F3 + FVector(T0 * 0.8, 0.0, 13.0), OctavesFor(RefineStartCm * 2.0, MinWavelengthCm, 10), 2.0, 0.58);
 			// About fifteen metres at the 400 m wavelength on an Earth-size canyon, a metre at 3 m.
 			const double V = FMath::Abs(V0 + 0.0045 * HalfWidth * Flute * (0.3 + T0));
 			// Main canyon: flat floor, then the wall climbs through the outer third of the half-width as a
@@ -235,7 +235,7 @@ namespace SlonkTerrain
 			// The wall profile is a stack of eight strata of hashed thickness; hard layers stand as cliffs,
 			// soft ones slump into scree slopes, and a slow noise along the canyon shifts the whole stack so the
 			// benches wander rather than run level for a hundred kilometres.
-			const double Shift = 0.06 * FbmN(QW * F * 20.0 + FVector(29.0, 7.0, 3.0), 3, 2.0, 0.5);
+			const double Shift = 0.1 * FbmN(QW * F * 20.0 + FVector(29.0, 7.0, 3.0), 3, 2.0, 0.5);
 			const double T = FMath::Clamp((V - HalfWidth * 0.65) / (HalfWidth * 0.35) + Shift, 0.0, 1.0);
 			double Stair = 0.0;
 			{
@@ -269,6 +269,17 @@ namespace SlonkTerrain
 			// Depth varies along the canyon so it opens and narrows.
 			const double Along = 0.75 + 0.25 * (FbmN(QW * 3.0 + FVector(19.0, 0.0, 0.0), 3, 2.0, 0.5) * 0.5 + 0.5);
 			Carve = (FMath::Max(Main, Trib) + Gorge) * CanyonZone * Along;
+			// The river: down the middle of the inner gorge with a meander of its own, 140 m wide on an Earth-size
+			// canyon, with a strip of wetter ground along its banks. Dry worlds and airless ones have none.
+			if (!P.bAirless && P.Moisture > 0.2f)
+			{
+				// Bends every couple of kilometres on an Earth-size gorge, swinging a few hundred metres.
+				const double Meander = FbmN(QW * F * 150.0 + FVector(0.0, 0.0, 77.0), OctavesFor(CellCm / 150.0, MinWavelengthCm, 4), 2.0, 0.55);
+				const double Vr = FMath::Abs(V + 0.07 * HalfWidth * Meander);
+				const double GorgeFloor = 1.0 - SmoothStep(HalfWidth * 0.05, HalfWidth * 0.09, V);
+				River = (1.0 - SmoothStep(HalfWidth * 0.02, HalfWidth * 0.03, Vr)) * GorgeFloor * CanyonZone;
+				Banks = (1.0 - SmoothStep(HalfWidth * 0.03, HalfWidth * 0.08, Vr)) * GorgeFloor * CanyonZone;
+			}
 			// The wall band: everything between the rim and the floor.
 			Wall = SmoothStep(0.02, 0.12, Carve) * (1.0 - SmoothStep(0.88, 0.98, Carve));
 		}
@@ -276,6 +287,9 @@ namespace SlonkTerrain
 		// Never cut below sea level: keep a twentieth of the plateau height under the floor.
 		const double Cut = FMath::Min(Carve * CanyonUnits, H * 0.95);
 		H -= Cut;
+		// River bed nine metres under the gorge floor; the water stands three metres under it.
+		const double RiverBedCm = 900.0, RiverSurfaceCm = 300.0;
+		H -= River * RiverBedCm / FMath::Max(P.ReliefCm, 1.0);
 
 		// ---- strata: terraces on the canyon walls and steep rock ----
 		if (P.Strata > 0.f && Wall > 0.01)
@@ -321,7 +335,8 @@ namespace SlonkTerrain
 			const double Rocky = FMath::Clamp(MtnMask * Mtn * 2.0 + Wall * 0.8 + Carve * 0.5 + (P.bAirless ? 0.3 : 0.0), 0.0, 1.0);
 			// Rock keeps its roughness down the octaves, plains smooth out.
 			const double D = FbmN(QW * 60.0 + FVector(0.0, 0.0, 41.0), Oct, 2.0, 0.5 + 0.12 * Rocky);
-			H += D * (0.01 + 0.02 * Rocky) * (0.3 + 0.7 * Land);
+			// The gorge floor around the river stays level so the water does not climb the hills.
+			H += D * (0.01 + 0.02 * Rocky) * (0.3 + 0.7 * Land) * (1.0 - Banks);
 		}
 
 		// ---- ocean floor ----
@@ -341,11 +356,20 @@ namespace SlonkTerrain
 		Out.GroundCm = HeightCm;
 		Out.bWater = !P.bAirless && HeightCm < 0.0;
 		Out.HeightCm = HeightCm;
+		Out.WaterCm = 0.0;
+		Out.River = (float)River;
+		if (River > 1.0 / 3.0 && HeightCm > 0.0)
+		{
+			// Bed below the water line: the surface sits a fixed distance under the undisturbed floor.
+			Out.bWater = true;
+			Out.WaterCm = HeightCm + River * RiverBedCm - RiverSurfaceCm;
+		}
 
 		// ---- biome ----
 		const double Hr = FMath::Clamp(HeightCm / FMath::Max(P.ReliefCm, 1.0), 0.0, 1.0);
 		const double WetField = FbmN(Q * 2.5 + FVector(43.0, 0.0, 0.0), 3, 2.0, 0.5) * 0.5 + 0.5;
 		double Wet = FMath::Clamp(P.Moisture * 1.4 * (0.5 + WetField) - Hr * 0.6, 0.0, 1.0);
+		Wet = FMath::Max(Wet, Banks * 0.8);
 		if (P.bAirless) { Wet = 0.0; }
 		const double Lat = FMath::Abs(Dir.Z);
 		const double Polar = SmoothStep(P.IceCapStart - 0.06, P.IceCapStart + 0.04, Lat);

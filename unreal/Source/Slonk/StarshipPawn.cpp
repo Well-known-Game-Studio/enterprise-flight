@@ -1497,9 +1497,9 @@ void AStarshipPawn::ProcessDebugCommand()
 	}
 	else if (Op == TEXT("hover") && Movement)
 	{
-		// hover <metres> follows the ground at that height; hover off releases.
+		// hover <metres> [canyon] follows the ground at that height, steering along the canyon if asked; hover off releases.
 		if (ArgStr(1) == TEXT("off")) { Movement->ClearTerrainFollow(); }
-		else { Movement->SetTerrainFollow(Arg(1, 300.f) * 100.f); }
+		else { Movement->SetTerrainFollow(Arg(1, 300.f) * 100.f); Movement->SetCanyonFollow(ArgStr(2) == TEXT("canyon")); }
 	}
 	else if (Op == TEXT("terrain") && Movement && ArgStr(1) == TEXT("goto"))
 	{
@@ -1527,15 +1527,28 @@ void AStarshipPawn::ProcessDebugCommand()
 			FVector Fwd = Heading == TEXT("sun") ? Sun : (Heading == TEXT("away") ? -Sun : FVector::CrossProduct(Up, Sun));
 			if (Heading == TEXT("along"))
 			{
-				// Along the canyon: perpendicular to the gradient of the canyon mask, sampled 500 m either side.
+				// Along the canyon: of eight headings, the one along which the depth of the cut changes least over
+				// 400 m each way (a gradient is useless mid-gorge, where the cut is flat on both sides).
 				const FPlanetTerrainParams& TP = Planet->Terrain->GetParams();
 				const FVector E = FVector::CrossProduct(FVector::ZAxisVector, Dir).GetSafeNormal();
 				const FVector Nn = FVector::CrossProduct(Dir, E).GetSafeNormal();
-				const double Step = 5.0e4 / TP.RadiusCm;
-				const double dE = SlonkTerrain::Sample(TP, (Dir + E * Step).GetSafeNormal(), 1.0e4).Canyon - SlonkTerrain::Sample(TP, (Dir - E * Step).GetSafeNormal(), 1.0e4).Canyon;
-				const double dN = SlonkTerrain::Sample(TP, (Dir + Nn * Step).GetSafeNormal(), 1.0e4).Canyon - SlonkTerrain::Sample(TP, (Dir - Nn * Step).GetSafeNormal(), 1.0e4).Canyon;
-				FVector AlongLocal = (E * -dN + Nn * dE).GetSafeNormal();
-				if (AlongLocal.IsNearlyZero()) { AlongLocal = E; }
+				const double Step = 4.0e4 / TP.RadiusCm;
+				const double Cut0 = SlonkTerrain::Sample(TP, Dir, 1.0e4).CutCm;
+				double BestVar = TNumericLimits<double>::Max(), BestA = 0.0;
+				auto Try = [&](double A)
+				{
+					const FVector Hd = E * FMath::Cos(A) + Nn * FMath::Sin(A);
+					const double C1 = SlonkTerrain::Sample(TP, (Dir + Hd * Step).GetSafeNormal(), 1.0e4).CutCm;
+					const double C2 = SlonkTerrain::Sample(TP, (Dir - Hd * Step).GetSafeNormal(), 1.0e4).CutCm;
+					const double Var = FMath::Abs(C1 - Cut0) + FMath::Abs(C2 - Cut0);
+					if (Var < BestVar) { BestVar = Var; BestA = A; }
+				};
+				// Every five degrees over the half circle, then every degree around the best: a few degrees off
+				// is a kilometre off after a minute at 250 m/s.
+				for (int32 k = 0; k < 36; ++k) { Try(k * UE_DOUBLE_PI / 36.0); }
+				const double Centre = BestA;
+				for (int32 k = -5; k <= 5; ++k) { Try(Centre + k * UE_DOUBLE_PI / 180.0); }
+				const FVector AlongLocal = E * FMath::Cos(BestA) + Nn * FMath::Sin(BestA);
 				Fwd = TT.TransformVectorNoScale(AlongLocal);
 			}
 			Fwd = (Fwd - Up * FVector::DotProduct(Fwd, Up)).GetSafeNormal();

@@ -462,6 +462,8 @@ bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& Ne
 		if (K == TEXT("canyon")) { return S.bWater ? -1e9 : S.Canyon * 4.0 + S.CutCm / FMath::Max(Params.CanyonDepthCm, 1.0) * 10.0 + Temperate + Near * 0.5; }
 		// The rim: top of a wall, just outside the cut, high up.
 		if (K == TEXT("rim")) { return S.bWater ? -1e9 : S.Wall * 6.0 - S.Canyon * 8.0 + S.HeightCm / FMath::Max(Params.ReliefCm, 1.0) * 4.0 + S.CutCm / FMath::Max(Params.CanyonDepthCm, 1.0) * 4.0 + Temperate + Near * 0.5; }
+		// The river: the gorge's deepest cut leads to within a bend of it, then the river mask takes over.
+		if (K == TEXT("river")) { return S.River * 10.0 + S.Canyon * 2.0 + S.CutCm / FMath::Max(Params.CanyonDepthCm, 1.0) * 4.0 + Temperate + Near * 0.5; }
 		if (K == TEXT("mountain")) { return S.bWater ? -1e9 : S.HeightCm / FMath::Max(Params.ReliefCm, 1.0) * 10.0 + Near * 0.5; }
 		if (K == TEXT("coast")) { return S.bWater ? -1e9 : -FMath::Abs(S.HeightCm) / FMath::Max(Params.ReliefCm, 1.0) * 10.0 + Near * 3.0; }
 		return S.bWater ? -1e9 : Near * 10.0 + (S.HeightCm > 0.0 ? 1.0 : 0.0);
@@ -479,7 +481,7 @@ bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& Ne
 	if (BestScore <= -1e8) { return false; }
 	// Canyons are thin lines on broad tablelands and the coarse pass mostly misses them: around the best few
 	// tableland samples, comb a fine grid (2 km spacing, 80 km across) for the deepest cut.
-	if (K == TEXT("canyon") || K == TEXT("rim"))
+	if (K == TEXT("canyon") || K == TEXT("rim") || K == TEXT("river"))
 	{
 		struct FCand { double Score; FVector D; };
 		TArray<FCand> Cands;
@@ -513,7 +515,7 @@ bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& Ne
 		}
 	}
 	// Refine: hill-climb on a shrinking step so the result sits on the feature, not 30 km from it.
-	double Step = (K == TEXT("canyon") || K == TEXT("rim")) ? 2.0e5 / Params.RadiusCm : CoarseWavelength / Params.RadiusCm;
+	double Step = (K == TEXT("canyon") || K == TEXT("rim") || K == TEXT("river")) ? 2.0e5 / Params.RadiusCm : CoarseWavelength / Params.RadiusCm;
 	for (int32 It = 0; It < 6; ++It)
 	{
 		bool bMoved = true;
@@ -602,7 +604,7 @@ void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, int32 Fa
 	}
 	for (int32 k = 0; k < W * W; ++k)
 	{
-		const double H = Smp[k].bWater ? 0.0 : Smp[k].HeightCm;
+		const double H = Smp[k].bWater ? Smp[k].WaterCm : Smp[k].HeightCm;
 		Pos[k] = Dirs[k] * (R + H) - Origin;
 	}
 

@@ -190,7 +190,11 @@ public:
 	void SetTerrainFollow(double AltitudeCm);
 
 	UFUNCTION(BlueprintCallable, Category = "Starship|Movement")
-	void ClearTerrainFollow() { bTerrainFollow = false; }
+	void ClearTerrainFollow() { bTerrainFollow = false; bCanyonFollow = false; }
+	/** With terrain following on, steer along the canyon: yaw each tick toward the deeper cut ahead. */
+	void SetCanyonFollow(bool bOn) { bCanyonFollow = bOn; }
+	UPROPERTY(BlueprintReadOnly, Category = "Terrain")
+	bool bCanyonFollow = false;
 
 	// ---- Proximity governor -------------------------------------------------------------------
 
