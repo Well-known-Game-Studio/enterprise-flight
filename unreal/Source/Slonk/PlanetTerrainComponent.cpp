@@ -477,7 +477,33 @@ bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& Ne
 		// The river: the gorge's deepest cut leads to within a bend of it, then the river mask takes over.
 		if (K == TEXT("river")) { return S.River * 10.0 + S.Canyon * 2.0 + S.CutCm / FMath::Max(Params.CanyonDepthCm, 1.0) * 4.0 + Temperate + Near * 0.5; }
 		if (K == TEXT("mountain")) { return S.bWater ? -1e9 : S.HeightCm / FMath::Max(Params.ReliefCm, 1.0) * 10.0 + Near * 0.5; }
-		if (K == TEXT("coast")) { return S.bWater ? -1e9 : -FMath::Abs(S.HeightCm) / FMath::Max(Params.ReliefCm, 1.0) * 10.0 + Near * 3.0; }
+		if (K == TEXT("coast"))
+		{
+			if (S.bWater) { return -1e9; }
+			// Land near the sea: the score climbs as the nearest water (sampled along four directions at 300 m,
+			// 1, 3 and 10 km) gets closer, so the hill-climb walks to the shore; water on every side at 300 m is
+			// a sandbar, not a shore.
+			const FVector E = FVector::CrossProduct(FVector::ZAxisVector, D).GetSafeNormal(), Nn = FVector::CrossProduct(D, E);
+			double NearestKm = 30.0; int32 WetClose = 0;
+			for (const FVector& Off : { E, -E, Nn, -Nn })
+			{
+				for (double Km : { 0.3, 1.0, 3.0, 10.0 })
+				{
+					if (Km >= NearestKm) { break; }
+					if (SlonkTerrain::SampleStructure(Params, (D + Off * (Km * 1.0e5 / Params.RadiusCm)).GetSafeNormal(), 2.0e5).bWater)
+					{
+						NearestKm = Km; if (Km <= 0.3) { ++WetClose; } break;
+					}
+				}
+			}
+			// And land behind: dry ground 3 km away in at least one direction, or this is an islet or a spit.
+			int32 Dry3 = 0;
+			for (const FVector& Off : { E, -E, Nn, -Nn })
+			{
+				if (!SlonkTerrain::SampleStructure(Params, (D + Off * (3.0e5 / Params.RadiusCm)).GetSafeNormal(), 2.0e5).bWater) { ++Dry3; }
+			}
+			return -NearestKm * 0.6 - (WetClose == 4 ? 6.0 : 0.0) - (Dry3 == 0 ? 6.0 : 0.0) - FMath::Abs(S.HeightCm) / FMath::Max(Params.ReliefCm, 1.0) * 4.0 + Near * 3.0;
+		}
 		return S.bWater ? -1e9 : Near * 10.0 + (S.HeightCm > 0.0 ? 1.0 : 0.0);
 	};
 	const double CoarseWavelength = 2.0 * UE_DOUBLE_PI * Params.RadiusCm / FMath::Sqrt((double)N * UE_DOUBLE_PI);

@@ -234,16 +234,51 @@ land *= 0.8 * (0.94 + 0.12 * (fb0 + 0.5));
 land *= 1.0 - saturate(rocky - sediment) * 0.45 * smoothstep(0.72, 1.0, crack);
 float snowy = ice * (1.0 - saturate(slope * 3.0)) ;
 land = lerp(land, IceColor, snowy);
-float depth = saturate(-hN * 2.5);
+float3 U = normalize(float3(ORX, ORY, ORZ) + LP / PlanetRadiusCm);
+float3 dpx = ddx(p), dpy = ddy(p);
+// Turquoise over the first forty metres of water, the deep colour beyond; the depth is in cm, not a fraction
+// of the ocean floor, so a shelf sea reads as sea and not as a lagoon.
+float depth = smoothstep(0.0, 4000.0, max(-hN * OceanDepthCm, 0.0));
 float3 sea = lerp(ShallowColor, OceanColor, depth);
 // Rivers (water above sea level): darker, greener, silt in the shallows along the banks.
 float river = water * saturate(hN * ReliefCm / 500.0);
 sea = lerp(sea, float3(0.06, 0.16, 0.17) * (0.9 + 0.3 * (fb0 + 0.5)), river);
+// ---- The sea surface. Wind waves from a baked normal (T_Water_NR: normal xy, foam in A) at two scales that
+// scroll with time, laid down by a cube-face projection on the radial (one seam band per cube edge, lost in
+// the chop). They fade out by twenty kilometres so the sun glint from orbit falls on the smooth macro
+// surface, where any fine normal scattered it to nothing. The sand shows through the first metres of water,
+// foam lines the shore and rides the crests, and rivers get smaller ripples.
+float3 waterN = 0; float foam = 0;
+if (water > 0.001)
+{
+    float3 aU = abs(U);
+    float2 pu, dux, duy; float3 Tw, Bw;
+    if (aU.x >= aU.y && aU.x >= aU.z) { pu = p.yz; dux = dpx.yz; duy = dpy.yz; Tw = float3(0, 1, 0); Bw = float3(0, 0, 1); }
+    else if (aU.y >= aU.z) { pu = p.xz; dux = dpx.xz; duy = dpy.xz; Tw = float3(1, 0, 0); Bw = float3(0, 0, 1); }
+    else { pu = p.xy; dux = dpx.xy; duy = dpy.xy; Tw = float3(1, 0, 0); Bw = float3(0, 1, 0); }
+    float waveFade = 1.0 - smoothstep(300000.0, 2000000.0, dist);
+    float tile1 = lerp(600.0, 180.0, river), tile2 = lerp(3500.0, 900.0, river);
+    // The second scale is turned 37 degrees so the two lattices never line up into a grid of glints.
+    const float2x2 Rot = float2x2(0.7986, -0.6018, 0.6018, 0.7986);
+    float2 pu2 = mul(Rot, pu), dux2 = mul(Rot, dux), duy2 = mul(Rot, duy);
+    float2 uv1 = pu / tile1 + Time * float2(0.030, 0.011);
+    float2 uv2 = pu2 / tile2 - Time * float2(0.006, 0.014);
+    float4 w1 = Texture2DSampleGrad(WaterNR, WaterNRSampler, uv1, dux / tile1, duy / tile1);
+    float4 w2 = Texture2DSampleGrad(WaterNR, WaterNRSampler, uv2, dux2 / tile2, duy2 / tile2);
+    float2 n2 = mul(float2x2(0.7986, 0.6018, -0.6018, 0.7986), w2.rg * 2.0 - 1.0);
+    float2 nxy = (w1.rg * 2.0 - 1.0) * 0.55 + n2 * 0.45;
+    waterN = (Tw * nxy.x + Bw * (SLONK_TEX_FLIPY * nxy.y)) * (0.3 * waveFade);
+    float depthCm = max(-hN * OceanDepthCm, 0.0);
+    // Surf: foam over the first four metres of depth, broken up by the crest mask so it is a ragged line.
+    float shore = (1.0 - smoothstep(0.0, 400.0, depthCm)) * (1.0 - river);
+    foam = saturate(shore * (0.55 + 0.6 * w1.a + 0.3 * w2.a) + 0.35 * w1.a * w2.a * waveFade);
+    float3 sand = LandColor2 * 0.85;
+    sea = lerp(lerp(sand, sea, smoothstep(0.0, 600.0, depthCm)), sea, river);
+    sea = lerp(sea, float3(0.88, 0.9, 0.92), foam);
+}
 // Texture sets (see FUNCS): cliff on the steep ground, talus on rocky slopes, scrub where it is wet and flat,
 // soil elsewhere; the two or so layers present are blended by their heights. Each set modulates the colour
 // decided above (its albedo over its mean), perturbs the normal, and brings roughness and occlusion up close.
-float3 U = normalize(float3(ORX, ORY, ORZ) + LP / PlanetRadiusCm);
-float3 dpx = ddx(p), dpy = ddy(p);
 float nearFade = (1.0 - 0.5 * smoothstep(10000.0, 60000.0, dist)) * (1.0 - smoothstep(100000.0, 250000.0, dist));
 float3 texMod = 1.0, texN = 0.0, texOrm = float3(1.0, 0.85, 0.5);
 if (nearFade > 0.001 && water < 0.5)
@@ -269,8 +304,10 @@ float3 base = lerp(land, sea, water);
 float bumpCm = (25.0 + 320.0 * rocky) * (1.0 - water) * (1.0 - snowy * 0.6);
 float dh1 = dot(gfb, T1) * bumpCm;
 float dh2 = dot(gfb, T2) * bumpCm;
-Nrm = normalize(Nn - T1 * dh1 - T2 * dh2 + texN * (1.0 - water));
-Rough = lerp(lerp(LandRoughness * (0.8 + 0.2 * rocky), 0.35, snowy), lerp(OceanRoughness, 0.12, river), water);
+Nrm = normalize(Nn - T1 * dh1 - T2 * dh2 + texN * (1.0 - water) + waterN * water);
+float seaRough = lerp(OceanRoughness, 0.12, river);
+seaRough = lerp(lerp(seaRough, 0.09, 0.5 * (1.0 - smoothstep(300000.0, 2000000.0, dist))), 0.7, foam);
+Rough = lerp(lerp(LandRoughness * (0.8 + 0.2 * rocky), 0.35, snowy), seaRough, water);
 Rough = lerp(Rough, texOrm.g, 0.6 * nearFade * (1.0 - water) * (1.0 - snowy));
 AO = lerp(1.0, texOrm.r, nearFade * (1.0 - water));
 
@@ -286,7 +323,7 @@ TEX_KINDS = ["BC", "NR"]
 TEX_FOLDER = "/Game/Slonk/Terrain"
 TEX_INPUTS = [f"{s}{k}" for s in TEX_SETS for k in TEX_KINDS]
 
-INPUTS = ["Fn", "N", "LP", "UV0", "UV1", "UV2", "Col", "ColA", "OX", "OY", "OZ", "Cell", "ORX", "ORY", "ORZ", "Cam", "WP", "PlanetRadiusCm"] + TEX_INPUTS + [
+INPUTS = ["Fn", "N", "LP", "UV0", "UV1", "UV2", "Col", "ColA", "OX", "OY", "OZ", "Cell", "ORX", "ORY", "ORZ", "Cam", "WP", "PlanetRadiusCm", "WaterNR", "Time"] + TEX_INPUTS + [
           "OceanColor", "ShallowColor", "LandColor", "LandColor2", "MountainColor", "IceColor", "NightLightColor",
           "OceanRoughness", "LandRoughness", "NightLightIntensity", "LavaEmissive", "SunDirection",
           "NoisePeriodCm", "ReliefCm", "OceanDepthCm"]
@@ -313,6 +350,9 @@ def build():
     e = g.custom(CODE, INPUTS, "CMOT_Float3", "terrain layers, textures, bump, lights", extra_outputs=(("Nrm", "CMOT_Float3"), ("Rough", "CMOT_Float1"), ("Emis", "CMOT_Float3"), ("AO", "CMOT_Float1")))
     for pin, src in [("Fn", fn), ("N", n), ("LP", vi), ("UV0", uv0), ("UV1", uv1), ("UV2", uv2), ("Col", col), ("OX", ox), ("OY", oy), ("OZ", oz), ("Cell", cell), ("ORX", orx), ("ORY", ory), ("ORZ", orz), ("Cam", cam), ("WP", wp)]:
         g.c(src, e, pin)
+    wn = g.node("TextureObjectParameter", {"ParameterName": "WaterNR", "Texture": {"refPath": f"{TEX_FOLDER}/T_Water_NR.T_Water_NR"}})
+    g.c(wn, e, "WaterNR")
+    g.c(g.node("Time"), e, "Time")
     for set_ in TEX_SETS:
         for kind in TEX_KINDS:
             asset = f"T_{set_}_{kind}"
