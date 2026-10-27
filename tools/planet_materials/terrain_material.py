@@ -26,6 +26,11 @@ NAME = "M_PlanetTerrain"
 FUNCS = r"""
 return 0.0;
 }
+// The template emits every custom node twice, for the pixel and the vertex stage, once a node feeds the world
+// position offset; the functions are defined on the first pass only and the dummy that swallows the closing
+// brace takes a different name each time.
+#ifndef SLONK_FUNCS
+#define SLONK_FUNCS
 #define SLONK_TEX_FLIPY (-1.0)
 void SlonkCellFrame(int3 c, uint salt, float3 U, out float3 E, out float3 N2, out float2 off)
 {
@@ -93,9 +98,51 @@ void SlonkLayer(Texture2D bc, SamplerState bcs, Texture2D nr, SamplerState nrs,
     nrm = (nN - Nn) * nearFade;
     oorm = lerp(float3(1.0, 0.85, 0.5), ormN, nearFade);
 }
-float SlonkTexFuncsEnd(FMaterialPixelParameters Parameters)
+// Swell: four Gerstner waves with integer wave numbers across the noise period (so the field wraps with the
+// chunk origins), deep-water dispersion in cm, amplitude scaled by swellCm. Returns the displacement in the
+// (T, B, up) frame and the surface normal in the same frame.
+void SlonkGerstner(float2 pu, float time, float periodCm, float swellCm, out float3 disp, out float3 nrm)
 {
+    const float2 K[4] = { float2(100.0, 70.0), float2(180.0, -60.0), float2(0.0, 256.0), float2(-300.0, 400.0) };
+    const float A[4] = { 0.55, 0.3, 0.25, 0.12 };
+    const float Q = 0.55;
+    disp = 0; float2 dn = 0; float dz = 0;
+    [unroll] for (int i = 0; i < 4; i++)
+    {
+        float2 k = 6.2831853 * K[i] / periodCm;
+        float kl = length(k); float2 d = k / kl;
+        float w = sqrt(981.0 * kl);
+        float ph = dot(k, pu) - w * time;
+        float a = A[i] * swellCm;
+        float sn, cs; sincos(ph, sn, cs);
+        disp.xy += d * (Q * a * cs); disp.z += a * sn;
+        dn += d * (kl * a * cs); dz += Q * kl * a * sn;
+    }
+    nrm = normalize(float3(-dn, 1.0 - dz));
+}
+float SlonkTexFuncsEnd1(FMaterialPixelParameters Parameters)
+{
+#else
+float SlonkTexFuncsEnd2(FMaterialVertexParameters Parameters)
+{
+#endif
     return 0.0;
+"""
+
+# The vertex shader side: the swell as geometry on the water vertices, within a few kilometres.
+WPO_CODE = r"""
+float3 p = LP + float3(OX, OY, OZ);
+float water = Col.g;
+float fade = (1.0 - smoothstep(80000.0, 250000.0, distance(Cam, WP))) * water;
+if (fade <= 0.001) { return float3(0, 0, 0); }
+float3 U = normalize(float3(ORX, ORY, ORZ) + LP / PlanetRadiusCm);
+float3 aU = abs(U); float2 pu; float3 Tw, Bw;
+if (aU.x >= aU.y && aU.x >= aU.z) { pu = p.yz; Tw = float3(0, 1, 0); Bw = float3(0, 0, 1); }
+else if (aU.y >= aU.z) { pu = p.xz; Tw = float3(1, 0, 0); Bw = float3(0, 0, 1); }
+else { pu = p.xy; Tw = float3(1, 0, 0); Bw = float3(0, 1, 0); }
+float3 d, n;
+SlonkGerstner(pu, Time, NoisePeriodCm, SwellCm, d, n);
+return (Tw * d.x + Bw * d.y + U * d.z) * fade;
 """
 
 # Shared HLSL: inputs are the custom node's pins. Value noise on a wrapped integer lattice: periodic in NoisePeriodCm.
@@ -268,10 +315,17 @@ if (water > 0.001)
     float2 n2 = mul(float2x2(0.7986, 0.6018, -0.6018, 0.7986), w2.rg * 2.0 - 1.0);
     float2 nxy = (w1.rg * 2.0 - 1.0) * 0.55 + n2 * 0.45;
     waterN = (Tw * nxy.x + Bw * (SLONK_TEX_FLIPY * nxy.y)) * (0.3 * waveFade);
+    // The swell's own normal, from the same Gerstner sum that moves the vertices, within its fade.
+    float3 gd, gn;
+    SlonkGerstner(pu, Time, NoisePeriodCm, SwellCm, gd, gn);
+    float swellFade = 1.0 - smoothstep(80000.0, 250000.0, dist);
+    waterN += (Tw * gn.x + Bw * gn.y) * swellFade;
+    foam = 0.0;
     float depthCm = max(-hN * OceanDepthCm, 0.0);
     // Surf: foam over the first four metres of depth, broken up by the crest mask so it is a ragged line.
     float shore = (1.0 - smoothstep(0.0, 400.0, depthCm)) * (1.0 - river);
-    foam = saturate(shore * (0.55 + 0.6 * w1.a + 0.3 * w2.a) + 0.35 * w1.a * w2.a * waveFade);
+    foam = saturate(shore * (0.55 + 0.6 * w1.a + 0.3 * w2.a) + 0.35 * w1.a * w2.a * waveFade
+        + 0.6 * smoothstep(0.55, 0.85, gd.z / max(SwellCm * 1.2, 1.0)) * w1.a * swellFade);
     float3 sand = LandColor2 * 0.85;
     sea = lerp(lerp(sand, sea, smoothstep(0.0, 600.0, depthCm)), sea, river);
     sea = lerp(sea, float3(0.88, 0.9, 0.92), foam);
@@ -323,7 +377,8 @@ TEX_KINDS = ["BC", "NR"]
 TEX_FOLDER = "/Game/Slonk/Terrain"
 TEX_INPUTS = [f"{s}{k}" for s in TEX_SETS for k in TEX_KINDS]
 
-INPUTS = ["Fn", "N", "LP", "UV0", "UV1", "UV2", "Col", "ColA", "OX", "OY", "OZ", "Cell", "ORX", "ORY", "ORZ", "Cam", "WP", "PlanetRadiusCm", "WaterNR", "Time"] + TEX_INPUTS + [
+WPO_INPUTS = ["Fn", "LP", "Col", "OX", "OY", "OZ", "ORX", "ORY", "ORZ", "Cam", "WP", "PlanetRadiusCm", "NoisePeriodCm", "Time", "SwellCm"]
+INPUTS = ["Fn", "N", "LP", "UV0", "UV1", "UV2", "Col", "ColA", "OX", "OY", "OZ", "Cell", "ORX", "ORY", "ORZ", "Cam", "WP", "PlanetRadiusCm", "WaterNR", "Time", "SwellCm"] + TEX_INPUTS + [
           "OceanColor", "ShallowColor", "LandColor", "LandColor2", "MountainColor", "IceColor", "NightLightColor",
           "OceanRoughness", "LandRoughness", "NightLightIntensity", "LavaEmissive", "SunDirection",
           "NoisePeriodCm", "ReliefCm", "OceanDepthCm"]
@@ -346,13 +401,15 @@ def build():
         "OceanColor": (0.05, 0.17, 0.35), "ShallowColor": (0.1, 0.35, 0.5), "LandColor": (0.30, 0.36, 0.18), "LandColor2": (0.55, 0.45, 0.28),
         "MountainColor": (0.55, 0.52, 0.50), "IceColor": (0.90, 0.93, 0.97), "NightLightColor": (1.0, 0.8, 0.5), "SunDirection": (1.0, 0.0, 0.0),
     }
-    scal = {"OceanRoughness": 0.22, "LandRoughness": 0.9, "NightLightIntensity": 0.0, "LavaEmissive": 0.0, "NoisePeriodCm": 1048576.0, "ReliefCm": 3.8e6, "OceanDepthCm": 5.0e5, "PlanetRadiusCm": 6.371e8}
+    scal = {"OceanRoughness": 0.22, "LandRoughness": 0.9, "NightLightIntensity": 0.0, "LavaEmissive": 0.0, "NoisePeriodCm": 1048576.0, "ReliefCm": 3.8e6, "OceanDepthCm": 5.0e5, "PlanetRadiusCm": 6.371e8, "SwellCm": 120.0}
     e = g.custom(CODE, INPUTS, "CMOT_Float3", "terrain layers, textures, bump, lights", extra_outputs=(("Nrm", "CMOT_Float3"), ("Rough", "CMOT_Float1"), ("Emis", "CMOT_Float3"), ("AO", "CMOT_Float1")))
     for pin, src in [("Fn", fn), ("N", n), ("LP", vi), ("UV0", uv0), ("UV1", uv1), ("UV2", uv2), ("Col", col), ("OX", ox), ("OY", oy), ("OZ", oz), ("Cell", cell), ("ORX", orx), ("ORY", ory), ("ORZ", orz), ("Cam", cam), ("WP", wp)]:
         g.c(src, e, pin)
     wn = g.node("TextureObjectParameter", {"ParameterName": "WaterNR", "Texture": {"refPath": f"{TEX_FOLDER}/T_Water_NR.T_Water_NR"}})
     g.c(wn, e, "WaterNR")
-    g.c(g.node("Time"), e, "Time")
+    tm = g.node("Time"); g.c(tm, e, "Time")
+    swell = g.scalar("SwellCm", 120.0); g.c(swell, e, "SwellCm")
+    scalnodes = {}
     for set_ in TEX_SETS:
         for kind in TEX_KINDS:
             asset = f"T_{set_}_{kind}"
@@ -362,7 +419,15 @@ def build():
     for name, rgb in vecs.items():
         g.c(g.vec(name, rgb), e, name)
     for name, v in scal.items():
-        g.c(g.scalar(name, v), e, name)
+        if name == "SwellCm": continue
+        scalnodes[name] = g.scalar(name, v); g.c(scalnodes[name], e, name)
+    # The swell as geometry: a second custom node on the world position offset, compiled in the vertex shader.
+    # It takes the functions node as an input so the Gerstner function is emitted before it.
+    wpo = g.custom(WPO_CODE, WPO_INPUTS, "CMOT_Float3", "swell geometry")
+    for pin, src in [("Fn", fn), ("LP", psp), ("Col", col), ("OX", ox), ("OY", oy), ("OZ", oz), ("ORX", orx), ("ORY", ory), ("ORZ", orz), ("Cam", cam), ("WP", wp),
+                     ("PlanetRadiusCm", scalnodes["PlanetRadiusCm"]), ("NoisePeriodCm", scalnodes["NoisePeriodCm"]), ("Time", tm), ("SwellCm", swell)]:
+        g.c(src, wpo, pin)
+    g.out(wpo, "MP_WorldPositionOffset")
     g.out(e, "MP_BaseColor")
     g.out(e, "MP_Normal", "Nrm")
     g.out(e, "MP_Roughness", "Rough")

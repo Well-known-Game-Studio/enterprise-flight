@@ -588,6 +588,28 @@ void APlanetBody::ResolveStyleFromArchetype()
 		S.AtmosphereScaleHeightKm = ScaleKm;
 		S.AtmosphereHeightKm = FMath::Min(S.AtmosphereScaleHeightKm * 12.f, RadiusKm * 0.15f);
 	}
+	// The volumetric cloud layer per world, km above the surface, and the cloud shell's height with it.
+	{
+		switch (Type)
+		{
+		case EPlanetArchetype::Terrestrial: S.CloudBaseKm = Rng.FRandRange(1.5f, 2.5f); S.CloudThicknessKm = 8.f; S.CloudDensity = 1.f; S.CloudDeck = 0.f; break;
+		case EPlanetArchetype::Ocean: S.CloudBaseKm = Rng.FRandRange(0.8f, 1.5f); S.CloudThicknessKm = 7.f; S.CloudDensity = 1.f; S.CloudDeck = 0.3f; break;
+		case EPlanetArchetype::Desert: S.CloudBaseKm = Rng.FRandRange(3.f, 5.f); S.CloudThicknessKm = 4.f; S.CloudDensity = 0.6f; S.CloudDeck = 0.f; break;
+		case EPlanetArchetype::Ice: S.CloudBaseKm = Rng.FRandRange(0.8f, 1.5f); S.CloudThicknessKm = 5.f; S.CloudDensity = 0.8f; S.CloudDeck = 0.4f; break;
+		case EPlanetArchetype::Lava: S.CloudBaseKm = 2.f; S.CloudThicknessKm = 6.f; S.CloudDensity = 1.2f; S.CloudDeck = 0.5f; break;
+		// Venus: the sulphuric acid deck from 48 to 70 km, continuous and opaque.
+		case EPlanetArchetype::Venus: S.CloudBaseKm = 48.f; S.CloudThicknessKm = 22.f; S.CloudDensity = 2.f; S.CloudDeck = 1.f; break;
+		// Mars: thin water-ice clouds 10 to 20 km up, wisps.
+		case EPlanetArchetype::Mars: S.CloudBaseKm = 10.f; S.CloudThicknessKm = 10.f; S.CloudDensity = 0.25f; S.CloudDeck = 0.f; break;
+		default:
+			// A hazy moon (Titan): a photochemical haze from 30 km up to 90, thin and continuous.
+			if (S.bClouds) { S.CloudBaseKm = 30.f; S.CloudThicknessKm = 60.f; S.CloudDensity = 0.15f; S.CloudDeck = 1.f; }
+			else { S.CloudThicknessKm = 0.f; }
+			break;
+		}
+		// The shell sits at the top of the layer (Earth 10 km, not the 38 km of the old 0.6%).
+		if (S.CloudThicknessKm > 0.f) { S.CloudHeightFraction = (S.CloudBaseKm + S.CloudThicknessKm) / FMath::Max(RadiusKm, 1.f); }
+	}
 
 	if (Rng.FRand() < 0.25f)
 	{

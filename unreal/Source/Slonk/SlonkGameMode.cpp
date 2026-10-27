@@ -16,6 +16,7 @@
 #include "Components/SkyAtmosphereComponent.h"
 #include "Components/VolumetricCloudComponent.h"
 #include "Materials/MaterialInterface.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "GameFramework/WorldSettings.h"
 #include "SpaceTarget.h"
 #include "StarshipHUD.h"
@@ -189,7 +190,9 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 		VolumetricCloud->SetupAttachment(Root);
 		if (UMaterialInterface* CloudMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/EngineSky/VolumetricClouds/m_SimpleVolumetricCloud_Inst.m_SimpleVolumetricCloud_Inst")))
 		{
-			VolumetricCloud->SetMaterial(CloudMat);
+			// A dynamic instance so each world can set its coverage, density and colour.
+			CloudMID = UMaterialInstanceDynamic::Create(CloudMat, this);
+			VolumetricCloud->SetMaterial(CloudMID ? static_cast<UMaterialInterface*>(CloudMID) : CloudMat);
 		}
 		VolumetricCloud->SetLayerBottomAltitude(CloudLayerBottomKm);
 		VolumetricCloud->SetLayerHeight(CloudLayerHeightKm);
@@ -304,12 +307,28 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 	// layer is for the sky overhead and the shadows it throws).
 	if (VolumetricCloud)
 	{
-		const bool bVolumetric = bUseVolumetricClouds && S.bClouds && BestRadii < VolumetricCloudRadii;
+		const bool bVolumetric = bUseVolumetricClouds && S.bClouds && S.CloudThicknessKm > 0.f && BestRadii < VolumetricCloudRadii;
 		if (VolumetricCloud->IsVisible() != bVolumetric)
 		{
 			VolumetricCloud->SetVisibility(bVolumetric);
 		}
 		AtmospherePlanet->SetUsingVolumetricClouds(bVolumetric);
+		if (bVolumetric && CloudStyledPlanet.Get() != AtmospherePlanet)
+		{
+			// The layer from the style: where it sits, how thick, how dense, how continuous, what colour. The
+			// engine's simple cloud material reads a coverage bias (its default -0.2 is a scattered sky) and a
+			// density per metre (0.008 is a cumulus), and a deck pushes the bias up so the gaps close.
+			CloudStyledPlanet = AtmospherePlanet;
+			VolumetricCloud->SetLayerBottomAltitude(S.CloudBaseKm);
+			VolumetricCloud->SetLayerHeight(S.CloudThicknessKm);
+			VolumetricCloud->SetTracingMaxDistance(FMath::Max(50.f, (S.CloudBaseKm + S.CloudThicknessKm) * 3.f));
+			if (CloudMID)
+			{
+				CloudMID->SetScalarParameterValue(TEXT("Cloud_GlobalCoverage"), S.CloudCoverage * 1.2f - 0.7f + S.CloudDeck * 0.3f);
+				CloudMID->SetScalarParameterValue(TEXT("Cloud_GlobalDensity"), 0.008f * S.CloudDensity);
+				CloudMID->SetVectorParameterValue(TEXT("Cloud_AlbedoColor"), FLinearColor(S.CloudColor.R, S.CloudColor.G, S.CloudColor.B, 0.5f));
+			}
+		}
 	}
 }
 
