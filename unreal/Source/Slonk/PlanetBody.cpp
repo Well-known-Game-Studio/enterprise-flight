@@ -1,4 +1,5 @@
 #include "PlanetBody.h"
+#include "PlanetTerrainComponent.h"
 #include "SlonkTiming.h"
 
 #include "Components/DirectionalLightComponent.h"
@@ -135,6 +136,7 @@ APlanetBody::APlanetBody()
 	CloudMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_PlanetClouds.M_PlanetClouds")));
 	AtmosphereMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_PlanetAtmosphere.M_PlanetAtmosphere")));
 	RingMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_PlanetRings.M_PlanetRings")));
+	TerrainMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_PlanetTerrain.M_PlanetTerrain")));
 	RingRockMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(SlonkMaterials::AsteroidPath));
 }
 
@@ -565,23 +567,26 @@ void APlanetBody::ResolveStyleFromArchetype()
 	// few radii out; the clouds and relief sit inside the dense part instead of on top of it.
 	if (S.bAtmosphere)
 	{
-		float ScaleFrac = 0.008f;
+		// Real scale heights in km (Earth 8.5, Venus 16, Mars 11, Titan 40): the sky has to read right from a
+		// canyon floor, and from orbit a real atmosphere is the thin blue rim it is in photographs. The giants
+		// keep a deep stylised haze since nothing flies into them.
+		float ScaleKm = 8.5f;
 		switch (Type)
 		{
-		case EPlanetArchetype::Ocean: ScaleFrac = 0.009f; break;
-		case EPlanetArchetype::Desert: ScaleFrac = 0.0055f; break;
-		case EPlanetArchetype::Ice: ScaleFrac = 0.006f; break;
-		case EPlanetArchetype::Lava: ScaleFrac = 0.007f; break;
-		case EPlanetArchetype::Venus: ScaleFrac = 0.014f; break;
-		case EPlanetArchetype::Mars: ScaleFrac = 0.005f; break;
-		case EPlanetArchetype::GasGiant: ScaleFrac = 0.018f; break;   // deep, hazy
-		case EPlanetArchetype::IceGiant: ScaleFrac = 0.014f; break;
-		case EPlanetArchetype::Moon: ScaleFrac = 0.022f; break;       // Titan-like haze
+		case EPlanetArchetype::Ocean: ScaleKm = 9.f; break;
+		case EPlanetArchetype::Desert: ScaleKm = 7.f; break;
+		case EPlanetArchetype::Ice: ScaleKm = 6.5f; break;
+		case EPlanetArchetype::Lava: ScaleKm = 11.f; break;
+		case EPlanetArchetype::Venus: ScaleKm = 16.f; break;
+		case EPlanetArchetype::Mars: ScaleKm = 11.f; break;
+		case EPlanetArchetype::GasGiant: ScaleKm = 0.018f * RadiusKm; break;
+		case EPlanetArchetype::IceGiant: ScaleKm = 0.014f * RadiusKm; break;
+		case EPlanetArchetype::Moon: ScaleKm = 40.f; break;       // Titan-like haze
 		default: break;
 		}
-		ScaleFrac *= Extra.FRandRange(0.8f, 1.25f);
-		S.AtmosphereScaleHeightKm = FMath::Max(ScaleFrac * RadiusKm, 6.f);
-		S.AtmosphereHeightKm = FMath::Min(S.AtmosphereScaleHeightKm * 5.f, RadiusKm * 0.15f);
+		ScaleKm *= Extra.FRandRange(0.85f, 1.2f);
+		S.AtmosphereScaleHeightKm = ScaleKm;
+		S.AtmosphereHeightKm = FMath::Min(S.AtmosphereScaleHeightKm * 12.f, RadiusKm * 0.15f);
 	}
 
 	if (Rng.FRand() < 0.25f)
@@ -589,7 +594,8 @@ void APlanetBody::ResolveStyleFromArchetype()
 		S.IceCapStart = FMath::Min(S.IceCapStart, Rng.FRandRange(0.7f, 0.9f));
 	}
 	Style = S;
-	SpinDegPerSec = Rng.FRandRange(0.1f, 0.8f) * (Rng.FRand() < 0.2f ? -1.f : 1.f);
+	// Real day lengths (9 to 70 hours): the ground under a ship flying the terrain must not race past at km/s.
+	SpinDegPerSec = Rng.FRandRange(0.1f, 0.8f) * (Rng.FRand() < 0.2f ? -1.f : 1.f) * 0.014f;
 	if (Type == EPlanetArchetype::GasGiant || Type == EPlanetArchetype::IceGiant)
 	{
 		SpinDegPerSec *= 2.f;
@@ -827,6 +833,11 @@ void APlanetBody::UpdateSunDirectionParams()
 		Mid->SetVectorParameterValue(TEXT("SunDirection"), SunDir);
 		Mid->SetVectorParameterValue(TEXT("SunDirectionLocal"), BodyLocal);
 	}
+	if (Terrain && bTerrainActive)
+	{
+		Terrain->SetVectorParameter(TEXT("SunDirection"), SunDir);
+		Terrain->SetVectorParameter(TEXT("SunDirectionLocal"), BodyLocal);
+	}
 	if (RingMID)
 	{
 		RingMID->SetVectorParameterValue(TEXT("SunDirection"), SunDir);
@@ -855,8 +866,108 @@ void APlanetBody::ApplyAppearance()
 	UpdateStarDirection();
 	BuildFarMeshes();
 	ApplyMaterials();
+	EnsureTerrain();
 	BuildRings();
 	UpdateShellVisibility();
+}
+
+FPlanetTerrainParams APlanetBody::MakeTerrainParams() const
+{
+	FPlanetTerrainParams P;
+	const FPlanetStyle& S = Style;
+	const double R = GetRadiusCm();
+	const FVector L = const_cast<APlanetBody*>(this)->GetSeedLocation();
+	P.Seed = FVector(FMath::Frac(L.X / 7.3e9) * 100.0, FMath::Frac(L.Y / 5.1e9) * 100.0, FMath::Frac(L.Z / 3.7e9) * 100.0);
+	P.RadiusCm = R;
+	// Real proportions: Earth's tallest peak is 0.14% of its radius, Mars's 0.6%. The style's ReliefFraction was
+	// tuned for relief visible from orbit on the old displaced sphere, four times too tall for flying through.
+	double ReliefFraction = S.ReliefFraction;
+	switch (ResolvedArchetype)
+	{
+	case EPlanetArchetype::Mars: ReliefFraction = FMath::Min(ReliefFraction, 0.006f); break;
+	case EPlanetArchetype::Moon: break;
+	case EPlanetArchetype::Desert: case EPlanetArchetype::Venus: ReliefFraction = FMath::Min(ReliefFraction, 0.002f); break;
+	default: ReliefFraction = FMath::Min(ReliefFraction, 0.0016f); break;
+	}
+	P.ReliefCm = FMath::Max(ReliefFraction * R, 1.0);
+	P.OceanDepthCm = 0.0008 * R;
+	P.SeaLevel = S.SeaLevel;
+	P.ContinentScale = S.NoiseScale;
+	P.Craters = S.CraterStrength;
+	P.CraterScale = S.CraterScale;
+	P.Maria = S.MariaStrength;
+	P.IceCapStart = S.IceCapStart;
+	P.bLava = S.LavaEmissive > 0.f;
+	// Canyons scale with the body: an Earth gets a Grand Canyon, Mars a Valles Marineris.
+	const double Earth = R / 6.371e8;
+	switch (ResolvedArchetype)
+	{
+	case EPlanetArchetype::Ocean:   P.Mountains = 0.4f; P.Canyons = 0.3f; P.Strata = 0.3f; P.Moisture = 0.8f; P.CanyonDepthCm = 1.2e5 * Earth; P.CanyonWidthCm = 1.5e6 * Earth; break;
+	case EPlanetArchetype::Desert:  P.Mountains = 0.5f; P.Canyons = 0.9f; P.Strata = 0.9f; P.Moisture = 0.05f; P.CanyonDepthCm = 2.0e5 * Earth; P.CanyonWidthCm = 2.2e6 * Earth; break;
+	case EPlanetArchetype::Ice:     P.Mountains = 0.35f; P.Canyons = 0.2f; P.Strata = 0.3f; P.Moisture = 0.5f; P.CanyonDepthCm = 1.0e5 * Earth; P.CanyonWidthCm = 1.5e6 * Earth; break;
+	case EPlanetArchetype::Lava:    P.Mountains = 0.5f; P.Canyons = 0.3f; P.Strata = 0.3f; P.Moisture = 0.f; P.CanyonDepthCm = 1.5e5 * Earth; P.CanyonWidthCm = 1.5e6 * Earth; break;
+	case EPlanetArchetype::Mars:    P.Mountains = 0.7f; P.Canyons = 1.0f; P.Strata = 0.8f; P.Moisture = 0.f; P.bAirless = true; P.CanyonDepthCm = 6.0e5 * Earth * 1.9; P.CanyonWidthCm = 1.2e7 * Earth * 1.9; break;
+	case EPlanetArchetype::Venus:   P.Mountains = 0.5f; P.Canyons = 0.3f; P.Strata = 0.3f; P.Moisture = 0.f; P.bAirless = true; P.CanyonDepthCm = 1.5e5 * Earth; P.CanyonWidthCm = 2.0e6 * Earth; break;
+	case EPlanetArchetype::Moon:    P.Mountains = 0.3f; P.Canyons = 0.f; P.Strata = 0.2f; P.Moisture = 0.f; P.bAirless = true; break;
+	default:                        P.Mountains = 0.6f; P.Canyons = 0.5f; P.Strata = 0.6f; P.Moisture = 0.55f; P.CanyonDepthCm = 1.6e5 * Earth; P.CanyonWidthCm = 1.8e6 * Earth; break;
+	}
+	return P;
+}
+
+void APlanetBody::EnsureTerrain()
+{
+	UWorld* World = GetWorld();
+	const bool bWant = bUseTerrainChunks && World && World->IsGameWorld() && Style.ReliefFraction > 0.f && Style.BandStrength < 0.5f;
+	if (!bWant)
+	{
+		if (Terrain) { Terrain->SetTerrainVisible(false); }
+		bTerrainActive = false;
+		return;
+	}
+	if (!Terrain)
+	{
+		Terrain = NewObject<UPlanetTerrainComponent>(this, TEXT("Terrain"));
+		Terrain->SetupAttachment(Body);
+		Terrain->RegisterComponent();
+		Terrain->SetRelativeLocation(FVector::ZeroVector);
+		Terrain->SetWorldScale3D(FVector::OneVector);
+	}
+	const FPlanetTerrainParams P = MakeTerrainParams();
+	if (!bTerrainActive || P != TerrainParams)
+	{
+		TerrainParams = P;
+		UMaterialInterface* Mat = SlonkMaterials::LoadOrFallback(TerrainMaterial, TEXT("PlanetTerrain"), true);
+		Terrain->Configure(P, Mat);
+	}
+	bTerrainActive = true;
+	Terrain->SetTerrainVisible(true);
+	ApplyTerrainMaterialParams();
+}
+
+void APlanetBody::ApplyTerrainMaterialParams()
+{
+	if (!Terrain || !bTerrainActive) { return; }
+	const FPlanetStyle& S = Style;
+	Terrain->SetVectorParameter(TEXT("OceanColor"), S.OceanColor);
+	Terrain->SetVectorParameter(TEXT("ShallowColor"), S.ShallowColor);
+	Terrain->SetVectorParameter(TEXT("LandColor"), S.LandColor);
+	Terrain->SetVectorParameter(TEXT("LandColor2"), S.LandColor2);
+	Terrain->SetVectorParameter(TEXT("MountainColor"), S.MountainColor);
+	Terrain->SetVectorParameter(TEXT("IceColor"), S.IceColor);
+	Terrain->SetVectorParameter(TEXT("NightLightColor"), S.NightLightColor);
+	Terrain->SetScalarParameter(TEXT("OceanRoughness"), S.OceanRoughness);
+	Terrain->SetScalarParameter(TEXT("LandRoughness"), S.LandRoughness);
+	Terrain->SetScalarParameter(TEXT("NightLightIntensity"), S.NightLightIntensity);
+	Terrain->SetScalarParameter(TEXT("LavaEmissive"), S.LavaEmissive);
+	Terrain->SetScalarParameter(TEXT("CloudScale"), S.CloudScale);
+	Terrain->SetScalarParameter(TEXT("Coverage"), S.bClouds ? S.CloudCoverage : 0.f);
+	Terrain->SetVectorParameter(TEXT("SunDirection"), FLinearColor(CachedStarDirection.X, CachedStarDirection.Y, CachedStarDirection.Z, 0.f));
+}
+
+double APlanetBody::GetSurfaceRadiusCm(const FVector& WorldPos) const
+{
+	const double R = GetRadiusCm();
+	return bTerrainActive && Terrain ? R + Terrain->SurfaceHeightAtWorld(WorldPos) : R;
 }
 
 void APlanetBody::BuildFarMeshes()
@@ -891,12 +1002,12 @@ void APlanetBody::UpdateShellVisibility()
 		// Game: generated spheres draw, the static placeholders only keep collision / editor display.
 		Body->SetVisibility(false);
 		Clouds->SetVisibility(false);
-		FarBody->SetVisibility(bShow && !bDetailActive);
+		FarBody->SetVisibility(bShow && !bDetailActive && !bTerrainActive);
 		CloudsMesh->SetVisibility(bShow && Style.bClouds);
 	}
 	else
 	{
-		Body->SetVisibility(bShow && !bDetailActive);
+		Body->SetVisibility(bShow && !bDetailActive && !bTerrainActive);
 		Clouds->SetVisibility(bShow && Style.bClouds);
 	}
 	if (DetailBody) { DetailBody->SetVisibility(bShow && bDetailActive); }
@@ -1006,6 +1117,7 @@ void APlanetBody::SetBeyondHorizon(bool bBeyond)
 	{
 		if (P) { P->SetVisibility(bPatchesActive && !bBeyond); }
 	}
+	if (Terrain) { Terrain->SetTerrainVisible(bTerrainActive && !bBeyond); }
 }
 
 void APlanetBody::OnConstruction(const FTransform& Transform)
@@ -1024,6 +1136,12 @@ void APlanetBody::PreRegisterAllComponents()
 void APlanetBody::BeginPlay()
 {
 	Super::BeginPlay();
+	// Planets saved or spawned with the old stylised spin (0.3 deg/s) get a real day: the ground under a ship
+	// flying the terrain must not move at 30 km/s.
+	if (FMath::Abs(SpinDegPerSec) > 0.05f)
+	{
+		SpinDegPerSec = 0.0042f * (SpinDegPerSec / 0.3f);
+	}
 	ApplyAppearance();
 }
 
@@ -1054,6 +1172,7 @@ void APlanetBody::Tick(float DeltaTime)
 		{
 			Mid->SetScalarParameterValue(TEXT("CloudYaw"), Yaw);
 		}
+		if (Terrain && bTerrainActive) { Terrain->SetScalarParameter(TEXT("CloudYaw"), Yaw); }
 	}
 
 	LODTimer -= DeltaTime;
@@ -1063,6 +1182,19 @@ void APlanetBody::Tick(float DeltaTime)
 		// The floating origin keeps the player near the world origin, so distance from the origin is what the GPU sees.
 		SetBeyondHorizon(IsLocationBeyondHorizon(GetActorLocation()));
 		UpdateLOD();
+	}
+
+	// Terrain LOD every frame: the traversal is cheap and finished chunks should land the frame they are ready.
+	if (bTerrainActive && Terrain && !bBeyondHorizon)
+	{
+		UWorld* World = GetWorld();
+		APlayerController* PC = World && World->IsGameWorld() ? World->GetFirstPlayerController() : nullptr;
+		if (PC)
+		{
+			FVector ViewLoc; FRotator ViewRot;
+			PC->GetPlayerViewPoint(ViewLoc, ViewRot);
+			Terrain->UpdateView(ViewLoc);
+		}
 	}
 
 	// The star direction only changes as bodies move; refresh a few times a second.
@@ -1139,6 +1271,16 @@ void APlanetBody::UpdateLOD()
 	PC->GetPlayerViewPoint(ViewLoc, ViewRot);
 	const double RadiusCm = GetRadiusCm();
 	const double Dist = FVector::Dist(ViewLoc, GetActorLocation()) / RadiusCm;
+
+	if (bTerrainActive && Terrain)
+	{
+		// The quadtree covers every distance; the displaced spheres and patches stay off.
+		if (bDetailActive) { bDetailActive = false; UpdateShellVisibility(); }
+		SetPatchesActive(false);
+		// The quadtree itself is updated every tick (Tick) so chunks land as fast as they cook.
+		UpdateRingParticles(ViewLoc);
+		return;
+	}
 
 	// Hysteresis so the swap never flickers at the boundary.
 	const bool bWantDetail = bDetailActive ? Dist < DetailMeshRadii * 1.15 : Dist < DetailMeshRadii;

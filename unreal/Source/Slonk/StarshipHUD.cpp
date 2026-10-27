@@ -179,6 +179,19 @@ void AStarshipHUD::DrawHUD()
 				DrawText(FString::Printf(TEXT("ORBIT HOLD  %s   alt %s   %s   (O releases, PgUp/PgDn alt)"), *Movement->OrbitBodyName.ToUpper(), *FormatDistance(Alt), *PeriodText), Accent, X, Y, Font, UIScale); Y += Line;
 			}
 		}
+		if (Movement->GroundBody && Movement->AltitudeAGLCm >= 0.0 && !Movement->bOrbitHold)
+		{
+			FString GroundName = Movement->GroundBody->GetActorNameOrLabel();
+			if (const APlanetBody* GroundPlanet = Cast<APlanetBody>(Movement->GroundBody.Get())) { GroundName = GroundPlanet->GetDisplayName(); }
+			if (Movement->bTerrainFollow)
+			{
+				DrawText(FString::Printf(TEXT("TERRAIN FOLLOW  %s   hover %s   ground %s above sea   (PgUp/PgDn height)"), *GroundName.ToUpper(), *FormatDistance(Movement->HoverAltitudeCm), *FormatDistance(Movement->GroundHeightCm)), Accent, X, Y, Font, UIScale); Y += Line;
+			}
+			else if (Movement->AltitudeAGLCm < 1.0e8)
+			{
+				DrawText(FString::Printf(TEXT("ALTITUDE %s above ground   ground %s above sea   %s"), *FormatDistance(Movement->AltitudeAGLCm), *FormatDistance(Movement->GroundHeightCm), *GroundName.ToUpper()), Dim, X, Y, Font, UIScale); Y += Line;
+			}
+		}
 
 		{
 			const float SF = Ship->GetShieldFraction();

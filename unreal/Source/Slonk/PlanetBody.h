@@ -6,7 +6,10 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "FarBody.h"
+#include "PlanetTerrain.h"
 #include "PlanetBody.generated.h"
+
+class UPlanetTerrainComponent;
 
 class UStaticMeshComponent;
 class USphereComponent;
@@ -174,6 +177,14 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> Clouds;
 
+	/**
+	 * Quadtree terrain for worlds with relief (game only): six cube-sphere roots split toward the camera down to
+	 * metre cells, built from the height field in PlanetTerrain.h. Replaces the far/detail spheres and the clipmap
+	 * patches on those worlds; gas giants keep the shader-shaded sphere.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UPlanetTerrainComponent> Terrain;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> Atmosphere;
 
@@ -185,9 +196,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
 	float RadiusKm = 600.f;
 
-	/** Rotation about the local Z axis in degrees per second. */
+	/** Rotation about the local Z axis in degrees per second. 0.0042 is a 24-hour day; the old stylised 0.3 (a
+	 *  20-minute day, 30 km/s of ground speed on an Earth) is rescaled to a real day in BeginPlay. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
-	float SpinDegPerSec = 0.3f;
+	float SpinDegPerSec = 0.0042f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
 	FString PlanetName;
@@ -248,6 +260,22 @@ public:
 	double GetRadiusCm() const;
 
 	// ---- Level of detail ----
+
+	/** Use the quadtree terrain on worlds with relief (off: the old displaced spheres and clipmap patches). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|LOD")
+	bool bUseTerrainChunks = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Materials") TSoftObjectPtr<UMaterialInterface> TerrainMaterial;
+
+	UFUNCTION(BlueprintPure, Category = "Planet")
+	bool HasTerrain() const { return bTerrainActive; }
+
+	/** Distance from the centre to the ground (land or sea surface) under a world position, cm. The body radius without terrain. */
+	UFUNCTION(BlueprintPure, Category = "Planet")
+	double GetSurfaceRadiusCm(const FVector& WorldPos) const;
+
+	/** The height field parameters this planet's terrain is built from. */
+	FPlanetTerrainParams MakeTerrainParams() const;
 
 	/** Switch to the dense mesh when the camera is closer than this many radii from the centre. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|LOD")
@@ -354,6 +382,8 @@ private:
 	EPlanetArchetype PickArchetype(FRandomStream& Rng) const;
 
 	void UpdateLOD();
+	void EnsureTerrain();
+	void ApplyTerrainMaterialParams();
 	void BuildDetailMesh();
 	void BuildFarMeshes();
 	void UpdateShellVisibility();
@@ -396,6 +426,8 @@ private:
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> SurfaceMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> DetailSurfaceMID;
 	bool bUsingSkyAtmosphere = false;
+	bool bTerrainActive = false;
+	FPlanetTerrainParams TerrainParams;
 	bool bDetailActive = false;
 	bool bBeyondHorizon = false;
 	bool bDetailBuilt = false;
