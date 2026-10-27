@@ -109,6 +109,13 @@ struct FPlanetStyle
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Clouds") float CloudSpinDegPerSec = 0.5f;
 	/** Internal evolution of the cloud shapes (noise units per second). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Clouds") float CloudDrift = 0.03f;
+	/** Volumetric layer: bottom above the surface and thickness, km (Earth: cumulus from 2 km, tops by 10). 0 thickness = no volumetric layer. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Clouds") float CloudBaseKm = 2.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Clouds") float CloudThicknessKm = 8.f;
+	/** Density of the volumetric layer relative to Earth cumulus (0.2 is Martian water ice, 2 is the Venus deck). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Clouds") float CloudDensity = 1.f;
+	/** 0 broken cumulus, 1 a continuous deck. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Clouds", meta = (ClampMin = "0", ClampMax = "1")) float CloudDeck = 0.f;
 
 	// Atmosphere
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Atmosphere") bool bAtmosphere = true;

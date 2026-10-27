@@ -105,6 +105,8 @@ private:
 	UPROPERTY() TObjectPtr<AActor> AtmosphereHolder;
 	UPROPERTY() TObjectPtr<class USkyAtmosphereComponent> SkyAtmosphere;
 	UPROPERTY() TObjectPtr<class UVolumetricCloudComponent> VolumetricCloud;
+	UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> CloudMID;
+	TWeakObjectPtr<class APlanetBody> CloudStyledPlanet;
 	UPROPERTY() TObjectPtr<class APlanetBody> AtmospherePlanet;
 	void SpawnTestTargets();
 };
