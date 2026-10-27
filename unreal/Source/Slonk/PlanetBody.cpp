@@ -600,7 +600,7 @@ void APlanetBody::ResolveStyleFromArchetype()
 		// Venus: the sulphuric acid deck from 48 to 70 km, continuous and opaque.
 		case EPlanetArchetype::Venus: S.CloudBaseKm = 48.f; S.CloudThicknessKm = 22.f; S.CloudDensity = 2.f; S.CloudDeck = 1.f; break;
 		// Mars: thin water-ice clouds 10 to 20 km up, wisps.
-		case EPlanetArchetype::Mars: S.CloudBaseKm = 10.f; S.CloudThicknessKm = 10.f; S.CloudDensity = 0.25f; S.CloudDeck = 0.f; break;
+		case EPlanetArchetype::Mars: S.CloudBaseKm = 10.f; S.CloudThicknessKm = 10.f; S.CloudDensity = 0.6f; S.CloudDeck = 0.f; break;
 		default:
 			// A hazy moon (Titan): a photochemical haze from 30 km up to 90, thin and continuous.
 			if (S.bClouds) { S.CloudBaseKm = 30.f; S.CloudThicknessKm = 60.f; S.CloudDensity = 0.15f; S.CloudDeck = 1.f; }
