@@ -4,7 +4,7 @@
 
 Two and a half minutes in one take, flown by the ship's autopilot: the inner gorge of a canyon on the Earth-like world, the climb out through the clouds, a moment in low orbit, warp 9.9 across 2.9 billion km to Caerulea I with its ringed ice giant standing over the lineae, full impulse into the Caerulea Nebula, and warp back to the night side of Starbase 11 with its windows lit.
 
-A flyable, life-size Star Trek solar system in Unreal Engine 5.8. You fly a kinematic Enterprise with impulse and warp drive through a procedurally generated star system at real scale: planets with terrain, atmospheres, clouds and rings, an asteroid belt, spinning space stations, patrolling starships that warp between them, a Borg cube, and combat with shields, phasers, torpedoes and a tractor beam. A floating origin keeps AU-scale distances precise, and the Star Trek VI bridge set gives a first-person view from the captain's chair.
+A flyable, life-size Star Trek solar system in Unreal Engine 5.8. You fly a kinematic Enterprise with impulse and warp drive through a procedurally generated star system at real scale: planets with terrain, atmospheres, clouds and rings, an asteroid belt, spinning space stations, patrolling starships that warp between them, a Borg cube, and combat with shields, phasers, torpedoes and a tractor beam. A floating origin keeps AU-scale distances precise, the Star Trek VI bridge set gives a first-person view from the captain's chair, and warp can be watched as the physics says it would look: aberration, Doppler shift and the multiple images of other ships seen through their own light.
 
 The project lives in `unreal/` (open `Slonk.uproject` in UE 5.8, build the `SlonkEditor` target, open the `SpaceTest` map and press Play; the Unreal project and module keep their original working name, Slonk). C++ is in `unreal/Source/Slonk`; materials and the map are generated assets under `unreal/Content/Slonk`. The clips below are animated WebP files in `docs/media`, captured in play.
 
@@ -18,9 +18,43 @@ The system is real size. Planets are thousands of kilometres across, orbits are 
 
 Looking aft from beside Starbase 11: a slow drift past the station, then full impulse. The station is gone in a blink and the Earth-like world behind it shrinks to a coin in ten seconds.
 
+## Warp, the relativistic view
+
+Alongside the classic streak-and-flash, the ship has a view of faster-than-light travel rendered as the physics says it would look: aberration crowds the whole sky toward the bow and empties the sky astern, the Doppler shift blues what is ahead and reddens what is behind, and other ships at warp are seen through their own light, which means several of them at once. It is a post-process on the real frame (switch with `warpvis real`), so planets, stations, the sun and other ships all go through it, and the effects below are not canned animations but what the camera sees of the live scene.
+
+Our own jump to warp 2 beside the Earth-like world, chase camera: the planet is gone in the flash, the star field crowds toward the bow and blue-shifts, and the sun slides in from the edge of the view:
+
+<img width="100%" alt="Our own jump to warp 2 beside the Earth-like world in the relativistic view: the planet gone in the flash, the stars crowding toward the bow and blue-shifting, the sun sliding in from the edge" src="docs/media/rel_jump.webp" />
+
+Warp 1, 1.5, 2 and 2.5 with the sun 70° off the bow, out of the frame to starboard. Aberration carries it into view and toward the bow a step at a time, the shift whitens it, and by warp 2.5 almost the whole sky is in the forward hemisphere:
+
+<img width="100%" alt="Warp 1, 1.5, 2 and 2.5 in the relativistic view with the sun 70 degrees off the bow: aberration carries it into view and toward the bow a step at a time" src="docs/media/rel_sun.webp" />
+
+Dropping out of warp at the ringed ice giant, flown by the autopilot. At warp the giant ahead is a crushed, brightened blue blob among the crowded stars; at the drop the sky relaxes outward and the giant is there with its rings and two moons, forty thousand kilometres off, with the edge of the nebula beyond it filling the left of the view:
+
+<img width="100%" alt="Dropping out of warp at the ringed ice giant Caerulea in the relativistic view: the giant a crushed blue blob at warp, then the sky relaxes outward and the giant is there with its rings and moons" src="docs/media/rel_drop.webp" />
+
+The same jump from the captain's chair, the sun coming onto the viewscreen as the ship works up to warp 2:
+
+<img width="100%" alt="The bridge at warp 2 in the relativistic view: the sun carried onto the viewscreen" src="docs/media/rel_bridge.webp" />
+
+Other ships at warp are drawn where their light is, with the visual light speed scaled down (`cscale`) so the sweeps span seconds instead of microseconds. Light from the point of the track nearest you arrives first, and the images then run outward along the track in both directions from that point. Head-on arrival: the ship pops into view at its arrival point first, and an after-image then runs backward up the track, red-shifted and shrinking, until it replaces the old pre-departure image:
+
+<img width="100%" alt="Head-on arrival of another ship in the relativistic view: it appears at the arrival point first and an after-image runs back up the track, red-shifted" src="docs/media/rel_ship_arrival.webp" />
+
+Across the bow: a ship nine kilometres to port warps to a point ahead and the track crosses the view. The ship is seen at the destination before its old image at the departure point has gone, and a red-shifted copy runs back along the track to meet it:
+
+<img width="100%" alt="A ship warping across the bow in the relativistic view: the live ship at the destination while its old image is still at the departure point, and a red-shifted copy running back along the track" src="docs/media/rel_ship_beside.webp" />
+
+Departure from alongside: the live ship is gone in a blink, the image of it before departure stays where it was, then runs up the track after it, red-shifted and dimming:
+
+<img width="100%" alt="A ship departing to warp from alongside in the relativistic view: its pre-departure image stays, then runs up the track after it, red-shifted" src="docs/media/rel_ship_depart.webp" />
+
+<img width="49%" alt="Three images of one ship on its warp track: the live ship at the arrival point, the red-shifted after-image running back, and the old image still at the departure point" src="docs/media/still_rel_images.jpg" /> <img width="49%" alt="The sun carried toward the bow at warp 2.5, with the stars crowded forward" src="docs/media/still_rel_sun.jpg" />
+
 ## Impulse and warp
 
-Warp speed follows the show's curve (warp 1 is light speed, warp 3 is 39 c), so a hop between orbits takes seconds and crossing the system takes a minute. Two warp looks are built in, switched with `warpvis classic` and `warpvis real`: the classic streak-and-flash, and a relativistic view with aberration, Doppler shift and retarded-time imaging.
+Warp speed follows the show's curve (warp 1 is light speed, warp 3 is 39 c), so a hop between orbits takes seconds and crossing the system takes a minute. Two warp looks are built in, switched with `warpvis classic` and `warpvis real`: the relativistic view above, and the classic streak-and-flash below.
 
 <img width="100%" alt="Going to warp from the chase camera in the classic view: streaks, flash and the stretch" src="docs/media/warp_jump.webp" />
 
@@ -81,22 +115,6 @@ Phasers, photon torpedoes, shields with a visible bubble, hull damage, a tractor
 The Star Trek VI bridge is built from code in Blender (`blender/bridge-st6`) and imported as one mesh with its Okudagram screens bound to live readouts. From the captain's chair the viewscreen shows the real view ahead; the crew figures are placeholders for now.
 
 <img width="100%" alt="From the captain's chair over the ocean world: forward to the helm, a sweep across the starboard stations and back" src="docs/media/bridge_look.webp" />
-
-## Warp, the relativistic view
-
-In the relativistic view a ship moving faster than light is seen as several images. Light from the point of the track nearest you arrives first, and the images then run outward along the track in both directions from that point. The visual light speed is scaled down (`cscale`) so the effects span seconds. Our own jump, chase camera, with the star field crowding forward and blue-shifting:
-
-https://github.com/user-attachments/assets/0eb46304-8d26-4cdf-99b2-8ab644f1f65a
-
-Head-on arrival of another ship, real time. It pops into view at its arrival point first, and an after-image then runs backward up the track, red-shifted and shrinking, until it replaces the old pre-departure image:
-
-https://github.com/user-attachments/assets/858b2e8a-76b2-4eaf-92c0-db17e63479dd
-
-Beside the track, 4x slow motion. A copy appears mid-track and splits in two: one runs back to the departure point and merges with the old image, the other slides on to the destination and becomes the live ship:
-
-https://github.com/user-attachments/assets/ee582208-d1a2-4239-a63b-071e58248faf
-
-<img width="49%" alt="Three images of one ship beside its warp track" src="https://github.com/user-attachments/assets/f341cdab-8d2b-43e2-baf7-50296aa4c914" /> <img width="49%" alt="Red-shifted receding image of a ship" src="https://github.com/user-attachments/assets/2515ae48-1b77-401d-b575-ad994a6e6c6c" />
 
 ## Credits
 

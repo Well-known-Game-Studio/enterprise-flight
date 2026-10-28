@@ -544,6 +544,16 @@ bool AStarshipHUD::SetNavTargetActor(AActor* Actor)
 bool AStarshipHUD::SetNavTargetByName(const FString& Name)
 {
 	GatherNavObjects(true);
+	// An exact label wins ("Caerulea" is the giant, not whichever of its moons the list happens to hold first),
+	// then a substring match for shorthand.
+	for (const FNavObject& O : NavObjects)
+	{
+		if (O.Actor && O.Label.Equals(Name, ESearchCase::IgnoreCase))
+		{
+			NavTarget = O.Actor;
+			return true;
+		}
+	}
 	for (const FNavObject& O : NavObjects)
 	{
 		if (O.Actor && (O.Actor->GetName().Contains(Name) || O.Label.Contains(Name)))
