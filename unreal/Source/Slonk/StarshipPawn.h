@@ -92,6 +92,14 @@ public:
 	virtual void Tick(float DeltaTime) override;
 	virtual float TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent, AController* EventInstigator, AActor* DamageCauser) override;
 
+	// ---- Autopilot to the HUD's nav target ----
+	/** 0 off, 1 warp (holds the heading, sets the factor so the time to target stays AutopilotSeconds, drops out at
+	 *  the standoff and eases in on impulse), 2 impulse (eases in to the standoff). Read by the capture scripts. */
+	UPROPERTY(BlueprintReadOnly, Category = "Autopilot") int32 AutopilotState = 0;
+	/** Distance to the nav target this frame, km (-1 without one). */
+	UPROPERTY(BlueprintReadOnly, Category = "Autopilot") float NavDistanceKm = -1.f;
+	void SetAutopilot(int32 Mode, double StandoffKm, float Seconds);
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|Defence")
 	TObjectPtr<UShieldComponent> Shield;
 
@@ -497,7 +505,8 @@ public:
 
 	/** True while a debug "steer" command is driving the ship (the controller leaves steering alone). */
 	UFUNCTION(BlueprintPure, Category = "Starship")
-	bool IsDebugSteering() const { return DebugSteerTime > 0.f; }
+	/** The controller leaves the steering alone while a debug steer or the autopilot owns it. */
+	bool IsDebugSteering() const { return DebugSteerTime > 0.f || AutopilotState != 0; }
 
 	UFUNCTION(BlueprintPure, Category = "Starship")
 	bool IsDebugVertical() const { return DebugVerticalTime > 0.f; }
@@ -572,6 +581,12 @@ private:
 	int32 LastTorpedoesFired = 0;
 	FVector DebugSteer = FVector::ZeroVector;
 	float DebugSteerTime = 0.f;
+	double AutopilotStandoffCm = 0.0;
+	float AutopilotSeconds = 5.f;
+	bool bAutopilotWarpEngaged = false;
+	FVector2D AutopilotPrevError = FVector2D::ZeroVector;
+	float AutopilotLogTimer = 0.f;
+	void TickAutopilot(float DeltaTime);
 	FVector2D DebugLook = FVector2D::ZeroVector;
 	float DebugLookTime = 0.f;
 	float DebugVertical = 0.f;

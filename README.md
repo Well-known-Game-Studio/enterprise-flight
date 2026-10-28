@@ -1,6 +1,8 @@
 # enterprise-flight
 
-<img width="100%" alt="Full impulse at the ringed ice giant Caerulea: the planet grows from a point to fill the view, and the ship brakes over its rings" src="docs/media/approach_caerulea.webp" />
+<img width="100%" alt="The highlight run: down a canyon on the Earth-like world at 250 m/s, up through the cloud deck into orbit, warp across the system to the icy moon of the ringed ice giant Caerulea, on into the nebula beyond it, and warp home to the night side of Starbase 11" src="docs/media/highlight.webp" />
+
+Two and a half minutes in one take, flown by the ship's autopilot: the inner gorge of a canyon on the Earth-like world, the climb out through the clouds, a moment in low orbit, warp 9.9 across 2.9 billion km to Caerulea I with its ringed ice giant standing over the lineae, full impulse into the Caerulea Nebula, and warp back to the night side of Starbase 11 with its windows lit.
 
 A flyable, life-size Star Trek solar system in Unreal Engine 5.8. You fly a kinematic Enterprise with impulse and warp drive through a procedurally generated star system at real scale: planets with terrain, atmospheres, clouds and rings, an asteroid belt, spinning space stations, patrolling starships that warp between them, a Borg cube, and combat with shields, phasers, torpedoes and a tractor beam. A floating origin keeps AU-scale distances precise, and the Star Trek VI bridge set gives a first-person view from the captain's chair.
 
@@ -9,6 +11,8 @@ The project lives in `unreal/` (open `Slonk.uproject` in UE 5.8, build the `Slon
 ## Scale
 
 The system is real size. Planets are thousands of kilometres across, orbits are tenths of an AU to tens of AU apart, and the ship is 305 m long, so nothing is faked with a skybox: the planet behind the station below really is 23,000 km away. Full impulse is a quarter of the speed of light, with a throttle curve that still gives km/s precision near a station.
+
+<img width="100%" alt="Full impulse at the ringed ice giant Caerulea: the planet grows from a point to fill the view, and the ship brakes over its rings" src="docs/media/approach_caerulea.webp" />
 
 <img width="100%" alt="Leaving Starbase 11 looking aft: a slow drift past the station, then full impulse, and the planet behind it shrinks to a coin in ten seconds" src="docs/media/leaving_orbit.webp" />
 
@@ -30,10 +34,31 @@ Every world is generated at real scale from a seed. The height field is computed
 
 Down the inner gorge of a canyon on the Earth-like world at 250 m/s, 150 m above the floor. The walls are a stack of strata of hashed thickness and hardness: hard layers stand as cliffs, soft ones slump into scree, and each bench wanders along the canyon on its own. Side canyons cut into the walls every few kilometres from a second, denser line field held to the ones that run into the trunk rather than along it; each reaches a varying distance into the plateau and ends in an amphitheatre where its floor climbs back through the strata. The ground is dressed with four tileable texture sets (bedded cliff, talus, desert soil, scrub) baked in Blender from procedural shaders on a 4-D torus so they wrap, packed to colour + height and normal + occlusion + roughness, and chosen per pixel by slope, rock and moisture. They are laid down in 20 m hashed cells of a planet-local lattice, each with its own heading in a frame tied to the ground and projected triplanar within it, so 5 m tiles never line up into a quilt and the beds stay horizontal on the cliffs; the sets modulate the procedural colour rather than replace it. `tools/planet_materials/bake_terrain_textures.py` bakes them and `import_terrain_textures.py` imports them headless.
 
-<img width="49%" alt="An Earth-like world from three radii out" src="https://github.com/user-attachments/assets/42d6cd62-72c5-4062-8516-d1e837b71ad9" /> <img width="49%" alt="Low orbit over the Earth-like world: ocean, coast and terrain" src="https://github.com/user-attachments/assets/c009fe6d-9786-43b7-af09-f8cceb31af4e" />
-<img width="49%" alt="Night side of the Earth-like world with its terminator" src="https://github.com/user-attachments/assets/5d5dcfbd-dbcd-4764-bb0a-a9618feb1355" /> <img width="49%" alt="An ocean world under cloud" src="https://github.com/user-attachments/assets/cb9d117b-40a4-45d1-a7de-e977e17f2306" />
-<img width="49%" alt="Sunrise over the ocean world from low orbit" src="https://github.com/user-attachments/assets/468df791-4dfd-4ce7-9a3e-53fdeefb1297" /> <img width="49%" alt="The ringed gas giant with the ring shadow across it" src="https://github.com/user-attachments/assets/3c48e414-9391-438a-a735-2e00a7918409" />
-<img width="49%" alt="A lava world glowing through its crust" src="https://github.com/user-attachments/assets/5ff6c174-db00-460d-ae95-16fe0cceaa0d" /> <img width="49%" alt="The star up close, photosphere and corona" src="https://github.com/user-attachments/assets/3d069559-7eeb-43a1-a4a9-e001e798e566" />
+<img width="100%" alt="The canyon from 1.5 km over the rim: side canyons branching off the trunk, their stepped walls and amphitheatre heads" src="docs/media/side_canyons.webp" />
+
+<img width="100%" alt="Along a shore of the Earth-like world at 60 m: the swell, the surf line and the sand through the shallows" src="docs/media/coast.webp" />
+
+<img width="100%" alt="Up through the cloud deck from the canyon rim: into and over the cumulus, the volumetric layer that throws its shadows on the ground" src="docs/media/clouds.webp" />
+
+<img width="49%" alt="An Earth-like world from three radii out" src="docs/media/still_earthlike.jpg" /> <img width="49%" alt="The Earth-like world along its terminator from two radii out" src="docs/media/still_nightside.jpg" />
+<img width="49%" alt="A Venus from 80 km up: the top of the sulphuric cloud deck" src="docs/media/still_venus.jpg" /> <img width="49%" alt="A Mars from 25 km up: dunes, rock and a thin pink sky" src="docs/media/still_mars.jpg" />
+<img width="49%" alt="Sunrise over the ocean world from low orbit" src="docs/media/still_ocean.jpg" /> <img width="49%" alt="A lava world glowing through its crust" src="docs/media/still_lava.jpg" />
+
+## Moons
+
+Every ringed giant has an icy moon the size of Europa just outside its rings and a hazy moon the size of Titan further out. The icy moons carry lineae, long double-ridged cracks in the crust stained brown along their floors; the hazy moons keep an orange photochemical haze from 30 to 90 km that turns the sky from below. `terrain goto linea 300 giant` lands on a crack facing the giant.
+
+<img width="100%" alt="Lift-off from the surface of Caerulea I, the icy moon, with the ringed ice giant standing over the lineae" src="docs/media/moon_giant.webp" />
+
+<img width="49%" alt="The hazy moon from 60 km inside its haze: an orange sky" src="docs/media/still_hazymoon.jpg" /> <img width="49%" alt="The lineae of Caerulea I from 100 km" src="docs/media/still_lineae.jpg" />
+
+## Nebulae
+
+A nebula is a sphere of gas the ship can fly into: the material ray-marches it from the camera to the far side or the first thing in the way, through domain-warped noise that thins toward a ragged edge, scattering the star's light and the gas's own glow, and the transmittance left over veils whatever lies behind. One a light-second across lies beyond each ringed giant; the nav list knows them.
+
+<img width="100%" alt="Full impulse into the Caerulea Nebula from two and a half radii out, through the ragged edge into the glow" src="docs/media/nebula_fly.webp" />
+
+<img width="49%" alt="The Planet4 Nebula from three radii out" src="docs/media/still_nebula.jpg" /> <img width="49%" alt="A moon of the giant seen from inside the nebula's edge, its night side lit by the glow" src="docs/media/still_nebula_moon.jpg" />
 
 ## Ships and stations
 
@@ -43,8 +68,7 @@ Every station orbits a planet and every planet has traffic: Constitution, Mirand
 
 <img width="100%" alt="A patrolling ship arrives from warp ahead and to starboard, streak first, ship at its head" src="docs/media/ship_warp_in.webp" />
 
-<img width="49%" alt="Enterprise backlit by the sun, floodlights on the saucer" src="https://github.com/user-attachments/assets/d28d66e8-8809-415b-a66c-914168c3e37b" /> <img width="49%" alt="Enterprise from the cinematic camera" src="https://github.com/user-attachments/assets/1f9b075a-93bb-4f57-9bda-a464eb4525b8" />
-<img width="49%" alt="Station hub and ring windows up close" src="https://github.com/user-attachments/assets/2fd5cd50-4258-4961-9fa9-efedcf7c1cbb" /> <img width="49%" alt="Traffic ship night side with window rows and floodlights" src="https://github.com/user-attachments/assets/b44cbb1b-cc35-4750-85e5-37ebffd8a360" />
+<img width="49%" alt="Enterprise backlit by the sun, floodlights on the saucer" src="docs/media/still_enterprise.jpg" /> <img width="49%" alt="Starbase 11 on its night side, windows and docking ring lit" src="docs/media/still_station.jpg" />
 
 ## Combat
 

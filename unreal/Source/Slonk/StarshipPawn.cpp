@@ -1204,6 +1204,7 @@ void AStarshipPawn::Tick(float DeltaTime)
 		// Movement ticks before this (pre-physics); set the input it will consume next frame.
 		Movement->SetSteeringInput(DebugSteer.X, DebugSteer.Y, DebugSteer.Z);
 	}
+	TickAutopilot(DeltaTime);
 	if (DebugLookTime > 0.f)
 	{
 		DebugLookTime -= DeltaTime;
@@ -1572,6 +1573,14 @@ void AStarshipPawn::ProcessDebugCommand()
 			}
 		}
 	}
+	else if (Op == TEXT("autopilot"))
+	{
+		// autopilot warp [standoff km] [seconds] | autopilot impulse [standoff km] [seconds] | autopilot off
+		const FString Mode = ArgStr(1);
+		if (Mode == TEXT("warp")) { SetAutopilot(1, Arg(2, 200000.f), Arg(3, 1.f)); }
+		else if (Mode == TEXT("impulse")) { SetAutopilot(2, Arg(2, 5.f), Arg(3, 0.5f)); }
+		else { SetAutopilot(0, 0.0, 0.f); }
+	}
 	else if (Op == TEXT("hover") && Movement)
 	{
 		// hover <metres> [canyon] follows the ground at that height, steering along the canyon if asked; hover off releases.
@@ -1617,6 +1626,24 @@ void AStarshipPawn::ProcessDebugCommand()
 			const FString Heading = ArgStr(4);
 			FVector Fwd = Heading == TEXT("sun") ? Sun : (Heading == TEXT("away") ? -Sun : FVector::CrossProduct(Up, Sun));
 			if (Giant) { Fwd = (Giant->GetActorLocation() - Pos).GetSafeNormal(); }
+			if (Heading == TEXT("sea"))
+			{
+				// Toward the nearest water: sample sixteen bearings out to 12 km and take the closest wet one.
+				const FPlanetTerrainParams& TP = Planet->Terrain->GetParams();
+				const FVector E = FVector::CrossProduct(FVector::ZAxisVector, Dir).GetSafeNormal();
+				const FVector Nn = FVector::CrossProduct(Dir, E).GetSafeNormal();
+				double BestKm = 1e9; FVector BestD = FVector::ZeroVector;
+				for (int32 b = 0; b < 16; ++b)
+				{
+					const double A = b * UE_DOUBLE_PI / 8.0;
+					const FVector T2 = E * FMath::Cos(A) + Nn * FMath::Sin(A);
+					for (double Km = 0.3; Km < 12.0 && Km < BestKm; Km += 0.3)
+					{
+						if (SlonkTerrain::SampleStructure(TP, (Dir + T2 * (Km * 1.0e5 / Planet->GetRadiusCm())).GetSafeNormal(), 2.0e5).bWater) { BestKm = Km; BestD = T2; break; }
+					}
+				}
+				if (!BestD.IsNearlyZero()) { Fwd = TT.TransformVectorNoScale(BestD).GetSafeNormal(); }
+			}
 			if (Heading == TEXT("along"))
 			{
 				// Along the canyon: of eight headings, the one along which the depth of the cut changes least over
@@ -1767,7 +1794,12 @@ void AStarshipPawn::ProcessDebugCommand()
 				else if (What == TEXT("clear")) { H->ClearNavTarget(); }
 				else if (What == TEXT("markers")) { H->ToggleNavMarkers(); }
 				else if (What == TEXT("map")) { H->ToggleMinimap(); }
-				else if (What == TEXT("target")) { H->SetNavTargetByName(ArgStr(2)); }
+				else if (What == TEXT("target"))
+				{
+					// The rest of the line is the name, so "nav target Caerulea I" finds the moon and not the planet.
+					FString Name; for (int32 i = 2; i < Args.Num(); ++i) { Name += (i > 2 ? TEXT(" ") : TEXT("")) + Args[i]; }
+					UE_LOG(LogTemp, Log, TEXT("nav target %s: %s"), *Name, H->SetNavTargetByName(Name) ? TEXT("set") : TEXT("not found"));
+				}
 			}
 		}
 	}
@@ -1775,6 +1807,137 @@ void AStarshipPawn::ProcessDebugCommand()
 	{
 		UE_LOG(LogTemp, Warning, TEXT("Starship debug command not understood: %s"), *Cmd);
 	}
+}
+
+void AStarshipPawn::SetAutopilot(int32 Mode, double StandoffKm, float Seconds)
+{
+	AutopilotState = Mode;
+	AutopilotStandoffCm = StandoffKm * 1.0e5;
+	AutopilotSeconds = FMath::Max(Seconds, 0.5f);
+	bAutopilotWarpEngaged = false;
+	if (Mode == 0 && Movement) { Movement->SetSteeringInput(0.f, 0.f, 0.f); }
+	if (Mode == 0 && WarpDrive) { WarpDrive->CruiseSpeedResponse = 1.5f; }
+	UE_LOG(LogTemp, Log, TEXT("autopilot %d standoff %.0f km over %.1f s"), Mode, StandoffKm, Seconds);
+}
+
+void AStarshipPawn::TickAutopilot(float DeltaTime)
+{
+	NavDistanceKm = -1.f;
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	AStarshipHUD* H = PC ? Cast<AStarshipHUD>(PC->GetHUD()) : nullptr;
+	FNavObject O;
+	if (!H || !H->GetNavTargetInfo(O))
+	{
+		if (AutopilotState != 0) { SetAutopilot(0, 0.0, 0.f); }
+		return;
+	}
+	const FVector Here = GetActorLocation();
+	const FVector Rel = O.Location - Here;
+	const double Dist = Rel.Size();
+	NavDistanceKm = (float)(Dist / 1.0e5);
+	if (AutopilotState == 0 || !Movement || Dist < 1.0) { return; }
+	// Hold the nose on the target: the bearing error in the ship's frame drives the steering.
+	const FVector D = Rel / Dist;
+	const double Yaw = FMath::RadiansToDegrees(FMath::Atan2(FVector::DotProduct(D, GetActorRightVector()), FVector::DotProduct(D, GetActorForwardVector())));
+	const double Pitch = FMath::RadiansToDegrees(FMath::Asin(FMath::Clamp(FVector::DotProduct(D, GetActorUpVector()), -1.0, 1.0)));
+	const bool bAtWarp = WarpDrive && WarpDrive->IsWarpEngaged();
+	// Proportional on the bearing error with a derivative term against the turn rate, so the nose settles instead
+	// of hunting about the target; the movement scales steering down at warp, so the gain goes up there.
+	const double Gain = bAtWarp ? 0.3 : 0.1;
+	const double Kd = bAtWarp ? 0.05 : 0.02;
+	const FVector2D Err(Pitch, Yaw);
+	const FVector2D Rate = DeltaTime > 1e-4f ? (Err - AutopilotPrevError) / DeltaTime : FVector2D::ZeroVector;
+	AutopilotPrevError = Err;
+	Movement->SetSteeringInput((float)FMath::Clamp(Pitch * Gain + Rate.X * Kd, -1.0, 1.0), (float)FMath::Clamp(Yaw * Gain + Rate.Y * Kd, -1.0, 1.0), 0.f);
+	const bool bAligned = FMath::Abs(Yaw) < 1.0 && FMath::Abs(Pitch) < 1.0;
+	AutopilotLogTimer -= DeltaTime;
+	if (AutopilotLogTimer <= 0.f)
+	{
+		AutopilotLogTimer = 1.f;
+		UE_LOG(LogTemp, Log, TEXT("autopilot %d: %.0f km, yaw %.2f pitch %.2f%s warp %d"), AutopilotState, Dist / 1.0e5, Yaw, Pitch, bAligned ? TEXT(" aligned") : TEXT(""), bAtWarp ? 1 : 0);
+	}
+	const double C = 2.99792458e10;
+	// A body on the straight path to the target: at warp it throttles the field and the drive drops out, on
+	// impulse the governor stops the ship short of it. Steer for the point beside the body where the path would
+	// pass closest, pushed out to 1.6 radii, at up to three thousand km/s, until the path is clear.
+	auto ClimbOut = [&]() -> bool
+	{
+		AActor* Block = nullptr; FVector BlockP = FVector::ZeroVector; double BlockR = 0.0, BlockT = TNumericLimits<double>::Max();
+		auto Test = [&](AActor* A, double Rad)
+		{
+			const FVector Cc = A->GetActorLocation();
+			const double Tt = FMath::Clamp(FVector::DotProduct(Cc - Here, D), 0.0, Dist);
+			if (Tt < 1.0 || Tt > Dist - 1.0) { return; }
+			const FVector Pp = Here + D * Tt;
+			if (FVector::Dist(Pp, Cc) < Rad * 1.3 && Tt < BlockT) { Block = A; BlockP = Pp; BlockR = Rad; BlockT = Tt; }
+		};
+		for (TActorIterator<APlanetBody> It(GetWorld()); It; ++It) { Test(*It, It->GetRadiusCm()); }
+		for (TActorIterator<AStarBody> It(GetWorld()); It; ++It) { Test(*It, It->GetRadiusCm()); }
+		if (!Block) { return false; }
+		const FVector Cc = Block->GetActorLocation();
+		FVector Away = (BlockP - Cc).GetSafeNormal();
+		if (Away.IsNearlyZero()) { Away = FVector::CrossProduct(D, FVector::UpVector).GetSafeNormal(); }
+		const FVector Goal = Cc + Away * (BlockR * 1.6);
+		const FVector Climb = (Goal - Here).GetSafeNormal();
+		const double CYaw = FMath::RadiansToDegrees(FMath::Atan2(FVector::DotProduct(Climb, GetActorRightVector()), FVector::DotProduct(Climb, GetActorForwardVector())));
+		const double CPitch = FMath::RadiansToDegrees(FMath::Asin(FMath::Clamp(FVector::DotProduct(Climb, GetActorUpVector()), -1.0, 1.0)));
+		Movement->SetSteeringInput((float)FMath::Clamp(CPitch * Gain, -1.0, 1.0), (float)FMath::Clamp(CYaw * Gain, -1.0, 1.0), 0.f);
+		const double V = FMath::Min(3.0e8, 0.9 * FMath::Sqrt(2.0 * Movement->ImpulseAcceleration * FVector::Dist(Goal, Here)));
+		Movement->SetThrottle(FMath::Abs(CYaw) < 8.0 && FMath::Abs(CPitch) < 8.0 ? FMath::Pow(V / Movement->FullImpulseSpeed, 1.0 / FMath::Max((double)Movement->ThrottleExponent, 0.1)) : 0.0);
+		return true;
+	};
+	if (AutopilotState == 1 && WarpDrive)
+	{
+		// The 1.2 s drop from warp 1 covers about half a light-second; disengage that far out.
+		const double DropCoverCm = C * 0.7;
+		if (!bAtWarp)
+		{
+			if (bAutopilotWarpEngaged)
+			{
+				// Dropped out at the standoff: ease the rest of the way on impulse.
+				AutopilotState = 2; AutopilotSeconds = 0.5f; bAutopilotWarpEngaged = false;
+				return;
+			}
+			if (Dist < AutopilotStandoffCm + DropCoverCm) { AutopilotState = 2; AutopilotSeconds = 0.5f; return; }
+			if (ClimbOut()) { return; }
+			if (bAligned)
+			{
+				Movement->SetThrottle(0.0);
+				WarpDrive->SetWarpFactor((float)FMath::Clamp(FMath::Pow((Dist - AutopilotStandoffCm) / (C * AutopilotSeconds), 0.3), 1.0, 9.9));
+				// The cruise speed follows the factor with a lag; at the drive's 1.5 it trails the deceleration so
+				// far that the drop fires at hundreds of c and lands tens of millions of km short. 4 tracks it.
+				WarpDrive->CruiseSpeedResponse = 4.f;
+				WarpDrive->EngageWarp();
+				bAutopilotWarpEngaged = true;
+			}
+			return;
+		}
+		// At warp: the factor keeps the time to target at AutopilotSeconds, so the ship decelerates as it closes.
+		WarpDrive->SetWarpFactor((float)FMath::Clamp(FMath::Pow(FMath::Max(Dist - AutopilotStandoffCm, 1.0) / (C * AutopilotSeconds), 0.3), 1.0, 9.9));
+		// Drop out where the drop itself (1.2 s easing out from the speed we are actually doing) plus two frames
+		// of travel would land on the standoff: at the capture's fixed 24 fps step a warp 9.9 frame is twenty
+		// million km, so a fixed window is never hit and the ship overshoots and turns round at warp. And if the
+		// target is behind us we have passed it: drop at once.
+		const double Speed = FMath::Max(WarpDrive->GetCurrentWarpSpeed(), C);
+		const double DropAt = FMath::Max(C * 0.45, Speed * 1.2 * 0.3 + Speed * DeltaTime * 2.0);
+		if (Dist < AutopilotStandoffCm + DropAt || FMath::Abs(Yaw) > 90.0) { WarpDrive->DisengageWarp(); WarpDrive->CruiseSpeedResponse = 1.5f; }
+		return;
+	}
+	// Impulse: brake at nine tenths of the drive's acceleration from as fast as that allows (the speed that
+	// stops in the remaining distance), and ease the last stretch over AutopilotSeconds; the throttle is the
+	// inverse of the movement's power law.
+	// Done within a per cent of the standoff (or a kilometre): the ease-in approaches it asymptotically.
+	const double Remaining = Dist - AutopilotStandoffCm;
+	if (Remaining <= FMath::Max(1.0e5, AutopilotStandoffCm * 0.01))
+	{
+		Movement->SetThrottle(0.0);
+		SetAutopilot(0, 0.0, 0.f);
+		return;
+	}
+	if (ClimbOut()) { return; }
+	const double VBrake = 0.9 * FMath::Sqrt(2.0 * Movement->ImpulseAcceleration * Remaining);
+	const double V = FMath::Min3(VBrake, Remaining / AutopilotSeconds, Movement->FullImpulseSpeed);
+	Movement->SetThrottle(FMath::Pow(V / Movement->FullImpulseSpeed, 1.0 / FMath::Max((double)Movement->ThrottleExponent, 0.1)));
 }
 
 void AStarshipPawn::JumpToActor(AActor* Target, double TargetRadiusCm, float StandoffRadii)
