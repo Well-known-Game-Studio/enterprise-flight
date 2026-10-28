@@ -106,7 +106,7 @@ Every station orbits a planet and every planet has traffic: Constitution, Mirand
 
 https://github.com/user-attachments/assets/c3715b89-3650-4fff-abd2-6414bca71515
 
-https://github.com/user-attachments/assets/7bb976ab-5dcd-48d6-8b50-5a4faeaa0162
+https://github.com/user-attachments/assets/9d4fed35-9918-4979-8f7b-9d059d708661
 
 <img width="49%" alt="Enterprise backlit by the sun, floodlights on the saucer" src="docs/media/still_enterprise.jpg" /> <img width="49%" alt="Starbase 11 on its night side, windows and docking ring lit" src="docs/media/still_station.jpg" />
 
