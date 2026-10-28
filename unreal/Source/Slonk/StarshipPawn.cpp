@@ -1626,6 +1626,24 @@ void AStarshipPawn::ProcessDebugCommand()
 			const FString Heading = ArgStr(4);
 			FVector Fwd = Heading == TEXT("sun") ? Sun : (Heading == TEXT("away") ? -Sun : FVector::CrossProduct(Up, Sun));
 			if (Giant) { Fwd = (Giant->GetActorLocation() - Pos).GetSafeNormal(); }
+			if (Heading == TEXT("sea"))
+			{
+				// Toward the nearest water: sample sixteen bearings out to 12 km and take the closest wet one.
+				const FPlanetTerrainParams& TP = Planet->Terrain->GetParams();
+				const FVector E = FVector::CrossProduct(FVector::ZAxisVector, Dir).GetSafeNormal();
+				const FVector Nn = FVector::CrossProduct(Dir, E).GetSafeNormal();
+				double BestKm = 1e9; FVector BestD = FVector::ZeroVector;
+				for (int32 b = 0; b < 16; ++b)
+				{
+					const double A = b * UE_DOUBLE_PI / 8.0;
+					const FVector T2 = E * FMath::Cos(A) + Nn * FMath::Sin(A);
+					for (double Km = 0.3; Km < 12.0 && Km < BestKm; Km += 0.3)
+					{
+						if (SlonkTerrain::SampleStructure(TP, (Dir + T2 * (Km * 1.0e5 / Planet->GetRadiusCm())).GetSafeNormal(), 2.0e5).bWater) { BestKm = Km; BestD = T2; break; }
+					}
+				}
+				if (!BestD.IsNearlyZero()) { Fwd = TT.TransformVectorNoScale(BestD).GetSafeNormal(); }
+			}
 			if (Heading == TEXT("along"))
 			{
 				// Along the canyon: of eight headings, the one along which the depth of the cut changes least over
