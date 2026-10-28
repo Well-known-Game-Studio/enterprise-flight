@@ -70,7 +70,29 @@ void ASpaceTraffic::Populate()
 	bPopulated = true;
 	FSlonkScopeTimer Timer(TEXT("ASpaceTraffic::Populate"));
 	FRandomStream Rng(Seed);
-	int32 ShipIndex = 0, StationIndex = 0;
+	TArray<APlanetBody*> Planets;
+	for (TActorIterator<APlanetBody> It(World); It; ++It)
+	{
+		Planets.Add(*It);
+	}
+	PopulateWith(Planets, Rng, false);
+}
+
+void ASpaceTraffic::PopulatePlanets(const TArray<TObjectPtr<APlanetBody>>& Planets, int32 SeedValue)
+{
+	FRandomStream Rng(SeedValue);
+	TArray<APlanetBody*> List;
+	for (const TObjectPtr<APlanetBody>& P : Planets)
+	{
+		if (P) { List.Add(P); }
+	}
+	PopulateWith(List, Rng, true);
+}
+
+void ASpaceTraffic::PopulateWith(const TArray<APlanetBody*>& Planets, FRandomStream& Rng, bool bNameStationsByPlanet)
+{
+	UWorld* World = GetWorld();
+	if (!World) { return; }
 	auto SpawnShip = [&](const FVector& Loc, const FVector& Home, double Patrol)
 	{
 		// Deferred, so seed, size, colours and patrol data are in place when BeginPlay runs the one Rebuild.
@@ -91,21 +113,24 @@ void ASpaceTraffic::Populate()
 		Ship->FinishSpawning(Xf);
 		Spawned.Add(Ship);
 	};
-	for (TActorIterator<APlanetBody> It(World); It; ++It)
+	for (APlanetBody* Planet : Planets)
 	{
-		if (It->IsMoon())
+		if (!Planet || Planet->IsMoon())
 		{
 			continue;
 		}
-		const double R = It->GetRadiusCm();
+		const double R = Planet->GetRadiusCm();
 		const float A = Rng.FRandRange(0.f, 2.f * PI);
-		const FVector Loc = It->GetActorLocation() + FVector(FMath::Cos(A), FMath::Sin(A), 0.f) * R * StationOrbitRadii;
+		const FVector Loc = Planet->GetActorLocation() + FVector(FMath::Cos(A), FMath::Sin(A), 0.f) * R * StationOrbitRadii;
 		const FTransform StationXf(FRotator(Rng.FRandRange(-15.f, 15.f), Rng.FRandRange(0.f, 360.f), 0.f), Loc);
 		ASpaceStation* Station = World->SpawnActorDeferred<ASpaceStation>(ASpaceStation::StaticClass(), StationXf, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
 		if (!Station) { continue; }
 		Station->Seed = Rng.RandRange(1, 1 << 20);
-		Station->VesselName = StationNames[StationIndex++ % UE_ARRAY_COUNT(StationNames)];
-		Station->Style = StyleForName(Station->VesselName);
+		// Generated systems name their stations after the planet ("Sirius III Station"): the eight stock names
+		// are the home system's, and a nav target by name must be unique across systems.
+		const FString Stock = StationNames[StationIndex++ % UE_ARRAY_COUNT(StationNames)];
+		Station->VesselName = bNameStationsByPlanet ? Planet->GetDisplayName() + TEXT(" Station") : Stock;
+		Station->Style = StyleForName(Stock);
 		// Spacedock-type bases are the giants; the others are a kilometre or two across.
 		Station->SizeCm = Station->Style == EStationStyle::Spacedock ? Rng.FRandRange(450000.f, 650000.f) : Rng.FRandRange(150000.f, 300000.f);
 		Station->FinishSpawning(StationXf);

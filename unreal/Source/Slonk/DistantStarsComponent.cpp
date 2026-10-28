@@ -126,7 +126,12 @@ void UDistantStarsComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 		const double Blend = FMath::Clamp((Dist - AStarBody::FarSpriteDistanceCm) / FMath::Max(ScaleFullDistance - AStarBody::FarSpriteDistanceCm, 1.0), 0.0, 1.0);
 		const double SizeScale = FMath::Lerp(1.0, (double)ApparentSizeScale, Blend);
 		const double DiscWidth = 2.0 * StarRadius / Dist * SpriteDistance * SizeScale;
-		const double Width = FMath::Max(DiscWidth * (1.0 + GlowRadii), SpriteDistance * (double)MinAngularSize);
+		const double FarRatio = FMath::Clamp(FarDimStartCm / Dist, 0.0, 1.0);
+		const double FarGlow = FMath::Pow(FarRatio, (double)FarDimIntensityExp);
+		const double FarSize = FMath::Clamp(FMath::Pow(FarRatio, 0.25), 0.25, 1.0);
+		// A far star is a point: its colour is the photosphere's, not the corona's.
+		const FLinearColor FarColor = FMath::Lerp(Star->StarColor, Star->CoronaColor, (float)FarRatio);
+		const double Width = FMath::Max(DiscWidth * (1.0 + GlowRadii), SpriteDistance * (double)MinAngularSize * FarSize);
 
 		Sprite->SetRelativeLocation(Dir * SpriteDistance);
 		// The engine plane faces +Z; point it back at the viewer.
@@ -143,9 +148,9 @@ void UDistantStarsComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 			Mid->SetScalarParameterValue(TEXT("DiscIntensity"), Star->Intensity);
 			Mid->SetScalarParameterValue(TEXT("DiscLimbDarkening"), Star->LimbDarkening);
 			Mid->SetVectorParameterValue(TEXT("StarColor"), Star->StarColor);
-			Mid->SetVectorParameterValue(TEXT("CoronaColor"), Star->CoronaColor);
+			Mid->SetVectorParameterValue(TEXT("CoronaColor"), FarColor);
 			Mid->SetScalarParameterValue(TEXT("Falloff"), Star->CoronaFalloff);
-			Mid->SetScalarParameterValue(TEXT("Intensity"), Star->CoronaIntensity * GlowIntensityScale);
+			Mid->SetScalarParameterValue(TEXT("Intensity"), Star->CoronaIntensity * GlowIntensityScale * (float)FarGlow);
 		}
 	}
 	// Nebulae: a soft glow in the cloud's own colours, at its true angular size (never under the minimum), from
@@ -198,6 +203,7 @@ void UDistantStarsComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 		if (Dist < 1.0) { continue; }
 		const FVector Dir = To / Dist;
 		const double AngDeg = FMath::RadiansToDegrees(2.0 * FMath::Atan(Pl->GetRadiusCm() / Dist));
+		if (FMath::Square(Pl->GetRadiusCm() / Dist) < PlanetMinApparentArea) { continue; }
 		// Full beyond the horizon (nothing else is drawn there); inside it the sprite fades as the mesh grows
 		// from a few pixels to a readable disc.
 		const float Fade = Dist >= SlonkMaterials::RenderHorizonCm ? 1.f : 1.f - FMath::SmoothStep(PlanetMinApparentDeg, PlanetMinApparentDeg * 2.5f, (float)AngDeg);

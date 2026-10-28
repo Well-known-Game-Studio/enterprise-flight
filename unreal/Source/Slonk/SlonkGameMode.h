@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
+#include "StarSystem.h"
 #include "SlonkGameMode.generated.h"
 
 /**
@@ -81,6 +82,17 @@ public:
 	bool bSpawnShowcaseMoons = true;
 	bool bShowcaseMoonsSpawned = false;
 	void SpawnShowcaseMoons();
+
+	/** Neighbouring star systems generated at play start, each at its real-sky bearing and distance. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Systems")
+	bool bSpawnStarSystems = true;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Systems")
+	FString HomeSystemName = TEXT("Sol");
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Systems")
+	TArray<FStarSystemSpec> StarSystems;
+	void SpawnStarSystems();
+	bool bStarSystemsSpawned = false;
+	float AdoptTimer = 0.f;
 
 	/** Place a nebula out beyond each ringed giant on the first tick, named after it. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Testing")

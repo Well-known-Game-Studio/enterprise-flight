@@ -69,6 +69,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "HUD|Nav") void ToggleNavMarkers() { bShowNavMarkers = !bShowNavMarkers; }
 	UFUNCTION(BlueprintCallable, Category = "HUD|Nav") void ToggleMinimap() { bShowMinimap = !bShowMinimap; }
 	UFUNCTION(BlueprintCallable, Category = "HUD|Nav") void CycleNavTarget();
+	/** Whether a nav object is listed and marked from here: stars and nebulae always, anything else only within
+	 *  FarSystemCm (bodies of another star system project onto its star). */
+	bool IsNavListed(const FNavObject& O, double Dist) const;
+	static constexpr double FarSystemCm = 1.0e16;
 	/** Select a specific nav object; false if it is not in the gathered list. */
 	UFUNCTION(BlueprintCallable, Category = "HUD|Nav") bool SetNavTargetActor(AActor* Actor);
 	/** Select by actor name or label substring. */

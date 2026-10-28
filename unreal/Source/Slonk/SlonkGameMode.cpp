@@ -31,6 +31,13 @@ ASlonkGameMode::ASlonkGameMode()
 	DefaultPawnClass = AStarshipPawn::StaticClass();
 	PlayerControllerClass = AStarshipPlayerController::StaticClass();
 	HUDClass = AStarshipHUD::StaticClass();
+	// Three real neighbours of the Sun, at their sky bearings and distances (J2000), one star each.
+	{
+		FStarSystemSpec A; A.Name = TEXT("Alpha Centauri"); A.RightAscensionHours = 14.66f; A.DeclinationDeg = -60.83f; A.DistanceLy = 4.37f; A.StarClass = EStarClass::G; A.Seed = 4371;
+		FStarSystemSpec B; B.Name = TEXT("Barnard's Star"); B.RightAscensionHours = 17.96f; B.DeclinationDeg = 4.69f; B.DistanceLy = 5.96f; B.StarClass = EStarClass::M; B.Seed = 5963;
+		FStarSystemSpec C; C.Name = TEXT("Sirius"); C.RightAscensionHours = 6.75f; C.DeclinationDeg = -16.72f; C.DistanceLy = 8.6f; C.StarClass = EStarClass::A; C.Seed = 8601;
+		StarSystems = { A, B, C };
+	}
 }
 
 void ASlonkGameMode::InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage)
@@ -66,6 +73,19 @@ void ASlonkGameMode::DisableWorldBoundsChecks()
 	{
 		WorldSettings->bEnableWorldBoundsChecks = false;
 		WorldSettings->KillZ = -UE_OLD_HALF_WORLD_MAX;
+	}
+}
+
+void ASlonkGameMode::SpawnStarSystems()
+{
+	UWorld* World = GetWorld();
+	if (!World) { return; }
+	FSlonkScopeTimer Timer(TEXT("ASlonkGameMode::SpawnStarSystems"));
+	AStarSystem* Home = AStarSystem::CreateHome(World, HomeSystemName);
+	const FVector HomeStar = Home ? Home->GetStarLocation() : FVector::ZeroVector;
+	for (const FStarSystemSpec& Spec : StarSystems)
+	{
+		AStarSystem::Generate(World, Spec, HomeStar);
 	}
 }
 
@@ -170,11 +190,24 @@ void ASlonkGameMode::Tick(float DeltaTime)
 	{
 		UpdateStarLighting();
 	}
+	// Other systems first, so the moon and nebula passes cover their giants too.
+	if (!bStarSystemsSpawned)
+	{
+		bStarSystemsSpawned = true;
+		if (bSpawnStarSystems) { SpawnStarSystems(); }
+	}
 	if (bSpawnShowcaseMoons && !bShowcaseMoonsSpawned)
 	{
 		bShowcaseMoonsSpawned = true;
 		SpawnShowcaseMoons();
 		if (bSpawnNebulae) { SpawnNebulae(); }
+	}
+	// Bodies spawned later (moons, nebulae, traffic, the cube) hang from their system's anchor too.
+	AdoptTimer -= DeltaTime;
+	if (AdoptTimer <= 0.f)
+	{
+		AdoptTimer = 3.f;
+		for (TActorIterator<AStarSystem> It(GetWorld()); It; ++It) { It->AdoptLoose(); }
 	}
 	if (bUseSkyAtmosphere)
 	{
