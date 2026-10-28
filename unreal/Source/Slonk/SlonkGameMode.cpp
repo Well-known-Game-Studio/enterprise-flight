@@ -34,8 +34,10 @@ ASlonkGameMode::ASlonkGameMode()
 	// Three real neighbours of the Sun, at their sky bearings and distances (J2000), one star each.
 	{
 		FStarSystemSpec A; A.Name = TEXT("Alpha Centauri"); A.RightAscensionHours = 14.66f; A.DeclinationDeg = -60.83f; A.DistanceLy = 4.37f; A.StarClass = EStarClass::G; A.Seed = 4371;
+		A.CompanionClass = EStarClass::K; A.CompanionSeparationAU = 23.f;          // Alpha Centauri B, an orange K1 star
 		FStarSystemSpec B; B.Name = TEXT("Barnard's Star"); B.RightAscensionHours = 17.96f; B.DeclinationDeg = 4.69f; B.DistanceLy = 5.96f; B.StarClass = EStarClass::M; B.Seed = 5963;
 		FStarSystemSpec C; C.Name = TEXT("Sirius"); C.RightAscensionHours = 6.75f; C.DeclinationDeg = -16.72f; C.DistanceLy = 8.6f; C.StarClass = EStarClass::A; C.Seed = 8601;
+		C.CompanionClass = EStarClass::WhiteDwarf; C.CompanionSeparationAU = 20.f;  // Sirius B, the white dwarf
 		StarSystems = { A, B, C };
 	}
 }

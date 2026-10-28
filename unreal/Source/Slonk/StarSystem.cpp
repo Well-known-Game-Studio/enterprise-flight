@@ -93,9 +93,9 @@ AStarSystem* AStarSystem::CreateHome(UWorld* World, const FString& Name)
 	return Sys;
 }
 
-void AStarSystem::ApplyStarClass(AStarBody* S, FRandomStream& Rng) const
+void AStarSystem::ApplyStarClass(AStarBody* S, EStarClass Class, FRandomStream& Rng)
 {
-	switch (StarClass)
+	switch (Class)
 	{
 	case EStarClass::M:
 		S->RadiusKm = Rng.FRandRange(120000.f, 250000.f);
@@ -113,6 +113,12 @@ void AStarSystem::ApplyStarClass(AStarBody* S, FRandomStream& Rng) const
 		S->RadiusKm = Rng.FRandRange(1100000.f, 1400000.f);
 		S->StarColor = FLinearColor(0.85f, 0.9f, 1.0f); S->CoronaColor = FLinearColor(0.7f, 0.8f, 1.0f); S->Intensity = 110.f;
 		break;
+	case EStarClass::WhiteDwarf:
+		// Earth-sized and blazing: a point of blue-white light with a tight corona.
+		S->RadiusKm = Rng.FRandRange(5500.f, 7000.f);
+		S->StarColor = FLinearColor(0.8f, 0.88f, 1.0f); S->CoronaColor = FLinearColor(0.6f, 0.75f, 1.0f); S->Intensity = 140.f;
+		S->CoronaDepth = 1.2f;
+		break;
 	default:
 		S->RadiusKm = Rng.FRandRange(650000.f, 750000.f);
 		S->StarColor = FLinearColor(1.0f, 0.86f, 0.62f); S->CoronaColor = FLinearColor(1.0f, 0.72f, 0.4f); S->Intensity = 80.f;
@@ -120,35 +126,29 @@ void AStarSystem::ApplyStarClass(AStarBody* S, FRandomStream& Rng) const
 	}
 }
 
-AStarSystem* AStarSystem::Generate(UWorld* World, const FStarSystemSpec& Spec, const FVector& HomeStarLocation)
+double AStarSystem::LuminosityScale(EStarClass Class)
 {
-	if (!World) { return nullptr; }
-	const FVector Loc = HomeStarLocation + DirectionFromSky(Spec.RightAscensionHours, Spec.DeclinationDeg) * ((double)Spec.DistanceLy * LightYearCm);
-	FActorSpawnParameters SP; SP.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	AStarSystem* Sys = World->SpawnActor<AStarSystem>(AStarSystem::StaticClass(), Loc, FRotator::ZeroRotator, SP);
-	if (!Sys) { return nullptr; }
-	Sys->SystemName = Spec.Name;
-	Sys->Seed = Spec.Seed;
-	Sys->StarClass = Spec.StarClass;
-	FRandomStream Rng(Spec.Seed);
+	// Orbit scale of the temperate band relative to the Sun's: sqrt of the luminosity, roughly.
+	switch (Class)
+	{
+	case EStarClass::M: return 0.25;
+	case EStarClass::K: return 0.6;
+	case EStarClass::F: return 1.4;
+	case EStarClass::A: return 2.6;
+	case EStarClass::WhiteDwarf: return 0.1;
+	default: return 1.0;
+	}
+}
 
-	// The star. Spawned deferred so the class is applied before its appearance pass.
-	AStarBody* S = World->SpawnActorDeferred<AStarBody>(AStarBody::StaticClass(), FTransform(Loc), nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
-	if (!S) { return Sys; }
-	S->StarName = Spec.Name;
-	Sys->ApplyStarClass(S, Rng);
-	S->FinishSpawning(FTransform(Loc));
-	Sys->Star = S;
-	Sys->Adopt(S);
-
-	// Planets: a handful of orbits spaced geometrically outward from a few tenths of an AU, scaled by the star's
-	// luminosity so the temperate band sits where a world can keep water. Kinds by temperature band.
-	const double LumScale = Sys->StarClass == EStarClass::M ? 0.25 : Sys->StarClass == EStarClass::K ? 0.6 : Sys->StarClass == EStarClass::F ? 1.4 : Sys->StarClass == EStarClass::A ? 2.6 : 1.0;
-	const int32 Count = Rng.RandRange(4, 7);
+void AStarSystem::SpawnPlanets(UWorld* World, FRandomStream& Rng, const FVector& Centre, const FString& Prefix, EStarClass Class, int32 Count, double MaxAu, TArray<APlanetBody*>& Out)
+{
+	// Orbits spaced geometrically outward from a few tenths of an AU, scaled by the star's luminosity so the
+	// temperate band sits where a world can keep water. Kinds by temperature band.
+	const double LumScale = LuminosityScale(Class);
 	double OrbitAu = LumScale * Rng.FRandRange(0.3, 0.45);
 	static const TCHAR* Numerals[] = { TEXT("I"), TEXT("II"), TEXT("III"), TEXT("IV"), TEXT("V"), TEXT("VI"), TEXT("VII"), TEXT("VIII") };
 	const double Tilt = FMath::DegreesToRadians(Rng.FRandRange(-4.0, 4.0));
-	for (int32 i = 0; i < Count; ++i)
+	for (int32 i = 0; i < Count && OrbitAu <= MaxAu; ++i)
 	{
 		const double Band = OrbitAu / LumScale;       // 1 = Earth-equivalent insolation
 		EPlanetArchetype Kind; float RadiusKm;
@@ -176,28 +176,80 @@ AStarSystem* AStarSystem::Generate(UWorld* World, const FStarSystemSpec& Spec, c
 		}
 		const double A = Rng.FRandRange(0.0, 2.0 * PI);
 		const double R = OrbitAu * AuCm;
-		const FVector PLoc = Loc + FVector(FMath::Cos(A) * R, FMath::Sin(A) * R, FMath::Sin(A + 1.0) * R * FMath::Sin(Tilt));
+		const FVector PLoc = Centre + FVector(FMath::Cos(A) * R, FMath::Sin(A) * R, FMath::Sin(A + 1.0) * R * FMath::Sin(Tilt));
 		APlanetBody* P = World->SpawnActorDeferred<APlanetBody>(APlanetBody::StaticClass(), FTransform(PLoc), nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
 		if (P)
 		{
 			P->Archetype = Kind; P->RadiusKm = RadiusKm;
-			P->PlanetName = FString::Printf(TEXT("%s %s"), *Spec.Name, Numerals[FMath::Min(i, 7)]);
+			P->PlanetName = FString::Printf(TEXT("%s %s"), *Prefix, Numerals[FMath::Min(i, 7)]);
 			P->SeedLocation = PLoc; P->bSeedLocationSet = true;
 			P->FinishSpawning(FTransform(PLoc));
-			Sys->Adopt(P);
-			Sys->Planets.Add(P);
+			Adopt(P);
+			Planets.Add(P);
+			Out.Add(P);
 		}
 		OrbitAu *= Rng.FRandRange(1.55, 2.0);
 	}
+}
+
+AStarSystem* AStarSystem::Generate(UWorld* World, const FStarSystemSpec& Spec, const FVector& HomeStarLocation)
+{
+	if (!World) { return nullptr; }
+	const FVector Loc = HomeStarLocation + DirectionFromSky(Spec.RightAscensionHours, Spec.DeclinationDeg) * ((double)Spec.DistanceLy * LightYearCm);
+	FActorSpawnParameters SP; SP.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	AStarSystem* Sys = World->SpawnActor<AStarSystem>(AStarSystem::StaticClass(), Loc, FRotator::ZeroRotator, SP);
+	if (!Sys) { return nullptr; }
+	Sys->SystemName = Spec.Name;
+	Sys->Seed = Spec.Seed;
+	Sys->StarClass = Spec.StarClass;
+	FRandomStream Rng(Spec.Seed);
+
+	// The star. Spawned deferred so the class is applied before its appearance pass.
+	AStarBody* S = World->SpawnActorDeferred<AStarBody>(AStarBody::StaticClass(), FTransform(Loc), nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (!S) { return Sys; }
+	S->StarName = Spec.Name;
+	ApplyStarClass(S, Spec.StarClass, Rng);
+	S->FinishSpawning(FTransform(Loc));
+	Sys->Star = S;
+	Sys->Adopt(S);
+
+	// A companion star, in the orbital plane at the given separation.
+	const bool bBinary = Spec.CompanionClass != EStarClass::None && Spec.CompanionSeparationAU > 0.f;
+	FVector CLoc = Loc;
+	if (bBinary)
+	{
+		const double Ang = Rng.FRandRange(0.0, 2.0 * PI);
+		CLoc = Loc + FVector(FMath::Cos(Ang), FMath::Sin(Ang), 0.0) * ((double)Spec.CompanionSeparationAU * AuCm);
+		AStarBody* C = World->SpawnActorDeferred<AStarBody>(AStarBody::StaticClass(), FTransform(CLoc), nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+		if (C)
+		{
+			C->StarName = Spec.Name + TEXT(" B");
+			ApplyStarClass(C, Spec.CompanionClass, Rng);
+			C->FinishSpawning(FTransform(CLoc));
+			Sys->Companion = C;
+			Sys->Adopt(C);
+		}
+	}
+
+	// Planets: the primary's inside a third of the separation (a binary's stable zone), then a few of the
+	// companion's own.
+	TArray<APlanetBody*> Primary, Secondary;
+	const double MaxPrimaryAu = bBinary ? (double)Spec.CompanionSeparationAU * 0.3 : 1.0e9;
+	Sys->SpawnPlanets(World, Rng, Loc, Spec.Name, Spec.StarClass, Rng.RandRange(4, 7), MaxPrimaryAu, Primary);
+	if (bBinary && Sys->Companion)
+	{
+		Sys->SpawnPlanets(World, Rng, CLoc, Spec.Name + TEXT(" B"), Spec.CompanionClass, Rng.RandRange(1, 3), (double)Spec.CompanionSeparationAU * 0.3, Secondary);
+	}
 
 	// A belt in the first gap past the temperate band, two systems in three.
-	if (Rng.FRand() < 0.67 && Sys->Planets.Num() >= 3)
+	if (Rng.FRand() < 0.67 && Primary.Num() >= 3)
 	{
 		double BeltAu = 0.0;
-		for (int32 i = 1; i < Sys->Planets.Num(); ++i)
+		const double LumScale = LuminosityScale(Spec.StarClass);
+		for (int32 i = 1; i < Primary.Num(); ++i)
 		{
-			const double R0 = FVector::Dist(Sys->Planets[i - 1]->GetActorLocation(), Loc) / AuCm;
-			const double R1 = FVector::Dist(Sys->Planets[i]->GetActorLocation(), Loc) / AuCm;
+			const double R0 = FVector::Dist(Primary[i - 1]->GetActorLocation(), Loc) / AuCm;
+			const double R1 = FVector::Dist(Primary[i]->GetActorLocation(), Loc) / AuCm;
 			if (R0 / LumScale > 1.2) { BeltAu = FMath::Sqrt(R0 * R1); break; }
 		}
 		if (BeltAu > 0.0)
@@ -221,6 +273,6 @@ AStarSystem* AStarSystem::Generate(UWorld* World, const FStarSystemSpec& Spec, c
 		TrafficIt->PopulatePlanets(Sys->Planets, Spec.Seed * 13 + 5);
 	}
 	Sys->AdoptLoose();
-	UE_LOG(LogTemp, Log, TEXT("Star system %s: class %d star, %d planets, %.2f ly at RA %.1fh Dec %.0f"), *Spec.Name, (int32)Spec.StarClass, Sys->Planets.Num(), Spec.DistanceLy, Spec.RightAscensionHours, Spec.DeclinationDeg);
+	UE_LOG(LogTemp, Log, TEXT("Star system %s: class %d star%s, %d planets (%d of the companion), %.2f ly at RA %.1fh Dec %.0f"), *Spec.Name, (int32)Spec.StarClass, bBinary ? TEXT(" with a companion") : TEXT(""), Sys->Planets.Num(), Secondary.Num(), Spec.DistanceLy, Spec.RightAscensionHours, Spec.DeclinationDeg);
 	return Sys;
 }
