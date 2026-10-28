@@ -203,6 +203,12 @@ void ASpaceVessel::ApplyWindowParams(UMaterialInstanceDynamic* MID) const
 	MID->SetScalarParameterValue(TEXT("WindowDeck"), WindowDeck);
 	MID->SetScalarParameterValue(TEXT("WindowGlow"), WindowGlow);
 	MID->SetScalarParameterValue(TEXT("WindowOnFraction"), WindowOnFraction);
+	MID->SetVectorParameterValue(TEXT("WindowRingA"), FLinearColor((float)WindowRingA.X, (float)WindowRingA.Y, (float)WindowRingA.Z, 1.f));
+	MID->SetScalarParameterValue(TEXT("WindowRingAHeight"), (float)WindowRingA.W);
+	MID->SetVectorParameterValue(TEXT("WindowRingB"), FLinearColor((float)WindowRingB.X, (float)WindowRingB.Y, (float)WindowRingB.Z, 1.f));
+	MID->SetScalarParameterValue(TEXT("WindowRingBHeight"), (float)WindowRingB.W);
+	MID->SetScalarParameterValue(TEXT("WindowPaneW"), WindowPaneW);
+	MID->SetScalarParameterValue(TEXT("WindowPaneH"), WindowPaneH);
 }
 
 void ASpaceVessel::Rebuild()
@@ -1327,10 +1333,14 @@ void ASpaceStation::BuildMeshes(UDynamicMesh* HM, UDynamicMesh* GM, FRandomStrea
 		const float P = Rng.FRand();
 		S = P < 0.35f ? EStationStyle::Spacedock : (P < 0.55f ? EStationStyle::K7 : (P < 0.75f ? EStationStyle::Regula : EStationStyle::Ring));
 	}
-	// Panes the size of a ship's, not scaled with the station: at D * 0.012 a 4 km station had 50 m windows.
-	WindowPitch = 550.f;
-	WindowDeck = 380.f;
+	// Panes a little larger than a ship's, not scaled with the station (at D * 0.012 a 4 km station had 50 m
+	// windows): decks of 5.2 m at an 8 m pitch read as lit decks from the kilometres a station is seen from.
+	WindowPitch = 800.f;
+	WindowDeck = 520.f;
 	WindowOnFraction = 0.4f;
+	WindowGlow = 32.f;
+	WindowPaneW = 0.45f;
+	WindowPaneH = 0.35f;
 	const float Bulb = D * 0.0007f;
 	auto Dir = [](float Deg) { const float A = FMath::DegreesToRadians(Deg); return FVector(FMath::Cos(A), FMath::Sin(A), 0.f); };
 	auto Beacon = [&](const FVector& P, float Phase) { PendingLights.Add(FRunningLight(P, RL::PortRed(), ERunningLightMode::Blink, 1.4f, Phase, Bulb * 1.6f)); };
@@ -1384,6 +1394,9 @@ void ASpaceStation::BuildMeshes(UDynamicMesh* HM, UDynamicMesh* GM, FRandomStrea
 		WindowSaucerCenter = FVector(0.f, 0.f, D * 0.3f);
 		WindowSaucerRadius = D * 0.5f;
 		WindowSaucerThickness = D * 0.06f;
+		// Decks down the shaft and round the lower pod.
+		WindowRingA = FVector4(-D * 0.27, 0.0, D * 0.095, D * 0.26);
+		WindowRingB = FVector4(-D * 0.5, 0.0, D * 0.2, D * 0.1);
 		Beacon(FVector(0.f, 0.f, D * 0.67f + Bulb), 0.f);
 		Beacon(FVector(0.f, 0.f, -D * 0.62f - Bulb), 0.5f);
 		StrobeRing(D * 0.505f, D * 0.29f, 12, 0.f);
@@ -1414,6 +1427,9 @@ void ASpaceStation::BuildMeshes(UDynamicMesh* HM, UDynamicMesh* GM, FRandomStrea
 		WindowSaucerCenter = FVector::ZeroVector;
 		WindowSaucerRadius = D * 0.1f;
 		WindowSaucerThickness = D * 0.1f;
+		// The three pods and the arms out to them.
+		WindowRingA = FVector4(0.0, D * 0.4, D * 0.11, D * 0.09);
+		WindowRingB = FVector4(0.0, D * 0.25, D * 0.06, D * 0.035);
 		Beacon(FVector(0.f, 0.f, D * 0.32f + Bulb), 0.f);
 		Beacon(FVector(0.f, 0.f, -D * 0.17f - Bulb), 0.5f);
 		break;
@@ -1439,6 +1455,9 @@ void ASpaceStation::BuildMeshes(UDynamicMesh* HM, UDynamicMesh* GM, FRandomStrea
 		WindowSaucerCenter = FVector(0.f, 0.f, -D * 0.1f);
 		WindowSaucerRadius = D * 0.14f;
 		WindowSaucerThickness = D * 0.1f;
+		// Decks down the column and round the dome above the platform.
+		WindowRingA = FVector4(-D * 0.12, 0.0, D * 0.075, D * 0.27);
+		WindowRingB = FVector4(D * 0.3, 0.0, D * 0.27, D * 0.09);
 		Beacon(FVector(0.f, 0.f, D * 0.41f + Bulb), 0.f);
 		Beacon(FVector(0.f, 0.f, -D * 0.62f - Bulb), 0.5f);
 		StrobeRing(D * 0.425f, D * 0.185f, 8, 0.f);
@@ -1472,6 +1491,9 @@ void ASpaceStation::BuildMeshes(UDynamicMesh* HM, UDynamicMesh* GM, FRandomStrea
 		WindowSaucerCenter = FVector::ZeroVector;
 		WindowSaucerRadius = D * 0.08f;
 		WindowSaucerThickness = D * 0.14f;
+		// Decks all round the wheel, and along the spokes.
+		WindowRingA = FVector4(0.0, Major, RW * 1.1, RH * 1.05);
+		WindowRingB = FVector4(0.0, (Major + D * 0.08) * 0.5, (Major - D * 0.08) * 0.5, RH * 0.5);
 		Beacon(FVector(0.f, 0.f, D * 0.31f + Bulb), 0.f);
 		Beacon(FVector(0.f, 0.f, -D * 0.17f - Bulb), 0.5f);
 		StrobeRing(Major + RW * 1.05f, 0.f, Spokes * 2, 180.f / (Spokes * 2));

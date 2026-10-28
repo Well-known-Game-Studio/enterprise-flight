@@ -30,6 +30,19 @@ public:
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Lighting")
 	bool bTrackStarLighting = true;
+	/** Sunlight falls off with distance from the star. The level's light intensity is taken as the sunlight of a
+	 *  Sun-sized star at SunlightReferenceAU; from there it follows the inverse square (scaled by the star's
+	 *  radius squared) but never drops below SunlightFloorFraction while within SunlightFloorToAU, and the floor
+	 *  fades to black by SunlightDarkAU, so the outer planets stay readable and the space between stars is dark. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Lighting")
+	float SunlightReferenceAU = 1.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Lighting")
+	float SunlightFloorFraction = 0.08f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Lighting")
+	float SunlightFloorToAU = 100.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Lighting")
+	float SunlightDarkAU = 1000.f;
+	float BaseSunlightLux = -1.f;
 
 	/** Keeps the ship near the origin and shifts the universe around it (real-scale systems). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Slonk|Scale")

@@ -542,6 +542,19 @@ void ASlonkGameMode::UpdateStarLighting()
 				{
 					LightComp->SetLightColor(Wanted);
 				}
+				// Brightness by distance: inverse square from the reference, floored for the outer system, black
+				// between the stars.
+				if (BaseSunlightLux < 0.f) { BaseSunlightLux = LightComp->Intensity; }
+				const double DistAU = FVector::Dist(Here, Star->GetActorLocation()) / 1.495978707e13;
+				const double Lum = FMath::Square((double)StarBody->RadiusKm / 696000.0);
+				double Frac = Lum * FMath::Square((double)SunlightReferenceAU / FMath::Max(DistAU, 1.0e-3));
+				const double FloorFade = 1.0 - FMath::Clamp((DistAU - SunlightFloorToAU) / FMath::Max(SunlightDarkAU - SunlightFloorToAU, 1.0), 0.0, 1.0);
+				Frac = FMath::Clamp(FMath::Max(Frac, (double)SunlightFloorFraction * FloorFade), 0.0, 1.0);
+				const float WantedLux = BaseSunlightLux * (float)Frac;
+				if (!FMath::IsNearlyEqual(LightComp->Intensity, WantedLux, FMath::Max(BaseSunlightLux * 0.002f, 0.001f)))
+				{
+					LightComp->SetIntensity(WantedLux);
+				}
 			}
 		}
 	}

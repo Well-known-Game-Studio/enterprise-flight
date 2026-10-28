@@ -145,6 +145,13 @@ protected:
 	float WindowHullMaxX = 1.0e9f;
 	float WindowPitch = 600.f;
 	float WindowDeck = 400.f;
+	/** Two annulus zones about the vessel's own axis (centre z, major radius, half width, half height; width 0 = off):
+	 *  a wheel's ring, or with major radius 0 a vertical cylinder such as a station's shaft or pod cluster. */
+	FVector4 WindowRingA = FVector4(0.0, 0.0, 0.0, 0.0);
+	FVector4 WindowRingB = FVector4(0.0, 0.0, 0.0, 0.0);
+	/** Pane size as a fraction of the pitch and the deck (a ship's are small; a station's are wider and taller). */
+	float WindowPaneW = 0.2f;
+	float WindowPaneH = 0.12f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vessel")
 	float WindowGlow = 25.f;
 	/** Fraction of windows lit at any moment (each is on or off; the pattern re-rolls slowly over time). */
