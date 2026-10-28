@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "FarBody.h"
 #include "Nebula.generated.h"
 
 class UStaticMeshComponent;
@@ -12,7 +13,7 @@ class UMaterialInstanceDynamic;
 class UMaterialInterface;
 
 UCLASS()
-class SLONK_API ANebula : public AActor
+class SLONK_API ANebula : public AActor, public IFarBody
 {
 	GENERATED_BODY()
 
@@ -57,12 +58,18 @@ public:
 	UFUNCTION(BlueprintCallable, CallInEditor, Category = "Nebula")
 	void ApplyAppearance();
 
+	/** Beyond the render horizon the volume is switched off; the ship's distant-stars component draws a glow
+	 *  sprite in its place, so the cloud is in view at warp long before the volume can be. */
+	virtual void SetBeyondHorizon(bool bBeyond) override;
+	virtual bool IsBeyondHorizon() const override { return bBeyondHorizon; }
+
 	virtual void OnConstruction(const FTransform& Transform) override;
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
 
 private:
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> MID;
+	bool bBeyondHorizon = false;
 	float StarTimer = 0.f;
 	void UpdateStar();
 };

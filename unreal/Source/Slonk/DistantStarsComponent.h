@@ -8,6 +8,8 @@
 #include "DistantStarsComponent.generated.h"
 
 class AStarBody;
+class ANebula;
+class APlanetBody;
 class UStaticMesh;
 class UStaticMeshComponent;
 class UMaterialInstanceDynamic;
@@ -64,6 +66,30 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Distant Stars")
 	float RescanInterval = 1.f;
 
+	/** Nebulae beyond the render horizon get a glow sprite too, once they subtend at least this many degrees. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Distant Stars")
+	float NebulaMinAngularDeg = 0.02f;
+
+	/** The sprite never reads smaller than this many degrees, so a distant nebula is a smudge and not a dot. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Distant Stars")
+	float NebulaMinApparentDeg = 3.f;
+
+	/** Glow brightness of a nebula sprite relative to its Brightness. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Distant Stars")
+	float NebulaGlowScale = 6.f;
+
+	/** Planets and moons beyond the horizon: a point of light this wide at least, a lit disc at the true angular
+	 *  size once that passes PlanetDiscMinDeg. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Distant Stars")
+	float PlanetMinApparentDeg = 0.3f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Distant Stars")
+	float PlanetDiscMinDeg = 0.06f;
+	/** Brightness of a planet disc (a lit white surface sits near 40 in this scene) and of its point of light. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Distant Stars")
+	float PlanetDiscIntensity = 24.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Distant Stars")
+	float PlanetPointIntensity = 40.f;
+
 private:
 	void Rescan();
 	UStaticMeshComponent* EnsureSprite(int32 Index);
@@ -72,5 +98,7 @@ private:
 	UPROPERTY() TArray<TObjectPtr<UStaticMeshComponent>> Sprites;
 	UPROPERTY() TArray<TObjectPtr<UMaterialInstanceDynamic>> SpriteMIDs;
 	TArray<TWeakObjectPtr<AStarBody>> Stars;
+	TArray<TWeakObjectPtr<ANebula>> Nebulae;
+	TArray<TWeakObjectPtr<APlanetBody>> Planets;
 	float RescanTimer = 0.f;
 };

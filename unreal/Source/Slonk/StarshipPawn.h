@@ -100,6 +100,9 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Autopilot") float NavDistanceKm = -1.f;
 	void SetAutopilot(int32 Mode, double StandoffKm, float Seconds);
 
+	/** Brightness of the star sphere, 0..1: the game mode fades it into a daylit sky. */
+	void SetStarFieldFade(float Fade);
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|Defence")
 	TObjectPtr<UShieldComponent> Shield;
 
@@ -586,6 +589,8 @@ private:
 	bool bAutopilotWarpEngaged = false;
 	FVector2D AutopilotPrevError = FVector2D::ZeroVector;
 	float AutopilotLogTimer = 0.f;
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> StarSphereMID;
+	float StarFieldFade = 1.f;
 	void TickAutopilot(float DeltaTime);
 	FVector2D DebugLook = FVector2D::ZeroVector;
 	float DebugLookTime = 0.f;
