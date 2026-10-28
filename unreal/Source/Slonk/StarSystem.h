@@ -15,7 +15,9 @@ enum class EStarClass : uint8
 	K UMETA(DisplayName = "K (orange)"),
 	G UMETA(DisplayName = "G (yellow)"),
 	F UMETA(DisplayName = "F (yellow-white)"),
-	A UMETA(DisplayName = "A (white)")
+	A UMETA(DisplayName = "A (white)"),
+	WhiteDwarf UMETA(DisplayName = "White dwarf"),
+	None UMETA(DisplayName = "None")
 };
 
 /** Where a neighbouring system sits: a real-sky bearing (right ascension, declination) and distance in light-years. */
@@ -29,6 +31,10 @@ struct FStarSystemSpec
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "System") float DeclinationDeg = 0.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "System") float DistanceLy = 4.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "System") EStarClass StarClass = EStarClass::G;
+	/** A companion star (None for a single star) this many AU from the primary. The primary's planets stay
+	 *  inside a third of the separation, where orbits are stable; the companion gets a few worlds of its own. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "System") EStarClass CompanionClass = EStarClass::None;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "System") float CompanionSeparationAU = 0.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "System") int32 Seed = 1;
 };
 
@@ -53,6 +59,7 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "System") int32 Seed = 0;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "System") EStarClass StarClass = EStarClass::G;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "System") TObjectPtr<AStarBody> Star;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "System") TObjectPtr<AStarBody> Companion;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "System") TArray<TObjectPtr<APlanetBody>> Planets;
 	/** Everything within this radius of the star belongs to the system (cm). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "System") double RadiusCm = 6.0e15;
@@ -77,6 +84,9 @@ public:
 	double DistanceFrom(const FVector& Location) const { return FVector::Dist(GetStarLocation(), Location); }
 
 private:
-	void ApplyStarClass(AStarBody* S, FRandomStream& Rng) const;
+	static void ApplyStarClass(AStarBody* S, EStarClass Class, FRandomStream& Rng);
+	static double LuminosityScale(EStarClass Class);
+	/** Planets on geometric orbits out from `StartAu` about `Centre`, named "<Prefix> I, II, ..." until MaxAu. */
+	void SpawnPlanets(UWorld* World, FRandomStream& Rng, const FVector& Centre, const FString& Prefix, EStarClass Class, int32 Count, double MaxAu, TArray<APlanetBody*>& Out);
 	UPROPERTY() TObjectPtr<USceneComponent> Anchor;
 };

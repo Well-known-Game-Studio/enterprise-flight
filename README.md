@@ -60,9 +60,19 @@ https://github.com/user-attachments/assets/77f7650e-2cd8-475f-9d0e-addd550871f8
 
 ## Star systems
 
-The Sun's three nearest real neighbours are in the sky at their true bearings and distances: Alpha Centauri (a yellow star, 4.37 light-years), Barnard's Star (a red dwarf, 5.96) and Sirius (a white star, 8.6). Each is a full system generated from a seed at play start: a star of its spectral class, four to seven planets placed by temperature band (lava and Venus-like worlds inside, Earth-like and ocean worlds in the temperate zone, giants and ice worlds beyond), rings and moons where the giants roll them, a belt in two systems out of three, a station with patrol ships at every planet, and a nebula past each ringed giant. Every body of a system hangs from one anchor, so the floating origin moves a system as a unit and a world keeps its exact place after a light-year crossing.
+The Sun's three nearest real neighbours are in the sky at their true bearings and distances: Alpha Centauri (a yellow star with an orange companion 23 AU out, 4.37 light-years), Barnard's Star (a red dwarf, 5.96) and Sirius (a white star with a white-dwarf companion 20 AU out, 8.6). Each is a full system generated from a seed at play start: a star of its spectral class, four to seven planets placed by temperature band (lava and Venus-like worlds inside, Earth-like and ocean worlds in the temperate zone, giants and ice worlds beyond), a companion star with a few worlds of its own where there is one, rings and moons where the giants roll them, a belt in two systems out of three, a station with patrol ships at every planet, and a nebula past each ringed giant. Every body of a system hangs from one anchor, so the floating origin moves a system as a unit and a world keeps its exact place after a light-year crossing.
 
 Getting there is a transwarp leg. Below warp 9.9 the drive follows the show's curve; above it the curve climbs toward the warp 10 asymptote, and warp 9.99 crosses a light-year in about fifteen seconds. `systems` lists the systems with their distances, `nav target Sirius` and `autopilot warp` fly there, and the HUD reads distances in light-years. The neighbouring suns are visible from home as points of their own colour, and on arrival the sunlight, the sky and the horizon hand-overs all belong to the new star.
+
+The leg to Alpha Centauri, flown by the autopilot: the jump beside the Earth-like world and the transwarp streaks, then the drop ten AU out with the two suns ahead:
+
+https://github.com/user-attachments/assets/d3d34352-bdb5-4363-a01e-ef90f61cbeea
+
+On to Alpha Centauri IV, the system's Earth-like world, its twin suns in the sky:
+
+https://github.com/user-attachments/assets/1217dacf-b4f1-4b20-89b8-4c7c6707035b
+
+<img width="100%" alt="The two suns of Alpha Centauri from ten AU out" src="docs/media/still_acen_suns.jpg" />
 
 ## Planets
 
