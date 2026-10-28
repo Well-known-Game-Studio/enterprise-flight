@@ -90,6 +90,17 @@ public:
 	float PlanetDiscIntensity = 12.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Distant Stars")
 	float PlanetPointIntensity = 6.f;
+	/** A planet sprite needs (radius / distance)^2 above this: in-system worlds pass (a giant at 19 AU is 1e-12),
+	 *  the planets of another star system (1e-20) do not. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Distant Stars")
+	double PlanetMinApparentArea = 1.0e-13;
+	/** Beyond this distance (cm, 50 AU) a star's glow dims as (FarDimStartCm / distance)^FarDimIntensityExp and
+	 *  its minimum glow size shrinks, so a neighbouring sun is a bright point of its own colour, not a second
+	 *  sun-sized glow. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Distant Stars")
+	double FarDimStartCm = 7.5e14;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Distant Stars")
+	float FarDimIntensityExp = 0.2f;
 
 private:
 	void Rescan();

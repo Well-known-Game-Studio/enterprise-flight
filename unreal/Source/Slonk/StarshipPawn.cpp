@@ -7,6 +7,7 @@
 #include "PlanetBody.h"
 #include "PlanetTerrainComponent.h"
 #include "StarBody.h"
+#include "StarSystem.h"
 #include "SpaceVessel.h"
 #include "EngineUtils.h"
 #include "SlonkGameMode.h"
@@ -1780,6 +1781,19 @@ void AStarshipPawn::ProcessDebugCommand()
 		TakeDamage(Arg(1, 15.f), E, nullptr, nullptr);
 	}
 	else if (Op == TEXT("jump")) { JumpToNavTarget(); }
+	else if (Op == TEXT("systems"))
+	{
+		// systems: list every star system with its distance.
+		for (TActorIterator<AStarSystem> It(GetWorld()); It; ++It)
+		{
+			const double D = It->DistanceFrom(GetActorLocation());
+			const FString Line = D > AStarSystem::LightYearCm * 0.01
+				? FString::Printf(TEXT("%s: %d planets, %.2f ly"), *It->SystemName, It->Planets.Num(), D / AStarSystem::LightYearCm)
+				: FString::Printf(TEXT("%s: %d planets, %.2f AU (here)"), *It->SystemName, It->Planets.Num(), D / AStarSystem::AuCm);
+			UE_LOG(LogTemp, Log, TEXT("%s"), *Line);
+			if (GEngine) { GEngine->AddOnScreenDebugMessage(-1, 12.f, FColor::Cyan, Line); }
+		}
+	}
 	else if (Op == TEXT("warpvis"))
 	{
 		const FString Mode = ArgStr(1);
@@ -1879,9 +1893,12 @@ void AStarshipPawn::TickAutopilot(float DeltaTime)
 		AActor* Block = nullptr; FVector BlockP = FVector::ZeroVector; double BlockR = 0.0, BlockT = TNumericLimits<double>::Max();
 		auto Test = [&](AActor* A, double Rad)
 		{
+			// The destination itself, and anything at its distance, is not in the way. The margin is in radii,
+			// not centimetres: at light-year range Dist - 1 cm is the same double as Dist.
+			if (A == O.Actor) { return; }
 			const FVector Cc = A->GetActorLocation();
 			const double Tt = FMath::Clamp(FVector::DotProduct(Cc - Here, D), 0.0, Dist);
-			if (Tt < 1.0 || Tt > Dist - 1.0) { return; }
+			if (Tt < 1.0 || Tt > Dist - Rad * 2.0) { return; }
 			const FVector Pp = Here + D * Tt;
 			if (FVector::Dist(Pp, Cc) < Rad * 1.3 && Tt < BlockT) { Block = A; BlockP = Pp; BlockR = Rad; BlockT = Tt; }
 		};
@@ -1917,7 +1934,7 @@ void AStarshipPawn::TickAutopilot(float DeltaTime)
 			if (bAligned)
 			{
 				Movement->SetThrottle(0.0);
-				WarpDrive->SetWarpFactor((float)FMath::Clamp(FMath::Pow((Dist - AutopilotStandoffCm) / (C * AutopilotSeconds), 0.3), 1.0, 9.9));
+				WarpDrive->SetWarpFactor((float)FMath::Clamp(WarpDrive->GetFactorForSpeed((Dist - AutopilotStandoffCm) / AutopilotSeconds), 1.0, (double)WarpDrive->MaxWarpFactor));
 				// The cruise speed follows the factor with a lag; at the drive's 1.5 it trails the deceleration so
 				// far that the drop fires at hundreds of c and lands tens of millions of km short. 4 tracks it.
 				WarpDrive->CruiseSpeedResponse = 4.f;
@@ -1927,7 +1944,7 @@ void AStarshipPawn::TickAutopilot(float DeltaTime)
 			return;
 		}
 		// At warp: the factor keeps the time to target at AutopilotSeconds, so the ship decelerates as it closes.
-		WarpDrive->SetWarpFactor((float)FMath::Clamp(FMath::Pow(FMath::Max(Dist - AutopilotStandoffCm, 1.0) / (C * AutopilotSeconds), 0.3), 1.0, 9.9));
+		WarpDrive->SetWarpFactor((float)FMath::Clamp(WarpDrive->GetFactorForSpeed(FMath::Max(Dist - AutopilotStandoffCm, 1.0) / AutopilotSeconds), 1.0, (double)WarpDrive->MaxWarpFactor));
 		// Drop out where the drop itself (1.2 s easing out from the speed we are actually doing) plus two frames
 		// of travel would land on the standoff: at the capture's fixed 24 fps step a warp 9.9 frame is twenty
 		// million km, so a fixed window is never hit and the ship overshoots and turns round at warp. And if the

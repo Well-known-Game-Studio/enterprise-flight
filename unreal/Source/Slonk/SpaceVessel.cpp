@@ -888,7 +888,13 @@ bool AProceduralStarship::WarpToRandomStation()
 			continue;
 		}
 		// Not the station we are already patrolling around.
-		if (FVector::Dist(It->GetActorLocation(), Home) < It->SizeCm * 40.0)
+		const double D = FVector::Dist(It->GetActorLocation(), Home);
+		if (D < It->SizeCm * 40.0)
+		{
+			continue;
+		}
+		// Stations of other star systems are light-years off: patrols stay in their own system.
+		if (D > 4.5e15)
 		{
 			continue;
 		}

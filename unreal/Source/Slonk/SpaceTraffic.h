@@ -7,6 +7,7 @@
 #include "SpaceTraffic.generated.h"
 
 class ASpaceVessel;
+class APlanetBody;
 
 UCLASS()
 class SLONK_API ASpaceTraffic : public AActor
@@ -17,6 +18,10 @@ public:
 	ASpaceTraffic();
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
+
+	/** A station and its patrol ships at each of these planets (moons skipped), from its own seed: used by the
+	 *  star-system generator for systems made after the level's own planets were populated. */
+	void PopulatePlanets(const TArray<TObjectPtr<APlanetBody>>& Planets, int32 SeedValue);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic") int32 Seed = 11;
 	/** One station orbits each non-moon planet at this many radii. */
@@ -32,6 +37,9 @@ public:
 
 private:
 	void Populate();
+	void PopulateWith(const TArray<APlanetBody*>& Planets, FRandomStream& Rng, bool bNameStationsByPlanet);
+	int32 ShipIndex = 0;
+	int32 StationIndex = 0;
 	/** Ships and the Borg cube near the player's start; re-queues itself until the player pawn exists. */
 	void SpawnStartShips();
 	bool bPopulated = false;

@@ -36,11 +36,18 @@ AActor* ABeltField::FindStar()
 	{
 		return nullptr;
 	}
-	TActorIterator<AStarBody> StarIt(World);
-	if (StarIt)
+	// The nearest star: with several systems in the world the first one found may be light-years away.
+	AStarBody* Nearest = nullptr;
+	double BestD = TNumericLimits<double>::Max();
+	for (TActorIterator<AStarBody> StarIt(World); StarIt; ++StarIt)
 	{
-		CachedStar = *StarIt;
-		return *StarIt;
+		const double D = FVector::DistSquared(StarIt->GetActorLocation(), GetActorLocation());
+		if (D < BestD) { BestD = D; Nearest = *StarIt; }
+	}
+	if (Nearest)
+	{
+		CachedStar = Nearest;
+		return Nearest;
 	}
 	for (TActorIterator<AActor> It(World); It; ++It)
 	{

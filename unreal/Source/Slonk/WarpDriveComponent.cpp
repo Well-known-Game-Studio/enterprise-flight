@@ -32,7 +32,23 @@ void UWarpDriveComponent::ResolveMovement()
 
 double UWarpDriveComponent::GetWarpSpeedForFactor(float Factor) const
 {
-	return Warp1Speed * FMath::Pow((double)FMath::Max(Factor, 0.f), (double)WarpSpeedExponent);
+	const double Base = Warp1Speed * FMath::Pow((double)FMath::Clamp(Factor, 0.f, TranswarpStart), (double)WarpSpeedExponent);
+	if (Factor <= TranswarpStart)
+	{
+		return Base;
+	}
+	const double W = FMath::Min((double)Factor, 9.999);
+	return Base * FMath::Pow((10.0 - (double)TranswarpStart) / (10.0 - W), (double)TranswarpExponent);
+}
+
+double UWarpDriveComponent::GetFactorForSpeed(double Speed) const
+{
+	const double AtStart = GetWarpSpeedForFactor(TranswarpStart);
+	if (Speed <= AtStart)
+	{
+		return FMath::Pow(FMath::Max(Speed, 0.0) / Warp1Speed, 1.0 / (double)WarpSpeedExponent);
+	}
+	return 10.0 - (10.0 - (double)TranswarpStart) * FMath::Pow(AtStart / Speed, 1.0 / (double)TranswarpExponent);
 }
 
 float UWarpDriveComponent::GetChargeProgress() const

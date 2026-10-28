@@ -42,6 +42,10 @@ FString AStarshipHUD::FormatSpeed(double CmPerSecond) const
 FString AStarshipHUD::FormatDistance(double Cm) const
 {
 	const double Km = Cm / 100000.0;
+	if (Km >= 9.0e10)
+	{
+		return FString::Printf(TEXT("%.2f ly"), Km / 9.4607e12);
+	}
 	if (Km >= 2.0e6)
 	{
 		return FString::Printf(TEXT("%.3f AU"), Km / 149597870.7);
@@ -141,7 +145,7 @@ void AStarshipHUD::DrawHUD()
 		FString ThrottleLabel;
 		if (Warp && Warp->IsWarpEngaged())
 		{
-			ThrottleLabel = TEXT("WARP");
+			ThrottleLabel = Warp->WarpFactor > Warp->TranswarpStart + 0.001f ? TEXT("TRANSWARP") : TEXT("WARP");
 		}
 		else if (FMath::IsNearlyZero(Throttle, 0.01))
 		{
@@ -382,6 +386,10 @@ void AStarshipHUD::GatherNavObjects(bool bForce)
 	NavObjects.Reset();
 
 	bool bHaveStar = false;
+	// Every star is listed; the nearest one is the system's sun for the markers.
+	const APawn* OwnPawn = GetOwningPlayerController() ? GetOwningPlayerController()->GetPawn() : nullptr;
+	const FVector Here = OwnPawn ? OwnPawn->GetActorLocation() : FVector::ZeroVector;
+	double BestStarD = TNumericLimits<double>::Max();
 	for (TActorIterator<AStarBody> It(World); It; ++It)
 	{
 		FNavObject O;
@@ -391,9 +399,11 @@ void AStarshipHUD::GatherNavObjects(bool bForce)
 		O.Location = It->GetActorLocation();
 		O.RadiusCm = It->GetRadiusCm();
 		NavObjects.Add(O);
-		if (!bHaveStar)
+		const double D = FVector::DistSquared(O.Location, Here);
+		if (!bHaveStar || D < BestStarD)
 		{
 			StarLocation = O.Location;
+			BestStarD = D;
 			bHaveStar = true;
 		}
 	}
@@ -545,14 +555,24 @@ bool AStarshipHUD::SetNavTargetByName(const FString& Name)
 {
 	GatherNavObjects(true);
 	// An exact label wins ("Caerulea" is the giant, not whichever of its moons the list happens to hold first),
-	// then a substring match for shorthand.
+	// the nearest of several exact matches (patrol ships share names across systems), then a substring match
+	// for shorthand.
+	const APawn* OwnPawn = GetOwningPlayerController() ? GetOwningPlayerController()->GetPawn() : nullptr;
+	const FVector Here = OwnPawn ? OwnPawn->GetActorLocation() : FVector::ZeroVector;
+	AActor* Exact = nullptr;
+	double ExactD = TNumericLimits<double>::Max();
 	for (const FNavObject& O : NavObjects)
 	{
 		if (O.Actor && O.Label.Equals(Name, ESearchCase::IgnoreCase))
 		{
-			NavTarget = O.Actor;
-			return true;
+			const double D = FVector::DistSquared(O.Location, Here);
+			if (D < ExactD) { ExactD = D; Exact = O.Actor; }
 		}
+	}
+	if (Exact)
+	{
+		NavTarget = Exact;
+		return true;
 	}
 	for (const FNavObject& O : NavObjects)
 	{
@@ -582,9 +602,24 @@ void AStarshipHUD::CycleNavTarget()
 			break;
 		}
 	}
-	// Order: star, planets, moons, belt; wrap to "none" after the last entry.
-	const int32 Next = Index + 1;
-	NavTarget = Next < NavObjects.Num() ? NavObjects[Next].Actor : nullptr;
+	// Order: star, planets, moons, belt; wrap to "none" after the last entry. Bodies of other systems are
+	// skipped (their star is the way there).
+	const APawn* OwnPawn = GetOwningPlayerController() ? GetOwningPlayerController()->GetPawn() : nullptr;
+	const FVector Here = OwnPawn ? OwnPawn->GetActorLocation() : FVector::ZeroVector;
+	for (int32 Next = Index + 1; Next < NavObjects.Num(); ++Next)
+	{
+		if (IsNavListed(NavObjects[Next], FVector::Dist(NavObjects[Next].Location, Here)))
+		{
+			NavTarget = NavObjects[Next].Actor;
+			return;
+		}
+	}
+	NavTarget = nullptr;
+}
+
+bool AStarshipHUD::IsNavListed(const FNavObject& O, double Dist) const
+{
+	return O.Kind == ENavObjectKind::Star || O.Kind == ENavObjectKind::Nebula || Dist < FarSystemCm;
 }
 
 void AStarshipHUD::DrawCircle(float CX, float CY, float R, const FLinearColor& Color, int32 Segments, float Thickness)
@@ -624,6 +659,8 @@ void AStarshipHUD::DrawNavMarkers(const AActor* Ship, float UIScale)
 	{
 		const bool bIsNavTarget = NavTarget.IsValid() && O.Actor == NavTarget.Get();
 		const double Dist = FVector::Dist(O.Location, ShipLoc);
+		// Another system's planets and stations all project onto its star from here: only the star is marked.
+		if (!bIsNavTarget && !IsNavListed(O, Dist)) { continue; }
 		FLinearColor Color = KindColor(O.Kind);
 		if (bIsNavTarget)
 		{

@@ -51,7 +51,16 @@ public:
 	float MinWarpFactor = 1.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Warp", meta = (ClampMin = "1", ClampMax = "9.99"))
-	float MaxWarpFactor = 9.9f;
+	float MaxWarpFactor = 9.99f;
+	/** Above this factor the curve climbs toward the warp 10 asymptote (transwarp): speed multiplies by
+	 *  ((10 - TranswarpStart) / (10 - factor))^TranswarpExponent, so 9.99 is a thousand times warp 9.9 and crosses
+	 *  light-years in a minute. Below it the TNG curve is untouched. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Warp")
+	float TranswarpStart = 9.9f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Warp")
+	float TranswarpExponent = 3.0f;
+	/** The factor that cruises at a given speed (cm/s): the inverse of GetWarpSpeedForFactor, unclamped. */
+	double GetFactorForSpeed(double Speed) const;
 
 	/** Seconds the nacelles charge before the jump. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Warp|Timing")
