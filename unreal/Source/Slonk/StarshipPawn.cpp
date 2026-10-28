@@ -1266,7 +1266,10 @@ void AStarshipPawn::UpdateWarpEffects(float DeltaTime)
 	WarpStreaks->SetTravelDirection(Travel);
 
 	FPostProcessSettings& S = PostProcess->Settings;
-	S.SceneFringeIntensity = WarpChromaticAberration * FMath::Max(Flash, Streak * 0.5f);
+	// The colour fringe is part of the classic look and of the jump flash in both; the relativistic view
+	// shows the scene as it is, so it carries no fringe while cruising at warp.
+	const bool bRelView = WarpVisualMode == EWarpVisualMode::Relativistic;
+	S.SceneFringeIntensity = WarpChromaticAberration * (bRelView ? Flash : FMath::Max(Flash, Streak * 0.5f));
 	S.BloomIntensity = 0.675f + WarpFlashBloom * Flash + 0.8f * Streak;
 	const float Gain = 1.f + 1.5f * Flash * Flash;
 	S.ColorGain = FVector4(

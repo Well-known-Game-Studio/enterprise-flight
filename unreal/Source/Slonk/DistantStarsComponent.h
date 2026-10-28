@@ -84,11 +84,12 @@ public:
 	float PlanetMinApparentDeg = 0.3f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Distant Stars")
 	float PlanetDiscMinDeg = 0.06f;
-	/** Brightness of a planet disc (a lit white surface sits near 40 in this scene) and of its point of light. */
+	/** Brightness of a planet disc and of its point of light: kept below the bloom threshold so a far planet
+	 *  reads as a crisp point, not a halo (the sun's sprite sits near 60). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Distant Stars")
-	float PlanetDiscIntensity = 24.f;
+	float PlanetDiscIntensity = 12.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Distant Stars")
-	float PlanetPointIntensity = 40.f;
+	float PlanetPointIntensity = 6.f;
 
 private:
 	void Rescan();
