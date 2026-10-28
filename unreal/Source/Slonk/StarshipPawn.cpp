@@ -945,7 +945,9 @@ void AStarshipPawn::SetupHullMaterials()
 {
 	if (UMaterialInterface* Stars = StarMaterial.LoadSynchronous())
 	{
-		StarSphere->SetMaterial(0, Stars);
+		StarSphereMID = UMaterialInstanceDynamic::Create(Stars, this);
+		StarSphere->SetMaterial(0, StarSphereMID);
+		StarSphereMID->SetScalarParameterValue(TEXT("Fade"), StarFieldFade);
 	}
 	else
 	{
@@ -1426,6 +1428,15 @@ void AStarshipPawn::UpdateCameras(float DeltaTime)
 		break;
 	}
 	}
+}
+
+void AStarshipPawn::SetStarFieldFade(float Fade)
+{
+	Fade = FMath::Clamp(Fade, 0.f, 1.f);
+	if (FMath::IsNearlyEqual(StarFieldFade, Fade, 1e-3f)) { return; }
+	StarFieldFade = Fade;
+	if (StarSphereMID) { StarSphereMID->SetScalarParameterValue(TEXT("Fade"), Fade); }
+	SetStarFieldHidden(Fade <= 0.001f);
 }
 
 void AStarshipPawn::SetStarFieldHidden(bool bHidden)

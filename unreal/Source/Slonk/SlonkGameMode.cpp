@@ -365,7 +365,9 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 			const FVector Up = (ViewLoc - AtmospherePlanet->GetActorLocation()).GetSafeNormal();
 			const float SunUp = (float)FVector::DotProduct(Up, AtmospherePlanet->GetStarDirection());
 			const float Daylight = (1.f - FMath::Clamp((float)(AltitudeKm / (HeightKm * 1.2)), 0.f, 1.f)) * FMath::Clamp(SunUp * 6.f + 0.3f, 0.f, 1.f);
-			Ship->SetStarFieldHidden(Daylight > 0.5f);
+			// Fade the stars out across the middle of the daylight range rather than switching them off: leaving
+			// the atmosphere the sky went black a beat before the stars appeared.
+			Ship->SetStarFieldFade(1.f - FMath::SmoothStep(0.2f, 0.7f, Daylight));
 		}
 	}
 	SkyAtmosphere->SetSkyLuminanceFactor(FLinearColor(Boost, Boost, Boost));

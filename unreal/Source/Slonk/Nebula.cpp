@@ -84,6 +84,14 @@ void ANebula::ApplyAppearance()
 	}
 }
 
+void ANebula::SetBeyondHorizon(bool bBeyond)
+{
+	if (bBeyondHorizon == bBeyond) { return; }
+	bBeyondHorizon = bBeyond;
+	if (Volume) { Volume->SetVisibility(!bBeyond); }
+	if (Glow) { Glow->SetVisibility(!bBeyond); }
+}
+
 void ANebula::UpdateStar()
 {
 	if (!MID) { return; }
