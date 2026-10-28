@@ -65,6 +65,10 @@ def wipe(name):
             T(MT, "delete_expression", {"material_or_function": m, "expression": e})
 
 
+def mask(g, src, r=False, gg=False, b=False, a=False):
+    n = g.node("ComponentMask", {"R": r, "G": gg, "B": b, "A": a}); g.c(src, n, ""); return n
+
+
 class G:
     """Tiny graph builder."""
 
@@ -120,6 +124,22 @@ class G:
             got = getp(e, ["AdditionalOutputs"]).get("AdditionalOutputs")
             print("  custom outputs:", json.dumps(got)[:300])
         return e
+
+    def op2(self, cls, a, b, pa="A", pb="B"):
+        n = self.node(cls); self.c(a, n, pa); self.c(b, n, pb); return n
+    def mul(self, a, b): return self.op2("Multiply", a, b)
+    def add_(self, a, b): return self.op2("Add", a, b)
+    def sub(self, a, b): return self.op2("Subtract", a, b)
+    def dot(self, a, b): return self.op2("DotProduct", a, b)
+    def lerp(self, a, b, alpha):
+        n = self.node("LinearInterpolate"); self.c(a, n, "A"); self.c(b, n, "B"); self.c(alpha, n, "Alpha"); return n
+    def smooth(self, lo, hi, v):
+        n = self.node("SmoothStep"); self.c(lo, n, "Min"); self.c(hi, n, "Max"); self.c(v, n, "Value"); return n
+    def un(self, cls, a, pin=""):
+        n = self.node(cls); self.c(a, n, pin); return n
+    def noise(self, pos, levels=6, scale=1.0, lo=0.0, hi=1.0, fn="NOISEFUNCTION_SimplexTex", turb=False, levelscale=2.0):
+        n = self.node("Noise", {"NoiseFunction": fn, "Levels": levels, "Scale": scale, "OutputMin": lo, "OutputMax": hi, "bTurbulence": turb, "LevelScale": levelscale, "Quality": 1})
+        self.c(pos, n, "World Position"); return n
 
     def out(self, e, prop, aout=""):
         r = out(e, aout, prop); print("  out", prop, r)
