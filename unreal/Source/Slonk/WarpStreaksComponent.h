@@ -54,6 +54,8 @@ public:
 	/** 0 = hidden, 1 = full warp. */
 	UFUNCTION(BlueprintCallable, Category = "Starship|Warp")
 	void SetIntensity(float NewIntensity);
+	/** 0..1 transwarp: the streaks take cycling rainbow hues and run longer and faster. */
+	void SetTranswarp(float NewTranswarp);
 
 	UFUNCTION(BlueprintPure, Category = "Starship|Warp")
 	float GetIntensity() const { return Intensity; }
@@ -68,6 +70,8 @@ private:
 	void RandomizeRadial(FVector& Position) const;
 
 	float Intensity = 0.f;
+	float Transwarp = 0.f;
+	UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> StreakMID;
 	TArray<FVector> Positions;
 	TArray<float> LengthJitter;
 	TArray<FTransform> Transforms;

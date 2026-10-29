@@ -2,6 +2,7 @@
 
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInterface.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "SlonkMaterials.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -38,7 +39,8 @@ void UWarpStreaksComponent::BeginPlay()
 	UMaterialInterface* Material = SlonkMaterials::LoadOrFallback(StreakMaterial, TEXT("WarpStreaks"));
 	if (Material)
 	{
-		SetMaterial(0, Material);
+		StreakMID = UMaterialInstanceDynamic::Create(Material, this);
+		SetMaterial(0, StreakMID ? static_cast<UMaterialInterface*>(StreakMID) : Material);
 	}
 
 	BuildInstances();
@@ -87,6 +89,14 @@ void UWarpStreaksComponent::SetTravelDirection(const FVector& WorldDirection)
 	}
 }
 
+void UWarpStreaksComponent::SetTranswarp(float NewTranswarp)
+{
+	NewTranswarp = FMath::Clamp(NewTranswarp, 0.f, 1.f);
+	if (FMath::IsNearlyEqual(NewTranswarp, Transwarp, 0.002f)) { return; }
+	Transwarp = NewTranswarp;
+	if (StreakMID) { StreakMID->SetScalarParameterValue(TEXT("Rainbow"), Transwarp); }
+}
+
 void UWarpStreaksComponent::SetIntensity(float NewIntensity)
 {
 	Intensity = FMath::Clamp(NewIntensity, 0.f, 1.f);
@@ -107,8 +117,8 @@ void UWarpStreaksComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 	}
 
 	// Streaks get longer and faster as intensity rises; at the moment of the jump they are short dots.
-	const float Speed = ScrollSpeed * (0.15f + 0.85f * Intensity);
-	const float LengthScale = 0.1f + 1.4f * Intensity * Intensity;
+	const float Speed = ScrollSpeed * (0.15f + 0.85f * Intensity) * (1.f + 1.5f * Transwarp);
+	const float LengthScale = (0.1f + 1.4f * Intensity * Intensity) * (1.f + 1.2f * Transwarp);
 	const float Step = Speed * FMath::Min(DeltaTime, 0.1f);
 
 	for (int32 i = 0; i < Positions.Num(); ++i)
