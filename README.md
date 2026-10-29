@@ -130,7 +130,7 @@ https://github.com/user-attachments/assets/9d4fed35-9918-4979-8f7b-9d059d708661
 
 ## Combat
 
-Phasers, photon torpedoes, shields with a visible bubble, hull damage, a tractor beam and a Borg cube that shoots back. Lock the nearest target and fire; the HUD tracks shields and hull.
+Phasers, photon torpedoes, shields with a visible bubble, hull damage, a tractor beam and a Borg cube that shoots back. Lock the nearest target and fire; the HUD tracks shields and hull. On the Enterprise-A the phaser banks fire from the emitters painted on the hull, twin beams from each dual bank, and the RCS plumes leave its painted thruster ports; both come from one scan of the hull textures (`tools/rcs_ports/find_ports.py`).
 
 https://github.com/user-attachments/assets/77b4a194-d3a0-4cb2-a4f4-148228e0b8bb
 

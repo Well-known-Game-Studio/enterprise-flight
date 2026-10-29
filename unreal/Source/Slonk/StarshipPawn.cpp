@@ -376,6 +376,62 @@ FVector AStarshipPawn::ProbeHull(const FVector& Dir, const FBox& Region, const F
 	return BestP + Dir * (GetShipLengthCm() * 0.001f);
 }
 
+namespace
+{
+	/** A mark painted on the Enterprise-A hull: a thruster port or a phaser emitter. */
+	enum class EHullPortKind : uint8 { Thruster, Phaser };
+	struct FHullPort { EHullPortKind Kind; const TCHAR* Bank; float X, Y, Z, NX, NY, NZ, Size; };
+
+	/** The Enterprise-A hull paints its reaction-control ports and phaser emitters: a tan patch with a mark per
+	 *  nozzle or emitter, yellow for a thruster (round on the saucer faces, square on the rim, the deflector housing
+	 *  and the nacelle caps) and a larger grey disc for a phaser emitter. Their positions and the plating normals
+	 *  under them were read off the model's diffuse maps through its UVs (tools/rcs_ports/find_ports.py), so the
+	 *  plumes and the beams leave exactly those marks. Pawn space, cm; phaser emitters carry their bank's name. */
+	TArrayView<const FHullPort> EnterpriseAPorts()
+	{
+		constexpr EHullPortKind T = EHullPortKind::Thruster, P = EHullPortKind::Phaser;
+		static const FHullPort Ports[] = {
+			// Saucer top: a thruster at each corner; a two-emitter phaser bank at each beam and one ahead of the bridge.
+			{ T, nullptr, 3224.f,  4891.f, 2049.f,  0.f,    0.f,   1.f,   1.0f }, { T, nullptr, 3224.f, -4891.f, 2049.f,  0.f,    0.f,   1.f,   1.0f },
+			{ T, nullptr, 13025.f, -4891.f, 2049.f, 0.f,    0.f,   1.f,   1.0f }, { T, nullptr, 13027.f, 4891.f, 2049.f,  0.f,    0.f,   1.f,   1.0f },
+			{ P, TEXT("DorsalPort"), 8021.f, -2937.f, 2347.f,  0.f,   -0.26f, 0.965f, 1.f }, { P, TEXT("DorsalPort"), 8229.f, -2936.f, 2347.f,  0.f,   -0.26f, 0.965f, 1.f },
+			{ P, TEXT("DorsalStbd"), 8022.f,  2936.f, 2347.f,  0.f,    0.26f, 0.965f, 1.f }, { P, TEXT("DorsalStbd"), 8228.f,  2938.f, 2347.f,  0.f,    0.26f, 0.965f, 1.f },
+			{ P, TEXT("DorsalFwd"), 11069.f, -104.f, 2344.f,  0.26f,  0.f,   0.965f, 1.f }, { P, TEXT("DorsalFwd"), 11068.f,  103.f, 2345.f,  0.26f,  0.f,   0.965f, 1.f },
+			// Saucer rim: a thruster pair on the upper and a pair on the lower bevel at each corner, firing out along the diagonal.
+			{ T, nullptr, 2969.f, -4922.f, 1964.f, -0.72f, -0.68f, 0.15f, 0.7f }, { T, nullptr, 3201.f, -5154.f, 1964.f, -0.68f, -0.72f, 0.15f, 0.7f },
+			{ T, nullptr, 2969.f,  4922.f, 1964.f, -0.72f,  0.68f, 0.15f, 0.7f }, { T, nullptr, 3201.f,  5154.f, 1964.f, -0.68f,  0.72f, 0.15f, 0.7f },
+			{ T, nullptr, 13045.f, -5154.f, 1964.f, 0.68f, -0.72f, 0.15f, 0.7f }, { T, nullptr, 13277.f, -4922.f, 1964.f, 0.72f, -0.68f, 0.15f, 0.7f },
+			{ T, nullptr, 13045.f,  5154.f, 1964.f, 0.68f,  0.72f, 0.15f, 0.7f }, { T, nullptr, 13277.f,  4922.f, 1964.f, 0.72f,  0.68f, 0.15f, 0.7f },
+			{ T, nullptr, 3060.f, -4835.f, 1507.f, -0.63f, -0.59f, -0.50f, 0.7f }, { T, nullptr, 3288.f, -5064.f, 1507.f, -0.59f, -0.63f, -0.50f, 0.7f },
+			{ T, nullptr, 3060.f,  4835.f, 1507.f, -0.63f,  0.59f, -0.50f, 0.7f }, { T, nullptr, 3288.f,  5064.f, 1507.f, -0.59f,  0.63f, -0.50f, 0.7f },
+			{ T, nullptr, 12958.f, -5063.f, 1507.f, 0.59f, -0.63f, -0.50f, 0.7f }, { T, nullptr, 13187.f, -4835.f, 1507.f, 0.63f, -0.59f, -0.50f, 0.7f },
+			{ T, nullptr, 12958.f,  5063.f, 1507.f, 0.59f,  0.63f, -0.50f, 0.7f }, { T, nullptr, 13187.f,  4835.f, 1507.f, 0.63f,  0.59f, -0.50f, 0.7f },
+			// Saucer underside: the same pattern as the top.
+			{ T, nullptr, 12979.f, -4845.f, 1434.f, 0.f,    0.f,  -1.f,   1.0f }, { T, nullptr, 12978.f, 4846.f, 1434.f,  0.f,    0.f,  -1.f,   1.0f },
+			{ T, nullptr, 3277.f, -4845.f, 1434.f,  0.f,    0.f,  -1.f,   1.0f }, { T, nullptr, 3277.f,  4849.f, 1434.f,  0.f,    0.f,  -1.f,   1.0f },
+			{ P, TEXT("VentralFwd"), 10966.f,  -94.f, 1299.f,  0.24f,  0.f,  -0.97f, 1.f }, { P, TEXT("VentralFwd"), 10966.f,  101.f, 1299.f,  0.24f,  0.f,  -0.97f, 1.f },
+			{ P, TEXT("VentralStbd"), 8225.f,  2839.f, 1298.f,  0.f,    0.24f, -0.97f, 1.f }, { P, TEXT("VentralStbd"), 8026.f,  2839.f, 1298.f,  0.f,    0.24f, -0.97f, 1.f },
+			{ P, TEXT("VentralPort"), 8225.f, -2835.f, 1297.f,  0.f,   -0.24f, -0.97f, 1.f }, { P, TEXT("VentralPort"), 8027.f, -2835.f, 1297.f,  0.f,   -0.24f, -0.97f, 1.f },
+			// Engineering hull: a phaser bank on top of the stern (one emitter each side), two two-emitter banks under
+			// the keel, and four thrusters round the deflector housing.
+			{ P, TEXT("SternPort"), -6242.f, -320.f, -1011.f, -0.1f, -0.3f,  0.95f, 1.f }, { P, TEXT("SternStbd"), -6244.f,  312.f, -1009.f, -0.1f,  0.3f,  0.95f, 1.f },
+			{ P, TEXT("KeelStbd"), 154.f,   274.f, -3563.f,  0.f,    0.13f, -0.99f, 1.f }, { P, TEXT("KeelStbd"), -112.f,  273.f, -3557.f,  0.f,    0.13f, -0.99f, 1.f },
+			{ P, TEXT("KeelPort"), 155.f,  -267.f, -3564.f,  0.f,   -0.13f, -0.99f, 1.f }, { P, TEXT("KeelPort"), -112.f, -266.f, -3558.f,  0.f,   -0.13f, -0.99f, 1.f },
+			{ T, nullptr, 2868.f, -800.f, -1137.f,  0.18f, -0.66f, 0.72f, 0.9f }, { T, nullptr, 2868.f,  801.f, -1138.f,  0.18f,  0.66f, 0.72f, 0.9f },
+			{ T, nullptr, 2868.f,  807.f, -2752.f,  0.18f,  0.72f, -0.66f, 0.9f }, { T, nullptr, 2868.f, -807.f, -2751.f,  0.18f, -0.72f, -0.66f, 0.9f },
+			// Nacelle aft caps: a thruster firing aft, out and down, and one straight outboard, on each nacelle.
+			{ T, nullptr, -14505.f, 5237.f, 2605.f, -0.73f, 0.42f, -0.54f, 1.1f }, { T, nullptr, -14505.f, -5237.f, 2605.f, -0.73f, -0.42f, -0.54f, 1.1f },
+			{ T, nullptr, -14362.f, 5313.f, 2602.f,  0.f,   1.f,   0.f,   1.0f }, { T, nullptr, -14362.f, -5313.f, 2602.f,  0.f,  -1.f,   0.f,   1.0f },
+		};
+		return Ports;
+	}
+
+	bool IsEnterpriseAMesh(const UStaticMeshComponent* Mesh)
+	{
+		return Mesh && Mesh->GetStaticMesh() && Mesh->GetStaticMesh()->GetPathName().Contains(TEXT("1701"));
+	}
+}
+
 void AStarshipPawn::SetupThrusters()
 {
 	if (!Thrusters)
@@ -393,54 +449,22 @@ void AStarshipPawn::SetupThrusters()
 	const float SaucerR = 7190.f;
 	TArray<FRcsNozzle> Nozzles;
 
-	// The Enterprise-A hull paints its RCS ports: tan patches with a grey or yellow circle per nozzle. Their
-	// circles' positions and the plating normals under them were read off the model's diffuse maps through its UVs
-	// (tools/rcs_ports/find_ports.py), so on this mesh the plumes leave exactly those ports. Pawn space, cm.
-	const FString MeshName = ShipMesh && ShipMesh->GetStaticMesh() ? ShipMesh->GetStaticMesh()->GetPathName() : FString();
-	if (MeshName.Contains(TEXT("1701")))
+	// On the Enterprise-A the plumes leave the painted thruster ports (the yellow marks; see EnterpriseAPorts).
+	if (IsEnterpriseAMesh(ShipMesh))
 	{
-		struct FPort { float X, Y, Z, NX, NY, NZ, Size; };
-		static const FPort Ports[] = {
-			// Saucer top: a single port at each corner, pairs at the beam and forward of the bridge.
-			{ 3224.f,  4891.f, 2049.f,  0.f,    0.f,   1.f,   1.0f }, { 3224.f, -4891.f, 2049.f,  0.f,    0.f,   1.f,   1.0f },
-			{ 13025.f, -4891.f, 2049.f, 0.f,    0.f,   1.f,   1.0f }, { 13027.f, 4891.f, 2049.f,  0.f,    0.f,   1.f,   1.0f },
-			{ 8021.f, -2937.f, 2347.f,  0.f,   -0.26f, 0.965f, 0.8f }, { 8229.f, -2936.f, 2347.f,  0.f,   -0.26f, 0.965f, 0.8f },
-			{ 8022.f,  2936.f, 2347.f,  0.f,    0.26f, 0.965f, 0.8f }, { 8228.f,  2938.f, 2347.f,  0.f,    0.26f, 0.965f, 0.8f },
-			{ 11069.f, -104.f, 2344.f,  0.26f,  0.f,   0.965f, 0.8f }, { 11068.f,  103.f, 2345.f,  0.26f,  0.f,   0.965f, 0.8f },
-			// Saucer rim: a pair on the upper and a pair on the lower bevel at each corner, firing out along the diagonal.
-			{ 2969.f, -4922.f, 1964.f, -0.72f, -0.68f, 0.15f, 0.7f }, { 3201.f, -5154.f, 1964.f, -0.68f, -0.72f, 0.15f, 0.7f },
-			{ 2969.f,  4922.f, 1964.f, -0.72f,  0.68f, 0.15f, 0.7f }, { 3201.f,  5154.f, 1964.f, -0.68f,  0.72f, 0.15f, 0.7f },
-			{ 13045.f, -5154.f, 1964.f, 0.68f, -0.72f, 0.15f, 0.7f }, { 13277.f, -4922.f, 1964.f, 0.72f, -0.68f, 0.15f, 0.7f },
-			{ 13045.f,  5154.f, 1964.f, 0.68f,  0.72f, 0.15f, 0.7f }, { 13277.f,  4922.f, 1964.f, 0.72f,  0.68f, 0.15f, 0.7f },
-			{ 3060.f, -4835.f, 1507.f, -0.63f, -0.59f, -0.50f, 0.7f }, { 3288.f, -5064.f, 1507.f, -0.59f, -0.63f, -0.50f, 0.7f },
-			{ 3060.f,  4835.f, 1507.f, -0.63f,  0.59f, -0.50f, 0.7f }, { 3288.f,  5064.f, 1507.f, -0.59f,  0.63f, -0.50f, 0.7f },
-			{ 12958.f, -5063.f, 1507.f, 0.59f, -0.63f, -0.50f, 0.7f }, { 13187.f, -4835.f, 1507.f, 0.63f, -0.59f, -0.50f, 0.7f },
-			{ 12958.f,  5063.f, 1507.f, 0.59f,  0.63f, -0.50f, 0.7f }, { 13187.f,  4835.f, 1507.f, 0.63f,  0.59f, -0.50f, 0.7f },
-			// Saucer underside: the same pattern as the top.
-			{ 12979.f, -4845.f, 1434.f, 0.f,    0.f,  -1.f,   1.0f }, { 12978.f, 4846.f, 1434.f,  0.f,    0.f,  -1.f,   1.0f },
-			{ 3277.f, -4845.f, 1434.f,  0.f,    0.f,  -1.f,   1.0f }, { 3277.f,  4849.f, 1434.f,  0.f,    0.f,  -1.f,   1.0f },
-			{ 10966.f,  -94.f, 1299.f,  0.24f,  0.f,  -0.97f, 0.8f }, { 10966.f,  101.f, 1299.f,  0.24f,  0.f,  -0.97f, 0.8f },
-			{ 8225.f,  2839.f, 1298.f,  0.f,    0.24f, -0.97f, 0.8f }, { 8026.f,  2839.f, 1298.f,  0.f,    0.24f, -0.97f, 0.8f },
-			{ 8225.f, -2835.f, 1297.f,  0.f,   -0.24f, -0.97f, 0.8f }, { 8027.f, -2835.f, 1297.f,  0.f,   -0.24f, -0.97f, 0.8f },
-			// Engineering hull: a pair on top of the stern, four under the keel, four round the deflector housing.
-			{ -6242.f, -320.f, -1011.f, -0.1f, -0.3f,  0.95f, 0.9f }, { -6244.f,  312.f, -1009.f, -0.1f,  0.3f,  0.95f, 0.9f },
-			{ 154.f,   274.f, -3563.f,  0.f,    0.13f, -0.99f, 0.9f }, { -112.f,  273.f, -3557.f,  0.f,    0.13f, -0.99f, 0.9f },
-			{ 155.f,  -267.f, -3564.f,  0.f,   -0.13f, -0.99f, 0.9f }, { -112.f, -266.f, -3558.f,  0.f,   -0.13f, -0.99f, 0.9f },
-			{ 2868.f, -800.f, -1137.f,  0.18f, -0.66f, 0.72f, 0.9f }, { 2868.f,  801.f, -1138.f,  0.18f,  0.66f, 0.72f, 0.9f },
-			{ 2868.f,  807.f, -2752.f,  0.18f,  0.72f, -0.66f, 0.9f }, { 2868.f, -807.f, -2751.f,  0.18f, -0.72f, -0.66f, 0.9f },
-			// Nacelle aft caps: one firing aft, out and down, one straight outboard, on each nacelle.
-			{ -14505.f, 5237.f, 2605.f, -0.73f, 0.42f, -0.54f, 1.1f }, { -14505.f, -5237.f, 2605.f, -0.73f, -0.42f, -0.54f, 1.1f },
-			{ -14362.f, 5313.f, 2602.f,  0.f,   1.f,   0.f,   1.0f }, { -14362.f, -5313.f, 2602.f,  0.f,  -1.f,   0.f,   1.0f },
-		};
-		for (const FPort& P : Ports)
+		for (const FHullPort& P : EnterpriseAPorts())
 		{
+			if (P.Kind != EHullPortKind::Thruster)
+			{
+				continue;
+			}
 			const FVector N = FVector(P.NX, P.NY, P.NZ).GetSafeNormal();
 			Nozzles.Add(FRcsNozzle(FVector(P.X, P.Y, P.Z) + N * 12.f, N, P.Size));
 		}
 		Thrusters->PlumeLength = GetShipLengthCm() * 0.04f;
 		Thrusters->PlumeWidth = GetShipLengthCm() * 0.018f;
 		Thrusters->SetNozzles(Nozzles);
-		UE_LOG(LogTemp, Log, TEXT("Starship thrusters: %d nozzles on the painted ports of %s"), Nozzles.Num(), *MeshName);
+		UE_LOG(LogTemp, Log, TEXT("Starship thrusters: %d nozzles on the painted thruster ports of %s"), Nozzles.Num(), *ShipMesh->GetStaticMesh()->GetPathName());
 		return;
 	}
 
@@ -517,6 +541,54 @@ void AStarshipPawn::SetupWeaponBanks()
 {
 	if (!Weapons)
 	{
+		return;
+	}
+	// On the Enterprise-A the banks sit on the painted emitters (the grey discs; see EnterpriseAPorts). They come
+	// in pairs, as the refit's dual banks: the two discs of a patch make one bank that fires twin beams. A bank's
+	// field of fire is centred outward as much as away from its plating (the emitters swivel, and what blocks them
+	// is the hull inboard): saucer banks lean along their radial, the stern pair astern, the keel banks down and aft.
+	if (IsEnterpriseAMesh(ShipMesh))
+	{
+		const FVector SaucerCentre(8050.f, 0.f, 250.f);
+		TArray<FPhaserBank> Banks;
+		for (const FHullPort& P : EnterpriseAPorts())
+		{
+			if (P.Kind != EHullPortKind::Phaser)
+			{
+				continue;
+			}
+			const FVector N = FVector(P.NX, P.NY, P.NZ).GetSafeNormal();
+			const FName BankName(P.Bank);
+			FPhaserBank* Bank = Banks.FindByPredicate([&](const FPhaserBank& B) { return B.Name == BankName; });
+			if (!Bank)
+			{
+				FVector Field;
+				if (P.X < -5000.f)
+				{
+					Field = FVector(-0.75f, FMath::Sign(P.Y) * 0.4f, 0.5f);
+				}
+				else if (P.Z < -3000.f)
+				{
+					Field = FVector(-0.2f, FMath::Sign(P.Y) * 0.3f, -0.93f);
+				}
+				else
+				{
+					const FVector Radial = FVector(P.X - SaucerCentre.X, P.Y - SaucerCentre.Y, 0.f).GetSafeNormal();
+					Field = Radial * 0.85f + FVector(0.f, 0.f, N.Z > 0.f ? 0.5f : -0.5f);
+				}
+				Bank = &Banks.Add_GetRef(FPhaserBank(BankName, FVector::ZeroVector, Field));
+			}
+			Bank->Emitters.Add(FVector(P.X, P.Y, P.Z) + N * 20.f);
+		}
+		for (FPhaserBank& B : Banks)
+		{
+			for (const FVector& E : B.Emitters)
+			{
+				B.Offset += E / B.Emitters.Num();
+			}
+			UE_LOG(LogTemp, Log, TEXT("Phaser bank %-14s %d emitters at %7.0f %7.0f %7.0f  field %5.2f %5.2f %5.2f"), *B.Name.ToString(), B.Emitters.Num(), B.Offset.X, B.Offset.Y, B.Offset.Z, B.Normal.X, B.Normal.Y, B.Normal.Z);
+		}
+		Weapons->PhaserBanks = Banks;
 		return;
 	}
 	if (HullVerts.Num() == 0)
@@ -1567,7 +1639,18 @@ void AStarshipPawn::ProcessDebugCommand()
 	else if (Op == TEXT("warpfactor") && WarpDrive) { WarpDrive->SetWarpFactor(Arg(1, 2.f)); }
 	else if (Op == TEXT("phasers") && Weapons) { if (ArgStr(1) == TEXT("off")) { Weapons->StopPhasers(); } else { Weapons->StartPhasers(); } }
 	else if (Op == TEXT("torpedo") && Weapons) { Weapons->FireTorpedo(); }
-	else if (Op == TEXT("target") && Weapons) { if (ArgStr(1) == TEXT("clear")) { Weapons->ClearTarget(); } else if (ArgStr(1) == TEXT("nearest")) { Weapons->LockNearest(); } else { Weapons->CycleTarget(); } }
+	else if (Op == TEXT("target") && Weapons)
+	{
+		if (ArgStr(1) == TEXT("clear")) { Weapons->ClearTarget(); } else if (ArgStr(1) == TEXT("nearest")) { Weapons->LockNearest(); } else { Weapons->CycleTarget(); }
+		if (Weapons->LockedTarget)
+		{
+			UE_LOG(LogTemp, Log, TEXT("Weapons: locked %s at %.1f km"), *Weapons->LockedTarget->GetName(), FVector::Dist(Weapons->LockedTarget->GetActorLocation(), GetActorLocation()) / 1.0e5);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Log, TEXT("Weapons: no target locked"));
+		}
+	}
 	else if (Op == TEXT("zoom")) { ChaseZoom = FMath::Clamp(Arg(1, 1.f), MinChaseZoom, MaxChaseZoom); }
 	else if (Op == TEXT("meshdump")) { DumpHullMesh(); }
 	else if (Op == TEXT("slotbox") && Args.Num() >= 7)

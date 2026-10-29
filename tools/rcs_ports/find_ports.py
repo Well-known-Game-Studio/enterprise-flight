@@ -1,9 +1,11 @@
-"""Find the painted RCS thruster ports on the Enterprise-A hull.
+"""Find the painted RCS thruster ports and phaser emitters on the Enterprise-A hull.
 
-The model's diffuse maps mark every reaction-control port as a tan patch with a grey or yellow circle per nozzle.
-This finds the patches (and the circles inside them as holes in the patch), maps their texel centres through the
-OBJ's UVs to the triangle under them, and prints pawn-space positions (cm) and plating normals, which is where the
-table in AStarshipPawn::SetupThrusters comes from. Pawn space is (-obj.y, obj.x, obj.z) x 100.
+The model's diffuse maps mark every reaction-control port and phaser emitter as a tan patch with a mark per
+nozzle or emitter: thrusters are yellow (round on the saucer faces, square on the rim, the deflector housing and
+the nacelle caps), phaser emitters are larger grey discs. This finds the patches (and the marks inside them as
+holes in the patch), classifies each hole by its colour, maps its texel centre through the OBJ's UVs to the
+triangle under it, and prints pawn-space positions (cm) and plating normals, which is where the port table in
+StarshipPawn.cpp (EnterpriseAPorts) comes from. Pawn space is (-obj.y, obj.x, obj.z) x 100.
 
 Inputs (not in the repo, under blender/uss-enterprise-ncc-1701-a): the OBJ from source/Major Stress Enterprise-A.7z
 extracted to <scratch>/obj/, and textures/Fed_TMP_Constitution_{1..4}_DIFF.png resized to 2048 and dumped raw:
@@ -110,13 +112,17 @@ for slot in (1,2,3,4):
         for hp in holes:
             hx=sum(j%bw for j in hp)/len(hp)+x0; hy=sum(j//bw for j in hp)/len(hp)+y0
             u=(hx+0.5)/W; v=1-(hy+0.5)/H
-            rec["holes"].append((len(hp),locate(mtl,u,v,grid)))
+            # the mark's colour says what it is: yellow (255,245,104) thruster, grey (204,204,204) phaser emitter
+            gi=[(y0+j//bw)*W+(x0+j%bw) for j in hp]
+            mr=sum(data[3*i] for i in gi)/len(gi); mg=sum(data[3*i+1] for i in gi)/len(gi); mb=sum(data[3*i+2] for i in gi)/len(gi)
+            kind="thruster" if mr-mb>60 else ("phaser" if max(mr,mg,mb)-min(mr,mg,mb)<25 and mr>120 else "?")
+            rec["holes"].append((len(hp),locate(mtl,u,v,grid),kind,(round(mr),round(mg),round(mb))))
         out.append(rec)
 def pawn(p): return (-p[1]*100, p[0]*100, p[2]*100)
 def fmt(c): return "none" if not c else " | ".join("pawn %7.0f %7.0f %7.0f  n %5.2f %5.2f %5.2f"%(*pawn(a[0]),*pawn(a[1])) for a in c)
 for r in out:
     print(f"slot {r['slot']} patch {r['patch']:2d} px {r['px']:5d} bbox {r['bbox']}  centre", fmt(r["centre"]))
-    for n,h in r["holes"]:
-        print(f"      hole px {n:4d} ", fmt(h))
+    for n,h,kind,rgb in r["holes"]:
+        print(f"      hole px {n:4d} {kind:8s} rgb {rgb} ", fmt(h))
 import json
 json.dump([{**r,"centre":r["centre"],"holes":r["holes"]} for r in out], open(S+"/rcsmarks.json","w"))
