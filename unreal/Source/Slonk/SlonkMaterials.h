@@ -23,6 +23,7 @@ namespace SlonkMaterials
 	inline const TCHAR* BorgBeamPath = TEXT("/Game/Slonk/Materials/M_BorgBeam.M_BorgBeam");
 	inline const TCHAR* RunningLightPath = TEXT("/Game/Slonk/Materials/M_RunningLight.M_RunningLight");
 	inline const TCHAR* ThrusterPath = TEXT("/Game/Slonk/Materials/M_Thruster.M_Thruster");
+	inline const TCHAR* ThrusterFlarePath = TEXT("/Game/Slonk/Materials/M_ThrusterFlare.M_ThrusterFlare");
 
 	/**
 	 * Primitives further than this (cm) from the world origin lose GPU matrix precision (the engine's

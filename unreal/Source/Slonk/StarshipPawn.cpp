@@ -456,8 +456,8 @@ void AStarshipPawn::SetupThrusters()
 		}
 	}
 	// The plumes are small next to the ship: scale with the hull so a different mesh keeps the proportion.
-	Thrusters->PlumeLength = GetShipLengthCm() * 0.045f;
-	Thrusters->PlumeWidth = GetShipLengthCm() * 0.009f;
+	Thrusters->PlumeLength = GetShipLengthCm() * 0.04f;
+	Thrusters->PlumeWidth = GetShipLengthCm() * 0.018f;
 	Thrusters->SetNozzles(Nozzles);
 	UE_LOG(LogTemp, Log, TEXT("Starship thrusters: %d nozzles, %d bedded on the mesh (%d verts, %d normals)"), Nozzles.Num(), Snapped, HullVerts.Num(), HullNormals.Num());
 }
