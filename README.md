@@ -20,7 +20,7 @@ Looking aft from beside Starbase 11: a slow drift past the station, then full im
 
 ## Warp, the relativistic view
 
-Alongside the classic streak-and-flash, the ship has a view of faster-than-light travel rendered as the physics says it would look: aberration crowds the whole sky toward the bow and empties the sky astern, the Doppler shift blues what is ahead and reddens what is behind, and other ships at warp are seen through their own light, which means several of them at once. It is a post-process on the real frame (switch with `warpvis real`), so planets, stations, the sun and other ships all go through it, and the effects below are not canned animations but what the camera sees of the live scene.
+Alongside the classic streak-and-flash, the ship has a view of faster-than-light travel rendered as the physics says it would look: aberration crowds the whole sky toward the bow and empties the sky astern, the Doppler shift blues what is ahead and reddens what is behind, and other ships at warp are seen through their own light, which means several of them at once. It is a post-process on the real frame (U switches, or `ship warpvis real` in the console), so planets, stations, the sun and other ships all go through it, and the effects below are not canned animations but what the camera sees of the live scene.
 
 Our own jump to warp 2 beside the Earth-like world, chase camera: the planet is gone in the flash, the star field crowds toward the bow and blue-shifts, and the sun slides in from the edge of the view:
 
@@ -42,7 +42,7 @@ Transwarp, above warp 9.9, is a thousand times faster again and the view says so
 
 https://github.com/user-attachments/assets/4c279b67-d5eb-4a97-a27a-04332f1b8c9b
 
-Other ships at warp are drawn where their light is, with the visual light speed scaled down (`cscale`) so the sweeps span seconds instead of microseconds. Light from the point of the track nearest you arrives first, and the images then run outward along the track in both directions from that point. Head-on arrival: the ship pops into view at its arrival point first, and an after-image then runs backward up the track, red-shifted and shrinking, until it replaces the old pre-departure image:
+Other ships at warp are drawn where their light is, with the visual light speed scaled down (`ship cscale`) so the sweeps span seconds instead of microseconds. Light from the point of the track nearest you arrives first, and the images then run outward along the track in both directions from that point. Head-on arrival: the ship pops into view at its arrival point first, and an after-image then runs backward up the track, red-shifted and shrinking, until it replaces the old pre-departure image:
 
 https://github.com/user-attachments/assets/090eb0fe-ecf2-4f09-8250-cb81ca560c56
 
@@ -58,7 +58,7 @@ https://github.com/user-attachments/assets/7803ede5-cecd-4408-b4d0-a2e8efa686b4
 
 ## Impulse and warp
 
-Warp speed follows the show's curve (warp 1 is light speed, warp 3 is 39 c), so a hop between orbits takes seconds and crossing the system takes a minute. Two warp looks are built in, switched with `warpvis classic` and `warpvis real`: the relativistic view above, and the classic streak-and-flash below.
+Warp speed follows the show's curve (warp 1 is light speed, warp 3 is 39 c), so a hop between orbits takes seconds and crossing the system takes a minute. Two warp looks are built in, switched with U (or `ship warpvis classic` and `ship warpvis real` in the console): the relativistic view above, and the classic streak-and-flash below.
 
 https://github.com/user-attachments/assets/77f7650e-2cd8-475f-9d0e-addd550871f8
 
@@ -70,7 +70,7 @@ https://github.com/user-attachments/assets/d1a76720-41e4-4bc3-ae41-177799456d21
 
 The Sun's three nearest real neighbours are in the sky at their true bearings and distances: Alpha Centauri (a yellow star with an orange companion 23 AU out, 4.37 light-years), Barnard's Star (a red dwarf, 5.96) and Sirius (a white star with a white-dwarf companion 20 AU out, 8.6). Each is a full system generated from a seed at play start: a star of its spectral class, four to seven planets placed by temperature band (lava and Venus-like worlds inside, Earth-like and ocean worlds in the temperate zone, giants and ice worlds beyond), a companion star with a few worlds of its own where there is one, rings and moons where the giants roll them, a belt in two systems out of three, a station with patrol ships at every planet, and a nebula past each ringed giant. Every body of a system hangs from one anchor, so the floating origin moves a system as a unit and a world keeps its exact place after a light-year crossing.
 
-Getting there is a transwarp leg. Below warp 9.9 the drive follows the show's curve; above it the curve climbs toward the warp 10 asymptote, and warp 9.99 crosses a light-year in about fifteen seconds. `systems` lists the systems with their distances, `nav target Sirius` and `autopilot warp` fly there, and the HUD reads distances in light-years. The neighbouring suns are visible from home as points of their own colour, and on arrival the sunlight, the sky and the horizon hand-overs all belong to the new star.
+Getting there is a transwarp leg. Below warp 9.9 the drive follows the show's curve; above it the curve climbs toward the warp 10 asymptote, and warp 9.99 crosses a light-year in about fifteen seconds. In the console `ship systems` lists the systems with their distances, `ship nav target Sirius` picks one (or I filters the nav list to stars and L cycles to it) and P hands the leg to the autopilot, and the HUD reads distances in light-years. The neighbouring suns are visible from home as points of their own colour, and on arrival the sunlight, the sky and the horizon hand-overs all belong to the new star.
 
 The leg to Alpha Centauri, flown by the autopilot: the jump beside the Earth-like world and the transwarp streaks, then the drop ten AU out with the two suns ahead:
 
@@ -84,7 +84,7 @@ https://github.com/user-attachments/assets/1217dacf-b4f1-4b20-89b8-4c7c6707035b
 
 ## Planets
 
-Every world is generated at real scale from a seed. The height field is computed in double precision on the CPU in two stages, the way Outerra layers fractal detail over its elevation data: a structure stage (domain-warped continents, ridged mountain ranges, canyons cut into uplifted tablelands with fluted, stratified walls and a river down the inner gorge, craters on the airless worlds) down to 200 m, and a refinement stage that synthesises what lies below it from the structure's local slope (fractured rock on cliffs, talus and boulders beneath them, hummocky soil on the flats) down to 25 cm. Both are deterministic functions of position, so nothing is stored and every visit is the same place. The surface is drawn through a cube-sphere quadtree of mesh chunks that splits toward the camera from six root chunks in orbit down to those 25 cm cells on the ground, so the same surface serves the view from space and a flight along a canyon floor. The sea is part of the same mesh at the water level: within a few kilometres its vertices ride a swell of four Gerstner waves (real geometry, so the horizon and the ship's shadow move with it), and on top of that it is shaded with baked wind waves at two scales that scroll with time and fade out by twenty kilometres so the sun glint from orbit stays sharp, sand showing through the first metres, foam along the shore and on the crests. Atmospheres are volumetric with real scale heights, and near a planet its clouds are a volumetric layer whose height, thickness, density, continuity and colour come from the world's style (cumulus from 2 to 10 km on an Earth-like world, the sulphuric deck from 48 to 70 km on a Venus, thin ice wisps on a Mars, a continuous haze on a Titan-like moon) and that throws its shadows across the ground; the textured cloud shell, now at the top of that layer, takes over from orbit; planets turn at real day lengths, relief is in real proportion, and the gas giants keep a shader-shaded sphere with cloud bands and rings. Orbit hold keeps a chosen altitude while you look around; `hover <m>` follows the terrain (`hover <m> canyon` also steers along the canyon), and `terrain goto river 200 along` parks the ship over the river in the deepest canyon of the nearest world, nose along it.
+Every world is generated at real scale from a seed. The height field is computed in double precision on the CPU in two stages, the way Outerra layers fractal detail over its elevation data: a structure stage (domain-warped continents, ridged mountain ranges, canyons cut into uplifted tablelands with fluted, stratified walls and a river down the inner gorge, craters on the airless worlds) down to 200 m, and a refinement stage that synthesises what lies below it from the structure's local slope (fractured rock on cliffs, talus and boulders beneath them, hummocky soil on the flats) down to 25 cm. Both are deterministic functions of position, so nothing is stored and every visit is the same place. The surface is drawn through a cube-sphere quadtree of mesh chunks that splits toward the camera from six root chunks in orbit down to those 25 cm cells on the ground, so the same surface serves the view from space and a flight along a canyon floor. The sea is part of the same mesh at the water level: within a few kilometres its vertices ride a swell of four Gerstner waves (real geometry, so the horizon and the ship's shadow move with it), and on top of that it is shaded with baked wind waves at two scales that scroll with time and fade out by twenty kilometres so the sun glint from orbit stays sharp, sand showing through the first metres, foam along the shore and on the crests. Atmospheres are volumetric with real scale heights, and near a planet its clouds are a volumetric layer whose height, thickness, density, continuity and colour come from the world's style (cumulus from 2 to 10 km on an Earth-like world, the sulphuric deck from 48 to 70 km on a Venus, thin ice wisps on a Mars, a continuous haze on a Titan-like moon) and that throws its shadows across the ground; the textured cloud shell, now at the top of that layer, takes over from orbit; planets turn at real day lengths, relief is in real proportion, and the gas giants keep a shader-shaded sphere with cloud bands and rings. Orbit hold keeps a chosen altitude while you look around; `ship hover <m>` follows the terrain (`ship hover <m> canyon` also steers along the canyon), and `ship terrain goto river 200 along` parks the ship over the river in the deepest canyon of the nearest world, nose along it.
 
 https://github.com/user-attachments/assets/36df6d62-e5e1-4171-9d36-a8f8467c0d71
 
@@ -104,7 +104,7 @@ https://github.com/user-attachments/assets/49ab1990-8066-4a10-9c2d-077e42233f7e
 
 ## Moons
 
-Every ringed giant has an icy moon the size of Europa just outside its rings and a hazy moon the size of Titan further out. The icy moons carry lineae, long double-ridged cracks in the crust stained brown along their floors; the hazy moons keep an orange photochemical haze from 30 to 90 km that turns the sky from below. `terrain goto linea 300 giant` lands on a crack facing the giant.
+Every ringed giant has an icy moon the size of Europa just outside its rings and a hazy moon the size of Titan further out. The icy moons carry lineae, long double-ridged cracks in the crust stained brown along their floors; the hazy moons keep an orange photochemical haze from 30 to 90 km that turns the sky from below. `ship terrain goto linea 300 giant` lands on a crack facing the giant.
 
 https://github.com/user-attachments/assets/ca04ed83-7e29-4f07-84c4-5a8dba818034
 
@@ -139,6 +139,27 @@ https://github.com/user-attachments/assets/77b4a194-d3a0-4cb2-a4f4-148228e0b8bb
 The Star Trek VI bridge is built from code in Blender (`blender/bridge-st6`) and imported as one mesh with its Okudagram screens bound to live readouts. From the captain's chair the viewscreen shows the real view ahead; the crew figures are placeholders for now.
 
 https://github.com/user-attachments/assets/28b77f79-c31d-487a-ac32-dce1ff09c396
+
+## Controls
+
+Mouse or the left stick steers; H shows the full key list in game.
+
+| | |
+|---|---|
+| W / S, mouse wheel | throttle; 1 to 4 set quarter to full impulse, X all stop, Z reverse |
+| J, [ and ] | warp on/off, warp factor down/up (past 9.9 is transwarp) |
+| L, K | next nav target, clear it |
+| I | nav filter: all, stars, worlds, stations, ships, nebulae and belts (applies to the markers, the map and L) |
+| P | autopilot to the nav target: a warp leg when it is far, an impulse approach when it is near; P again disengages |
+| O | orbit hold round the nav target or the nearest body |
+| T, Y | lock / clear a weapons target; left mouse or F phasers, Space or G torpedo, B tractor beam |
+| V, R, right mouse | cycle camera (chase, bridge, cinematic, front, port, starboard, top, bottom), reset, free look |
+| N, M, Tab, U | nav markers, system map, HUD, classic / relativistic warp view |
+| Page Up / Down, arrows | vertical and RCS thrusters |
+
+The nav target is the pulsing ring with four ticks (white to blue), the weapons lock the orange corner box.
+
+Everything else is a console command: press the backtick key (`` ` ``) to open the console and type `ship` followed by the command. `ship help` lists them; the ones used in this README are `ship nav target <name>`, `ship nav filter <kind>`, `ship autopilot warp|impulse|off`, `ship warpvis classic|real`, `ship camera <view>`, `ship systems`, `ship hover <m> [canyon]`, `ship terrain goto <feature> <altitude m>`, `ship cscale <0..1>` and `ship shipwarp` (sends the nearest patrol ship to warp).
 
 ## Credits
 

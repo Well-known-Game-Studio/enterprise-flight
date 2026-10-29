@@ -1605,7 +1605,8 @@ void AStarshipPawn::ProcessDebugCommand()
 		const FString Mode = ArgStr(1);
 		if (Mode == TEXT("warp")) { SetAutopilot(1, Arg(2, 200000.f), Arg(3, 1.f)); }
 		else if (Mode == TEXT("impulse")) { SetAutopilot(2, Arg(2, 5.f), Arg(3, 0.5f)); }
-		else { SetAutopilot(0, 0.0, 0.f); }
+		else if (Mode == TEXT("off")) { SetAutopilot(0, 0.0, 0.f); }
+		else { ToggleAutopilot(); }
 	}
 	else if (Op == TEXT("hover") && Movement)
 	{
@@ -1837,14 +1838,80 @@ void AStarshipPawn::ProcessDebugCommand()
 				{
 					// The rest of the line is the name, so "nav target Caerulea I" finds the moon and not the planet.
 					FString Name; for (int32 i = 2; i < Args.Num(); ++i) { Name += (i > 2 ? TEXT(" ") : TEXT("")) + Args[i]; }
-					UE_LOG(LogTemp, Log, TEXT("nav target %s: %s"), *Name, H->SetNavTargetByName(Name) ? TEXT("set") : TEXT("not found"));
+					const bool bFound = H->SetNavTargetByName(Name);
+					UE_LOG(LogTemp, Log, TEXT("nav target %s: %s"), *Name, bFound ? TEXT("set") : TEXT("not found"));
+					if (!bFound) { ScreenMessage(FString::Printf(TEXT("nav target: nothing called \"%s\" in range"), *Name), FColor::Orange); }
 				}
+				else if (What == TEXT("filter"))
+				{
+					// nav filter [all|stars|worlds|stations|ships|nebulae]: bare cycles.
+					if (Args.Num() < 3) { H->CycleNavFilter(); }
+					else if (!H->SetNavFilterByName(ArgStr(2))) { ScreenMessage(TEXT("nav filter: all, stars, worlds, stations, ships or nebulae"), FColor::Orange); }
+				}
+				else { ScreenMessage(TEXT("nav target <name> | nav next | nav clear | nav filter [kind] | nav markers | nav map"), FColor::Orange); }
 			}
 		}
+	}
+	else if (Op == TEXT("help"))
+	{
+		static const TCHAR* Lines[] = {
+			TEXT("ship nav target <name> | nav next | nav clear | nav filter [all|stars|worlds|stations|ships|nebulae] | nav markers | nav map"),
+			TEXT("ship autopilot [warp|impulse|off] [standoff km] [seconds]      ship jump  (to the nav target, dev)"),
+			TEXT("ship warp [on|off] | warpfactor <f> | impulse <1-4> | throttle <0-1> | stop | orbit [on|off]"),
+			TEXT("ship camera [chase|bridge|cinematic|front|port|starboard|top|bottom] | zoom <x> | look <yaw> <pitch> [s]"),
+			TEXT("ship warpvis [classic|real] | cscale <0..1> | systems | shipwarp [km] [far]"),
+			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mountain|coast|river|linea|land> <alt m> [across|sun|away|along|giant]"),
+			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km]"),
+			TEXT("ship exec <console command>"),
+		};
+		// Reverse order: on-screen messages stack newest on top.
+		for (int32 i = UE_ARRAY_COUNT(Lines) - 1; i >= 0; --i) { ScreenMessage(Lines[i], FColor::Cyan, 20.f); }
 	}
 	else
 	{
 		UE_LOG(LogTemp, Warning, TEXT("Starship debug command not understood: %s"), *Cmd);
+		ScreenMessage(FString::Printf(TEXT("ship: \"%s\" not understood (ship help)"), *Args[0]), FColor::Orange);
+	}
+}
+
+void AStarshipPawn::ScreenMessage(const FString& Text, FColor Color, float Seconds) const
+{
+	if (GEngine) { GEngine->AddOnScreenDebugMessage(-1, Seconds, Color, Text); }
+}
+
+void AStarshipPawn::Ship(const FString& Command)
+{
+	// Console path: the exec parser hands the rest of the line to the last string parameter.
+	DebugCommand = Command;
+	ProcessDebugCommand();
+}
+
+void AStarshipPawn::ToggleAutopilot()
+{
+	if (AutopilotState != 0)
+	{
+		SetAutopilot(0, 0.0, 0.f);
+		return;
+	}
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	AStarshipHUD* H = PC ? Cast<AStarshipHUD>(PC->GetHUD()) : nullptr;
+	FNavObject O;
+	if (!H || !H->GetNavTargetInfo(O))
+	{
+		ScreenMessage(TEXT("AUTOPILOT  no nav target (L selects one)"), FColor::Orange);
+		return;
+	}
+	// Standoffs from the centre: a star is approached to an AU, anything else to 200,000 km or four radii; a warp
+	// leg when the target is more than twice that away, else an impulse approach to two radii (five km at least).
+	const double Dist = FVector::Dist(O.Location, GetActorLocation());
+	const double WarpStandoffCm = O.Kind == ENavObjectKind::Star ? 1.495978707e13 : FMath::Max(2.0e10, O.RadiusCm * 4.0);
+	if (Dist > WarpStandoffCm * 2.0 && WarpDrive)
+	{
+		SetAutopilot(1, WarpStandoffCm / 1.0e5, 1.f);
+	}
+	else
+	{
+		SetAutopilot(2, FMath::Max(5.0e5, O.RadiusCm * 2.0) / 1.0e5, 0.5f);
 	}
 }
 
