@@ -738,7 +738,7 @@ void AStarshipPawn::UpdateWarpPostProcess()
 	// Effective beta for the relativistic look; see RelativisticMaxBeta.
 	const double Speed = Movement ? Movement->GetSpeed() : 0.0;
 	const double BetaV = Speed / 2.99792458e10;
-	const float BetaEff = (float)FMath::Clamp(BetaV / (1.0 + BetaV), 0.0, (double)RelativisticMaxBeta);
+	const float BetaEff = (float)FMath::Clamp(BetaV / (1.0 + BetaV), 0.0, (double)FMath::Lerp(RelativisticMaxBeta, RelativisticTranswarpMaxBeta, TranswarpFrac));
 
 	// The nearest star, so the shader can draw the sun where aberration puts it when its true bearing is outside
 	// the frame and there is nothing to sample.
@@ -795,6 +795,7 @@ void AStarshipPawn::UpdateWarpPostProcess()
 	WarpPPMID->SetScalarParameterValue(TEXT("Flash"), Flash);
 	WarpPPMID->SetScalarParameterValue(TEXT("Behind"), Behind);
 	WarpPPMID->SetScalarParameterValue(TEXT("Beta"), BetaEff);
+	WarpPPMID->SetScalarParameterValue(TEXT("Transwarp"), TranswarpFrac);
 	WarpPPMID->SetScalarParameterValue(TEXT("BlurStrength"), ClassicStreakStrength);
 	WarpPPMID->SetScalarParameterValue(TEXT("ContractStrength"), RelativisticContraction);
 	WarpPPMID->SetScalarParameterValue(TEXT("DopplerStrength"), RelativisticDoppler);
@@ -1253,6 +1254,13 @@ void AStarshipPawn::UpdateWarpEffects(float DeltaTime)
 	}
 	const float Streak = WarpDrive->GetStreakIntensity();
 	const float Flash = WarpDrive->GetFlashIntensity();
+	// Transwarp: how far above 9.9 the factor sits, fading with the streaks so it leaves with the drop.
+	{
+		const float Span = FMath::Max(WarpDrive->MaxWarpFactor - WarpDrive->TranswarpStart, 0.01f);
+		const float Raw = WarpDrive->IsWarpEngaged() ? FMath::Clamp((WarpDrive->WarpFactor - WarpDrive->TranswarpStart) / Span, 0.f, 1.f) : 0.f;
+		TranswarpFrac = FMath::FInterpTo(TranswarpFrac, Raw * Streak, DeltaTime, 2.f);
+	}
+	WarpStreaks->SetTranswarp(TranswarpFrac);
 
 	// Relativistic mode has no cartoon star streaks; the scene itself does the work. They must be fully off,
 	// not merely faint: the streak cylinders write colour but no depth, so the relativistic view would take
@@ -1270,7 +1278,10 @@ void AStarshipPawn::UpdateWarpEffects(float DeltaTime)
 	// The colour fringe is part of the classic look and of the jump flash in both; the relativistic view
 	// shows the scene as it is, so it carries no fringe while cruising at warp.
 	const bool bRelView = WarpVisualMode == EWarpVisualMode::Relativistic;
-	S.SceneFringeIntensity = WarpChromaticAberration * (bRelView ? Flash : FMath::Max(Flash, Streak * 0.5f));
+	// The transwarp boost is for the outside views, where the fringe reads as part of the streak field; on the
+	// bridge it would put rainbow edges on the whole set.
+	const float Boost = CameraMode == EStarshipCameraMode::Bridge ? 0.f : TranswarpFringeBoost * TranswarpFrac;
+	S.SceneFringeIntensity = WarpChromaticAberration * (bRelView ? Flash : FMath::Max(Flash, Streak * 0.5f * (1.f + Boost)));
 	S.BloomIntensity = 0.675f + WarpFlashBloom * Flash + 0.8f * Streak;
 	const float Gain = 1.f + 1.5f * Flash * Flash;
 	S.ColorGain = FVector4(

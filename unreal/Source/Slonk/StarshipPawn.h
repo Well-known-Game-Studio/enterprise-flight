@@ -401,6 +401,14 @@ public:
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Warp FX", meta = (ClampMin = "0.0", ClampMax = "0.995"))
 	float RelativisticMaxBeta = 0.93f;
+	/** The beta clamp at full transwarp (warp 9.99): the forward crush tightens from warp 9.9's ring to a knot. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Starship|Warp Look")
+	float RelativisticTranswarpMaxBeta = 0.99f;
+	/** How much stronger the classic view's colour fringe is at full transwarp (1 = double). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Starship|Warp Look")
+	float TranswarpFringeBoost = 1.5f;
+	/** 0..1 transwarp this frame (warp factor above the drive's TranswarpStart while at warp), for the effects. */
+	float TranswarpFrac = 0.f;
 
 	UFUNCTION(BlueprintCallable, Category = "Starship|Warp")
 	void SetWarpVisualMode(EWarpVisualMode Mode) { WarpVisualMode = Mode; }
