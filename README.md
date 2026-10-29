@@ -159,7 +159,7 @@ Mouse or the left stick steers; H shows the full key list in game.
 
 The nav target is the pulsing ring with four ticks (white to blue), the weapons lock the orange corner box.
 
-Everything else is a console command: press ` and type `ship` followed by the command. `ship help` lists them; the ones used in this README are `ship nav target <name>`, `ship nav filter <kind>`, `ship autopilot warp|impulse|off`, `ship warpvis classic|real`, `ship camera <view>`, `ship systems`, `ship hover <m> [canyon]`, `ship terrain goto <feature> <altitude m>`, `ship cscale <0..1>` and `ship shipwarp` (sends the nearest patrol ship to warp).
+Everything else is a console command: press the backtick key (`` ` ``) to open the console and type `ship` followed by the command. `ship help` lists them; the ones used in this README are `ship nav target <name>`, `ship nav filter <kind>`, `ship autopilot warp|impulse|off`, `ship warpvis classic|real`, `ship camera <view>`, `ship systems`, `ship hover <m> [canyon]`, `ship terrain goto <feature> <altitude m>`, `ship cscale <0..1>` and `ship shipwarp` (sends the nearest patrol ship to warp).
 
 ## Credits
 
