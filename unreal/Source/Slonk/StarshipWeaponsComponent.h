@@ -20,6 +20,9 @@ struct FPhaserBank
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) FVector Offset = FVector::ZeroVector;
 	/** Centre of the bank's field of fire: the hull normal where it is mounted. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) FVector Normal = FVector::UpVector;
+	/** Emitters of a multi-emitter bank (ship space, cm): each fires its own beam at the aim point, and the bank's
+	 *  damage is shared between them. Empty means a single emitter at Offset. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FVector> Emitters;
 
 	FPhaserBank() {}
 	FPhaserBank(FName InName, const FVector& InOffset, const FVector& InNormal) : Name(InName), Offset(InOffset), Normal(InNormal.GetSafeNormal()) {}
@@ -39,7 +42,7 @@ public:
 
 	// ---- Phasers ----
 
-	/** Phaser banks round the hull. The ones with the squarest view of the aim point fire. */
+	/** Phaser banks round the hull. The ones with the squarest view of the aim point fire, every emitter of each. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phasers")
 	TArray<FPhaserBank> PhaserBanks;
 

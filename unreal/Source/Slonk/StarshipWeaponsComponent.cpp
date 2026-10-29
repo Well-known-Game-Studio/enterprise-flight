@@ -135,25 +135,42 @@ void UStarshipWeaponsComponent::UpdatePhasers(float DeltaTime)
 
 	// Rank the banks by how squarely they face the aim point. A bank looking the other way cannot bear at all,
 	// so a target astern is engaged from the stern banks and one below from the ventral saucer banks.
-	struct FChoice { int32 Bank; double Cos; FVector Start; FVector Dir; };
+	struct FChoice { int32 Bank; double Cos; };
 	TArray<FChoice> Choices;
 	const double MinCos = FMath::Cos(FMath::DegreesToRadians(FMath::Clamp(PhaserBankArc, 1.f, 179.f)));
 	for (int32 i = 0; i < PhaserBanks.Num(); ++i)
 	{
-		const FVector Start = ShipTransform.TransformPosition(PhaserBanks[i].Offset);
-		const FVector Dir = (AimPoint - Start).GetSafeNormal();
+		const FVector Centre = ShipTransform.TransformPosition(PhaserBanks[i].Offset);
+		const FVector Dir = (AimPoint - Centre).GetSafeNormal();
 		const FVector Normal = ShipTransform.TransformVectorNoScale(PhaserBanks[i].Normal).GetSafeNormal();
 		const double Cos = FVector::DotProduct(Dir, Normal);
 		if (Cos >= MinCos)
 		{
-			Choices.Add({ i, Cos, Start, Dir });
+			Choices.Add({ i, Cos });
 		}
 	}
 	Choices.Sort([](const FChoice& A, const FChoice& B) { return A.Cos > B.Cos; });
 	const int32 NumFiring = FMath::Min(Choices.Num(), FMath::Max(MaxFiringBanks, 1));
 
-	// Spawn beams lazily, one per firing slot.
-	while (ActiveBeams.Num() < NumFiring)
+	// One beam from every emitter of each firing bank (a dual bank fires twin beams), each carrying its share of
+	// the bank's damage.
+	struct FShot { int32 Bank; FVector Start; FVector Dir; float Share; };
+	TArray<FShot> Shots;
+	FiringBanks.Reset();
+	for (int32 k = 0; k < NumFiring; ++k)
+	{
+		const FPhaserBank& Bank = PhaserBanks[Choices[k].Bank];
+		const int32 NumEmitters = FMath::Max(Bank.Emitters.Num(), 1);
+		for (int32 e = 0; e < NumEmitters; ++e)
+		{
+			const FVector Start = ShipTransform.TransformPosition(Bank.Emitters.IsValidIndex(e) ? Bank.Emitters[e] : Bank.Offset);
+			Shots.Add({ Choices[k].Bank, Start, (AimPoint - Start).GetSafeNormal(), 1.f / NumEmitters });
+		}
+		FiringBanks.Add(Choices[k].Bank);
+	}
+
+	// Spawn beams lazily, one per shot.
+	while (ActiveBeams.Num() < Shots.Num())
 	{
 		FActorSpawnParameters Params;
 		Params.Owner = Owner;
@@ -166,7 +183,6 @@ void UStarshipWeaponsComponent::UpdatePhasers(float DeltaTime)
 		ActiveBeams.Add(Beam);
 	}
 
-	FiringBanks.Reset();
 	bool bAnyFired = false;
 	for (int32 Slot = 0; Slot < ActiveBeams.Num(); ++Slot)
 	{
@@ -175,12 +191,12 @@ void UStarshipWeaponsComponent::UpdatePhasers(float DeltaTime)
 		{
 			continue;
 		}
-		if (Slot >= NumFiring)
+		if (Slot >= Shots.Num())
 		{
 			Beam->SetActorHiddenInGame(true);
 			continue;
 		}
-		const FChoice& C = Choices[Slot];
+		const FShot& C = Shots[Slot];
 		Beam->SetActorHiddenInGame(false);
 
 		FHitResult Hit;
@@ -190,13 +206,12 @@ void UStarshipWeaponsComponent::UpdatePhasers(float DeltaTime)
 		const bool bHit = World->LineTraceSingleByChannel(Hit, C.Start, TraceEnd, ECC_Visibility, Params);
 		const FVector End = bHit ? Hit.ImpactPoint : TraceEnd;
 		Beam->SetBeam(C.Start, End, bHit);
-		FiringBanks.Add(C.Bank);
 		bAnyFired = true;
 
 		if (bHit && Hit.GetActor())
 		{
 			AController* Instigator = Cast<APawn>(Owner) ? Cast<APawn>(Owner)->GetController() : nullptr;
-			UGameplayStatics::ApplyPointDamage(Hit.GetActor(), PhaserDamagePerSecond * DeltaTime, C.Dir, Hit, Instigator, Owner, nullptr);
+			UGameplayStatics::ApplyPointDamage(Hit.GetActor(), PhaserDamagePerSecond * DeltaTime * C.Share, C.Dir, Hit, Instigator, Owner, nullptr);
 		}
 	}
 
