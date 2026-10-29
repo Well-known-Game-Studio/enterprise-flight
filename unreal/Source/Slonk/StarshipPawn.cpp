@@ -1278,7 +1278,10 @@ void AStarshipPawn::UpdateWarpEffects(float DeltaTime)
 	// The colour fringe is part of the classic look and of the jump flash in both; the relativistic view
 	// shows the scene as it is, so it carries no fringe while cruising at warp.
 	const bool bRelView = WarpVisualMode == EWarpVisualMode::Relativistic;
-	S.SceneFringeIntensity = WarpChromaticAberration * (bRelView ? Flash : FMath::Max(Flash, Streak * 0.5f * (1.f + TranswarpFringeBoost * TranswarpFrac)));
+	// The transwarp boost is for the outside views, where the fringe reads as part of the streak field; on the
+	// bridge it would put rainbow edges on the whole set.
+	const float Boost = CameraMode == EStarshipCameraMode::Bridge ? 0.f : TranswarpFringeBoost * TranswarpFrac;
+	S.SceneFringeIntensity = WarpChromaticAberration * (bRelView ? Flash : FMath::Max(Flash, Streak * 0.5f * (1.f + Boost)));
 	S.BloomIntensity = 0.675f + WarpFlashBloom * Flash + 0.8f * Streak;
 	const float Gain = 1.f + 1.5f * Flash * Flash;
 	S.ColorGain = FVector4(
