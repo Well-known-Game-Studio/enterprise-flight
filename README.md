@@ -38,6 +38,10 @@ The same jump from the captain's chair, the sun coming onto the viewscreen as th
 
 https://github.com/user-attachments/assets/d4212a68-c7ba-4f40-9a71-c494fa83895e
 
+Transwarp, above warp 9.9, is a thousand times faster again and the view says so. The aberration clamp rises from warp 9.9's ring of stars to a knot ahead of the bow, and the Doppler shift runs off the ends of the visible band: what is ahead goes violet and then ultraviolet-black, what is behind goes red and then fades to nothing, and the beamed light ahead collapses into a violet halo with a white core. The run-up from warp 5 to 9.99, chase camera:
+
+https://github.com/user-attachments/assets/4c279b67-d5eb-4a97-a27a-04332f1b8c9b
+
 Other ships at warp are drawn where their light is, with the visual light speed scaled down (`ship cscale`) so the sweeps span seconds instead of microseconds. Light from the point of the track nearest you arrives first, and the images then run outward along the track in both directions from that point. Head-on arrival: the ship pops into view at its arrival point first, and an after-image then runs backward up the track, red-shifted and shrinking, until it replaces the old pre-departure image:
 
 https://github.com/user-attachments/assets/090eb0fe-ecf2-4f09-8250-cb81ca560c56
@@ -57,6 +61,10 @@ https://github.com/user-attachments/assets/7803ede5-cecd-4408-b4d0-a2e8efa686b4
 Warp speed follows the show's curve (warp 1 is light speed, warp 3 is 39 c), so a hop between orbits takes seconds and crossing the system takes a minute. Two warp looks are built in, switched with U (or `ship warpvis classic` and `ship warpvis real` in the console): the relativistic view above, and the classic streak-and-flash below.
 
 https://github.com/user-attachments/assets/77f7650e-2cd8-475f-9d0e-addd550871f8
+
+In the classic view transwarp has a look of its own too: the streaks take cycling rainbow hues and run longer and faster, the radial blur splits into a prism along every streak, and a prismatic ring sweeps out from the vanishing point. The same run-up from warp 5 to 9.99:
+
+https://github.com/user-attachments/assets/d1a76720-41e4-4bc3-ae41-177799456d21
 
 ## Star systems
 
