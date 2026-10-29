@@ -8,6 +8,7 @@
 #include "InputTriggers.h"
 #include "StarshipHUD.h"
 #include "StarshipMovementComponent.h"
+#include "Engine/Engine.h"
 #include "StarshipPawn.h"
 #include "StarshipWeaponsComponent.h"
 #include "WarpDriveComponent.h"
@@ -112,6 +113,8 @@ void AStarshipPlayerController::CreateDefaultInputAssets()
 	Ensure(IA_TractorBeam, TEXT("IA_TractorBeam"), EInputActionValueType::Boolean);
 	Ensure(IA_ThrusterFore, TEXT("IA_ThrusterFore"), EInputActionValueType::Axis1D);
 	Ensure(IA_ThrusterSide, TEXT("IA_ThrusterSide"), EInputActionValueType::Axis1D);
+	Ensure(IA_CycleNavFilter, TEXT("IA_CycleNavFilter"), EInputActionValueType::Boolean);
+	Ensure(IA_Autopilot, TEXT("IA_Autopilot"), EInputActionValueType::Boolean);
 
 	if (MappingContext)
 	{
@@ -191,6 +194,8 @@ void AStarshipPlayerController::CreateDefaultInputAssets()
 	Map(Ctx, IA_CycleNavTarget, EKeys::L);
 	Map(Ctx, IA_CycleNavTarget, EKeys::Gamepad_LeftThumbstick);
 	Map(Ctx, IA_ClearNavTarget, EKeys::K);
+	Map(Ctx, IA_CycleNavFilter, EKeys::I);
+	Map(Ctx, IA_Autopilot, EKeys::P);
 	Map(Ctx, IA_JumpToNavTarget, EKeys::Home);
 	Map(Ctx, IA_ToggleWarpVisuals, EKeys::U);
 
@@ -285,6 +290,8 @@ void AStarshipPlayerController::SetupInputComponent()
 	EIC->BindAction(IA_OrbitHold, ETriggerEvent::Started, this, &AStarshipPlayerController::OnOrbitHold);
 	EIC->BindAction(IA_TractorBeam, ETriggerEvent::Started, this, &AStarshipPlayerController::OnTractorBeam);
 	EIC->BindAction(IA_ToggleWarpVisuals, ETriggerEvent::Started, this, &AStarshipPlayerController::OnToggleWarpVisuals);
+	EIC->BindAction(IA_CycleNavFilter, ETriggerEvent::Started, this, &AStarshipPlayerController::OnCycleNavFilter);
+	EIC->BindAction(IA_Autopilot, ETriggerEvent::Started, this, &AStarshipPlayerController::OnAutopilot);
 }
 
 void AStarshipPlayerController::OnPossess(APawn* InPawn)
@@ -639,6 +646,22 @@ void AStarshipPlayerController::OnOrbitHold()
 	if (AStarshipPawn* Ship = GetStarship())
 	{
 		Ship->ToggleOrbitHold();
+	}
+}
+
+void AStarshipPlayerController::OnCycleNavFilter()
+{
+	if (AStarshipHUD* H = Cast<AStarshipHUD>(GetHUD()))
+	{
+		H->CycleNavFilter();
+	}
+}
+
+void AStarshipPlayerController::OnAutopilot()
+{
+	if (AStarshipPawn* Ship = GetStarship())
+	{
+		Ship->ToggleAutopilot();
 	}
 }
 

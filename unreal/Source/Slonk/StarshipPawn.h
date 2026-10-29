@@ -99,6 +99,11 @@ public:
 	/** Distance to the nav target this frame, km (-1 without one). */
 	UPROPERTY(BlueprintReadOnly, Category = "Autopilot") float NavDistanceKm = -1.f;
 	void SetAutopilot(int32 Mode, double StandoffKm, float Seconds);
+	/** P: autopilot to the nav target, a warp leg or an impulse approach by range; pressed again it disengages. */
+	void ToggleAutopilot();
+	/** In-game console entry (` opens it): "ship nav target Sirius", "ship autopilot warp", "ship help" lists them.
+	 *  The rest of the line is the command. */
+	UFUNCTION(Exec) void Ship(const FString& Command);
 
 	/** Brightness of the star sphere, 0..1: the game mode fades it into a daylit sky. */
 	void SetStarFieldFade(float Fade);
@@ -554,6 +559,7 @@ private:
 	void UpdateHullGlow(float DeltaTime);
 	void AttachStreaksToActiveCamera();
 	void ProcessDebugCommand();
+	void ScreenMessage(const FString& Text, FColor Color, float Seconds = 6.f) const;
 	void ApplyExposure();
 
 	UPROPERTY()

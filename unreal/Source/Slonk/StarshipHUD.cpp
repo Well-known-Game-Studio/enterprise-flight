@@ -276,6 +276,7 @@ void AStarshipHUD::DrawHUD()
 			DrawText(TEXT("TARGET   none  (T to lock)"), Dim, X, Y, Font, UIScale); Y += Line;
 		}
 	}
+	DrawText(FString::Printf(TEXT("NAV FILTER   %s   (I cycles)"), *NavFilterName()), NavFilter == ENavFilter::All ? Dim : Accent, X, Y, Font, UIScale); Y += Line;
 
 	if (bShowNavMarkers)
 	{
@@ -325,8 +326,11 @@ void AStarshipHUD::DrawHUD()
 			TEXT("Tab  HUD             H  help"),
 			TEXT("N  nav markers       M  minimap"),
 			TEXT("L  next nav target   K  clear nav target"),
+			TEXT("I  nav filter: all / stars / worlds / stations / ships / nebulae"),
+			TEXT("P  autopilot to the nav target (warp or impulse by range)"),
 			TEXT("Home  jump to nav target (dev)"),
 			TEXT("U  warp visuals: classic / relativistic"),
+			TEXT("`  console:  ship <command>   (ship help lists them)"),
 		};
 		for (const TCHAR* L : Help)
 		{
@@ -608,13 +612,63 @@ void AStarshipHUD::CycleNavTarget()
 	const FVector Here = OwnPawn ? OwnPawn->GetActorLocation() : FVector::ZeroVector;
 	for (int32 Next = Index + 1; Next < NavObjects.Num(); ++Next)
 	{
-		if (IsNavListed(NavObjects[Next], FVector::Dist(NavObjects[Next].Location, Here)))
+		if (IsNavListed(NavObjects[Next], FVector::Dist(NavObjects[Next].Location, Here)) && PassesNavFilter(NavObjects[Next].Kind))
 		{
 			NavTarget = NavObjects[Next].Actor;
 			return;
 		}
 	}
 	NavTarget = nullptr;
+}
+
+bool AStarshipHUD::PassesNavFilter(ENavObjectKind Kind) const
+{
+	switch (NavFilter)
+	{
+	case ENavFilter::Stars: return Kind == ENavObjectKind::Star;
+	case ENavFilter::Worlds: return Kind == ENavObjectKind::Planet || Kind == ENavObjectKind::Moon;
+	case ENavFilter::Stations: return Kind == ENavObjectKind::Station;
+	case ENavFilter::Ships: return Kind == ENavObjectKind::Ship || Kind == ENavObjectKind::Hostile;
+	case ENavFilter::Nebulae: return Kind == ENavObjectKind::Nebula || Kind == ENavObjectKind::Belt;
+	default: return true;
+	}
+}
+
+void AStarshipHUD::CycleNavFilter()
+{
+	NavFilter = static_cast<ENavFilter>((static_cast<uint8>(NavFilter) + 1) % 6);
+}
+
+bool AStarshipHUD::SetNavFilterByName(const FString& Name)
+{
+	const FString N = Name.ToLower();
+	if (N == TEXT("all") || N == TEXT("off") || N == TEXT("none")) { NavFilter = ENavFilter::All; }
+	else if (N.StartsWith(TEXT("star")) || N.StartsWith(TEXT("sun"))) { NavFilter = ENavFilter::Stars; }
+	else if (N.StartsWith(TEXT("world")) || N.StartsWith(TEXT("planet")) || N.StartsWith(TEXT("moon")) || N.StartsWith(TEXT("bod"))) { NavFilter = ENavFilter::Worlds; }
+	else if (N.StartsWith(TEXT("station")) || N.StartsWith(TEXT("base"))) { NavFilter = ENavFilter::Stations; }
+	else if (N.StartsWith(TEXT("ship")) || N.StartsWith(TEXT("vessel"))) { NavFilter = ENavFilter::Ships; }
+	else if (N.StartsWith(TEXT("nebula")) || N.StartsWith(TEXT("belt")) || N.StartsWith(TEXT("field"))) { NavFilter = ENavFilter::Nebulae; }
+	else { return false; }
+	return true;
+}
+
+FString AStarshipHUD::NavFilterName() const
+{
+	switch (NavFilter)
+	{
+	case ENavFilter::Stars: return TEXT("STARS");
+	case ENavFilter::Worlds: return TEXT("WORLDS");
+	case ENavFilter::Stations: return TEXT("STATIONS");
+	case ENavFilter::Ships: return TEXT("SHIPS");
+	case ENavFilter::Nebulae: return TEXT("NEBULAE & BELTS");
+	default: return TEXT("ALL");
+	}
+}
+
+FLinearColor AStarshipHUD::NavTargetColor() const
+{
+	const float Pulse = 0.5f + 0.5f * FMath::Sin(NavTime * 4.f);
+	return FMath::Lerp(FLinearColor(1.f, 1.f, 1.f, 1.f), FLinearColor(Accent.R, Accent.G, Accent.B, 1.f), Pulse * 0.7f);
 }
 
 bool AStarshipHUD::IsNavListed(const FNavObject& O, double Dist) const
@@ -625,6 +679,18 @@ bool AStarshipHUD::IsNavListed(const FNavObject& O, double Dist) const
 void AStarshipHUD::DrawCircle(float CX, float CY, float R, const FLinearColor& Color, int32 Segments, float Thickness)
 {
 	DrawEllipse(CX, CY, R, R, Color, Segments, Thickness);
+}
+
+void AStarshipHUD::DrawArc(float CX, float CY, float R, float FromDeg, float ToDeg, const FLinearColor& Color, int32 Segments, float Thickness)
+{
+	float PX = CX + R * FMath::Cos(FMath::DegreesToRadians(FromDeg)), PY = CY + R * FMath::Sin(FMath::DegreesToRadians(FromDeg));
+	for (int32 i = 1; i <= Segments; ++i)
+	{
+		const float A = FMath::DegreesToRadians(FMath::Lerp(FromDeg, ToDeg, (float)i / Segments));
+		const float X = CX + R * FMath::Cos(A), Y = CY + R * FMath::Sin(A);
+		DrawLine(PX, PY, X, Y, Color, Thickness);
+		PX = X; PY = Y;
+	}
 }
 
 void AStarshipHUD::DrawEllipse(float CX, float CY, float RX, float RY, const FLinearColor& Color, int32 Segments, float Thickness)
@@ -661,10 +727,11 @@ void AStarshipHUD::DrawNavMarkers(const AActor* Ship, float UIScale)
 		const double Dist = FVector::Dist(O.Location, ShipLoc);
 		// Another system's planets and stations all project onto its star from here: only the star is marked.
 		if (!bIsNavTarget && !IsNavListed(O, Dist)) { continue; }
+		if (!bIsNavTarget && !PassesNavFilter(O.Kind)) { continue; }
 		FLinearColor Color = KindColor(O.Kind);
 		if (bIsNavTarget)
 		{
-			Color = FLinearColor(1.f, 1.f, 1.f, 0.9f + 0.1f * FMath::Sin(NavTime * 6.f));
+			Color = NavTargetColor();
 		}
 
 		// Project; Project() returns Z > 0 when in front of the camera.
@@ -677,12 +744,31 @@ void AStarshipHUD::DrawNavMarkers(const AActor* Ship, float UIScale)
 			// Size the diamond to the body's angular size, with a minimum so distant bodies stay visible.
 			const float Angular = Dist > 0.0 ? (float)(O.RadiusCm / Dist) : 0.f;
 			const float S = FMath::Clamp(Angular * Canvas->ClipY * 0.6f, bIsNavTarget ? 14.f * UIScale : 8.f * UIScale, Canvas->ClipY);
-			DrawLine(Screen.X - S, Screen.Y, Screen.X, Screen.Y - S, Color, bIsNavTarget ? 2.f : 1.f);
-			DrawLine(Screen.X, Screen.Y - S, Screen.X + S, Screen.Y, Color, bIsNavTarget ? 2.f : 1.f);
-			DrawLine(Screen.X + S, Screen.Y, Screen.X, Screen.Y + S, Color, bIsNavTarget ? 2.f : 1.f);
-			DrawLine(Screen.X, Screen.Y + S, Screen.X - S, Screen.Y, Color, bIsNavTarget ? 2.f : 1.f);
+			const float Thick = bIsNavTarget ? 2.5f : 1.f;
+			DrawLine(Screen.X - S, Screen.Y, Screen.X, Screen.Y - S, Color, Thick);
+			DrawLine(Screen.X, Screen.Y - S, Screen.X + S, Screen.Y, Color, Thick);
+			DrawLine(Screen.X + S, Screen.Y, Screen.X, Screen.Y + S, Color, Thick);
+			DrawLine(Screen.X, Screen.Y + S, Screen.X - S, Screen.Y, Color, Thick);
 			const FString Text = FString::Printf(TEXT("%s  %s"), *O.Label, *FormatDistance(Dist));
-			DrawText(Text, Color, Screen.X + S + 4.f * UIScale, Screen.Y - 6.f * UIScale, SmallFont, UIScale);
+			if (bIsNavTarget)
+			{
+				// The nav target's own mark: a broken ring round the diamond with four diagonal ticks, pulsing between
+				// white and the accent, and its label in the larger font. Apart from the kind-coloured diamonds, and
+				// from the orange corner box of the weapons lock.
+				const float R = S * 1.5f + 8.f * UIScale;
+				for (int32 q = 0; q < 4; ++q)
+				{
+					const float Mid = 45.f + 90.f * q;
+					DrawArc(Screen.X, Screen.Y, R, Mid - 32.f, Mid + 32.f, Color, 10, 2.f);
+					const float A = FMath::DegreesToRadians(Mid);
+					DrawLine(Screen.X + R * FMath::Cos(A), Screen.Y + R * FMath::Sin(A), Screen.X + (R + 7.f * UIScale) * FMath::Cos(A), Screen.Y + (R + 7.f * UIScale) * FMath::Sin(A), Color, 2.f);
+				}
+				DrawText(Text, Color, Screen.X + R + 10.f * UIScale, Screen.Y - 8.f * UIScale, GEngine ? GEngine->GetMediumFont() : SmallFont, UIScale);
+			}
+			else
+			{
+				DrawText(Text, Color, Screen.X + S + 4.f * UIScale, Screen.Y - 6.f * UIScale, SmallFont, UIScale);
+			}
 		}
 		else
 		{
@@ -704,13 +790,28 @@ void AStarshipHUD::DrawNavMarkers(const AActor* Ship, float UIScale)
 			const float Tm = FMath::Min(TX, TY);
 			const FVector2D P(CX + Dir.X * Tm, CY + Dir.Y * Tm);
 			const FVector2D Perp(-Dir.Y, Dir.X);
-			const float A = (bIsNavTarget ? 12.f : 8.f) * UIScale;
-			const FVector2D Tip = P + Dir * A;
-			const FVector2D L = P - Dir * A * 0.4f + Perp * A * 0.6f;
-			const FVector2D R = P - Dir * A * 0.4f - Perp * A * 0.6f;
-			DrawLine(Tip.X, Tip.Y, L.X, L.Y, Color, 1.5f);
-			DrawLine(Tip.X, Tip.Y, R.X, R.Y, Color, 1.5f);
-			DrawLine(L.X, L.Y, R.X, R.Y, Color, 1.5f);
+			const float A = (bIsNavTarget ? 14.f : 8.f) * UIScale;
+			if (bIsNavTarget)
+			{
+				// Double chevron for the nav target, in its pulsing colour.
+				for (int32 k = 0; k < 2; ++k)
+				{
+					const FVector2D Tip = P + Dir * (A - k * A * 0.6f);
+					const FVector2D L = Tip - Dir * A * 0.6f + Perp * A * 0.75f;
+					const FVector2D R = Tip - Dir * A * 0.6f - Perp * A * 0.75f;
+					DrawLine(Tip.X, Tip.Y, L.X, L.Y, Color, 2.5f);
+					DrawLine(Tip.X, Tip.Y, R.X, R.Y, Color, 2.5f);
+				}
+			}
+			else
+			{
+				const FVector2D Tip = P + Dir * A;
+				const FVector2D L = P - Dir * A * 0.4f + Perp * A * 0.6f;
+				const FVector2D R = P - Dir * A * 0.4f - Perp * A * 0.6f;
+				DrawLine(Tip.X, Tip.Y, L.X, L.Y, Color, 1.5f);
+				DrawLine(Tip.X, Tip.Y, R.X, R.Y, Color, 1.5f);
+				DrawLine(L.X, L.Y, R.X, R.Y, Color, 1.5f);
+			}
 			if (bIsNavTarget || O.Kind == ENavObjectKind::Star)
 			{
 				const FString Text = FString::Printf(TEXT("%s %s"), *O.Label, *FormatDistance(Dist));
@@ -738,8 +839,10 @@ void AStarshipHUD::DrawNavMarkers(const AActor* Ship, float UIScale)
 				const double Seconds = Dist / Speed;
 				Eta = Seconds < 90.0 ? FString::Printf(TEXT("%.0f s"), Seconds) : Seconds < 5400.0 ? FString::Printf(TEXT("%.1f min"), Seconds / 60.0) : FString::Printf(TEXT("%.1f h"), Seconds / 3600.0);
 			}
-			const FString Text = FString::Printf(TEXT("NAV  %s   %s   ETA %s"), *O->Label, *FormatDistance(FMath::Max(Dist, 0.0)), *Eta);
-			DrawText(Text, FLinearColor::White, CX - 120.f * UIScale, CY + 60.f * UIScale, GEngine ? GEngine->GetMediumFont() : nullptr, UIScale);
+			const AStarshipPawn* ShipPawn = Cast<AStarshipPawn>(Ship);
+			const TCHAR* Auto = ShipPawn && ShipPawn->AutopilotState == 1 ? TEXT("   AUTOPILOT WARP") : ShipPawn && ShipPawn->AutopilotState == 2 ? TEXT("   AUTOPILOT IMPULSE") : TEXT("");
+			const FString Text = FString::Printf(TEXT("NAV  %s   %s   ETA %s%s"), *O->Label, *FormatDistance(FMath::Max(Dist, 0.0)), *Eta, Auto);
+			DrawText(Text, NavTargetColor(), CX - 120.f * UIScale, CY + 60.f * UIScale, GEngine ? GEngine->GetMediumFont() : nullptr, UIScale);
 		}
 	}
 }
@@ -841,6 +944,8 @@ void AStarshipHUD::DrawMinimap(const AActor* Ship, float UIScale)
 		const FVector2D P = MinimapProject(Rel, Scale, CX, CY, YawDeg);
 		const FVector2D Base = MinimapProject(FVector(Rel.X, Rel.Y, 0.0), Scale, CX, CY, YawDeg);
 		const bool bIsNavTarget = NavTarget.IsValid() && O.Actor == NavTarget.Get();
+		// The filter applies here too; the suns stay as the map's frame.
+		if (!bIsNavTarget && O.Kind != ENavObjectKind::Star && !PassesNavFilter(O.Kind)) { continue; }
 		FLinearColor Color = KindColor(O.Kind);
 		float Dot = O.Kind == ENavObjectKind::Star ? 5.f : O.Kind == ENavObjectKind::Moon ? 1.5f : 3.f;
 		Dot *= UIScale;
@@ -850,9 +955,13 @@ void AStarshipHUD::DrawMinimap(const AActor* Ship, float UIScale)
 		}
 		if (bIsNavTarget)
 		{
-			DrawCircle(P.X, P.Y, Dot + 4.f * UIScale, FLinearColor::White, 16, 1.5f);
+			DrawCircle(P.X, P.Y, Dot + 5.f * UIScale, NavTargetColor(), 16, 2.f);
 		}
 		Canvas->K2_DrawPolygon(nullptr, P, FVector2D(Dot, Dot), 12, Color);
+		if (bIsNavTarget && O.Kind != ENavObjectKind::Star && O.Kind != ENavObjectKind::Planet)
+		{
+			DrawText(O.Label, NavTargetColor(), P.X + Dot + 6.f * UIScale, P.Y - 6.f * UIScale, SmallFont, UIScale * 0.85f);
+		}
 		if (O.Kind == ENavObjectKind::Star || O.Kind == ENavObjectKind::Planet)
 		{
 			DrawText(O.Label, FLinearColor(Color.R, Color.G, Color.B, 0.8f), P.X + Dot + 2.f, P.Y - 6.f * UIScale, SmallFont, UIScale * 0.85f);

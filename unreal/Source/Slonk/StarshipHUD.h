@@ -20,6 +20,18 @@ enum class ENavObjectKind : uint8
 	Target
 };
 
+/** Which kinds the nav markers, the minimap and L cycling show (I cycles, "ship nav filter <kind>" sets). */
+UENUM(BlueprintType)
+enum class ENavFilter : uint8
+{
+	All,
+	Stars,
+	Worlds,
+	Stations,
+	Ships,
+	Nebulae
+};
+
 /** One thing worth navigating to, gathered each frame. */
 USTRUCT(BlueprintType)
 struct FNavObject
@@ -69,6 +81,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "HUD|Nav") void ToggleNavMarkers() { bShowNavMarkers = !bShowNavMarkers; }
 	UFUNCTION(BlueprintCallable, Category = "HUD|Nav") void ToggleMinimap() { bShowMinimap = !bShowMinimap; }
 	UFUNCTION(BlueprintCallable, Category = "HUD|Nav") void CycleNavTarget();
+
+	/** Kind filter for markers, minimap and cycling; the nav target and the system's sun stay shown regardless. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HUD|Nav")
+	ENavFilter NavFilter = ENavFilter::All;
+	UFUNCTION(BlueprintCallable, Category = "HUD|Nav") void CycleNavFilter();
+	UFUNCTION(BlueprintCallable, Category = "HUD|Nav") bool SetNavFilterByName(const FString& Name);
+	UFUNCTION(BlueprintCallable, Category = "HUD|Nav") FString NavFilterName() const;
+	bool PassesNavFilter(ENavObjectKind Kind) const;
 	/** Whether a nav object is listed and marked from here: stars and nebulae always, anything else only within
 	 *  FarSystemCm (bodies of another star system project onto its star). */
 	bool IsNavListed(const FNavObject& O, double Dist) const;
@@ -94,6 +114,9 @@ private:
 	void DrawMinimap(const AActor* Ship, float UIScale);
 	void DrawCircle(float CX, float CY, float R, const FLinearColor& Color, int32 Segments = 32, float Thickness = 1.f);
 	void DrawEllipse(float CX, float CY, float RX, float RY, const FLinearColor& Color, int32 Segments = 48, float Thickness = 1.f);
+	void DrawArc(float CX, float CY, float R, float FromDeg, float ToDeg, const FLinearColor& Color, int32 Segments = 12, float Thickness = 1.f);
+	/** The nav target's colour this frame: white pulsing toward the accent, apart from the kind colours. */
+	FLinearColor NavTargetColor() const;
 	FVector2D MinimapProject(const FVector& Relative, double Scale, float CX, float CY, float YawDeg) const;
 	FLinearColor KindColor(ENavObjectKind Kind) const;
 
