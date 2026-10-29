@@ -12,6 +12,7 @@
 
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
+class UPointLightComponent;
 
 USTRUCT(BlueprintType)
 struct FRcsNozzle
@@ -74,13 +75,18 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RCS") float PlumeLength = 1100.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RCS") float PlumeWidth = 440.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RCS") FLinearColor PlumeColor = FLinearColor(0.85f, 0.92f, 1.f);
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RCS") float Intensity = 30.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RCS") float Intensity = 22.f;
 	/** The bright core cone's width and length as fractions of the envelope's. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RCS") float CoreWidth = 0.42f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RCS") float CoreLength = 0.75f;
 	/** Diameter of the glow sphere at the nozzle mouth as a fraction of the plume width. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RCS") float FlareSize = 0.4f;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RCS") float FlareIntensity = 45.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RCS") float FlareIntensity = 32.f;
+	/** A small pool of point lights handed to the brightest firing nozzles, so a plume lights the plating round it. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RCS") int32 MaxLights = 6;
+	/** Light at full activation (candela) and its reach (cm): a wash on the nearby plating, not a floodlight. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RCS") float LightCandela = 260.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RCS") float LightRadius = 2600.f;
 	/** Decay rate (1/s) of the ignition flash: the overshoot when a nozzle lights, which the materials brighten by. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RCS") float FlashDecay = 9.f;
 	/** Activation rise and fall rates (1/s): a chemical thruster lights almost at once and cuts off quickly. */
@@ -101,6 +107,10 @@ private:
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> FlareMID;
 	/** The nozzle-mouth glow spheres, a sibling instanced mesh made on registration (one instance per nozzle). */
 	UPROPERTY(Transient) TObjectPtr<UInstancedStaticMeshComponent> Flares;
+	UPROPERTY(Transient) TArray<TObjectPtr<UPointLightComponent>> Lights;
+	/** Nozzle each pooled light is on, INDEX_NONE when parked. */
+	TArray<int32> LightNozzle;
+	void UpdateLights();
 	TArray<float> Target;
 	TArray<float> Current;
 	TArray<float> Flash;

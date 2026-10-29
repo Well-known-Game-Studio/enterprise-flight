@@ -393,6 +393,57 @@ void AStarshipPawn::SetupThrusters()
 	const float SaucerR = 7190.f;
 	TArray<FRcsNozzle> Nozzles;
 
+	// The Enterprise-A hull paints its RCS ports: tan patches with a grey or yellow circle per nozzle. Their
+	// circles' positions and the plating normals under them were read off the model's diffuse maps through its UVs
+	// (tools/rcs_ports/find_ports.py), so on this mesh the plumes leave exactly those ports. Pawn space, cm.
+	const FString MeshName = ShipMesh && ShipMesh->GetStaticMesh() ? ShipMesh->GetStaticMesh()->GetPathName() : FString();
+	if (MeshName.Contains(TEXT("1701")))
+	{
+		struct FPort { float X, Y, Z, NX, NY, NZ, Size; };
+		static const FPort Ports[] = {
+			// Saucer top: a single port at each corner, pairs at the beam and forward of the bridge.
+			{ 3224.f,  4891.f, 2049.f,  0.f,    0.f,   1.f,   1.0f }, { 3224.f, -4891.f, 2049.f,  0.f,    0.f,   1.f,   1.0f },
+			{ 13025.f, -4891.f, 2049.f, 0.f,    0.f,   1.f,   1.0f }, { 13027.f, 4891.f, 2049.f,  0.f,    0.f,   1.f,   1.0f },
+			{ 8021.f, -2937.f, 2347.f,  0.f,   -0.26f, 0.965f, 0.8f }, { 8229.f, -2936.f, 2347.f,  0.f,   -0.26f, 0.965f, 0.8f },
+			{ 8022.f,  2936.f, 2347.f,  0.f,    0.26f, 0.965f, 0.8f }, { 8228.f,  2938.f, 2347.f,  0.f,    0.26f, 0.965f, 0.8f },
+			{ 11069.f, -104.f, 2344.f,  0.26f,  0.f,   0.965f, 0.8f }, { 11068.f,  103.f, 2345.f,  0.26f,  0.f,   0.965f, 0.8f },
+			// Saucer rim: a pair on the upper and a pair on the lower bevel at each corner, firing out along the diagonal.
+			{ 2969.f, -4922.f, 1964.f, -0.72f, -0.68f, 0.15f, 0.7f }, { 3201.f, -5154.f, 1964.f, -0.68f, -0.72f, 0.15f, 0.7f },
+			{ 2969.f,  4922.f, 1964.f, -0.72f,  0.68f, 0.15f, 0.7f }, { 3201.f,  5154.f, 1964.f, -0.68f,  0.72f, 0.15f, 0.7f },
+			{ 13045.f, -5154.f, 1964.f, 0.68f, -0.72f, 0.15f, 0.7f }, { 13277.f, -4922.f, 1964.f, 0.72f, -0.68f, 0.15f, 0.7f },
+			{ 13045.f,  5154.f, 1964.f, 0.68f,  0.72f, 0.15f, 0.7f }, { 13277.f,  4922.f, 1964.f, 0.72f,  0.68f, 0.15f, 0.7f },
+			{ 3060.f, -4835.f, 1507.f, -0.63f, -0.59f, -0.50f, 0.7f }, { 3288.f, -5064.f, 1507.f, -0.59f, -0.63f, -0.50f, 0.7f },
+			{ 3060.f,  4835.f, 1507.f, -0.63f,  0.59f, -0.50f, 0.7f }, { 3288.f,  5064.f, 1507.f, -0.59f,  0.63f, -0.50f, 0.7f },
+			{ 12958.f, -5063.f, 1507.f, 0.59f, -0.63f, -0.50f, 0.7f }, { 13187.f, -4835.f, 1507.f, 0.63f, -0.59f, -0.50f, 0.7f },
+			{ 12958.f,  5063.f, 1507.f, 0.59f,  0.63f, -0.50f, 0.7f }, { 13187.f,  4835.f, 1507.f, 0.63f,  0.59f, -0.50f, 0.7f },
+			// Saucer underside: the same pattern as the top.
+			{ 12979.f, -4845.f, 1434.f, 0.f,    0.f,  -1.f,   1.0f }, { 12978.f, 4846.f, 1434.f,  0.f,    0.f,  -1.f,   1.0f },
+			{ 3277.f, -4845.f, 1434.f,  0.f,    0.f,  -1.f,   1.0f }, { 3277.f,  4849.f, 1434.f,  0.f,    0.f,  -1.f,   1.0f },
+			{ 10966.f,  -94.f, 1299.f,  0.24f,  0.f,  -0.97f, 0.8f }, { 10966.f,  101.f, 1299.f,  0.24f,  0.f,  -0.97f, 0.8f },
+			{ 8225.f,  2839.f, 1298.f,  0.f,    0.24f, -0.97f, 0.8f }, { 8026.f,  2839.f, 1298.f,  0.f,    0.24f, -0.97f, 0.8f },
+			{ 8225.f, -2835.f, 1297.f,  0.f,   -0.24f, -0.97f, 0.8f }, { 8027.f, -2835.f, 1297.f,  0.f,   -0.24f, -0.97f, 0.8f },
+			// Engineering hull: a pair on top of the stern, four under the keel, four round the deflector housing.
+			{ -6242.f, -320.f, -1011.f, -0.1f, -0.3f,  0.95f, 0.9f }, { -6244.f,  312.f, -1009.f, -0.1f,  0.3f,  0.95f, 0.9f },
+			{ 154.f,   274.f, -3563.f,  0.f,    0.13f, -0.99f, 0.9f }, { -112.f,  273.f, -3557.f,  0.f,    0.13f, -0.99f, 0.9f },
+			{ 155.f,  -267.f, -3564.f,  0.f,   -0.13f, -0.99f, 0.9f }, { -112.f, -266.f, -3558.f,  0.f,   -0.13f, -0.99f, 0.9f },
+			{ 2868.f, -800.f, -1137.f,  0.18f, -0.66f, 0.72f, 0.9f }, { 2868.f,  801.f, -1138.f,  0.18f,  0.66f, 0.72f, 0.9f },
+			{ 2868.f,  807.f, -2752.f,  0.18f,  0.72f, -0.66f, 0.9f }, { 2868.f, -807.f, -2751.f,  0.18f, -0.72f, -0.66f, 0.9f },
+			// Nacelle aft caps: one firing aft, out and down, one straight outboard, on each nacelle.
+			{ -14505.f, 5237.f, 2605.f, -0.73f, 0.42f, -0.54f, 1.1f }, { -14505.f, -5237.f, 2605.f, -0.73f, -0.42f, -0.54f, 1.1f },
+			{ -14362.f, 5313.f, 2602.f,  0.f,   1.f,   0.f,   1.0f }, { -14362.f, -5313.f, 2602.f,  0.f,  -1.f,   0.f,   1.0f },
+		};
+		for (const FPort& P : Ports)
+		{
+			const FVector N = FVector(P.NX, P.NY, P.NZ).GetSafeNormal();
+			Nozzles.Add(FRcsNozzle(FVector(P.X, P.Y, P.Z) + N * 12.f, N, P.Size));
+		}
+		Thrusters->PlumeLength = GetShipLengthCm() * 0.04f;
+		Thrusters->PlumeWidth = GetShipLengthCm() * 0.018f;
+		Thrusters->SetNozzles(Nozzles);
+		UE_LOG(LogTemp, Log, TEXT("Starship thrusters: %d nozzles on the painted ports of %s"), Nozzles.Num(), *MeshName);
+		return;
+	}
+
 	// Saucer rim: four thruster packages, forward and aft of the beam on each side, as on the refit. Each has a
 	// nozzle firing up from the rim's top face, one firing down from the bottom face, and a pair firing along the
 	// rim tangent for yaw and fore-aft translation.

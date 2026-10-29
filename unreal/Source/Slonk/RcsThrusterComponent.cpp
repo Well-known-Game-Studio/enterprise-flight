@@ -1,5 +1,6 @@
 #include "RcsThrusterComponent.h"
 
+#include "Components/PointLightComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "SlonkMaterials.h"
@@ -45,9 +46,79 @@ void URcsThrusterComponent::OnRegister()
 	}
 	Flares->SetupAttachment(this);
 	Flares->RegisterComponent();
+	for (int32 i = 0; i < MaxLights; ++i)
+	{
+		UPointLightComponent* L = NewObject<UPointLightComponent>(GetOwner());
+		L->SetupAttachment(this);
+		L->SetMobility(EComponentMobility::Movable);
+		L->SetIntensityUnits(ELightUnits::Candelas);
+		L->SetIntensity(0.f);
+		L->SetLightColor(PlumeColor);
+		L->SetAttenuationRadius(LightRadius);
+		L->SetSourceRadius(60.f);
+		L->CastShadows = false;
+		L->SetCastShadows(false);
+		L->bUseInverseSquaredFalloff = true;
+		L->SetVisibility(false);
+		L->RegisterComponent();
+		Lights.Add(L);
+		LightNozzle.Add(INDEX_NONE);
+	}
 	if (Nozzles.Num() > 0)
 	{
 		SetNozzles(TArray<FRcsNozzle>(Nozzles));
+	}
+}
+
+void URcsThrusterComponent::UpdateLights()
+{
+	// Lights stay with their nozzle while it burns; parked lights go to the brightest unlit nozzles.
+	for (int32 i = 0; i < Lights.Num(); ++i)
+	{
+		const int32 N = LightNozzle[i];
+		if (N != INDEX_NONE && (!Current.IsValidIndex(N) || Current[N] < 0.02f))
+		{
+			LightNozzle[i] = INDEX_NONE;
+		}
+	}
+	TArray<int32> Candidates;
+	for (int32 n = 0; n < Current.Num(); ++n)
+	{
+		if (Current[n] > 0.05f && !LightNozzle.Contains(n))
+		{
+			Candidates.Add(n);
+		}
+	}
+	Candidates.Sort([this](int32 A, int32 B) { return Current[A] > Current[B]; });
+	int32 Next = 0;
+	for (int32 i = 0; i < Lights.Num(); ++i)
+	{
+		if (LightNozzle[i] == INDEX_NONE && Next < Candidates.Num())
+		{
+			LightNozzle[i] = Candidates[Next++];
+		}
+		UPointLightComponent* L = Lights[i];
+		const int32 N = LightNozzle[i];
+		if (!L)
+		{
+			continue;
+		}
+		if (N == INDEX_NONE)
+		{
+			if (L->IsVisible())
+			{
+				L->SetIntensity(0.f);
+				L->SetVisibility(false);
+			}
+			continue;
+		}
+		const FRcsNozzle& Noz = Nozzles[N];
+		L->SetRelativeLocation(Noz.Position + Noz.ExhaustDir * (PlumeLength * Noz.Size * 0.12f));
+		L->SetIntensity(LightCandela * Noz.Size * Current[N] * (1.f + 1.5f * Flash[N]));
+		if (!L->IsVisible())
+		{
+			L->SetVisibility(true);
+		}
 	}
 }
 
@@ -260,4 +331,5 @@ void URcsThrusterComponent::ApplyInstances()
 	{
 		Flares->BatchUpdateInstancesTransforms(0, FlareTransforms, false, true, false);
 	}
+	UpdateLights();
 }

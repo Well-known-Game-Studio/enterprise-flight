@@ -64,7 +64,7 @@ def plume():
     g.c(g.node("PerInstanceCustomData", {"DataIndex": 2, "ConstDefaultValue": 0.0}), e, "Seed")
     g.c(g.node("PerInstanceCustomData", {"DataIndex": 3, "ConstDefaultValue": 0.0}), e, "Core")
     g.c(g.vec("Color", (0.85, 0.92, 1.0)), e, "Color")
-    g.c(g.scalar("Intensity", 30.0), e, "Intensity")
+    g.c(g.scalar("Intensity", 22.0), e, "Intensity")
     g.c(g.node("Time"), e, "T")
     g.out(e, "MP_EmissiveColor")
     g.finish(); return g
@@ -79,7 +79,7 @@ def flare():
     g.c(g.node("PerInstanceCustomData", {"DataIndex": 0, "ConstDefaultValue": 1.0}), e, "A")
     g.c(g.node("PerInstanceCustomData", {"DataIndex": 1, "ConstDefaultValue": 0.0}), e, "Flash")
     g.c(g.vec("Color", (0.85, 0.92, 1.0)), e, "Color")
-    g.c(g.scalar("Intensity", 45.0), e, "Intensity")
+    g.c(g.scalar("Intensity", 32.0), e, "Intensity")
     g.out(e, "MP_EmissiveColor")
     g.finish(); return g
 
