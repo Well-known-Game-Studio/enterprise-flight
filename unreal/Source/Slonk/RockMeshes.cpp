@@ -37,7 +37,7 @@ namespace
 		const int32 NumDents = Rng.RandRange(4, 9);
 		for (int32 i = 0; i < NumDents; ++i)
 		{
-			S.Dents.Add({ Rng.GetUnitVector(), Rng.FRandRange(0.25f, 0.7f), Rng.FRandRange(0.05f, 0.16f) });
+			S.Dents.Add({ Rng.GetUnitVector(), (float)Rng.FRandRange(0.25f, 0.7f), (float)Rng.FRandRange(0.05f, 0.16f) });
 		}
 		return S;
 	}
@@ -199,7 +199,11 @@ UStaticMesh* SlonkRocks::GetRockMesh(int32 Variant)
 	UStaticMesh* Mesh = NewObject<UStaticMesh>(GetTransientPackage(), *FString::Printf(TEXT("SlonkRock%d"), Variant), RF_Transient);
 	Mesh->AddToRoot();
 	Mesh->bAllowCPUAccess = true;
-	Mesh->GetStaticMaterials().Add(FStaticMaterial(nullptr, TEXT("Rock"), TEXT("Rock")));
+	FStaticMaterial RockMaterial(nullptr, TEXT("Rock"));
+#if WITH_EDITORONLY_DATA
+	RockMaterial.ImportedMaterialSlotName = TEXT("Rock");
+#endif
+	Mesh->GetStaticMaterials().Add(RockMaterial);
 	UStaticMesh::FBuildMeshDescriptionsParams Params;
 	Params.bFastBuild = true;
 	Params.bAllowCpuAccess = true;

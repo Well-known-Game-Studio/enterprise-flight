@@ -62,7 +62,7 @@ public:
 	/** Pick LOD for this view (world space), launch builds, swap finished meshes in. Call a few times a second. */
 	void UpdateView(const FVector& ViewLocationWorld);
 
-	void SetTerrainVisible(bool bVisible);
+	void SetTerrainVisible(bool bShow);
 	bool IsTerrainVisible() const { return bTerrainVisible; }
 
 	/** Ground height (cm above the sea-level sphere; the sea is 0) under a world position, at full detail. */

@@ -1617,12 +1617,12 @@ void AStarshipPawn::SetStarFieldFade(float Fade)
 	SetStarFieldHidden(Fade <= 0.001f);
 }
 
-void AStarshipPawn::SetStarFieldHidden(bool bHidden)
+void AStarshipPawn::SetStarFieldHidden(bool bHide)
 {
-	if (bStarFieldHidden != bHidden)
+	if (bStarFieldHidden != bHide)
 	{
-		bStarFieldHidden = bHidden;
-		if (StarSphere) { StarSphere->SetVisibility(!bHidden); }
+		bStarFieldHidden = bHide;
+		if (StarSphere) { StarSphere->SetVisibility(!bHide); }
 	}
 }
 

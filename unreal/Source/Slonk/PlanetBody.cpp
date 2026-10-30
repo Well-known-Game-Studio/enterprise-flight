@@ -200,7 +200,6 @@ void APlanetBody::BuildRingProfile()
 		RingProfileTexture->AddressX = TA_Clamp;
 		RingProfileTexture->AddressY = TA_Clamp;
 		RingProfileTexture->CompressionSettings = TC_VectorDisplacementmap;
-		RingProfileTexture->MipGenSettings = TMGS_NoMipmaps;
 #if WITH_EDITORONLY_DATA
 		RingProfileTexture->MipGenSettings = TMGS_NoMipmaps;
 #endif
