@@ -158,6 +158,8 @@ Escape opens the main computer: an Okudagram panel built with the engine's Commo
 
 ![The main computer, stellar cartography, the science log and the controls list](https://github.com/user-attachments/assets/4ea6eed5-77cf-461a-9ec8-bb3b522e9146)
 
+![Settings, and the panels set in Antonio](https://github.com/user-attachments/assets/7a3cca3b-25e9-439d-b4c0-ffb49b40e379)
+
 ## Controls
 
 Mouse or the left stick steers; H opens the controls panel with the full key list.
