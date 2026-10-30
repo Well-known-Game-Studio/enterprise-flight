@@ -32,6 +32,26 @@ protected:
 	virtual FLinearColor FrameColor() const override { return Lcars::Periwinkle; }
 };
 
+/** Settings: the typeface and the HUD overlays, from the main menu. */
+UCLASS()
+class SLONK_API USettingsPanel : public ULcarsPanel
+{
+	GENERATED_BODY()
+
+protected:
+	virtual void BuildContent() override;
+	virtual FString PanelTitle() const override { return TEXT("Settings"); }
+	virtual FLinearColor FrameColor() const override { return Lcars::Tan; }
+	virtual FVector2D PanelSize() const override { return FVector2D(1000.0, 560.0); }
+
+private:
+	/** A row of choices; the current one is lit. OnPick gets the index and should return the new current index. */
+	void AddChoiceRow(const FString& Label, const TArray<FString>& Choices, int32 Current, TFunction<int32(int32)> OnPick);
+	struct FChoiceRow { TArray<UButton*> Buttons; int32 Current = 0; };
+	TArray<FChoiceRow> Rows;
+	void Light(FChoiceRow& Row);
+};
+
 /** /: the science catalogue. */
 UCLASS()
 class SLONK_API UScienceLogPanel : public ULcarsPanel

@@ -18,6 +18,15 @@ class UWidget;
  * for the pills, bars and elbows, the engine's Roboto for type (uppercase, tracked out) until a condensed face is
  * brought in.
  */
+/** Which typeface the panels are set in; a menu setting kept by USlonkSettingsSubsystem. */
+enum class ELcarsTypeface : uint8
+{
+	/** The engine's Roboto, tracked out. */
+	Standard,
+	/** Antonio (SIL OFL), the condensed face in the Swiss 911 vein the real displays use. */
+	Condensed
+};
+
 namespace Lcars
 {
 	// Palette.
@@ -46,12 +55,12 @@ namespace Lcars
 	constexpr float ButtonH = 44.f;
 	constexpr float PillR = 22.f;
 
-	inline FSlateFontInfo Font(float Size, bool bBold = true, int32 Tracking = 60)
-	{
-		FSlateFontInfo F = FCoreStyle::GetDefaultFontStyle(bBold ? TEXT("Bold") : TEXT("Regular"), Size);
-		F.LetterSpacing = Tracking;
-		return F;
-	}
+	/** The current typeface; panels read it when they are built, so a change rebuilds the open panel. */
+	ELcarsTypeface GetTypeface();
+	void SetTypeface(ELcarsTypeface Face);
+	const TCHAR* TypefaceName(ELcarsTypeface Face);
+	/** Type in the current face: Roboto from the engine, or Antonio loaded straight from Content/UI/Fonts. */
+	FSlateFontInfo Font(float Size, bool bBold = true, int32 Tracking = 60);
 
 	/** A box with per-corner radii (TL, TR, BR, BL). */
 	inline FSlateBrush Rounded(const FLinearColor& Color, const FVector4& Radii)

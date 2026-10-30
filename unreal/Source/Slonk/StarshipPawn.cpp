@@ -2061,6 +2061,7 @@ void AStarshipPawn::ProcessDebugCommand()
 		else if (What == TEXT("chart") || What == TEXT("map")) { UI->TogglePanel(UStarChartPanel::StaticClass()); }
 		else if (What == TEXT("science")) { UI->TogglePanel(UScienceLogPanel::StaticClass()); }
 		else if (What == TEXT("controls") || What == TEXT("help")) { UI->TogglePanel(UControlsPanel::StaticClass()); }
+		else if (What == TEXT("settings")) { UI->TogglePanel(USettingsPanel::StaticClass()); }
 		else if (What == TEXT("close")) { UI->CloseAll(); }
 		else if (What == TEXT("click"))
 		{
@@ -2072,7 +2073,7 @@ void AStarshipPawn::ProcessDebugCommand()
 			UE_LOG(LogTemp, Log, TEXT("ui click \"%s\": %s"), *Label, bHit ? TEXT("pressed") : TEXT("no such button"));
 			if (!bHit) { ScreenMessage(FString::Printf(TEXT("ui click: no button \"%s\""), *Label), FColor::Orange); }
 		}
-		else { ScreenMessage(TEXT("ui menu | chart | science | controls | close | click <button>"), FColor::Orange); }
+		else { ScreenMessage(TEXT("ui menu | chart | science | controls | settings | close | click <button>"), FColor::Orange); }
 	}
 	else if (Op == TEXT("help"))
 	{
@@ -2086,7 +2087,7 @@ void AStarshipPawn::ProcessDebugCommand()
 			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km]"),
 			TEXT("ship shuttle  (launch the shuttlecraft; aboard it, dock when the bay is within 500 m) | ship takeoff"),
 			TEXT("ship scan [stop]  (sensors on the locked / nav target; landed: survey the ground) | ship science [reset]"),
-			TEXT("ship ui menu | chart | science | controls | close   (the LCARS panels)"),
+			TEXT("ship ui menu | chart | science | controls | settings | close | click <button>   (the LCARS panels)"),
 			TEXT("ship exec <console command>"),
 		};
 		// Reverse order: on-screen messages stack newest on top.

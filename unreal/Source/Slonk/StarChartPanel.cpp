@@ -22,9 +22,9 @@
 namespace
 {
 	constexpr double LocalSystemCm = 2000.0 * AStarSystem::AuCm;   // bodies farther than this from the star are other systems
-	const FLinearColor GridColor(0.25f, 0.35f, 0.55f, 0.35f);
-	const FLinearColor OrbitColor(0.45f, 0.6f, 0.9f, 0.45f);
-	const FLinearColor BeltColor(0.8f, 0.6f, 0.4f, 0.6f);
+	const FLinearColor ChartGridColor(0.25f, 0.35f, 0.55f, 0.35f);
+	const FLinearColor ChartOrbitColor(0.45f, 0.6f, 0.9f, 0.45f);
+	const FLinearColor ChartBeltColor(0.8f, 0.6f, 0.4f, 0.6f);
 
 	FString FormatLy(double Cm)
 	{
@@ -270,10 +270,10 @@ int32 UStarChartWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geo
 	// Grid: the orbital plane as concentric AU rings and the cardinal axes.
 	{
 		const double Step = MaxR / Zoom > 20.0 * AStarSystem::AuCm ? 10.0 * AStarSystem::AuCm : MaxR / Zoom > 4.0 * AStarSystem::AuCm ? 1.0 * AStarSystem::AuCm : 0.25 * AStarSystem::AuCm;
-		for (double R = Step; R * Scale < FMath::Max(Size.X, Size.Y) * 1.5 && R < 400.0 * AStarSystem::AuCm; R += Step) { Orbit(R, GridColor, 1.f, L0, false); }
+		for (double R = Step; R * Scale < FMath::Max(Size.X, Size.Y) * 1.5 && R < 400.0 * AStarSystem::AuCm; R += Step) { Orbit(R, ChartGridColor, 1.f, L0, false); }
 		const double Axis = FMath::Max(Size.X, Size.Y) / Scale;
-		Lines({ FVector2f(Project(FVector(-Axis, 0, 0))), FVector2f(Project(FVector(Axis, 0, 0))) }, GridColor, 1.f, L0);
-		Lines({ FVector2f(Project(FVector(0, -Axis, 0))), FVector2f(Project(FVector(0, Axis, 0))) }, GridColor, 1.f, L0);
+		Lines({ FVector2f(Project(FVector(-Axis, 0, 0))), FVector2f(Project(FVector(Axis, 0, 0))) }, ChartGridColor, 1.f, L0);
+		Lines({ FVector2f(Project(FVector(0, -Axis, 0))), FVector2f(Project(FVector(0, Axis, 0))) }, ChartGridColor, 1.f, L0);
 	}
 	// Planet orbits and the belt.
 	{
@@ -286,8 +286,8 @@ int32 UStarChartWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geo
 			for (double E : Orbits) { if (FMath::Abs(E - R) < R * 0.03) { bDup = true; break; } }
 			if (!bDup) { Orbits.Add(R); }
 		}
-		for (double R : Orbits) { Orbit(R, OrbitColor, 1.2f, L1, false); }
-		if (BeltRadiusCm > 0.0) { Orbit(BeltRadiusCm, BeltColor, 2.f, L1, true); }
+		for (double R : Orbits) { Orbit(R, ChartOrbitColor, 1.2f, L1, false); }
+		if (BeltRadiusCm > 0.0) { Orbit(BeltRadiusCm, ChartBeltColor, 2.f, L1, true); }
 	}
 	// Bodies.
 	APlayerController* PC = GetOwningPlayer();

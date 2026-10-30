@@ -7,9 +7,32 @@
 #include "Components/Button.h"
 #include "Components/ButtonSlot.h"
 #include "Styling/SlateTypes.h"
+#include "Misc/Paths.h"
 
 namespace Lcars
 {
+	static ELcarsTypeface CurrentTypeface = ELcarsTypeface::Standard;
+	ELcarsTypeface GetTypeface() { return CurrentTypeface; }
+	void SetTypeface(ELcarsTypeface Face) { CurrentTypeface = Face; }
+	const TCHAR* TypefaceName(ELcarsTypeface Face) { return Face == ELcarsTypeface::Condensed ? TEXT("Condensed") : TEXT("Standard"); }
+
+	FSlateFontInfo Font(float Size, bool bBold, int32 Tracking)
+	{
+		if (CurrentTypeface == ELcarsTypeface::Condensed)
+		{
+			// Slate loads a TTF by path (as the engine's own core style does); Antonio sits tight already, so a
+			// third of the tracking and a touch more size to match Roboto's presence.
+			static const FString Bold = FPaths::ProjectContentDir() / TEXT("UI/Fonts/Antonio-Bold.ttf");
+			static const FString Regular = FPaths::ProjectContentDir() / TEXT("UI/Fonts/Antonio-Regular.ttf");
+			FSlateFontInfo F(bBold ? Bold : Regular, Size * 1.1f);
+			F.LetterSpacing = Tracking / 3;
+			return F;
+		}
+		FSlateFontInfo F = FCoreStyle::GetDefaultFontStyle(bBold ? TEXT("Bold") : TEXT("Regular"), Size);
+		F.LetterSpacing = Tracking;
+		return F;
+	}
+
 	UTextBlock* MakeText(UWidgetTree* Tree, const FString& Text, float Size, const FLinearColor& Color, bool bBold, bool bUpper)
 	{
 		UTextBlock* T = Tree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());

@@ -11,6 +11,7 @@
 #include "StarSystem.h"
 #include "ScienceLog.h"
 #include "ScienceScannerComponent.h"
+#include "SlonkSettings.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
@@ -35,6 +36,7 @@ void UMainMenuPanel::BuildContent()
 	AddSidebarButton(TEXT("Star Chart"), Lcars::Periwinkle, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UStarChartPanel>(); } });
 	AddSidebarButton(TEXT("Science Log"), Lcars::Gold, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UScienceLogPanel>(); } });
 	AddSidebarButton(TEXT("Controls"), Lcars::Lavender, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UControlsPanel>(); } });
+	AddSidebarButton(TEXT("Settings"), Lcars::Tan, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<USettingsPanel>(); } });
 	AddSidebarButton(TEXT("Quit"), Lcars::Salmon, [this]()
 	{
 		ULcarsPopup::Show(GetUIRoot(), TEXT("End Program"), TEXT("Leave the ship and quit to the desktop?"), { TEXT("Quit"), TEXT("Stay") }, [this](int32 Choice)
@@ -151,6 +153,74 @@ void UControlsPanel::BuildContent()
 	};
 	Column(TEXT("Helm"), Flight, UE_ARRAY_COUNT(Flight));
 	Column(TEXT("Tactical, science, navigation"), Systems, UE_ARRAY_COUNT(Systems));
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Settings
+
+void USettingsPanel::Light(FChoiceRow& Row)
+{
+	for (int32 i = 0; i < Row.Buttons.Num(); ++i)
+	{
+		const FVector4 Radii(Lcars::PillR, Lcars::PillR, Lcars::PillR, Lcars::PillR);
+		Lcars::SetButtonColor(Row.Buttons[i], i == Row.Current ? Lcars::Orange : Lcars::Lilac, &Radii);
+	}
+}
+
+void USettingsPanel::AddChoiceRow(const FString& Label, const TArray<FString>& Choices, int32 Current, TFunction<int32(int32)> OnPick)
+{
+	UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+	USizeBox* Min = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+	Min->SetMinDesiredWidth(200.f);
+	Min->AddChild(Lcars::MakeText(WidgetTree, Label, 15.f, Lcars::Peach));
+	if (UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(Min)) { S->SetVerticalAlignment(VAlign_Center); S->SetPadding(FMargin(0.f, 0.f, 16.f, 0.f)); }
+	const int32 RowIndex = Rows.AddDefaulted();
+	Rows[RowIndex].Current = Current;
+	for (int32 i = 0; i < Choices.Num(); ++i)
+	{
+		const FVector4 Radii(Lcars::PillR, Lcars::PillR, Lcars::PillR, Lcars::PillR);
+		UButton* B = Lcars::MakeButton(WidgetTree, Choices[i], Lcars::Lilac, nullptr, &Radii);
+		USizeBox* Box = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+		Box->SetHeightOverride(Lcars::ButtonH); Box->SetMinDesiredWidth(170.f);
+		Box->AddChild(B);
+		if (UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(Box)) { S->SetPadding(FMargin(0.f, 0.f, Lcars::Gap, 0.f)); }
+		Rows[RowIndex].Buttons.Add(B);
+		const int32 Pick = i;
+		Bind(B, [this, RowIndex, Pick, OnPick]()
+		{
+			if (!Rows.IsValidIndex(RowIndex)) { return; }
+			Rows[RowIndex].Current = OnPick ? OnPick(Pick) : Pick;
+			Light(Rows[RowIndex]);
+		}, Choices[i]);
+	}
+	Light(Rows[RowIndex]);
+	if (UVerticalBoxSlot* S = Content->AddChildToVerticalBox(Row)) { S->SetPadding(FMargin(0.f, 4.f, 0.f, 8.f)); }
+}
+
+void USettingsPanel::BuildContent()
+{
+	AddSidebarButton(TEXT("Close"), Lcars::Orange, [this]() { Close(); });
+	AddSidebarButton(TEXT("Main Menu"), Lcars::Lavender, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UMainMenuPanel>(); } });
+
+	AddLine(Content, TEXT("Display"), 13.f, Lcars::Lilac, true, true, 0.f);
+	USlonkSettingsSubsystem* Settings = GetGameInstance() ? GetGameInstance()->GetSubsystem<USlonkSettingsSubsystem>() : nullptr;
+	AddChoiceRow(TEXT("Typeface"), { TEXT("Standard"), TEXT("Condensed") }, Settings && Settings->GetTypeface() == ELcarsTypeface::Condensed ? 1 : 0, [this, Settings](int32 Pick)
+	{
+		if (Settings) { Settings->SetTypeface(Pick == 1 ? ELcarsTypeface::Condensed : ELcarsTypeface::Standard); }
+		// Panels take their face when built: rebuild this one in the new type.
+		if (USlonkUIRoot* UI = GetUIRoot()) { UI->CloseAll(); UI->PushMenu<USettingsPanel>(); }
+		return Pick;
+	});
+	AddLine(Content, TEXT("Standard is the engine's Roboto; Condensed is Antonio, the compressed face in the spirit of the real displays."), 12.f, Lcars::Dim, false, false, 0.f);
+
+	AddLine(Content, TEXT("HUD"), 13.f, Lcars::Lilac, true, true, 14.f);
+	AStarshipHUD* H = GetHUD();
+	AddChoiceRow(TEXT("Nav markers"), { TEXT("On"), TEXT("Off") }, H && H->bShowNavMarkers ? 0 : 1, [this](int32 Pick) { if (AStarshipHUD* Hud = GetHUD()) { Hud->bShowNavMarkers = Pick == 0; } return Pick; });
+	AddChoiceRow(TEXT("Minimap"), { TEXT("On"), TEXT("Off") }, H && H->bShowMinimap ? 0 : 1, [this](int32 Pick) { if (AStarshipHUD* Hud = GetHUD()) { Hud->bShowMinimap = Pick == 0; } return Pick; });
+	AddChoiceRow(TEXT("Key hints"), { TEXT("On"), TEXT("Off") }, H && H->bShowHelp ? 0 : 1, [this](int32 Pick) { if (AStarshipHUD* Hud = GetHUD()) { Hud->bShowHelp = Pick == 0; } return Pick; });
+	AStarshipPawn* Ship = GetShip();
+	AddChoiceRow(TEXT("Warp view"), { TEXT("Classic"), TEXT("Relativistic") }, Ship && Ship->GetWarpVisualMode() == EWarpVisualMode::Relativistic ? 1 : 0, [this](int32 Pick) { if (AStarshipPawn* S = GetShip()) { S->SetWarpVisualMode(Pick == 1 ? EWarpVisualMode::Relativistic : EWarpVisualMode::Classic); } return Pick; });
+	AddLine(Content, TEXT("The typeface is kept between sessions; the HUD switches last for this flight (N, M's sidebar and U also flip them)."), 12.f, Lcars::Dim, false, false, 6.f);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
