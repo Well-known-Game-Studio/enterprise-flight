@@ -178,6 +178,24 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Terrain")
 	TObjectPtr<AActor> GroundBody;
 
+	// ---- Landing ------------------------------------------------------------------------------
+
+	/** Small craft settle: within the clearance height, below LandingSpeed, with no throttle or lift asked for, the
+	 *  craft lands, sits on the slope and turns with the planet until throttle or vertical thrust lifts it again. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Landing")
+	bool bCanLand = false;
+
+	/** Ground speed below which the craft settles (cm/s). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Landing")
+	double LandingSpeedCm = 600.0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Landing")
+	bool bLanded = false;
+
+	/** Leave the ground: a small upward push, then normal flight. */
+	UFUNCTION(BlueprintCallable, Category = "Starship|Movement")
+	void TakeOff();
+
 	/** Ground height under the ship above that planet's sea level, cm. */
 	UPROPERTY(BlueprintReadOnly, Category = "Terrain")
 	double GroundHeightCm = 0.0;
@@ -290,6 +308,12 @@ private:
 	/** Evaluate every body against the heading; returns the unit direction to the governing body (zero if none threatens). */
 	FVector UpdateProximity(const FVector& Here, const FVector& Dir);
 	void ApplyTerrainFloor(float DeltaTime);
+	/** Settle on the ground under the craft: skids on the slope, heading kept, position remembered in the planet's frame. */
+	void Land(class APlanetBody* Body, const FVector& Centre, const FVector& Radial, double SurfR);
+	/** Each tick while landed: ride the planet's spin, zero the motion, lift off when asked. */
+	void HoldLanded(float DeltaTime);
+	TWeakObjectPtr<class APlanetBody> LandedBody;
+	FTransform LandedLocal;
 	TArray<TWeakObjectPtr<class APlanetBody>> TerrainBodies;
 	float TerrainScanTimer = 0.f;
 

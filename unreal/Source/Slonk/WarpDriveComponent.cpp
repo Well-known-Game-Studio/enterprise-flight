@@ -74,6 +74,10 @@ void UWarpDriveComponent::AdjustWarpFactor(float Delta)
 
 void UWarpDriveComponent::EngageWarp()
 {
+	if (!bEnabled)
+	{
+		return;
+	}
 	if (State == EWarpState::Idle || State == EWarpState::Dropping)
 	{
 		SetState(EWarpState::Charging);

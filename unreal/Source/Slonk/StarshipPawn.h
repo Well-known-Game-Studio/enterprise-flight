@@ -79,6 +79,8 @@ struct FStarshipLightSpec
 	bool bImpulseLight = false;
 };
 
+class AShuttlecraftPawn;
+
 UCLASS()
 class SLONK_API AStarshipPawn : public APawn
 {
@@ -104,6 +106,24 @@ public:
 	/** In-game console entry (` opens it): "ship nav target Sirius", "ship autopilot warp", "ship help" lists them.
 	 *  The rest of the line is the command. */
 	UFUNCTION(Exec) void Ship(const FString& Command);
+
+	// ---- Shuttlecraft ----
+	/** The shuttle this ship has out (null while it is in the bay). */
+	UPROPERTY(BlueprintReadOnly, Category = "Shuttle") TWeakObjectPtr<AShuttlecraftPawn> ActiveShuttle;
+	/** The shuttlebay door in pawn space (cm): the fantail of the engineering hull. A shuttle leaves it astern. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shuttle") FVector ShuttleBayOffset = FVector(-7250.0, 0.0, -1600.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shuttle") TSubclassOf<AShuttlecraftPawn> ShuttleClass;
+	/** The ship must be below this speed (cm/s) and out of warp to launch. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shuttle") double ShuttleLaunchMaxSpeed = 5.0e4;
+	/** C: on the starship, launch the shuttle and fly it; on the shuttle, dock when the bay is in range. */
+	UFUNCTION(BlueprintCallable, Category = "Shuttle") virtual void ToggleShuttle();
+	UFUNCTION(BlueprintCallable, Category = "Shuttle") bool LaunchShuttle();
+	/** The shuttle has slid back into the bay: control returns here and the shuttle is removed. */
+	void OnShuttleDocked(AShuttlecraftPawn* Shuttle);
+	/** The bay door in world space, X pointing the way a shuttle leaves (astern). */
+	FTransform GetShuttleBayTransform() const;
+	virtual FString GetCraftName() const { return TEXT("U.S.S. Enterprise"); }
+	virtual bool IsShuttle() const { return false; }
 
 	/** Brightness of the star sphere, 0..1: the game mode fades it into a daylit sky. */
 	void SetStarFieldFade(float Fade);
@@ -465,7 +485,7 @@ public:
 	// ---- API ----
 
 	UFUNCTION(BlueprintCallable, Category = "Starship|Camera")
-	void SetCameraMode(EStarshipCameraMode Mode);
+	virtual void SetCameraMode(EStarshipCameraMode Mode);
 
 	UFUNCTION(BlueprintCallable, Category = "Starship|Camera")
 	void CycleCameraMode();
@@ -534,15 +554,20 @@ protected:
 	UFUNCTION()
 	void HandleCollision(const FHitResult& Hit);
 
+	/** Fittings a different hull lays out its own way (the shuttle overrides these). */
+	virtual void SetupRunningLights();
+	/** Lay the reaction control nozzles out on the hull mesh. */
+	virtual void SetupThrusters();
+	/** Lay the phaser banks out on the hull mesh. */
+	virtual void SetupWeaponBanks();
+	/** First look at a console op; true when handled (the shuttle takes "dock" here). */
+	virtual bool HandleCraftCommand(const FString& Op, const TArray<FString>& Args);
+	void ScreenMessage(const FString& Text, FColor Color, float Seconds = 6.f) const;
+
 private:
 	void ApplyHullDimensions();
 	void SetupHullMaterials();
 	void SetupHullLights();
-	void SetupRunningLights();
-	/** Lay the reaction control nozzles out on the hull mesh. */
-	void SetupThrusters();
-	/** Lay the phaser banks out on the hull mesh. */
-	void SetupWeaponBanks();
 	/** Feed this frame's steering and translation to the thruster FX. */
 	void UpdateThrusters();
 	/** Cache the hull's LOD0 vertices in pawn space for the probes below. */
@@ -559,7 +584,6 @@ private:
 	void UpdateHullGlow(float DeltaTime);
 	void AttachStreaksToActiveCamera();
 	void ProcessDebugCommand();
-	void ScreenMessage(const FString& Text, FColor Color, float Seconds = 6.f) const;
 	void ApplyExposure();
 
 	UPROPERTY()

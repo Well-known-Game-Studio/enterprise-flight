@@ -17,6 +17,7 @@
 #include "GameFramework/PlayerController.h"
 #include "StarshipMovementComponent.h"
 #include "StarshipPawn.h"
+#include "ShuttlecraftPawn.h"
 #include "StarshipWeaponsComponent.h"
 #include "WarpDriveComponent.h"
 
@@ -125,7 +126,7 @@ void AStarshipHUD::DrawHUD()
 	// ---- Left panel: flight ----
 	float X = 32.f * UIScale;
 	float Y = 32.f * UIScale;
-	DrawText(TEXT("U.S.S. ENTERPRISE  NCC-1701-A"), Accent, X, Y, Font, UIScale); Y += Line * 1.4f;
+	DrawText(Ship->IsShuttle() ? Ship->GetCraftName().ToUpper() : FString(TEXT("U.S.S. ENTERPRISE  NCC-1701-A")), Accent, X, Y, Font, UIScale); Y += Line * 1.4f;
 
 	// Frame timing (smoothed) so performance is visible without console stats.
 	{
@@ -184,11 +185,28 @@ void AStarshipHUD::DrawHUD()
 				DrawText(FString::Printf(TEXT("ORBIT HOLD  %s   alt %s   %s   (O releases, PgUp/PgDn alt)"), *Movement->OrbitBodyName.ToUpper(), *FormatDistance(Alt), *PeriodText), Accent, X, Y, Font, UIScale); Y += Line;
 			}
 		}
+		if (const AShuttlecraftPawn* Shuttle = Cast<AShuttlecraftPawn>(Ship))
+		{
+			const AStarshipPawn* Home = Shuttle->Mothership.Get();
+			const double BayDist = Shuttle->DistanceToBay();
+			FString Status;
+			switch (Shuttle->GetPhase())
+			{
+			case EShuttlePhase::Launching: Status = TEXT("leaving the bay"); break;
+			case EShuttlePhase::Docking: Status = TEXT("docking"); break;
+			default: Status = BayDist >= 0.0 && BayDist <= Shuttle->DockRangeCm ? TEXT("bay in range, C docks") : TEXT("C docks within 500 m of the bay"); break;
+			}
+			DrawText(FString::Printf(TEXT("SHUTTLECRAFT   %s %s   %s"), Home ? *Home->GetCraftName().ToUpper() : TEXT("NO SHIP"), BayDist >= 0.0 ? *FormatDistance(BayDist) : TEXT(""), *Status), Accent, X, Y, Font, UIScale); Y += Line;
+		}
 		if (Movement->GroundBody && Movement->AltitudeAGLCm >= 0.0 && !Movement->bOrbitHold)
 		{
 			FString GroundName = Movement->GroundBody->GetActorNameOrLabel();
 			if (const APlanetBody* GroundPlanet = Cast<APlanetBody>(Movement->GroundBody.Get())) { GroundName = GroundPlanet->GetDisplayName(); }
-			if (Movement->bTerrainFollow)
+			if (Movement->bLanded)
+			{
+				DrawText(FString::Printf(TEXT("LANDED  %s   ground %s above sea   (throttle or PgUp lifts off)"), *GroundName.ToUpper(), *FormatDistance(Movement->GroundHeightCm)), Accent, X, Y, Font, UIScale); Y += Line;
+			}
+			else if (Movement->bTerrainFollow)
 			{
 				DrawText(FString::Printf(TEXT("TERRAIN FOLLOW  %s   hover %s   ground %s above sea   (PgUp/PgDn height)"), *GroundName.ToUpper(), *FormatDistance(Movement->HoverAltitudeCm), *FormatDistance(Movement->GroundHeightCm)), Accent, X, Y, Font, UIScale); Y += Line;
 			}
@@ -328,6 +346,7 @@ void AStarshipHUD::DrawHUD()
 			TEXT("L  next nav target   K  clear nav target"),
 			TEXT("I  nav filter: all / stars / worlds / stations / ships / nebulae"),
 			TEXT("P  autopilot to the nav target (warp or impulse by range)"),
+			TEXT("C  shuttlecraft: launch from the bay / dock when within 500 m of it"),
 			TEXT("Home  jump to nav target (dev)"),
 			TEXT("U  warp visuals: classic / relativistic"),
 			TEXT("`  console:  ship <command>   (ship help lists them)"),
@@ -486,6 +505,19 @@ void AStarshipHUD::GatherNavObjects(bool bForce)
 		O.Kind = ENavObjectKind::Ship;
 		O.Location = It->GetActorLocation();
 		O.RadiusCm = It->GetBoundingRadiusCm();
+		NavObjects.Add(O);
+	}
+	// The player's other craft: from the shuttle, the starship is the way home.
+	for (TActorIterator<AStarshipPawn> It(World); It; ++It)
+	{
+		if (*It == OwnPawn) { continue; }
+		FNavObject O;
+		O.Actor = *It;
+		O.Label = It->GetCraftName();
+		O.Kind = ENavObjectKind::Ship;
+		O.Location = It->GetActorLocation();
+		// No standoff radius: the range shown is to the ship itself, which is what the shuttle pilot steers by.
+		O.RadiusCm = 0.0;
 		NavObjects.Add(O);
 	}
 

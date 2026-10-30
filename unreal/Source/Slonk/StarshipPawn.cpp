@@ -20,6 +20,7 @@
 #include "TractorBeamComponent.h"
 #include "RunningLightsComponent.h"
 #include "RcsThrusterComponent.h"
+#include "ShuttlecraftPawn.h"
 #include "Rendering/PositionVertexBuffer.h"
 #include "StaticMeshResources.h"
 #include "Engine/DamageEvents.h"
@@ -729,7 +730,7 @@ void AStarshipPawn::ApplyHullDimensions()
 	BridgeCamera->SetRelativeLocation(BridgeCameraOffset);
 	BridgeCamera->SetFieldOfView(BridgeFOV);
 	// The set's origin is the deck under the captain's chair; the camera sits at the seated eye point.
-	BridgeInterior->SetRelativeLocation(BridgeCameraOffset - BridgeInterior->GetEyeOffset());
+	if (BridgeInterior) { BridgeInterior->SetRelativeLocation(BridgeCameraOffset - BridgeInterior->GetEyeOffset()); }
 
 	const float OrbitDistance = LengthCm * CinematicDistanceFactor;
 	const FVector OrbitOffset(-OrbitDistance, 0.0, OrbitDistance * 0.18);
@@ -1267,7 +1268,7 @@ void AStarshipPawn::SetCameraMode(EStarshipCameraMode Mode)
 	ShipMesh->SetOwnerNoSee(false);
 	ShipMesh->SetVisibility(Mode != EStarshipCameraMode::Bridge);
 	if (RunningLights) { RunningLights->SetVisibility(Mode != EStarshipCameraMode::Bridge); }
-	BridgeInterior->SetVisibility(Mode == EStarshipCameraMode::Bridge, true);
+	if (BridgeInterior) { BridgeInterior->SetVisibility(Mode == EStarshipCameraMode::Bridge, true); }
 	AttachStreaksToActiveCamera();
 }
 
@@ -1524,6 +1525,37 @@ void AStarshipPawn::UpdateCameras(float DeltaTime)
 		ChaseArm->SocketOffset = ChaseArmBaseSocketOffset * ChaseZoom + ShakeOffset * Amp * LengthCm * 0.01f;
 		ChaseCamera->SetRelativeRotation(FRotator(0.f, 0.f, ShakeRoll));
 		ChaseCamera->SetFieldOfView(ChaseFOV + WarpFovBoost * Streak + 8.f * Flash);
+		// Near the ground the arm has nothing to probe (terrain chunks carry no collision), so lift the pivot
+		// whenever the lens would dip under the surface, and let the lift go only as fast as the clearance allows.
+		{
+			FVector Lift = ChaseArm->TargetOffset;
+			const APlanetBody* Ground = Movement ? Cast<APlanetBody>(Movement->GroundBody.Get()) : nullptr;
+			if (Ground)
+			{
+				const FVector Cam = ChaseCamera->GetComponentLocation();
+				const FVector Rv = Cam - Ground->GetActorLocation();
+				const double D = Rv.Size();
+				if (D > 1.0)
+				{
+					const FVector Radial = Rv / D;
+					const double Clearance = D - (Ground->GetSurfaceRadiusCm(Cam) + FMath::Max(LengthCm * 0.25f, 200.f));
+					if (Clearance < 0.0)
+					{
+						Lift += Radial * (-Clearance);
+					}
+					else if (!Lift.IsNearlyZero())
+					{
+						const double Drop = FMath::Min(Clearance, Lift.Size() * 2.0 * DeltaTime);
+						Lift -= Lift.GetSafeNormal() * Drop;
+					}
+				}
+			}
+			else
+			{
+				Lift = FVector::ZeroVector;
+			}
+			ChaseArm->TargetOffset = Lift;
+		}
 		break;
 	}
 	case EStarshipCameraMode::Bridge:
@@ -1606,7 +1638,8 @@ void AStarshipPawn::ProcessDebugCommand()
 
 	UE_LOG(LogTemp, Log, TEXT("Starship debug command: %s"), *Cmd);
 
-	if (Op == TEXT("throttle") && Movement) { Movement->SetThrottle(Arg(1, 0.f)); }
+	if (HandleCraftCommand(Op, Args)) {}
+	else if (Op == TEXT("throttle") && Movement) { Movement->SetThrottle(Arg(1, 0.f)); }
 	else if (Op == TEXT("bridge") && BridgeInterior)
 	{
 		const FString Which = ArgStr(1);
@@ -1996,6 +2029,7 @@ void AStarshipPawn::ProcessDebugCommand()
 			TEXT("ship warpvis [classic|real] | cscale <0..1> | systems | shipwarp [km] [far]"),
 			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mountain|coast|river|linea|land> <alt m> [across|sun|away|along|giant]"),
 			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km]"),
+			TEXT("ship shuttle  (launch the shuttlecraft; aboard it, dock when the bay is within 500 m) | ship takeoff"),
 			TEXT("ship exec <console command>"),
 		};
 		// Reverse order: on-screen messages stack newest on top.
@@ -2006,6 +2040,107 @@ void AStarshipPawn::ProcessDebugCommand()
 		UE_LOG(LogTemp, Warning, TEXT("Starship debug command not understood: %s"), *Cmd);
 		ScreenMessage(FString::Printf(TEXT("ship: \"%s\" not understood (ship help)"), *Args[0]), FColor::Orange);
 	}
+}
+
+bool AStarshipPawn::HandleCraftCommand(const FString& Op, const TArray<FString>& Args)
+{
+	if (Op == TEXT("shuttle"))
+	{
+		ToggleShuttle();
+		return true;
+	}
+	if (Op == TEXT("takeoff") && Movement)
+	{
+		Movement->TakeOff();
+		return true;
+	}
+	return false;
+}
+
+void AStarshipPawn::ToggleShuttle()
+{
+	LaunchShuttle();
+}
+
+FTransform AStarshipPawn::GetShuttleBayTransform() const
+{
+	// The door faces astern: a shuttle leaves along the ship's -X.
+	const FQuat Facing = GetActorQuat() * FQuat(FVector::UpVector, PI);
+	return FTransform(Facing, GetActorTransform().TransformPosition(ShuttleBayOffset));
+}
+
+bool AStarshipPawn::LaunchShuttle()
+{
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC || IsShuttle())
+	{
+		return false;
+	}
+	if (ActiveShuttle.IsValid())
+	{
+		ScreenMessage(TEXT("The shuttle is already out"), FColor::Orange);
+		return false;
+	}
+	if (Movement && (Movement->bWarpActive || Movement->GetSpeed() > ShuttleLaunchMaxSpeed))
+	{
+		ScreenMessage(FString::Printf(TEXT("Shuttle launch: drop out of warp and slow below %.0f m/s first"), ShuttleLaunchMaxSpeed / 100.0), FColor::Orange);
+		return false;
+	}
+	if (Movement)
+	{
+		// The ship parks: the shuttle has to find the bay again.
+		Movement->SetThrottle(0.0);
+		Movement->ClearOrbitHold();
+		Movement->ClearTerrainFollow();
+	}
+	SetAutopilot(0, 0.0, 0.f);
+	FActorSpawnParameters Params;
+	Params.Owner = this;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	UClass* Cls = ShuttleClass ? *ShuttleClass : AShuttlecraftPawn::StaticClass();
+	AShuttlecraftPawn* Shuttle = GetWorld()->SpawnActor<AShuttlecraftPawn>(Cls, GetShuttleBayTransform(), Params);
+	if (!Shuttle)
+	{
+		return false;
+	}
+	ActiveShuttle = Shuttle;
+	// The two craft pass through each other's collision proxies: the ship's box is the whole hull's extent and the
+	// shuttle starts inside it.
+	CollisionBox->IgnoreActorWhenMoving(Shuttle, true);
+	Shuttle->CollisionBox->IgnoreActorWhenMoving(this, true);
+	// One sky at a time: the shuttle carries its own star sphere and distant-star sprites.
+	if (StarSphere) { StarSphere->SetVisibility(false); }
+	if (DistantStars) { DistantStars->SetVisibility(false, true); }
+	Shuttle->BeginLaunch(this);
+	PC->Possess(Shuttle);
+	if (AStarshipHUD* H = Cast<AStarshipHUD>(PC->GetHUD()))
+	{
+		H->SetNavTargetActor(this);
+	}
+	UE_LOG(LogTemp, Log, TEXT("Shuttle launched from %s at %s"), *GetCraftName(), *GetShuttleBayTransform().GetLocation().ToString());
+	return true;
+}
+
+void AStarshipPawn::OnShuttleDocked(AShuttlecraftPawn* Shuttle)
+{
+	APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+	if (PC && PC->GetPawn() == Shuttle)
+	{
+		PC->Possess(this);
+		if (AStarshipHUD* H = Cast<AStarshipHUD>(PC->GetHUD()))
+		{
+			if (H->NavTarget == this) { H->ClearNavTarget(); }
+		}
+	}
+	if (StarSphere) { StarSphere->SetVisibility(!bStarFieldHidden); }
+	if (DistantStars) { DistantStars->SetVisibility(true, true); }
+	if (Shuttle)
+	{
+		CollisionBox->IgnoreActorWhenMoving(Shuttle, false);
+		Shuttle->Destroy();
+	}
+	ActiveShuttle = nullptr;
+	ScreenMessage(TEXT("Shuttle docked"), FColor::Cyan);
 }
 
 void AStarshipPawn::ScreenMessage(const FString& Text, FColor Color, float Seconds) const
