@@ -207,9 +207,12 @@ void ULcarsPanel::BuildFrame()
 		return S;
 	};
 
-	// Elbows: the top-left and bottom-left corners, reaching under the content box's rounded corners.
-	Place(MakeBlock(WidgetTree, FrameCol, FVector4(ElbowR, 0.f, 0.f, 0.f)), 0.f, 0.f, SidebarW + Notch, TopBarH + Notch, 0);
-	Place(MakeBlock(WidgetTree, FrameCol, FVector4(0.f, 0.f, 0.f, ElbowR)), 0.f, H - BottomBarH - Notch, SidebarW + Notch, BottomBarH + Notch, 0);
+	// Elbows: the top-left and bottom-left corners, reaching under the content box's rounded corners. A rounded box
+	// clamps its radius to half its smaller side, so the block has to stand at least two radii tall for the outer
+	// curve to sweep the whole corner and run on down into the column, as the real displays do.
+	const float ElbowH = FMath::Max(TopBarH + Notch, ElbowR * 2.f);
+	Place(MakeBlock(WidgetTree, FrameCol, FVector4(ElbowR, 0.f, 0.f, 0.f)), 0.f, 0.f, SidebarW + Notch, ElbowH, 0);
+	Place(MakeBlock(WidgetTree, FrameCol, FVector4(0.f, 0.f, 0.f, ElbowR)), 0.f, H - ElbowH, SidebarW + Notch, ElbowH, 0);
 
 	// Top bar: a short block, the title in the gap, a long block and a rounded end cap.
 	{
@@ -252,8 +255,8 @@ void ULcarsPanel::BuildFrame()
 
 	// Sidebar column between the elbows: buttons, then a filler block to the bottom elbow.
 	Sidebar = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("Sidebar"));
-	const float SideY = TopBarH + Notch + Gap;
-	Place(Sidebar, 0.f, SideY, SidebarW, H - SideY - BottomBarH - Notch - Gap, 0);
+	const float SideY = ElbowH + Gap;
+	Place(Sidebar, 0.f, SideY, SidebarW, H - SideY - ElbowH - Gap, 0);
 	SidebarFiller = MakeBlock(WidgetTree, Lilac, FVector4(0.f, 0.f, 0.f, 0.f));
 	if (UVerticalBoxSlot* S = Sidebar->AddChildToVerticalBox(SidebarFiller)) { S->SetSize(FSlateChildSize(ESlateSizeRule::Fill)); }
 
