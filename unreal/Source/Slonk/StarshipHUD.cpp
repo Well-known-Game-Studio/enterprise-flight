@@ -307,10 +307,6 @@ void AStarshipHUD::DrawHUD()
 	{
 		DrawMinimap(Ship, UIScale);
 	}
-	if (bShowScienceLog)
-	{
-		DrawScienceLog(Ship, UIScale);   // over the markers
-	}
 
 	// ---- Right panel: camera + help ----
 	const float RX = Canvas->ClipX - 330.f * UIScale;
@@ -331,38 +327,7 @@ void AStarshipHUD::DrawHUD()
 
 	if (bShowHelp)
 	{
-		const TCHAR* Help[] = {
-			TEXT("Mouse / left stick   steer"),
-			TEXT("A D / bumpers        roll      Q E  yaw"),
-			TEXT("W S / wheel          throttle"),
-			TEXT("1 2 3 4              1/4 .. full impulse"),
-			TEXT("X or 0  all stop     Z  reverse"),
-			TEXT("PgUp PgDn            vertical thrusters"),
-			TEXT("Arrows               RCS thrusters: fore/aft, port/stbd"),
-			TEXT("O  orbit hold around nav target / nearest body (follows ships)"),
-			TEXT("B  tractor beam on the locked target (else the nav target)"),
-			TEXT("J / Y button         engage / disengage warp"),
-			TEXT("[ ]  or  - +         warp factor"),
-			TEXT("LMB / F / RT         phasers (hold)"),
-			TEXT("Space / G / A        photon torpedo"),
-			TEXT("T  cycle target      Y  clear target"),
-			TEXT("V  camera            RMB hold  free look"),
-			TEXT("RMB + wheel  zoom    R  reset camera/zoom"),
-			TEXT("Tab  HUD             H  help"),
-			TEXT("N  nav markers       M  minimap"),
-			TEXT("L  next nav target   K  clear nav target"),
-			TEXT("I  nav filter: all / stars / worlds / stations / ships / nebulae"),
-			TEXT("P  autopilot to the nav target (warp or impulse by range)"),
-			TEXT("C  shuttlecraft: launch from the bay / dock when within 500 m of it"),
-			TEXT("Enter  scan the locked / nav target (landed: survey the ground)   /  science log"),
-			TEXT("Home  jump to nav target (dev)"),
-			TEXT("U  warp visuals: classic / relativistic"),
-			TEXT("`  console:  ship <command>   (ship help lists them)"),
-		};
-		for (const TCHAR* L : Help)
-		{
-			DrawText(L, Dim, RX, RY, SmallFont, UIScale); RY += Line * 0.85f;
-		}
+		DrawText(TEXT("Esc  menu      M  star chart      /  science log      H  controls      Tab  HUD"), Dim, RX, RY, SmallFont, UIScale); RY += Line * 0.85f;
 	}
 
 	// ---- Centre: warp charge ----
@@ -1184,62 +1149,5 @@ void AStarshipHUD::DrawScienceRows(const AStarshipPawn* Ship, float& X, float& Y
 		else if (bIn) { Text = FString::Printf(TEXT("SCAN     %s in sensor range: Enter"), *Label); }
 		else { Text = FString::Printf(TEXT("SCAN     %s: close to %s (now %s)"), *Label, *FormatDistance(Range), *FormatDistance(FMath::Max(Dist, 0.0))); }
 		DrawText(Text, bIn && !bDone ? Accent : Dim, X, Y, Font, UIScale); Y += Line;
-	}
-}
-
-void AStarshipHUD::DrawScienceLog(const AStarshipPawn* Ship, float UIScale)
-{
-	UScienceLogSubsystem* Log = ScienceLog();
-	if (!Log || !Canvas) { return; }
-	UFont* Font = GEngine->GetMediumFont();
-	UFont* SmallFont = GEngine->GetSmallFont();
-	const float Line = 18.f * UIScale;
-	const float W = 560.f * UIScale;
-	const TArray<FScanRecord>& Recs = Log->GetRecords();
-	const int32 Shown = FMath::Min(Recs.Num(), 16);
-	const float H = (4.5f + Shown * 1.6f + (Shown == 0 ? 1.f : 0.f)) * Line;
-	const float PX = Canvas->ClipX * 0.5f - W * 0.5f;
-	const float PY = FMath::Max(Canvas->ClipY * 0.5f - H * 0.5f - 60.f * UIScale, 40.f * UIScale);
-	DrawRect(FLinearColor(0.02f, 0.05f, 0.08f, 0.82f), PX, PY, W, H);
-	DrawRect(Accent, PX, PY, W, 2.f * UIScale);
-
-	float X = PX + 14.f * UIScale, Y = PY + 10.f * UIScale;
-	const int32 Next = Log->NextRatingPoints();
-	DrawText(FString::Printf(TEXT("SCIENCE LOG   %d points   %s%s"), Log->TotalPoints(), *Log->RatingTitle().ToUpper(),
-		Next > 0 ? *FString::Printf(TEXT("   (%d to the next rating)"), Next - Log->TotalPoints()) : TEXT("")), Accent, X, Y, Font, UIScale); Y += Line * 1.2f;
-	if (Ship)
-	{
-		FString System; TArray<FString> Keys;
-		UScienceScannerComponent::SurveyKeys(GetWorld(), Ship->GetActorLocation(), System, Keys);
-		if (Keys.Num() > 0)
-		{
-			// The bodies of this system still to scan.
-			TArray<FString> Missing;
-			for (const FString& K : Keys) { if (!Log->IsScanned(K)) { FString S, L; K.Split(TEXT("/"), &S, &L); Missing.Add(L); } }
-			const FString Rest = Missing.Num() == 0 ? TEXT("complete") : FString::Join(Missing, TEXT(", "));
-			DrawText(FString::Printf(TEXT("%s survey %d/%d: %s"), *System, Keys.Num() - Missing.Num(), Keys.Num(), *Rest), FLinearColor(1.f, 1.f, 1.f, 0.8f), X, Y, SmallFont, UIScale); Y += Line * 1.1f;
-		}
-	}
-	Y += Line * 0.3f;
-	if (Shown == 0)
-	{
-		DrawText(TEXT("Nothing catalogued yet. Pick a nav target (L), close to sensor range and press Enter."), FLinearColor(1.f, 1.f, 1.f, 0.7f), X, Y, SmallFont, UIScale); Y += Line;
-	}
-	for (int32 i = Recs.Num() - 1; i >= Recs.Num() - Shown; --i)
-	{
-		const FScanRecord& R = Recs[i];
-		const FString Head = FString::Printf(TEXT("%s   %s"), *R.Label, *R.System);
-		DrawText(Head, FLinearColor::White, X, Y, Font, UIScale);
-		DrawText(FString::Printf(TEXT("%-8s"), UScienceLogSubsystem::KindName(R.Kind)), FLinearColor(1.f, 1.f, 1.f, 0.6f), PX + W - 150.f * UIScale, Y, SmallFont, UIScale);
-		DrawText(FString::Printf(TEXT("+%d"), R.Total()), Accent, PX + W - 60.f * UIScale, Y, Font, UIScale);
-		Y += Line * 0.9f;
-		FString Detail = R.Facts.Num() > 0 ? R.Facts[0] : FString();
-		if (!R.Discovery.IsEmpty()) { Detail = TEXT("Discovery: ") + R.Discovery + (Detail.IsEmpty() ? TEXT("") : TEXT("   ") + Detail); }
-		DrawText(Detail, FLinearColor(1.f, 1.f, 1.f, 0.65f), X + 12.f * UIScale, Y, SmallFont, UIScale);
-		Y += Line * 0.7f;
-	}
-	if (Recs.Num() > Shown)
-	{
-		DrawText(FString::Printf(TEXT("... and %d earlier"), Recs.Num() - Shown), FLinearColor(1.f, 1.f, 1.f, 0.5f), X, Y, SmallFont, UIScale);
 	}
 }

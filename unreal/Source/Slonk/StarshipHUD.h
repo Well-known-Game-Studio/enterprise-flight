@@ -58,10 +58,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HUD")
 	bool bShowHelp = true;
 
-	/** The science catalogue panel: every scan on record, points and rating (/). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HUD")
-	bool bShowScienceLog = false;
-	UFUNCTION(BlueprintCallable, Category = "HUD") void ToggleScienceLog() { bShowScienceLog = !bShowScienceLog; }
+	/** The nav objects the HUD knows about (bRefresh re-gathers now rather than on the quarter-second cadence). */
+	const TArray<FNavObject>& GetNavObjects(bool bRefresh = false) { GatherNavObjects(bRefresh); return NavObjects; }
+	FVector GetStarLocation() const { return StarLocation; }
+	double GetBeltRadiusCm() const { return BeltRadiusCm; }
+	FLinearColor KindColor(ENavObjectKind Kind) const;
+	FString FormatSpeed(double CmPerSecond) const;
+	FString FormatDistance(double Cm) const;
 
 	/** Diamonds, names and distances for every body in the system (N). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HUD|Nav")
@@ -119,7 +122,6 @@ private:
 	void DrawMinimap(const AActor* Ship, float UIScale);
 	/** The science rows of the left panel: points, rating, system survey, scan progress or the range hint. */
 	void DrawScienceRows(const class AStarshipPawn* Ship, float& X, float& Y, float Line, float UIScale);
-	void DrawScienceLog(const class AStarshipPawn* Ship, float UIScale);
 	/** Whether a nav object is in the science log already. */
 	bool IsScanned(const FNavObject& O) const;
 	/** A small tick mark: the object is catalogued. */
@@ -131,7 +133,6 @@ private:
 	/** The nav target's colour this frame: white pulsing toward the accent, apart from the kind colours. */
 	FLinearColor NavTargetColor() const;
 	FVector2D MinimapProject(const FVector& Relative, double Scale, float CX, float CY, float YawDeg) const;
-	FLinearColor KindColor(ENavObjectKind Kind) const;
 
 	TArray<FNavObject> NavObjects;
 	FVector StarLocation = FVector::ZeroVector;
@@ -145,6 +146,4 @@ private:
 	void DrawReticle(float Scale);
 	/** Full-screen Okudagram loading panel shown while the world-generation queue is still working. */
 	void DrawLoadingScreen(const class USlonkLoadSubsystem& Load, UFont* Font, UFont* SmallFont, float UIScale);
-	FString FormatSpeed(double CmPerSecond) const;
-	FString FormatDistance(double Cm) const;
 };
