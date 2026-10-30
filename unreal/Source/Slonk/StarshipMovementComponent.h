@@ -43,6 +43,17 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Impulse", meta = (ClampMin = "0", ClampMax = "1"))
 	double ReverseThrottleLimit = 0.25;
 
+	/** With this above 0 a speed change also closes exponentially over about this many seconds, whatever its size,
+	 *  so a small craft answers the throttle at once instead of grinding through its full acceleration from km/s.
+	 *  The acceleration above still applies as the floor (it finishes the tail). 0 = acceleration-limited only. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Impulse", meta = (ClampMin = "0", ClampMax = "30"))
+	float SpeedResponseSeconds = 0.f;
+
+	/** Scale on the vertical-thruster rate near the ground, which grows with the square root of the height: a
+	 *  300 m ship wants tens of metres a second at touchdown height, a 10 m shuttle a few. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Impulse", meta = (ClampMin = "0.05", ClampMax = "5"))
+	float VerticalRateScale = 1.f;
+
 	// ---- Attitude control ---------------------------------------------------------------------
 
 	/** Max pitch rate, deg/s. A capital ship, but one that has to be fun to fly: a 180 takes ~6 s. */
@@ -178,6 +189,20 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Terrain")
 	TObjectPtr<AActor> GroundBody;
 
+	/** Near a world the craft is carried round with its spin, as if the air held it: the velocity and the HUD speed
+	 *  become ground-relative, so zero throttle hovers over one spot and a landing needs no matching of the
+	 *  surface's hundreds of metres a second. Full carry below CarryFullRadii from the centre, none above
+	 *  CarryZeroRadii, blended between (terrain following and landing are always fully carried). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Terrain", meta = (ClampMin = "1", ClampMax = "3"))
+	float CarryFullRadii = 1.05f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Terrain", meta = (ClampMin = "1", ClampMax = "4"))
+	float CarryZeroRadii = 1.35f;
+
+	/** How much of the ground's motion the craft is riding this tick, 0..1 (for the HUD). */
+	UPROPERTY(BlueprintReadOnly, Category = "Terrain")
+	float GroundCarry = 0.f;
+
 	// ---- Landing ------------------------------------------------------------------------------
 
 	/** Small craft settle: within the clearance height, below LandingSpeed, with no throttle or lift asked for, the
@@ -305,6 +330,7 @@ public:
 	FVector GetNormalizedAngularVelocity() const;
 
 private:
+	double GroundVerticalRate(double AltitudeCm) const;
 	/** Evaluate every body against the heading; returns the unit direction to the governing body (zero if none threatens). */
 	FVector UpdateProximity(const FVector& Here, const FVector& Dir);
 	void ApplyTerrainFloor(float DeltaTime);

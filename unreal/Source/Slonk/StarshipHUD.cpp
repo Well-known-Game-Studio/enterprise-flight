@@ -142,7 +142,9 @@ void AStarshipHUD::DrawHUD()
 	if (Movement)
 	{
 		const double Speed = Movement->GetSpeed();
-		DrawText(FString::Printf(TEXT("SPEED    %s"), *FormatSpeed(Speed)), Dim, X, Y, Font, UIScale); Y += Line;
+		// Near a world the craft rides its spin, so the figure is speed over the ground.
+		const TCHAR* Frame = Movement->GroundCarry > 0.99f ? TEXT("  over ground") : (Movement->GroundCarry > 0.01f ? TEXT("  (entering the world's frame)") : TEXT(""));
+		DrawText(FString::Printf(TEXT("SPEED    %s%s"), *FormatSpeed(Speed), Frame), Dim, X, Y, Font, UIScale); Y += Line;
 
 		const double Throttle = Movement->Throttle;
 		FString ThrottleLabel;

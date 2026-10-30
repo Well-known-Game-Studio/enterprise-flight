@@ -93,6 +93,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
 	float CloudShadowStrength = 1.f;
 
+	/** The sun light's dynamic shadow distance is raised to at least this (cm). The level's light shipped with the
+	 *  200 m default, and the virtual shadow maps drop any caster further than that from the camera, which is
+	 *  where a chase camera keeps a 300 m starship: no ship shadow ever fell on a planet. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Lighting")
+	float SunShadowDistanceCm = 5.0e6f;
+
 	/** Place an icy moon with lineae and a hazy moon around every ringed giant on the first tick, named after it. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Testing")
 	bool bSpawnShowcaseMoons = true;

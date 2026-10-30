@@ -66,11 +66,15 @@ AShuttlecraftPawn::AShuttlecraftPawn()
 	WarmPart = MakeShuttlePart(this, TEXT("WarmPart"), CollisionBox);
 	GlassPart = MakeShuttlePart(this, TEXT("GlassPart"), CollisionBox);
 
-	// Flight: a few kilometres a second flat out, two g of acceleration, agile; the RCS moves it at docking pace.
+	// Flight: a few kilometres a second flat out, agile, and quick to answer the throttle: eight g with a three
+	// second response, so a tap shows at once and a full stop from top speed takes a dozen seconds, not four
+	// minutes. The RCS moves it at docking pace; near the ground it climbs and sinks at a few metres a second.
 	if (Movement)
 	{
 		Movement->FullImpulseSpeed = 5.0e5;
-		Movement->ImpulseAcceleration = 2.0e3;
+		Movement->ImpulseAcceleration = 8.0e3;
+		Movement->SpeedResponseSeconds = 3.f;
+		Movement->VerticalRateScale = 0.3f;
 		Movement->ThrottleExponent = 2.f;
 		Movement->ReverseThrottleLimit = 0.3;
 		Movement->MaxPitchRate = 60.f;

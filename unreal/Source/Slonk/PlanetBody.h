@@ -369,6 +369,9 @@ public:
 	void SetUsingSkyAtmosphere(bool bEnabled);
 	/** How much of the cloud shell shows, 0..1: the game mode fades it out as the volumetric layer fades in. */
 	void SetCloudShellFade(float Fade);
+	/** 1 while this world is seen through another world's sky: its materials then add the sky's own in-scatter in
+	 *  place of the renderer's aerial perspective, which stops 96 km out and left a moon a dark cut-out in the blue. */
+	void SetSkyBehind(float K);
 
 	UFUNCTION(BlueprintPure, Category = "Planet")
 	bool IsUsingSkyAtmosphere() const { return bUsingSkyAtmosphere; }
@@ -444,6 +447,7 @@ private:
 	bool bUsingSkyAtmosphere = false;
 	float CloudShellFade = 1.f;
 	bool bTerrainActive = false;
+	float SkyBehind = 0.f;
 	FPlanetTerrainParams TerrainParams;
 	bool bDetailActive = false;
 	bool bBeyondHorizon = false;
