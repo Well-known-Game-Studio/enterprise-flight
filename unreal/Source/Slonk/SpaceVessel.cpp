@@ -1104,9 +1104,9 @@ void AProceduralStarship::ComputeImages(const FVector& Observer, double Now, FSh
 	const double Disc = qb * qb - 4.0 * qa * qc;
 	if (Disc >= 0.0 && FMath::Abs(qa) > 1e-6)
 	{
-		const double Root = FMath::Sqrt(Disc);
-		const double S1 = (-qb + Root) / (2.0 * qa);
-		const double S2 = (-qb - Root) / (2.0 * qa);
+		const double SqrtDisc = FMath::Sqrt(Disc);
+		const double S1 = (-qb + SqrtDisc) / (2.0 * qa);
+		const double S2 = (-qb - SqrtDisc) / (2.0 * qa);
 		const double Beta = WarpSpeed / c;
 		auto Fill = [&](FShipImage& Img, double S)
 		{

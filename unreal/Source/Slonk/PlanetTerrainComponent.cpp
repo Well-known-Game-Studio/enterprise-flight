@@ -255,10 +255,10 @@ void UPlanetTerrainComponent::ShowNode(FNode& N, bool bShow)
 	}
 }
 
-void UPlanetTerrainComponent::SetTerrainVisible(bool bVisible)
+void UPlanetTerrainComponent::SetTerrainVisible(bool bShow)
 {
-	bTerrainVisible = bVisible;
-	if (!bVisible)
+	bTerrainVisible = bShow;
+	if (!bShow)
 	{
 		for (UDynamicMeshComponent* C : Pool) { if (C) { C->SetVisibility(false); } }
 	}

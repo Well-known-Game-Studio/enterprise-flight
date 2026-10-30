@@ -207,7 +207,7 @@ public:
 	TObjectPtr<UStaticMeshComponent> StarSphere;
 
 	/** Daylight inside an atmosphere: the sky outshines the stars, so the game mode hides the star field. */
-	void SetStarFieldHidden(bool bHidden);
+	void SetStarFieldHidden(bool bHide);
 
 	/** Stand-in sprites for stars beyond the star sphere (the real sun from across the system). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|FX")
