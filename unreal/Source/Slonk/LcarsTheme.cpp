@@ -20,11 +20,17 @@ namespace Lcars
 	{
 		if (CurrentTypeface == ELcarsTypeface::Condensed)
 		{
-			// Slate loads a TTF by path (as the engine's own core style does); Antonio sits tight already, so a
-			// third of the tracking and a touch more size to match Roboto's presence.
-			static const FString Bold = FPaths::ProjectContentDir() / TEXT("UI/Fonts/Antonio-Bold.ttf");
-			static const FString Regular = FPaths::ProjectContentDir() / TEXT("UI/Fonts/Antonio-Regular.ttf");
-			FSlateFontInfo F(bBold ? Bold : Regular, Size * 1.1f);
+			// One composite font with both faces loaded from their TTFs, picked by name (as the engine's own default
+			// font is); Antonio sits tight already, so a third of the tracking and a touch more size to match Roboto's presence.
+			static const TSharedRef<const FCompositeFont> Antonio = []
+			{
+				TSharedRef<FCompositeFont> Composite = MakeShared<FCompositeFont>();
+				Composite->DefaultTypeface
+					.AppendFont(TEXT("Regular"), FPaths::ProjectContentDir() / TEXT("UI/Fonts/Antonio-Regular.ttf"), EFontHinting::Default, EFontLoadingPolicy::LazyLoad)
+					.AppendFont(TEXT("Bold"), FPaths::ProjectContentDir() / TEXT("UI/Fonts/Antonio-Bold.ttf"), EFontHinting::Default, EFontLoadingPolicy::LazyLoad);
+				return Composite;
+			}();
+			FSlateFontInfo F(Antonio, Size * 1.1f, bBold ? TEXT("Bold") : TEXT("Regular"));
 			F.LetterSpacing = Tracking / 3;
 			return F;
 		}
