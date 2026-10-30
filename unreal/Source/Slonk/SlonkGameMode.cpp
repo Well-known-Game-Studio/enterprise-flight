@@ -266,6 +266,16 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 	// The real-time sky capture only has a sky to capture while an atmosphere is active; without one the
 	// renderer warns on screen and the capture is black anyway.
 	SetSkyCaptureActive(AtmospherePlanet != nullptr);
+	// Worlds seen through this sky composite like the sky itself (see APlanetBody::SetSkyBehind): any other world
+	// further off than the atmosphere's planet, so a moon in front of it keeps its own light.
+	{
+		const double PlanetDist = AtmospherePlanet ? FVector::Dist(ViewLoc, AtmospherePlanet->GetActorLocation()) : 0.0;
+		for (TActorIterator<APlanetBody> It(World); It; ++It)
+		{
+			const bool bBehind = AtmospherePlanet && *It != AtmospherePlanet && FVector::Dist(ViewLoc, It->GetActorLocation()) > PlanetDist;
+			It->SetSkyBehind(bBehind ? 1.f : 0.f);
+		}
+	}
 	if (!AtmospherePlanet)
 	{
 		if (SkyAtmosphere && SkyAtmosphere->IsVisible())
@@ -535,6 +545,16 @@ void ASlonkGameMode::UpdateStarLighting()
 		if (FVector::DotProduct(CurrentDir, LightDir) < FMath::Cos(FMath::DegreesToRadians(0.1f)))
 		{
 			It->SetActorRotation(LightDir.Rotation());
+		}
+		if (UDirectionalLightComponent* LightComp = Cast<UDirectionalLightComponent>(It->GetLightComponent()))
+		{
+			// Casters beyond the dynamic shadow distance are culled from the virtual shadow maps; the default 200 m
+			// is inside the chase camera's distance to the hull.
+			if (LightComp->DynamicShadowDistanceMovableLight < SunShadowDistanceCm)
+			{
+				LightComp->DynamicShadowDistanceMovableLight = SunShadowDistanceCm;
+				LightComp->MarkRenderStateDirty();
+			}
 		}
 		if (StarBody)
 		{

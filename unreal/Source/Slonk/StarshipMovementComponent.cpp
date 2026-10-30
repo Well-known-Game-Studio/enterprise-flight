@@ -166,11 +166,18 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 		double VerticalSpeed = VerticalThrustFraction * FullImpulseSpeed;
 		if (AltitudeAGLCm >= 0.0)
 		{
-			VerticalSpeed = FMath::Min(VerticalSpeed, 6000.0 * FMath::Sqrt(FMath::Max(AltitudeAGLCm, 3000.0) / 10000.0));
+			VerticalSpeed = FMath::Min(VerticalSpeed, GroundVerticalRate(AltitudeAGLCm));
 		}
 		const FVector TargetVelocity = Forward * GetImpulseTargetSpeed() + Up * (VerticalInput * VerticalSpeed) + Thrusters;
 		const FVector DeltaV = TargetVelocity - Velocity;
-		Velocity += DeltaV.GetClampedToMaxSize(ImpulseAcceleration * DeltaTime);
+		// Acceleration-limited, and with a response time also a fraction of the gap each tick: the shuttle at
+		// 2 g took four minutes to stop from 5 km/s, and a tap of the throttle took seconds to show.
+		double MaxDeltaV = ImpulseAcceleration * DeltaTime;
+		if (SpeedResponseSeconds > 0.f)
+		{
+			MaxDeltaV = FMath::Max(MaxDeltaV, DeltaV.Size() * (1.0 - FMath::Exp(-DeltaTime / SpeedResponseSeconds)));
+		}
+		Velocity += DeltaV.GetClampedToMaxSize(MaxDeltaV);
 	}
 	// Automatic braking: when the heading would carry us into a body, scale the whole velocity so the
 	// closing rate never exceeds the cap (scaling keeps the heading; clamping one axis bled thrust sideways).
@@ -217,6 +224,14 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 	ThrusterInput = FVector::ZeroVector;
 }
 
+double UStarshipMovementComponent::GroundVerticalRate(double AltitudeCm) const
+{
+	// Climb rate near the ground grows with the square root of the height above it: 60 m/s at 100 m, 190 at 1 km,
+	// 600 at 10 km for the starship; floored at its own clearance so touchdown height is not a crawl.
+	const double Floor = FMath::Max(GroundClearanceCm, 300.0);
+	return VerticalRateScale * 6000.0 * FMath::Sqrt(FMath::Max(AltitudeCm, Floor) / 10000.0);
+}
+
 void UStarshipMovementComponent::SetTerrainFollow(double AltitudeCm)
 {
 	bTerrainFollow = true;
@@ -228,6 +243,7 @@ void UStarshipMovementComponent::ApplyTerrainFloor(float DeltaTime)
 {
 	GroundBody = nullptr;
 	AltitudeAGLCm = -1.0;
+	GroundCarry = 0.f;
 	if (!UpdatedComponent) { return; }
 	TerrainScanTimer -= DeltaTime;
 	if (TerrainScanTimer <= 0.f)
@@ -261,17 +277,25 @@ void UStarshipMovementComponent::ApplyTerrainFloor(float DeltaTime)
 	AltitudeAGLCm = Dist - SurfR;
 	if (bWarpActive || bOrbitHold) { return; }
 
+	// Ride the ground: the planet turns under us (its spin is about its local Z), so near it turn with it, hull,
+	// position and velocity together. The surface of an Earth-size world does close to half a kilometre a second;
+	// nobody wants to match that by hand to set down, and a parked mothership should still be over the same
+	// valley when the shuttle comes back.
+	{
+		const double Radii = Dist / FMath::Max(Near->GetRadiusCm(), 1.0);
+		GroundCarry = bTerrainFollow ? 1.f : (float)FMath::Clamp((CarryZeroRadii - Radii) / FMath::Max(CarryZeroRadii - CarryFullRadii, 0.01f), 0.0, 1.0);
+		const double SpinRad = FMath::DegreesToRadians(Near->SpinDegPerSec) * DeltaTime * GroundCarry;
+		if (!FMath::IsNearlyZero(SpinRad))
+		{
+			const FQuat Q(Near->GetActorQuat().GetAxisZ(), SpinRad);
+			UpdatedComponent->SetWorldLocationAndRotation(Centre + Q.RotateVector(Rv), Q * UpdatedComponent->GetComponentQuat(), false, nullptr, ETeleportType::TeleportPhysics);
+			Velocity = Q.RotateVector(Velocity);
+		}
+	}
+
 	double WantDist = -1.0;
 	if (bTerrainFollow)
 	{
-		// Ride the ground: the planet turns under us, so turn with it (its spin is about its local Z).
-		const double SpinRad = FMath::DegreesToRadians(Near->SpinDegPerSec) * DeltaTime;
-		if (!FMath::IsNearlyZero(SpinRad))
-		{
-			const FVector Axis = Near->GetActorQuat().GetAxisZ();
-			const FVector Turned = Rv.RotateAngleAxisRad(SpinRad, Axis);
-			UpdatedComponent->SetWorldLocation(Centre + Turned, false, nullptr, ETeleportType::TeleportPhysics);
-		}
 		// Canyon autopilot: compare the depth of the cut 400 m ahead-left, ahead and ahead-right, and yaw the hull
 		// (and the velocity with it) toward the deeper side, up to 20 degrees a second. The gorge bends a few
 		// hundred metres per kilometre, which a straight run leaves within seconds.
@@ -303,8 +327,7 @@ void UStarshipMovementComponent::ApplyTerrainFloor(float DeltaTime)
 		// height per second compounded: a climb doubled every second and a descent crawled).
 		if (!FMath::IsNearlyZero(VerticalInput))
 		{
-			const double Rate = 6000.0 * FMath::Sqrt(FMath::Max(HoverAltitudeCm, 3000.0) / 10000.0);
-			HoverAltitudeCm = FMath::Max(HoverAltitudeCm + VerticalInput * Rate * DeltaTime, GroundClearanceCm);
+			HoverAltitudeCm = FMath::Max(HoverAltitudeCm + VerticalInput * GroundVerticalRate(HoverAltitudeCm) * DeltaTime, GroundClearanceCm);
 		}
 		const double Target = SurfR + HoverAltitudeCm;
 		// Ease onto the contour over about half a second: the ground is sampled at the ship, so a cliff ahead

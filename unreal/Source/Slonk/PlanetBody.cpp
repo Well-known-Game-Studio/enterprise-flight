@@ -822,6 +822,11 @@ void APlanetBody::ApplyMaterials()
 		AtmosphereMID->SetScalarParameterValue(TEXT("NightFactor"), S.NightFactor);
 		AtmosphereMID->SetVectorParameterValue(TEXT("SunDirection"), FLinearColor(CachedStarDirection.X, CachedStarDirection.Y, CachedStarDirection.Z, 0.f));
 	}
+	for (UMaterialInstanceDynamic* Mid : { CloudMID.Get(), AtmosphereMID.Get(), RingMID.Get() })
+	{
+		if (Mid) { Mid->SetScalarParameterValue(TEXT("SkyBehind"), SkyBehind); }
+	}
+	for (UMaterialInstanceDynamic* Mid : SurfaceMIDs()) { Mid->SetScalarParameterValue(TEXT("SkyBehind"), SkyBehind); }
 	if (RingMID)
 	{
 		RingMID->SetScalarParameterValue(TEXT("RingInner"), S.RingInner);
@@ -975,6 +980,7 @@ void APlanetBody::ApplyTerrainMaterialParams()
 {
 	if (!Terrain || !bTerrainActive) { return; }
 	const FPlanetStyle& S = Style;
+	Terrain->SetScalarParameter(TEXT("SkyBehind"), SkyBehind);
 	Terrain->SetVectorParameter(TEXT("OceanColor"), S.OceanColor);
 	Terrain->SetVectorParameter(TEXT("ShallowColor"), S.ShallowColor);
 	Terrain->SetVectorParameter(TEXT("LandColor"), S.LandColor);
@@ -1251,6 +1257,19 @@ void APlanetBody::SetUsingSkyAtmosphere(bool bEnabled)
 		bUsingSkyAtmosphere = bEnabled;
 		UpdateShellVisibility();
 	}
+}
+
+void APlanetBody::SetSkyBehind(float K)
+{
+	if (FMath::IsNearlyEqual(SkyBehind, K, 1e-3f)) { return; }
+	SkyBehind = K;
+	for (UMaterialInstanceDynamic* Mid : { CloudMID.Get(), AtmosphereMID.Get(), RingMID.Get() })
+	{
+		if (Mid) { Mid->SetScalarParameterValue(TEXT("SkyBehind"), K); }
+	}
+	for (UMaterialInstanceDynamic* Mid : SurfaceMIDs()) { Mid->SetScalarParameterValue(TEXT("SkyBehind"), K); }
+	// Relief worlds are drawn by their terrain quadtree from any distance, so the term lives in that material too.
+	if (Terrain) { Terrain->SetScalarParameter(TEXT("SkyBehind"), K); }
 }
 
 void APlanetBody::SetCloudShellFade(float Fade)

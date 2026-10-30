@@ -130,7 +130,7 @@ https://github.com/user-attachments/assets/9d4fed35-9918-4979-8f7b-9d059d708661
 
 ## Shuttlecraft
 
-C launches a shuttle from the fantail bay (the ship has to be out of warp and under 500 m/s), and you fly it in place of the ship: the same controls, a few kilometres a second flat out, no warp. Ease it onto a planet's ground below walking pace and it sets down on the slope and turns with the planet; throttle or Page Up lifts it off again. The ship stays parked where you left it and is the nav target, so the way home is the marker; within 500 m of the bay, C flies the shuttle back in and puts you on the bridge again.
+C launches a shuttle from the fantail bay (the ship has to be out of warp and under 500 m/s), and you fly it in place of the ship: the same controls, a few kilometres a second flat out, no warp, and it answers the throttle in a few seconds whatever the speed, so a tap shows at once and a full stop from flat out takes a dozen seconds. Near a world every craft rides the world's spin, as if the air carried it: the HUD speed is speed over the ground, zero throttle hovers over one spot, and nobody has to match the half kilometre a second an Earth-size surface does to set down. Page Down sinks the shuttle at a few metres a second close to the ground; ease it on below walking pace and it sets down on the slope and turns with the planet; throttle or Page Up lifts it off again. The ship stays parked where you left it, over the same valley, and is the nav target, so the way home is the marker; within 500 m of the bay, C flies the shuttle back in and puts you on the bridge again.
 
 ![The shuttle slides out of the fantail bay](https://github.com/user-attachments/assets/3ca96bce-d4c3-4beb-946a-583ea673f5a5)
 
