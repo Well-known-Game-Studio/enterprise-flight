@@ -156,6 +156,8 @@ https://github.com/user-attachments/assets/28b77f79-c31d-487a-ac32-dce1ff09c396
 
 Escape opens the main computer: an Okudagram panel built with the engine's CommonUI plugin, elbows, pills and all, with the ship's status and the way to the other panels. M opens stellar cartography, a full-screen star chart of the system: drag to pan, wheel to zoom about the cursor, right-drag to tilt and turn; click a body or one of the other systems listed at the top right to select it, double-click or Set Course to make it the nav target, Autopilot to go there. The chart marks catalogued bodies with a tick and shows a scanned body's readings when you hover it. `/` opens the science log as a window with every record and its discoveries, H the controls list. Panels take the mouse and pause the ship's controls while they are up; Escape or the gamepad's B closes the one on top. Where the on-screen key list used to be there is now one line of hints, and the minimap's toggle lives in the chart's sidebar.
 
+![The main computer, stellar cartography, the science log and the controls list](https://github.com/user-attachments/assets/4ea6eed5-77cf-461a-9ec8-bb3b522e9146)
+
 ## Controls
 
 Mouse or the left stick steers; H opens the controls panel with the full key list.
