@@ -8,6 +8,15 @@
 #include "StarshipHUD.h"
 #include "StarChartPanel.generated.h"
 
+/** What the chart is looking at: the neighbouring suns, the current system, or one world and its moons. */
+UENUM()
+enum class EChartScope : uint8
+{
+	Sector,
+	System,
+	Local
+};
+
 /**
  * The map itself: painted in Slate from the HUD's nav objects. Drag pans, the wheel zooms about the cursor, the
  * right button tilts and turns, a click selects a body (or another star system in the list), a double click sets
@@ -29,6 +38,13 @@ public:
 	virtual FReply NativeOnMouseButtonDoubleClick(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 	virtual void NativeOnMouseLeave(const FPointerEvent& InMouseEvent) override;
 
+	/** Switch scope; Local picks its world from the selection, the course or the ship's neighbourhood. */
+	void SetScope(EChartScope S);
+	EChartScope GetScope() const { return Scope; }
+	/** "Sol sector", "Sol system" or the focused world's name. */
+	FString ScopeTitle() const;
+	/** A one-line description of the scope for the footer. */
+	FString ScopeHint() const;
 	AActor* GetSelected() const { return Selected.Get(); }
 	FString GetSelectedLabel() const { return SelectedLabel; }
 	void SelectActor(AActor* Actor);
@@ -51,6 +67,8 @@ private:
 		FVector Rel = FVector::ZeroVector;   // from the system's star
 		double RadiusCm = 0.0;
 		bool bScanned = false;
+		FLinearColor Color = FLinearColor::White;
+		FString Tag;                          // drawn after the label: a distance in Sector and Local
 		FVector2D Screen = FVector2D::ZeroVector;
 		FVector2D Base = FVector2D::ZeroVector;
 	};
@@ -68,6 +86,15 @@ private:
 	int32 HitBody(const FVector2D& Local) const;
 	int32 HitFarStar(const FVector2D& Local) const;
 	FString DescribeBody(const FBody& B, TArray<FString>& OutLines) const;
+	/** The world Local should centre on, from the selection, the course, then the ship. */
+	AActor* ResolveLocalFocus(const TArray<FNavObject>& Nav, const FVector& ShipLoc) const;
+
+	// Scope.
+	EChartScope Scope = EChartScope::System;
+	TWeakObjectPtr<AActor> LocalFocus;
+	mutable FString FocusLabel;
+	mutable FString LocalStarLabel;
+	mutable double LocalRangeCm = 0.0;
 
 	// View.
 	bool bCentreOnShipPending = false;
@@ -116,4 +143,7 @@ private:
 	UPROPERTY() TObjectPtr<UButton> HeadingButton;
 	UPROPERTY() TObjectPtr<UButton> MinimapButton;
 	UPROPERTY() TObjectPtr<UTextBlock> Footer;
+	UPROPERTY() TArray<TObjectPtr<UButton>> ScopeButtons;
+	UPROPERTY() TObjectPtr<UTextBlock> ScopeTitle;
+	int32 StyledScope = -1;
 };

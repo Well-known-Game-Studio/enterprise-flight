@@ -8,12 +8,17 @@
 #include "StarSystem.h"
 #include "ScienceLog.h"
 #include "ScienceScannerComponent.h"
+#include "PlanetBody.h"
+#include "StarBody.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
 #include "Components/Button.h"
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
+#include "Components/HorizontalBox.h"
+#include "Components/HorizontalBoxSlot.h"
+#include "Components/SizeBox.h"
 #include "Rendering/DrawElements.h"
 #include "Fonts/FontMeasure.h"
 #include "Framework/Application/SlateApplication.h"
@@ -22,6 +27,19 @@
 namespace
 {
 	constexpr double LocalSystemCm = 2000.0 * AStarSystem::AuCm;   // bodies farther than this from the star are other systems
+	constexpr double LocalRadii = 400.0;                            // Local reaches this many radii from its world (the moon rule)
+	// Round distances for the grid rings and the scale bar, in cm.
+	const double ChartNiceSteps[] = {
+		1.0e7, 2.0e7, 5.0e7, 1.0e8, 2.0e8, 5.0e8, 1.0e9, 2.0e9, 5.0e9, 1.0e10, 2.0e10, 5.0e10, 1.0e11, 2.0e11, 5.0e11,
+		AStarSystem::AuCm * 0.05, AStarSystem::AuCm * 0.1, AStarSystem::AuCm * 0.25, AStarSystem::AuCm * 0.5, AStarSystem::AuCm,
+		AStarSystem::AuCm * 2.0, AStarSystem::AuCm * 5.0, AStarSystem::AuCm * 10.0, AStarSystem::AuCm * 25.0, AStarSystem::AuCm * 50.0, AStarSystem::AuCm * 100.0,
+		AStarSystem::LightYearCm * 0.5, AStarSystem::LightYearCm, AStarSystem::LightYearCm * 2.0, AStarSystem::LightYearCm * 5.0, AStarSystem::LightYearCm * 10.0, AStarSystem::LightYearCm * 20.0 };
+	double NiceStepBelow(double Want)
+	{
+		double Pick = ChartNiceSteps[0];
+		for (double N : ChartNiceSteps) { if (N <= Want) { Pick = N; } }
+		return Pick;
+	}
 	const FLinearColor ChartGridColor(0.25f, 0.35f, 0.55f, 0.35f);
 	const FLinearColor ChartOrbitColor(0.45f, 0.6f, 0.9f, 0.45f);
 	const FLinearColor ChartBeltColor(0.8f, 0.6f, 0.4f, 0.6f);
@@ -51,6 +69,7 @@ bool UStarChartWidget::Initialize()
 		WidgetTree->RootWidget = Bg;
 		SetVisibility(ESlateVisibility::Visible);
 		SetIsFocusable(false);
+		SetClipping(EWidgetClipping::ClipToBounds);   // a world drawn at true size can outgrow the map when zoomed in
 		// The rounded-box shader never clamps its radius, so a fixed radius larger than half the box fills nothing;
 		// HalfHeightRadius makes a square box a disc at any size.
 		DotBrush = FSlateRoundedBoxBrush(FLinearColor::White, 4.f);
@@ -84,6 +103,68 @@ void UStarChartWidget::SelectActor(AActor* Actor)
 	for (const FFarStar& F : FarStars) { if (F.Actor.Get() == Actor) { SelectedLabel = F.Label; return; } }
 }
 
+void UStarChartWidget::SetScope(EChartScope S)
+{
+	if (S == EChartScope::Local) { LocalFocus = nullptr; }   // resolved on the next tick, when the nav list is at hand
+	Scope = S;
+	Zoom = 1.0;
+	Pan = FVector2D::ZeroVector;
+}
+
+FString UStarChartWidget::ScopeTitle() const
+{
+	switch (Scope)
+	{
+	case EChartScope::Sector: return LocalStarLabel + TEXT(" sector");
+	case EChartScope::Local: return FocusLabel;
+	default: return LocalStarLabel + TEXT(" system");
+	}
+}
+
+FString UStarChartWidget::ScopeHint() const
+{
+	switch (Scope)
+	{
+	case EChartScope::Sector: return TEXT("The neighbouring suns about ") + LocalStarLabel + TEXT(", distances from the ship.  Click one and Set Course for the transwarp leg.");
+	case EChartScope::Local: return FocusLabel + TEXT(" and its neighbourhood: moons, stations and traffic within 400 radii, distances from ") + FocusLabel + TEXT(".");
+	default: return TEXT("Click a body or a system to select it.  Drag pans, wheel zooms, right drag tilts and turns.");
+	}
+}
+
+AActor* UStarChartWidget::ResolveLocalFocus(const TArray<FNavObject>& Nav, const FVector& ShipLoc) const
+{
+	// The nearest planet to a point; within LocalRadii of it when bNear, else anywhere.
+	auto NearestPlanet = [&](const FVector& To, bool bNear) -> AActor*
+	{
+		AActor* Best = nullptr; double BestD = TNumericLimits<double>::Max();
+		for (const FNavObject& O : Nav)
+		{
+			if (!O.Actor || O.Kind != ENavObjectKind::Planet) { continue; }
+			const double D = FVector::Dist(O.Location, To);
+			if (bNear && D > LocalRadii * O.RadiusCm) { continue; }
+			if (D < BestD) { BestD = D; Best = O.Actor; }
+		}
+		return Best;
+	};
+	auto FromActor = [&](AActor* A) -> AActor*
+	{
+		if (!A) { return nullptr; }
+		if (APlanetBody* P = Cast<APlanetBody>(A))
+		{
+			if (!P->IsMoon()) { return P; }
+			return AStarSystem::PrimaryOf(GetWorld(), P);
+		}
+		if (Cast<AStarBody>(A)) { return nullptr; }
+		return NearestPlanet(A->GetActorLocation(), true);
+	};
+	APlayerController* PC = GetOwningPlayer();
+	const AStarshipHUD* H = PC ? Cast<AStarshipHUD>(PC->GetHUD()) : nullptr;
+	if (AActor* F = FromActor(Selected.Get())) { return F; }
+	if (AActor* F = FromActor(H && H->NavTarget.IsValid() ? H->NavTarget.Get() : nullptr)) { return F; }
+	if (AActor* F = NearestPlanet(ShipLoc, true)) { return F; }
+	return NearestPlanet(ShipLoc, false);
+}
+
 void UStarChartWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
@@ -99,32 +180,82 @@ void UStarChartWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime
 	const TArray<FNavObject>& Nav = H->GetNavObjects(true);
 	const FVector Star = H->GetStarLocation();
 	const FVector ShipLoc = Ship->GetActorLocation();
+	for (const FNavObject& O : Nav) { if (O.Kind == ENavObjectKind::Star && O.Location.Equals(Star, 1.0)) { LocalStarLabel = O.Label; break; } }
+	if (LocalStarLabel.IsEmpty()) { LocalStarLabel = TEXT("Sol"); }
+
+	// Local needs a world to centre on; without one it falls back to the system.
+	if (Scope == EChartScope::Local && !LocalFocus.IsValid()) { LocalFocus = ResolveLocalFocus(Nav, ShipLoc); }
+	if (Scope == EChartScope::Local && !LocalFocus.IsValid()) { Scope = EChartScope::System; }
+	FVector Origin = Star;
+	double FocusR = 0.0;
+	if (Scope == EChartScope::Local)
+	{
+		Origin = LocalFocus->GetActorLocation();
+		for (const FNavObject& O : Nav) { if (O.Actor == LocalFocus.Get()) { FocusR = O.RadiusCm; FocusLabel = O.Label; break; } }
+		if (FocusR <= 0.0) { FocusR = 6.0e8; }
+		LocalRangeCm = LocalRadii * FocusR;
+	}
+
 	for (const FNavObject& O : Nav)
 	{
 		if (!O.Actor || O.Kind == ENavObjectKind::Belt) { continue; }
 		const double FromStar = FVector::Dist(O.Location, Star);
-		if (FromStar > LocalSystemCm)
-		{
-			if (O.Kind == ENavObjectKind::Star)
-			{
-				FFarStar F; F.Actor = O.Actor; F.Label = O.Label; F.DistCm = FVector::Dist(O.Location, ShipLoc);
-				FarStars.Add(F);
-			}
-			continue;
-		}
 		FBody B;
-		B.Actor = O.Actor; B.Label = O.Label; B.Kind = O.Kind; B.Rel = O.Location - Star; B.RadiusCm = O.RadiusCm;
+		switch (Scope)
+		{
+		case EChartScope::Sector:
+			if (O.Kind != ENavObjectKind::Star) { continue; }
+			B.Tag = FormatLy(FVector::Dist(O.Location, ShipLoc));
+			break;
+		case EChartScope::Local:
+		{
+			const double D = FVector::Dist(O.Location, Origin);
+			const bool bFocus = O.Actor == LocalFocus.Get();
+			if (!bFocus && (D > LocalRangeCm || O.Kind == ENavObjectKind::Star || O.Kind == ENavObjectKind::Nebula)) { continue; }
+			if (!bFocus) { B.Tag = FormatLy(FMath::Max(D - O.RadiusCm - FocusR, 0.0)); }
+			break;
+		}
+		default:
+			if (FromStar > LocalSystemCm)
+			{
+				if (O.Kind == ENavObjectKind::Star)
+				{
+					FFarStar F; F.Actor = O.Actor; F.Label = O.Label; F.DistCm = FVector::Dist(O.Location, ShipLoc);
+					FarStars.Add(F);
+				}
+				continue;
+			}
+			break;
+		}
+		B.Actor = O.Actor; B.Label = O.Label; B.Kind = O.Kind; B.Rel = O.Location - Origin; B.RadiusCm = O.RadiusCm;
 		B.bScanned = Log && Log->IsScanned(UScienceScannerComponent::KeyFor(O.Actor, O.Label));
+		B.Color = H->KindColor(O.Kind);
+		if (const AStarBody* SB = Cast<AStarBody>(O.Actor)) { B.Color = Lcars::Brighter(SB->StarColor, 0.12f); B.Color.A = 1.f; }
 		Bodies.Add(B);
 	}
 	FarStars.Sort([](const FFarStar& A, const FFarStar& B) { return A.DistCm < B.DistCm; });
-	ShipRel = ShipLoc - Star;
+	ShipRel = ShipLoc - Origin;
 	ShipFwd = Ship->GetActorForwardVector();
 	ShipYawDeg = Ship->GetActorRotation().Yaw;
-	BeltRadiusCm = H->GetBeltRadiusCm();
-	// The default fit holds the planets, the belt and the ship; nebulae sit far out and would shrink everything.
-	MaxR = FMath::Max(FVector::Dist2D(ShipLoc, Star), BeltRadiusCm);
-	for (const FBody& B : Bodies) { if (B.Kind != ENavObjectKind::Nebula) { MaxR = FMath::Max(MaxR, FVector2D(B.Rel.X, B.Rel.Y).Size()); } }
+	BeltRadiusCm = Scope == EChartScope::System ? H->GetBeltRadiusCm() : 0.0;
+	// The default fit: Sector holds every sun; System the planets, the belt and the ship (nebulae sit far out and
+	// would shrink everything); Local the world's moons and neighbours, never less than ten radii.
+	switch (Scope)
+	{
+	case EChartScope::Sector:
+		MaxR = AStarSystem::LightYearCm;
+		for (const FBody& B : Bodies) { MaxR = FMath::Max(MaxR, FVector2D(B.Rel.X, B.Rel.Y).Size()); }
+		break;
+	case EChartScope::Local:
+		MaxR = 10.0 * FocusR;
+		for (const FBody& B : Bodies) { MaxR = FMath::Max(MaxR, FVector2D(B.Rel.X, B.Rel.Y).Size()); }
+		if (ShipRel.Size() <= LocalRangeCm) { MaxR = FMath::Max(MaxR, FVector2D(ShipRel.X, ShipRel.Y).Size()); }
+		break;
+	default:
+		MaxR = FMath::Max(FVector::Dist2D(ShipLoc, Star), BeltRadiusCm);
+		for (const FBody& B : Bodies) { if (B.Kind != ENavObjectKind::Nebula) { MaxR = FMath::Max(MaxR, FVector2D(B.Rel.X, B.Rel.Y).Size()); } }
+		break;
+	}
 	MaxR = FMath::Max(MaxR, 1.0);
 	// A selection made before the first gather gets its label now.
 	if (Selected.IsValid() && SelectedLabel.IsEmpty()) { SelectActor(Selected.Get()); }
@@ -169,6 +300,7 @@ bool UStarChartWidget::IsShown(const FBody& B, const AStarshipHUD* H) const
 {
 	// The star, the course and the selection always show; everything else obeys the HUD's nav filter.
 	if (B.Kind == ENavObjectKind::Star || !H) { return true; }
+	if (LocalFocus.IsValid() && B.Actor.Get() == LocalFocus.Get()) { return true; }
 	if (H->NavTarget.IsValid() && B.Actor.Get() == H->NavTarget.Get()) { return true; }
 	if (Selected.IsValid() && B.Actor.Get() == Selected.Get()) { return true; }
 	return H->PassesNavFilter(B.Kind);
@@ -283,20 +415,28 @@ int32 UStarChartWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geo
 	};
 	const int32 L0 = LayerId + 1, L1 = LayerId + 2, L2 = LayerId + 3, L3 = LayerId + 4, L4 = LayerId + 5;
 
-	// Grid: the orbital plane as concentric AU rings and the cardinal axes.
+	// Grid: the plane as concentric rings at a round distance, labelled, and the cardinal axes.
 	{
-		const double Step = MaxR / Zoom > 20.0 * AStarSystem::AuCm ? 10.0 * AStarSystem::AuCm : MaxR / Zoom > 4.0 * AStarSystem::AuCm ? 1.0 * AStarSystem::AuCm : 0.25 * AStarSystem::AuCm;
-		for (double R = Step; R * Scale < FMath::Max(Size.X, Size.Y) * 1.5 && R < 400.0 * AStarSystem::AuCm; R += Step) { Orbit(R, ChartGridColor, 1.f, L0, false); }
+		const double Step = NiceStepBelow(MaxR / Zoom / 4.0);
+		const int32 LabelEvery = FMath::Max(1, FMath::CeilToInt(72.0 / (Step * Scale)));   // labels need room along the axis
+		int32 N = 0;
+		for (double R = Step; R * Scale < FMath::Max(Size.X, Size.Y) * 0.8 && N < 24; R += Step, ++N)
+		{
+			Orbit(R, ChartGridColor, 1.f, L0, false);
+			if ((N + 1) % LabelEvery == 0) { Text(FormatLy(R), Project(FVector(0.0, R, 0.0)) + FVector2D(4.0, -15.0), Small, FLinearColor(0.5f, 0.6f, 0.8f, 0.55f), L0); }
+		}
 		const double Axis = FMath::Max(Size.X, Size.Y) / Scale;
 		Lines({ FVector2f(Project(FVector(-Axis, 0, 0))), FVector2f(Project(FVector(Axis, 0, 0))) }, ChartGridColor, 1.f, L0);
 		Lines({ FVector2f(Project(FVector(0, -Axis, 0))), FVector2f(Project(FVector(0, Axis, 0))) }, ChartGridColor, 1.f, L0);
 	}
-	// Planet orbits and the belt.
+	// Orbits: the planets' about the star, the moons' about the world; and the belt.
+	if (Scope != EChartScope::Sector)
 	{
+		const ENavObjectKind Orbiting = Scope == EChartScope::Local ? ENavObjectKind::Moon : ENavObjectKind::Planet;
 		TArray<double> Orbits;
 		for (const FBody& B : Bodies)
 		{
-			if (B.Kind != ENavObjectKind::Planet) { continue; }
+			if (B.Kind != Orbiting) { continue; }
 			const double R = FVector2D(B.Rel.X, B.Rel.Y).Size();
 			bool bDup = false;
 			for (double E : Orbits) { if (FMath::Abs(E - R) < R * 0.03) { bDup = true; break; } }
@@ -309,14 +449,31 @@ int32 UStarChartWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geo
 	APlayerController* PC = GetOwningPlayer();
 	AStarshipHUD* H = PC ? Cast<AStarshipHUD>(PC->GetHUD()) : nullptr;
 	const int32 HoverI = Hover.X >= 0.0 ? HitBody(Hover) : -1;
+	// Labels step down rather than print over one another (binaries, a ship beside its world).
+	TArray<FSlateRect> Placed;
+	auto PlaceLabel = [&](FVector2D At, const FVector2D& Sz) -> FVector2D
+	{
+		for (int32 k = 0; k < 8; ++k)
+		{
+			const FSlateRect R(At.X, At.Y, At.X + Sz.X, At.Y + Sz.Y);
+			bool bHit = false;
+			for (const FSlateRect& P : Placed) { if (FSlateRect::DoRectanglesIntersect(R, P)) { bHit = true; break; } }
+			if (!bHit) { Placed.Add(R); return At; }
+			At.Y += Sz.Y + 1.0;
+		}
+		Placed.Add(FSlateRect(At.X, At.Y, At.X + Sz.X, At.Y + Sz.Y));
+		return At;
+	};
 	for (int32 i = 0; i < Bodies.Num(); ++i)
 	{
 		const FBody& B = Bodies[i];
 		const bool bIsNav = H && H->NavTarget.IsValid() && B.Actor.Get() == H->NavTarget.Get();
 		const bool bIsSel = Selected.IsValid() && B.Actor.Get() == Selected.Get();
 		if (!IsShown(B, H)) { continue; }
-		const FLinearColor C = H ? H->KindColor(B.Kind) : FLinearColor::White;
-		const float D = B.Kind == ENavObjectKind::Star ? 12.f : B.Kind == ENavObjectKind::Planet ? 8.f : B.Kind == ENavObjectKind::Moon ? 4.f : 5.f;
+		const FLinearColor C = B.Color;
+		// A marker, or the body at true size once the zoom makes it bigger than one.
+		const float Mark = B.Kind == ENavObjectKind::Star ? 12.f : B.Kind == ENavObjectKind::Planet ? 8.f : B.Kind == ENavObjectKind::Moon ? 4.f : 5.f;
+		const float D = FMath::Clamp((float)(2.0 * B.RadiusCm * Scale), Mark, 4000.f);
 		if (FMath::Abs(B.Screen.Y - B.Base.Y) > 1.0) { Lines({ FVector2f(B.Base), FVector2f(B.Screen) }, FLinearColor(C.R, C.G, C.B, 0.35f), 1.f, L1); }
 		if (B.Kind == ENavObjectKind::Star) { Dot(B.Screen, D * 2.6f, FLinearColor(C.R, C.G, C.B, 0.18f), L2); }
 		Dot(B.Screen, D, C, L2);
@@ -327,16 +484,24 @@ int32 UStarChartWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geo
 			Ring(B.Screen, D * 0.5f + 15.f, FLinearColor(1.f, 1.f, 1.f, Pulse), 1.5f, L3, 48);
 		}
 		if (i == HoverI) { Ring(B.Screen, D * 0.5f + 6.f, FLinearColor(1.f, 1.f, 1.f, 0.6f), 1.f, L3); }
-		const bool bLabel = B.Kind == ENavObjectKind::Star || B.Kind == ENavObjectKind::Planet || B.Kind == ENavObjectKind::Nebula || bIsNav || bIsSel || i == HoverI || Zoom > 6.0 || (B.Kind == ENavObjectKind::Station && Zoom > 2.5);
+		const bool bLabel = Scope != EChartScope::System || B.Kind == ENavObjectKind::Star || B.Kind == ENavObjectKind::Planet || B.Kind == ENavObjectKind::Nebula || bIsNav || bIsSel || i == HoverI || Zoom > 6.0 || (B.Kind == ENavObjectKind::Station && Zoom > 2.5);
 		if (bLabel)
 		{
-			Text(B.Label, B.Screen + FVector2D(D * 0.5 + 6.0, -8.0), B.Kind == ENavObjectKind::Star ? Big : Label, FLinearColor(C.R, C.G, C.B, 0.95f), L3);
+			const FSlateFontInfo& F = B.Kind == ENavObjectKind::Star ? Big : Label;
+			const FVector2D NameSz = Measure->Measure(B.Label, F);
+			const double TagW = (B.bScanned ? 14.0 : 0.0) + (B.Tag.IsEmpty() ? 0.0 : Measure->Measure(B.Tag, Small).X + 6.0);
+			const FVector2D At = PlaceLabel(B.Screen + FVector2D(D * 0.5 + 6.0, -8.0), FVector2D(NameSz.X + 6.0 + TagW, NameSz.Y));
+			Text(B.Label, At, F, FLinearColor(C.R, C.G, C.B, 0.95f), L3);
+			if (!At.Equals(B.Screen + FVector2D(D * 0.5 + 6.0, -8.0))) { Lines({ FVector2f(B.Screen + FVector2D(D * 0.5, 0.0)), FVector2f(At + FVector2D(-2.0, NameSz.Y * 0.6)) }, FLinearColor(C.R, C.G, C.B, 0.5f), 1.f, L3); }
+			double X = At.X + NameSz.X + 6.0;
 			if (B.bScanned)
 			{
 				// A tick after the name: catalogued.
-				const FVector2D T = B.Screen + FVector2D(D * 0.5 + 6.0 + Measure->Measure(B.Label, B.Kind == ENavObjectKind::Star ? Big : Label).X + 6.0, 2.0);
+				const FVector2D T(X, At.Y + 10.0);
 				Lines({ FVector2f(T), FVector2f(T + FVector2D(3.0, 4.0)), FVector2f(T + FVector2D(9.0, -5.0)) }, Lcars::Gold, 1.5f, L3);
+				X += 14.0;
 			}
+			if (!B.Tag.IsEmpty()) { Text(B.Tag, FVector2D(X, At.Y + 2.0), Small, Lcars::Dim, L3); }
 		}
 	}
 	// The ship.
@@ -348,9 +513,10 @@ int32 UStarChartWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geo
 		Lines({ FVector2f(Base), FVector2f(P) }, FLinearColor(Lcars::Sky.R, Lcars::Sky.G, Lcars::Sky.B, 0.4f), 1.f, L1);
 		Lines({ FVector2f(P), FVector2f(Tip) }, FLinearColor(Lcars::Sky.R, Lcars::Sky.G, Lcars::Sky.B, Blink), 2.f, L3);
 		Dot(P, 7.f, FLinearColor(Lcars::Sky.R, Lcars::Sky.G, Lcars::Sky.B, Blink), L3);
-		Text(TEXT("YOU"), P + FVector2D(8.0, 4.0), Small, Lcars::Sky, L3);
+		Text(TEXT("YOU"), PlaceLabel(P + FVector2D(8.0, 4.0), Measure->Measure(TEXT("YOU"), Small)), Small, Lcars::Sky, L3);
 	}
-	// Other systems, listed top right; each row is a hit target.
+	// Other systems, listed top right in System scope; each row is a hit target.
+	if (FarStars.Num() > 0)
 	{
 		double Y = 10.0;
 		Text(TEXT("OTHER SYSTEMS"), FVector2D(Size.X - 12.0, Y), Small, Lcars::Lilac, L4, true); Y += 18.0;
@@ -372,9 +538,7 @@ int32 UStarChartWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geo
 	}
 	// Scale bar, bottom left.
 	{
-		static const double Nice[] = { 1.0e8, 1.0e9, 1.0e10, 1.0e11, 1.0e12, AStarSystem::AuCm * 0.1, AStarSystem::AuCm, AStarSystem::AuCm * 10.0, AStarSystem::AuCm * 100.0 };
-		double Pick = Nice[0];
-		for (double N : Nice) { if (N * Scale <= Size.X * 0.25) { Pick = N; } }
+		const double Pick = NiceStepBelow(Size.X * 0.25 / Scale);
 		const double Px = Pick * Scale;
 		const FVector2D A(14.0, Size.Y - 18.0);
 		Lines({ FVector2f(A), FVector2f(A + FVector2D(Px, 0.0)) }, Lcars::Peach, 2.f, L4);
@@ -498,6 +662,27 @@ void UStarChartPanel::BuildContent()
 {
 	Chart = CreateWidget<UStarChartWidget>(GetOwningPlayer(), UStarChartWidget::StaticClass());
 	Chart->OnSetCourse = [this](AActor* A) { SetCourse(A); };
+	// Scope tabs across the top: Sector, System, Local, then the title of what is shown.
+	{
+		UHorizontalBox* Tabs = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+		auto Tab = [&](const TCHAR* L, EChartScope S)
+		{
+			UButton* B = Lcars::MakeButton(WidgetTree, L, Lcars::Lilac);
+			Bind(B, [this, S]() { if (Chart) { Chart->SetScope(S); } }, L);
+			USizeBox* Box = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+			Box->SetWidthOverride(118.f);
+			Box->SetHeightOverride(30.f);
+			Box->AddChild(B);
+			if (UHorizontalBoxSlot* HS = Tabs->AddChildToHorizontalBox(Box)) { HS->SetPadding(FMargin(0.f, 0.f, Lcars::Gap, 0.f)); }
+			ScopeButtons.Add(B);
+		};
+		Tab(TEXT("Sector"), EChartScope::Sector);
+		Tab(TEXT("System"), EChartScope::System);
+		Tab(TEXT("Local"), EChartScope::Local);
+		ScopeTitle = Lcars::MakeText(WidgetTree, TEXT(""), 18.f, Lcars::Peach);
+		if (UHorizontalBoxSlot* HS = Tabs->AddChildToHorizontalBox(ScopeTitle)) { HS->SetPadding(FMargin(18.f, 0.f, 0.f, 0.f)); HS->SetVerticalAlignment(VAlign_Center); }
+		if (UVerticalBoxSlot* S = Content->AddChildToVerticalBox(Tabs)) { S->SetPadding(FMargin(0.f, 0.f, 0.f, 8.f)); }
+	}
 	if (UVerticalBoxSlot* S = Content->AddChildToVerticalBox(Chart)) { S->SetSize(FSlateChildSize(ESlateSizeRule::Fill)); }
 	Footer = AddLine(Content, TEXT(""), 13.f, Lcars::Peach, false, false, 8.f);
 
@@ -540,6 +725,20 @@ void UStarChartPanel::Refresh()
 	auto Relabel = [](UButton* B, const FString& S) { if (UTextBlock* T = B ? Cast<UTextBlock>(B->GetChildAt(0)) : nullptr) { const FString U = S.ToUpper(); if (!T->GetText().ToString().Equals(U)) { T->SetText(FText::FromString(U)); } } };
 	if (H) { Relabel(FilterButton, TEXT("Filter: ") + H->NavFilterName()); Relabel(MinimapButton, H->bShowMinimap ? TEXT("Minimap On") : TEXT("Minimap Off")); }
 	if (Chart) { Relabel(TiltButton, FString::Printf(TEXT("Tilt %.0f"), Chart->GetTilt())); Relabel(HeadingButton, Chart->IsHeadingUp() ? TEXT("Heading Up") : TEXT("North Up")); }
+	if (Chart)
+	{
+		const int32 S = (int32)Chart->GetScope();
+		if (S != StyledScope)
+		{
+			StyledScope = S;
+			for (int32 i = 0; i < ScopeButtons.Num(); ++i) { Lcars::SetButtonColor(ScopeButtons[i], i == S ? Lcars::Orange : Lcars::Lilac); }
+		}
+		if (ScopeTitle)
+		{
+			const FString T = Chart->ScopeTitle().ToUpper();
+			if (!ScopeTitle->GetText().ToString().Equals(T)) { ScopeTitle->SetText(FText::FromString(T)); }
+		}
+	}
 	if (Footer && Chart)
 	{
 		FString Line;
@@ -551,7 +750,7 @@ void UStarChartPanel::Refresh()
 		}
 		else
 		{
-			Line = TEXT("Click a body or a system to select it.  Drag pans, wheel zooms, right drag tilts and turns.");
+			Line = Chart->ScopeHint();
 		}
 		if (!Footer->GetText().ToString().Equals(Line)) { Footer->SetText(FText::FromString(Line)); }
 	}
@@ -565,5 +764,8 @@ FReply UStarChartPanel::NativeOnKeyDown(const FGeometry& InGeometry, const FKeyE
 		return FReply::Handled();
 	}
 	if (InKeyEvent.GetKey() == EKeys::M) { Close(); return FReply::Handled(); }
+	if (Chart && InKeyEvent.GetKey() == EKeys::One) { Chart->SetScope(EChartScope::Sector); return FReply::Handled(); }
+	if (Chart && InKeyEvent.GetKey() == EKeys::Two) { Chart->SetScope(EChartScope::System); return FReply::Handled(); }
+	if (Chart && InKeyEvent.GetKey() == EKeys::Three) { Chart->SetScope(EChartScope::Local); return FReply::Handled(); }
 	return Super::NativeOnKeyDown(InGeometry, InKeyEvent);
 }
