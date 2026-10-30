@@ -13,6 +13,7 @@
 #include "EngineUtils.h"
 #include "PlanetBody.h"
 #include "Nebula.h"
+#include "SpaceTraffic.h"
 #include "StarBody.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Components/SkyAtmosphereComponent.h"
@@ -203,6 +204,8 @@ void ASlonkGameMode::Tick(float DeltaTime)
 		bShowcaseMoonsSpawned = true;
 		SpawnShowcaseMoons();
 		if (bSpawnNebulae) { SpawnNebulae(); }
+		// The deep-space stations come after the nebulae so they can sit beside them.
+		for (TActorIterator<ASpaceTraffic> It(GetWorld()); It; ++It) { It->SpawnDeepSpaceStations(); }
 	}
 	// Bodies spawned later (moons, nebulae, traffic, the cube) hang from their system's anchor too.
 	AdoptTimer -= DeltaTime;

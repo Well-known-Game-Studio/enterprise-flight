@@ -1,4 +1,7 @@
 #include "SpaceTraffic.h"
+#include "StarSystem.h"
+#include "StarBody.h"
+#include "Nebula.h"
 
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -13,7 +16,9 @@
 namespace
 {
 	const TCHAR* ShipNames[] = { TEXT("Farragut"), TEXT("Lexington"), TEXT("Potemkin"), TEXT("Hood"), TEXT("Excalibur"), TEXT("Yorktown"), TEXT("Exeter"), TEXT("Constellation"), TEXT("Defiant"), TEXT("Intrepid"), TEXT("Kongo"), TEXT("Republic"), TEXT("Valiant"), TEXT("Endeavour"), TEXT("Saratoga"), TEXT("Reliant") };
-	const TCHAR* StationNames[] = { TEXT("Starbase 11"), TEXT("Deep Space Station K-7"), TEXT("Starbase 6"), TEXT("Regula Station"), TEXT("Starbase 47"), TEXT("Epsilon IX"), TEXT("Starbase 24"), TEXT("Vanguard") };
+	// Starbases orbit the home planets; the deep-space stations sit out beyond the planets, beside the nebulae.
+	const TCHAR* StationNames[] = { TEXT("Starbase 11"), TEXT("Starbase 6"), TEXT("Starbase 47"), TEXT("Starbase 24"), TEXT("Starbase 12"), TEXT("Starbase 74"), TEXT("Starbase 375"), TEXT("Starbase 234") };
+	const TCHAR* DeepSpaceNames[] = { TEXT("Deep Space Station K-7"), TEXT("Regula Station"), TEXT("Epsilon IX"), TEXT("Vanguard") };
 
 	/** The class each name was in the films: Reliant and Saratoga were Mirandas, the TNG-era Hood, Potemkin,
 	 *  Lexington and Farragut Excelsiors, the rest Constitutions. */
@@ -89,30 +94,54 @@ void ASpaceTraffic::PopulatePlanets(const TArray<TObjectPtr<APlanetBody>>& Plane
 	PopulateWith(List, Rng, true);
 }
 
+void ASpaceTraffic::SpawnPatrolShip(FRandomStream& Rng, const FVector& Loc, const FVector& Home, double Patrol)
+{
+	UWorld* World = GetWorld();
+	if (!World) { return; }
+	// Deferred, so seed, size, colours and patrol data are in place when BeginPlay runs the one Rebuild.
+	const FTransform Xf(FRotator(0.f, Rng.FRandRange(0.f, 360.f), 0.f), Loc);
+	AProceduralStarship* Ship = World->SpawnActorDeferred<AProceduralStarship>(AProceduralStarship::StaticClass(), Xf, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (!Ship) { return; }
+	Ship->Seed = Rng.RandRange(1, 1 << 20);
+	const TCHAR* Name = ShipNames[ShipIndex++ % UE_ARRAY_COUNT(ShipNames)];
+	Ship->ShipClass = ClassForName(Name);
+	Ship->SizeCm = SizeForClass(Ship->ShipClass, Rng);
+	Ship->VesselName = FString::Printf(TEXT("USS %s"), Name);
+	const float Tint = Rng.FRandRange(0.55f, 0.72f);
+	Ship->HullColor = FLinearColor(Tint, Tint * Rng.FRandRange(0.98f, 1.04f), Tint * Rng.FRandRange(1.0f, 1.1f));
+	Ship->GlowColor = Rng.FRand() < 0.75f ? FLinearColor(0.35f, 0.6f, 1.0f) : FLinearColor(1.0f, 0.35f, 0.15f);
+	Ship->HomeLocation = Home;
+	Ship->PatrolRadiusCm = Patrol;
+	Ship->CruiseSpeed = Rng.FRandRange(1.5e6, 3.5e6);
+	Ship->FinishSpawning(Xf);
+	Spawned.Add(Ship);
+}
+
+ASpaceStation* ASpaceTraffic::SpawnStationAt(const FString& Name, const FString& StyleName, const FVector& Loc, FRandomStream& Rng)
+{
+	UWorld* World = GetWorld();
+	if (!World) { return nullptr; }
+	const FTransform StationXf(FRotator(Rng.FRandRange(-15.f, 15.f), Rng.FRandRange(0.f, 360.f), 0.f), Loc);
+	ASpaceStation* Station = World->SpawnActorDeferred<ASpaceStation>(ASpaceStation::StaticClass(), StationXf, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (!Station) { return nullptr; }
+	Station->Seed = Rng.RandRange(1, 1 << 20);
+	Station->VesselName = Name;
+	Station->Style = StyleForName(StyleName);
+	// Spacedock-type bases are the giants; the others are a kilometre or two across.
+	Station->SizeCm = Station->Style == EStationStyle::Spacedock ? Rng.FRandRange(450000.f, 650000.f) : Rng.FRandRange(150000.f, 300000.f);
+	Station->FinishSpawning(StationXf);
+	Spawned.Add(Station);
+	for (int32 i = 0; i < ShipsPerStation; ++i)
+	{
+		SpawnPatrolShip(Rng, Loc + Rng.GetUnitVector() * Station->SizeCm * Rng.FRandRange(3.f, 8.f), Loc, Station->SizeCm * 10.0);
+	}
+	return Station;
+}
+
 void ASpaceTraffic::PopulateWith(const TArray<APlanetBody*>& Planets, FRandomStream& Rng, bool bNameStationsByPlanet)
 {
 	UWorld* World = GetWorld();
 	if (!World) { return; }
-	auto SpawnShip = [&](const FVector& Loc, const FVector& Home, double Patrol)
-	{
-		// Deferred, so seed, size, colours and patrol data are in place when BeginPlay runs the one Rebuild.
-		const FTransform Xf(FRotator(0.f, Rng.FRandRange(0.f, 360.f), 0.f), Loc);
-		AProceduralStarship* Ship = World->SpawnActorDeferred<AProceduralStarship>(AProceduralStarship::StaticClass(), Xf, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
-		if (!Ship) { return; }
-		Ship->Seed = Rng.RandRange(1, 1 << 20);
-		const TCHAR* Name = ShipNames[ShipIndex++ % UE_ARRAY_COUNT(ShipNames)];
-		Ship->ShipClass = ClassForName(Name);
-		Ship->SizeCm = SizeForClass(Ship->ShipClass, Rng);
-		Ship->VesselName = FString::Printf(TEXT("USS %s"), Name);
-		const float Tint = Rng.FRandRange(0.55f, 0.72f);
-		Ship->HullColor = FLinearColor(Tint, Tint * Rng.FRandRange(0.98f, 1.04f), Tint * Rng.FRandRange(1.0f, 1.1f));
-		Ship->GlowColor = Rng.FRand() < 0.75f ? FLinearColor(0.35f, 0.6f, 1.0f) : FLinearColor(1.0f, 0.35f, 0.15f);
-		Ship->HomeLocation = Home;
-		Ship->PatrolRadiusCm = Patrol;
-		Ship->CruiseSpeed = Rng.FRandRange(1.5e6, 3.5e6);
-		Ship->FinishSpawning(Xf);
-		Spawned.Add(Ship);
-	};
 	for (APlanetBody* Planet : Planets)
 	{
 		if (!Planet || Planet->IsMoon())
@@ -122,22 +151,58 @@ void ASpaceTraffic::PopulateWith(const TArray<APlanetBody*>& Planets, FRandomStr
 		const double R = Planet->GetRadiusCm();
 		const float A = Rng.FRandRange(0.f, 2.f * PI);
 		const FVector Loc = Planet->GetActorLocation() + FVector(FMath::Cos(A), FMath::Sin(A), 0.f) * R * StationOrbitRadii;
-		const FTransform StationXf(FRotator(Rng.FRandRange(-15.f, 15.f), Rng.FRandRange(0.f, 360.f), 0.f), Loc);
-		ASpaceStation* Station = World->SpawnActorDeferred<ASpaceStation>(ASpaceStation::StaticClass(), StationXf, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
-		if (!Station) { continue; }
-		Station->Seed = Rng.RandRange(1, 1 << 20);
-		// Generated systems name their stations after the planet ("Sirius III Station"): the eight stock names
+		// Generated systems name their stations after the planet ("Sirius III Station"): the stock starbase names
 		// are the home system's, and a nav target by name must be unique across systems.
 		const FString Stock = StationNames[StationIndex++ % UE_ARRAY_COUNT(StationNames)];
-		Station->VesselName = bNameStationsByPlanet ? Planet->GetDisplayName() + TEXT(" Station") : Stock;
-		Station->Style = StyleForName(Stock);
-		// Spacedock-type bases are the giants; the others are a kilometre or two across.
-		Station->SizeCm = Station->Style == EStationStyle::Spacedock ? Rng.FRandRange(450000.f, 650000.f) : Rng.FRandRange(150000.f, 300000.f);
-		Station->FinishSpawning(StationXf);
-		Spawned.Add(Station);
-		for (int32 i = 0; i < ShipsPerStation; ++i)
+		SpawnStationAt(bNameStationsByPlanet ? Planet->GetDisplayName() + TEXT(" Station") : Stock, Stock, Loc, Rng);
+	}
+}
+
+void ASpaceTraffic::SpawnDeepSpaceStations()
+{
+	UWorld* World = GetWorld();
+	if (!World || !World->IsGameWorld() || bDeepSpaceSpawned) { return; }
+	bDeepSpaceSpawned = true;
+	FRandomStream Rng(Seed * 7 + 3);
+	// The home star is the sun nearest this spawner.
+	FVector Star = FVector::ZeroVector;
+	double BestD = TNumericLimits<double>::Max();
+	for (TActorIterator<AStarBody> It(World); It; ++It)
+	{
+		const double D = FVector::DistSquared(It->GetActorLocation(), GetActorLocation());
+		if (D < BestD) { BestD = D; Star = It->GetActorLocation(); }
+	}
+	// This system's nebulae that lie far enough out, nearest first; other systems' are light-years away.
+	const double MinR = MinDeepSpaceAu * AStarSystem::AuCm;
+	TArray<ANebula*> Nebs;
+	for (TActorIterator<ANebula> It(World); It; ++It)
+	{
+		const double D = FVector::Dist(It->GetActorLocation(), Star);
+		if (D >= MinR && D < 500.0 * AStarSystem::AuCm) { Nebs.Add(*It); }
+	}
+	Nebs.Sort([&](const ANebula& A, const ANebula& B) { return FVector::DistSquared(A.GetActorLocation(), Star) < FVector::DistSquared(B.GetActorLocation(), Star); });
+	const int32 N = UE_ARRAY_COUNT(DeepSpaceNames);
+	for (int32 i = 0; i < N; ++i)
+	{
+		FVector Loc;
+		if (i < Nebs.Num())
 		{
-			SpawnShip(Loc + Rng.GetUnitVector() * Station->SizeCm * Rng.FRandRange(3.f, 8.f), Loc, Station->SizeCm * 10.0);
+			// Just outside the cloud on its far side from the star, so the glow is the backdrop from the inner system.
+			const ANebula* Neb = Nebs[i];
+			const FVector Away = (Neb->GetActorLocation() - Star).GetSafeNormal();
+			const FVector Side = FVector::CrossProduct(Away, FVector::UpVector).GetSafeNormal();
+			Loc = Neb->GetActorLocation() + Away * (Neb->GetRadiusCm() * 1.6) + Side * (Neb->GetRadiusCm() * Rng.FRandRange(-0.5f, 0.5f));
+		}
+		else
+		{
+			// On its own, spread about the star between eight and twelve AU, a little off the plane.
+			const double Ang = 2.0 * PI * i / N + Rng.FRandRange(-0.4f, 0.4f);
+			const double R = AStarSystem::AuCm * Rng.FRandRange(8.f, 12.f);
+			Loc = Star + FVector(FMath::Cos(Ang) * R, FMath::Sin(Ang) * R, AStarSystem::AuCm * Rng.FRandRange(-0.3f, 0.3f));
+		}
+		if (ASpaceStation* S = SpawnStationAt(DeepSpaceNames[i], DeepSpaceNames[i], Loc, Rng))
+		{
+			UE_LOG(LogTemp, Log, TEXT("Deep-space station %s at %.1f AU%s"), *S->VesselName, FVector::Dist(Loc, Star) / AStarSystem::AuCm, i < Nebs.Num() ? *(TEXT(" beside ") + Nebs[i]->GetDisplayName()) : TEXT(""));
 		}
 	}
 }

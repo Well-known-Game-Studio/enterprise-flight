@@ -23,6 +23,11 @@
 #include "ShuttlecraftPawn.h"
 #include "ScienceScannerComponent.h"
 #include "ScienceLog.h"
+#include "StarshipPlayerController.h"
+#include "SlonkUIRoot.h"
+#include "LcarsPanel.h"
+#include "LcarsPanels.h"
+#include "StarChartPanel.h"
 #include "Rendering/PositionVertexBuffer.h"
 #include "StaticMeshResources.h"
 #include "Engine/DamageEvents.h"
@@ -2014,9 +2019,9 @@ void AStarshipPawn::ProcessDebugCommand()
 				}
 				else if (What == TEXT("filter"))
 				{
-					// nav filter [all|stars|worlds|stations|ships|nebulae]: bare cycles.
+					// nav filter [all|stars|worlds|moons|stations|ships|nebulae]: bare cycles.
 					if (Args.Num() < 3) { H->CycleNavFilter(); }
-					else if (!H->SetNavFilterByName(ArgStr(2))) { ScreenMessage(TEXT("nav filter: all, stars, worlds, stations, ships or nebulae"), FColor::Orange); }
+					else if (!H->SetNavFilterByName(ArgStr(2))) { ScreenMessage(TEXT("nav filter: all, stars, worlds, moons, stations, ships or nebulae"), FColor::Orange); }
 				}
 				else { ScreenMessage(TEXT("nav target <name> | nav next | nav clear | nav filter [kind] | nav markers | nav map"), FColor::Orange); }
 			}
@@ -2045,10 +2050,35 @@ void AStarshipPawn::ProcessDebugCommand()
 			ScreenMessage(FString::Printf(TEXT("Science log: %d records, %d points, %s"), Recs.Num(), Log->TotalPoints(), *Log->RatingTitle()), FColor::Cyan, 15.f);
 		}
 	}
+	else if (Op == TEXT("ui"))
+	{
+		// ui menu | chart | science | controls | close: the LCARS panels, for scripts and the console.
+		AStarshipPlayerController* SPC = Cast<AStarshipPlayerController>(GetController());
+		USlonkUIRoot* UI = SPC ? SPC->GetUIRoot() : nullptr;
+		const FString What = ArgStr(1);
+		if (!UI) { ScreenMessage(TEXT("ui: no UI layer"), FColor::Orange); }
+		else if (What == TEXT("menu")) { UI->TogglePanel(UMainMenuPanel::StaticClass()); }
+		else if (What == TEXT("chart") || What == TEXT("map")) { UI->TogglePanel(UStarChartPanel::StaticClass()); }
+		else if (What == TEXT("science")) { UI->TogglePanel(UScienceLogPanel::StaticClass()); }
+		else if (What == TEXT("controls") || What == TEXT("help")) { UI->TogglePanel(UControlsPanel::StaticClass()); }
+		else if (What == TEXT("settings")) { UI->TogglePanel(USettingsPanel::StaticClass()); }
+		else if (What == TEXT("close")) { UI->CloseAll(); }
+		else if (What == TEXT("click"))
+		{
+			// ui click <button label>: press a button on the top popup, else the top panel (testing).
+			FString Label; for (int32 i = 2; i < Args.Num(); ++i) { Label += (i > 2 ? TEXT(" ") : TEXT("")) + Args[i]; }
+			ULcarsPanel* Panel = Cast<ULcarsPanel>(UI->TopPopup());
+			if (!Panel) { Panel = Cast<ULcarsPanel>(UI->TopMenu()); }
+			const bool bHit = Panel && Panel->ClickButton(Label);
+			UE_LOG(LogTemp, Log, TEXT("ui click \"%s\": %s"), *Label, bHit ? TEXT("pressed") : TEXT("no such button"));
+			if (!bHit) { ScreenMessage(FString::Printf(TEXT("ui click: no button \"%s\""), *Label), FColor::Orange); }
+		}
+		else { ScreenMessage(TEXT("ui menu | chart | science | controls | settings | close | click <button>"), FColor::Orange); }
+	}
 	else if (Op == TEXT("help"))
 	{
 		static const TCHAR* Lines[] = {
-			TEXT("ship nav target <name> | nav next | nav clear | nav filter [all|stars|worlds|stations|ships|nebulae] | nav markers | nav map"),
+			TEXT("ship nav target <name> | nav next | nav clear | nav filter [all|stars|worlds|moons|stations|ships|nebulae] | nav markers | nav map"),
 			TEXT("ship autopilot [warp|impulse|off] [standoff km] [seconds]      ship jump  (to the nav target, dev)"),
 			TEXT("ship warp [on|off] | warpfactor <f> | impulse <1-4> | throttle <0-1> | stop | orbit [on|off]"),
 			TEXT("ship camera [chase|bridge|cinematic|front|port|starboard|top|bottom] | zoom <x> | look <yaw> <pitch> [s]"),
@@ -2057,6 +2087,7 @@ void AStarshipPawn::ProcessDebugCommand()
 			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km]"),
 			TEXT("ship shuttle  (launch the shuttlecraft; aboard it, dock when the bay is within 500 m) | ship takeoff"),
 			TEXT("ship scan [stop]  (sensors on the locked / nav target; landed: survey the ground) | ship science [reset]"),
+			TEXT("ship ui menu | chart | science | controls | settings | close | click <button>   (the LCARS panels)"),
 			TEXT("ship exec <console command>"),
 		};
 		// Reverse order: on-screen messages stack newest on top.

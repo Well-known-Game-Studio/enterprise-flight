@@ -11,6 +11,10 @@
 #include "Engine/Engine.h"
 #include "StarshipPawn.h"
 #include "StarshipWeaponsComponent.h"
+#include "SlonkUIRoot.h"
+#include "LcarsPanels.h"
+#include "StarChartPanel.h"
+#include "Blueprint/UserWidget.h"
 #include "WarpDriveComponent.h"
 
 AStarshipPlayerController::AStarshipPlayerController()
@@ -118,6 +122,7 @@ void AStarshipPlayerController::CreateDefaultInputAssets()
 	Ensure(IA_Shuttle, TEXT("IA_Shuttle"), EInputActionValueType::Boolean);
 	Ensure(IA_Scan, TEXT("IA_Scan"), EInputActionValueType::Boolean);
 	Ensure(IA_ScienceLog, TEXT("IA_ScienceLog"), EInputActionValueType::Boolean);
+	Ensure(IA_Menu, TEXT("IA_Menu"), EInputActionValueType::Boolean);
 
 	if (MappingContext)
 	{
@@ -188,7 +193,8 @@ void AStarshipPlayerController::CreateDefaultInputAssets()
 	Map(Ctx, IA_ResetCamera, EKeys::R);
 	Map(Ctx, IA_ToggleHUD, EKeys::Tab);
 	Map(Ctx, IA_ToggleHelp, EKeys::H);
-	Map(Ctx, IA_ToggleHelp, EKeys::Gamepad_Special_Left);
+	Map(Ctx, IA_Menu, EKeys::Escape);
+	Map(Ctx, IA_Menu, EKeys::Gamepad_Special_Left);
 
 	// Navigation.
 	Map(Ctx, IA_ToggleNavMarkers, EKeys::N);
@@ -236,6 +242,13 @@ void AStarshipPlayerController::BeginPlay()
 				Subsystem->AddMappingContext(MappingContext, 0);
 			}
 		}
+	}
+
+	// The LCARS layer sits over the Canvas HUD; its root is active for the session and panels stack on it.
+	if (!UIRoot && IsLocalController())
+	{
+		UIRoot = CreateWidget<USlonkUIRoot>(this, USlonkUIRoot::StaticClass());
+		if (UIRoot) { UIRoot->AddToPlayerScreen(100); }
 	}
 }
 
@@ -301,6 +314,7 @@ void AStarshipPlayerController::SetupInputComponent()
 	EIC->BindAction(IA_Shuttle, ETriggerEvent::Started, this, &AStarshipPlayerController::OnShuttle);
 	EIC->BindAction(IA_Scan, ETriggerEvent::Started, this, &AStarshipPlayerController::OnScan);
 	EIC->BindAction(IA_ScienceLog, ETriggerEvent::Started, this, &AStarshipPlayerController::OnScienceLog);
+	EIC->BindAction(IA_Menu, ETriggerEvent::Started, this, &AStarshipPlayerController::OnMenu);
 }
 
 void AStarshipPlayerController::OnPossess(APawn* InPawn)
@@ -325,6 +339,11 @@ void AStarshipPlayerController::PlayerTick(float DeltaTime)
 	{
 		MouseDeltaThisFrame = FVector2D::ZeroVector;
 		return;
+	}
+	if (UIRoot && UIRoot->IsMenuOpen())
+	{
+		// A panel is up: the mouse belongs to it.
+		MouseDeltaThisFrame = FVector2D::ZeroVector;
 	}
 
 	float Pitch = 0.f;
@@ -593,10 +612,7 @@ void AStarshipPlayerController::OnToggleHUD()
 
 void AStarshipPlayerController::OnToggleHelp()
 {
-	if (AStarshipHUD* H = Cast<AStarshipHUD>(GetHUD()))
-	{
-		H->bShowHelp = !H->bShowHelp;
-	}
+	if (UIRoot) { UIRoot->TogglePanel(UControlsPanel::StaticClass()); }
 }
 
 void AStarshipPlayerController::OnToggleNavMarkers()
@@ -606,7 +622,8 @@ void AStarshipPlayerController::OnToggleNavMarkers()
 
 void AStarshipPlayerController::OnToggleMinimap()
 {
-	if (AStarshipHUD* H = Cast<AStarshipHUD>(GetHUD())) { H->ToggleMinimap(); }
+	// M opens the full star chart; the minimap toggle lives in its sidebar and in "ship nav map".
+	if (UIRoot) { UIRoot->TogglePanel(UStarChartPanel::StaticClass()); }
 }
 
 void AStarshipPlayerController::OnCycleNavTarget()
@@ -692,10 +709,13 @@ void AStarshipPlayerController::OnScan()
 
 void AStarshipPlayerController::OnScienceLog()
 {
-	if (AStarshipHUD* H = Cast<AStarshipHUD>(GetHUD()))
-	{
-		H->ToggleScienceLog();
-	}
+	if (UIRoot) { UIRoot->TogglePanel(UScienceLogPanel::StaticClass()); }
+}
+
+void AStarshipPlayerController::OnMenu()
+{
+	if (!UIRoot) { return; }
+	if (UIRoot->IsMenuOpen()) { UIRoot->CloseAll(); } else { UIRoot->PushMenu<UMainMenuPanel>(); }
 }
 
 void AStarshipPlayerController::OnTractorBeam()

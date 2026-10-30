@@ -107,6 +107,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_Shuttle;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_Scan;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_ScienceLog;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_Menu;
+
+	/** The CommonUI layer: LCARS menus and popups. */
+	class USlonkUIRoot* GetUIRoot() const { return UIRoot; }
+	UPROPERTY() TObjectPtr<class USlonkUIRoot> UIRoot;
 
 	UFUNCTION(BlueprintPure, Category = "Starship|Input")
 	FVector2D GetVirtualStick() const { return MouseStick; }
@@ -165,6 +170,7 @@ protected:
 	void OnShuttle();
 	void OnScan();
 	void OnScienceLog();
+	void OnMenu();
 
 private:
 	FVector2D MouseDeltaThisFrame = FVector2D::ZeroVector;

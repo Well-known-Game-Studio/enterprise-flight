@@ -120,7 +120,7 @@ https://github.com/user-attachments/assets/3abcee09-5a24-4f47-a9fd-c78f1c2a2cbb
 
 ## Ships and stations
 
-Every station orbits a planet and every planet has traffic: Constitution, Miranda and Excelsior class ships patrol between stations and warp when they leave. Hulls carry running lights, floodlights and rows of lit windows that show through on the dark side; stations have hub and ring windows, a strobe chase and beacons.
+A starbase orbits each planet, the deep-space stations (K-7, Regula, Epsilon IX, Vanguard) sit out on their own beyond seven AU, beside the nebulae where there are any, and every one of them has traffic: Constitution, Miranda and Excelsior class ships patrol between stations and warp when they leave. Hulls carry running lights, floodlights and rows of lit windows that show through on the dark side; stations have hub and ring windows, a strobe chase and beacons.
 
 https://github.com/user-attachments/assets/c3715b89-3650-4fff-abd2-6414bca71515
 
@@ -152,24 +152,35 @@ The Star Trek VI bridge is built from code in Blender (`blender/bridge-st6`) and
 
 https://github.com/user-attachments/assets/28b77f79-c31d-487a-ac32-dce1ff09c396
 
+## LCARS panels
+
+Escape opens the main computer: an Okudagram panel built with the engine's CommonUI plugin, elbows, pills and all, with the ship's status and the way to the other panels. M opens stellar cartography, a full-screen star chart of the system: drag to pan, wheel to zoom about the cursor, right-drag to tilt and turn; click a body or one of the other systems listed at the top right to select it, double-click or Set Course to make it the nav target, Autopilot to go there. The nav filter (I, or the drop-down at the chart's top right) hides kinds from the map and from the click alike, so a world is easy to pick out from under a nebula. The chart has three scopes, on tabs above the map or the 1, 2 and 3 keys: Sector shows the neighbouring suns about the current star with their distances, in their own colours and with stems to the plane; System is the planets, belt and traffic about the star; Local centres one world, the selected planet (or a selected moon's primary, or the one nearest the ship), drawn at true size with its moons on their orbits and whatever else lies within four hundred radii. The grid rings are labelled in km, AU or light-years to suit. The chart marks catalogued bodies with a tick and shows a scanned body's readings when you hover it. `/` opens the science log as a window with every record and its discoveries, H the controls list. Panels take the mouse and pause the ship's controls while they are up; Escape or the gamepad's B closes the one on top. Settings, from the main computer, picks the panels' typeface, the engine's Roboto or Antonio, the condensed face in the spirit of the real displays, and flips the HUD overlays; the typeface is kept between sessions. Where the on-screen key list used to be there is now one line of hints, and the minimap's toggle lives in the chart's sidebar.
+
+![The main computer, stellar cartography, the science log and the controls list](https://github.com/user-attachments/assets/4ea6eed5-77cf-461a-9ec8-bb3b522e9146)
+
+![Settings, and the panels set in Antonio](https://github.com/user-attachments/assets/7a3cca3b-25e9-439d-b4c0-ffb49b40e379)
+
 ## Controls
 
-Mouse or the left stick steers; H shows the full key list in game.
+Mouse or the left stick steers; H opens the controls panel with the full key list.
 
 | | |
 |---|---|
 | W / S, mouse wheel | throttle; 1 to 4 set quarter to full impulse, X all stop, Z reverse |
 | J, [ and ] | warp on/off, warp factor down/up (past 9.9 is transwarp) |
 | L, K | next nav target, clear it |
-| I | nav filter: all, stars, worlds, stations, ships, nebulae and belts (applies to the markers, the map and L) |
+| I | nav filter: all, stars, worlds, moons, stations, ships, nebulae and belts (applies to the markers, the map and L; in the chart it is also a drop-down at the top right) |
 | P | autopilot to the nav target: a warp leg when it is far, an impulse approach when it is near; P again disengages |
 | O | orbit hold round the nav target or the nearest body |
 | C | shuttlecraft: launch from the bay; aboard it, dock when within 500 m of the bay |
 | Enter | scan the locked target, else the nav target; aboard a landed shuttle, survey the ground |
+| Escape | main computer: status, star chart, science log, controls, quit |
+| M | stellar cartography: the full star chart, course setting and autopilot (1, 2, 3 pick Sector, System or Local) |
 | / | science log: every scan on record, points, rating and the system survey |
+| H | controls panel |
 | T, Y | lock / clear a weapons target; left mouse or F phasers, Space or G torpedo, B tractor beam |
 | V, R, right mouse | cycle camera (chase, bridge, cinematic, front, port, starboard, top, bottom), reset, free look |
-| N, M, Tab, U | nav markers, system map, HUD, classic / relativistic warp view |
+| N, Tab, U | nav markers, HUD, classic / relativistic warp view |
 | Page Up / Down, arrows | vertical and RCS thrusters |
 
 The nav target is the pulsing ring with four ticks (white to blue), the weapons lock the orange corner box.
@@ -181,3 +192,5 @@ Everything else is a console command: press the backtick key (`` ` ``) to open t
 The Enterprise hull flown in the space test is the one paid asset in the project: "U.S.S. Enterprise NCC-1701-A" (https://skfb.ly/6RsXJ) by Major Stress is licensed under Creative Commons Attribution (http://creativecommons.org/licenses/by/4.0/). Everything else is generated by the project's own scripts and code.
 
 The Star Trek VI bridge set in `blender/bridge-st6` was modelled from scratch using Donny Versiga's renders of the 2293 Enterprise-A bridge as reference, view for view (https://www.artstation.com/artwork/YeNkG3). None of his files are used; his work set the layout, proportions and look that the set is measured against. Thank you, Donny.
+
+The LCARS panels' condensed typeface is Antonio by Vernon Adams and the Antonio Project Authors, under the SIL Open Font License 1.1 (`unreal/Content/UI/Fonts/OFL.txt`).
