@@ -21,6 +21,8 @@
 #include "RunningLightsComponent.h"
 #include "RcsThrusterComponent.h"
 #include "ShuttlecraftPawn.h"
+#include "ScienceScannerComponent.h"
+#include "ScienceLog.h"
 #include "Rendering/PositionVertexBuffer.h"
 #include "StaticMeshResources.h"
 #include "Engine/DamageEvents.h"
@@ -84,6 +86,7 @@ AStarshipPawn::AStarshipPawn()
 
 	WarpDrive = CreateDefaultSubobject<UWarpDriveComponent>(TEXT("WarpDrive"));
 	Weapons = CreateDefaultSubobject<UStarshipWeaponsComponent>(TEXT("Weapons"));
+	Scanner = CreateDefaultSubobject<UScienceScannerComponent>(TEXT("Scanner"));
 
 	// Chase camera on a spring arm. Location lag is deliberately off: at impulse speeds the lag
 	// distance would already be kilometres; rotation lag gives the weighty feel instead.
@@ -2019,6 +2022,29 @@ void AStarshipPawn::ProcessDebugCommand()
 			}
 		}
 	}
+	else if (Op == TEXT("scan"))
+	{
+		// scan [stop]: the locked target, else the nav target; a landed craft surveys the ground.
+		if (ArgStr(1) == TEXT("stop") || ArgStr(1) == TEXT("off")) { if (Scanner) { Scanner->Cancel(); } }
+		else { ToggleScan(); }
+	}
+	else if (Op == TEXT("science"))
+	{
+		// science [reset]: list the log on screen, or wipe it (testing).
+		UScienceLogSubsystem* Log = GetGameInstance() ? GetGameInstance()->GetSubsystem<UScienceLogSubsystem>() : nullptr;
+		if (!Log) {}
+		else if (ArgStr(1) == TEXT("reset")) { Log->Reset(); ScreenMessage(TEXT("Science log reset"), FColor::Orange); }
+		else
+		{
+			const TArray<FScanRecord>& Recs = Log->GetRecords();
+			for (int32 i = Recs.Num() - 1; i >= FMath::Max(0, Recs.Num() - 12); --i)
+			{
+				const FScanRecord& R = Recs[i];
+				ScreenMessage(FString::Printf(TEXT("   %-8s %s  +%d%s"), UScienceLogSubsystem::KindName(R.Kind), *R.Label, R.Total(), R.Discovery.IsEmpty() ? TEXT("") : *(TEXT("   ") + R.Discovery)), FColor::White, 15.f);
+			}
+			ScreenMessage(FString::Printf(TEXT("Science log: %d records, %d points, %s"), Recs.Num(), Log->TotalPoints(), *Log->RatingTitle()), FColor::Cyan, 15.f);
+		}
+	}
 	else if (Op == TEXT("help"))
 	{
 		static const TCHAR* Lines[] = {
@@ -2030,6 +2056,7 @@ void AStarshipPawn::ProcessDebugCommand()
 			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mountain|coast|river|linea|land> <alt m> [across|sun|away|along|giant]"),
 			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km]"),
 			TEXT("ship shuttle  (launch the shuttlecraft; aboard it, dock when the bay is within 500 m) | ship takeoff"),
+			TEXT("ship scan [stop]  (sensors on the locked / nav target; landed: survey the ground) | ship science [reset]"),
 			TEXT("ship exec <console command>"),
 		};
 		// Reverse order: on-screen messages stack newest on top.
@@ -2039,6 +2066,46 @@ void AStarshipPawn::ProcessDebugCommand()
 	{
 		UE_LOG(LogTemp, Warning, TEXT("Starship debug command not understood: %s"), *Cmd);
 		ScreenMessage(FString::Printf(TEXT("ship: \"%s\" not understood (ship help)"), *Args[0]), FColor::Orange);
+	}
+}
+
+void AStarshipPawn::ToggleScan()
+{
+	if (!Scanner) { return; }
+	if (Scanner->IsBusy())
+	{
+		Scanner->Cancel();
+		return;
+	}
+	FString Reason;
+	bool bOk = false;
+	if (Movement && Movement->bLanded)
+	{
+		bOk = Scanner->BeginSurfaceSurvey(Cast<APlanetBody>(Movement->GroundBody.Get()), Reason);
+	}
+	else
+	{
+		// The weapons lock first, else the nav target, as the tractor beam does.
+		AActor* Candidate = Weapons ? Weapons->LockedTarget.Get() : nullptr;
+		FString Label = Candidate ? Candidate->GetActorNameOrLabel() : FString();
+		if (const ASpaceVessel* V = Cast<ASpaceVessel>(Candidate)) { Label = V->GetDisplayName(); }
+		if (!Candidate)
+		{
+			if (APlayerController* PC = Cast<APlayerController>(GetController()))
+			{
+				if (AStarshipHUD* H = Cast<AStarshipHUD>(PC->GetHUD()))
+				{
+					FNavObject Info;
+					if (H->GetNavTargetInfo(Info)) { Candidate = Info.Actor; Label = Info.Label; }
+				}
+			}
+		}
+		bOk = Scanner->BeginScan(Candidate, Label, Reason);
+	}
+	if (!bOk)
+	{
+		ScreenMessage(FString::Printf(TEXT("Science: %s"), *Reason), FColor::Orange);
+		UE_LOG(LogTemp, Log, TEXT("Science: %s"), *Reason);
 	}
 }
 

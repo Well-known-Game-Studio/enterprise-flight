@@ -83,9 +83,22 @@ public:
 	FVector GetStarLocation() const;
 	double DistanceFrom(const FVector& Location) const { return FVector::Dist(GetStarLocation(), Location); }
 
+	/** sqrt of a class's luminosity relative to the Sun: orbit radii scale by it so the temperate band stays put. */
+	static double LuminosityScale(EStarClass Class);
+
+	/** Roman numeral for a planet or moon's place (0-based), "I".."XII". */
+	static const TCHAR* Numeral(int32 Index);
+	/** A proper name for a world, Trek-flavoured syllables from the stream; never one already in Used. */
+	static FString GenerateWorldName(FRandomStream& Rng, TSet<FString>& Used);
+	/** "<Primary> <numeral>" with the first numeral no moon of that primary carries yet. */
+	static FString MoonDesignation(UWorld* World, const APlanetBody* Primary);
+	/** The planet a moon orbits: the nearest non-moon world within 400 of its radii, else null. */
+	static APlanetBody* PrimaryOf(UWorld* World, const APlanetBody* Moon);
+	/** Give every unnamed world of this system a name: planets a generated one in orbit order, moons their primary's designation. */
+	void NameUnnamedWorlds();
+
 private:
 	static void ApplyStarClass(AStarBody* S, EStarClass Class, FRandomStream& Rng);
-	static double LuminosityScale(EStarClass Class);
 	/** Planets on geometric orbits out from `StartAu` about `Centre`, named "<Prefix> I, II, ..." until MaxAu. */
 	void SpawnPlanets(UWorld* World, FRandomStream& Rng, const FVector& Centre, const FString& Prefix, EStarClass Class, int32 Count, double MaxAu, TArray<APlanetBody*>& Out);
 	UPROPERTY() TObjectPtr<USceneComponent> Anchor;

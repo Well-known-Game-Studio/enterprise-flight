@@ -80,6 +80,7 @@ struct FStarshipLightSpec
 };
 
 class AShuttlecraftPawn;
+class UScienceScannerComponent;
 
 UCLASS()
 class SLONK_API AStarshipPawn : public APawn
@@ -153,6 +154,10 @@ public:
 
 	/** Engage the tractor beam on the locked target (else the nav target), or release it. */
 	UFUNCTION(BlueprintCallable, Category = "Starship|Defence") void ToggleTractorBeam();
+	/** Start a scan of the locked target, else the nav target (the ground under a landed craft); cancels a running one. */
+	UFUNCTION(BlueprintCallable, Category = "Starship|Science") void ToggleScan();
+	/** A line in the on-screen message stack (newest on top). */
+	void ScreenMessage(const FString& Text, FColor Color, float Seconds = 6.f) const;
 	virtual UPawnMovementComponent* GetMovementComponent() const override;
 
 	// ---- Components ----
@@ -171,6 +176,10 @@ public:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStarshipWeaponsComponent> Weapons;
+
+	/** Science sensors: scans of the nav or locked target into the science log. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UScienceScannerComponent> Scanner;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|Cameras")
 	TObjectPtr<USpringArmComponent> ChaseArm;
@@ -562,7 +571,6 @@ protected:
 	virtual void SetupWeaponBanks();
 	/** First look at a console op; true when handled (the shuttle takes "dock" here). */
 	virtual bool HandleCraftCommand(const FString& Op, const TArray<FString>& Args);
-	void ScreenMessage(const FString& Text, FColor Color, float Seconds = 6.f) const;
 
 private:
 	void ApplyHullDimensions();

@@ -89,6 +89,7 @@ AStarSystem* AStarSystem::CreateHome(UWorld* World, const FString& Name)
 	{
 		if (It->GetAttachParentActor() == Sys) { Sys->Planets.Add(*It); }
 	}
+	Sys->NameUnnamedWorlds();
 	UE_LOG(LogTemp, Log, TEXT("Star system %s (home): star %s, %d planets"), *Name, HomeStar ? *HomeStar->StarName : TEXT("none"), Sys->Planets.Num());
 	return Sys;
 }
@@ -146,7 +147,6 @@ void AStarSystem::SpawnPlanets(UWorld* World, FRandomStream& Rng, const FVector&
 	// temperate band sits where a world can keep water. Kinds by temperature band.
 	const double LumScale = LuminosityScale(Class);
 	double OrbitAu = LumScale * Rng.FRandRange(0.3, 0.45);
-	static const TCHAR* Numerals[] = { TEXT("I"), TEXT("II"), TEXT("III"), TEXT("IV"), TEXT("V"), TEXT("VI"), TEXT("VII"), TEXT("VIII") };
 	const double Tilt = FMath::DegreesToRadians(Rng.FRandRange(-4.0, 4.0));
 	for (int32 i = 0; i < Count && OrbitAu <= MaxAu; ++i)
 	{
@@ -181,7 +181,7 @@ void AStarSystem::SpawnPlanets(UWorld* World, FRandomStream& Rng, const FVector&
 		if (P)
 		{
 			P->Archetype = Kind; P->RadiusKm = RadiusKm;
-			P->PlanetName = FString::Printf(TEXT("%s %s"), *Prefix, Numerals[FMath::Min(i, 7)]);
+			P->PlanetName = FString::Printf(TEXT("%s %s"), *Prefix, Numeral(i));
 			P->SeedLocation = PLoc; P->bSeedLocationSet = true;
 			P->FinishSpawning(FTransform(PLoc));
 			Adopt(P);
@@ -275,4 +275,119 @@ AStarSystem* AStarSystem::Generate(UWorld* World, const FStarSystemSpec& Spec, c
 	Sys->AdoptLoose();
 	UE_LOG(LogTemp, Log, TEXT("Star system %s: class %d star%s, %d planets (%d of the companion), %.2f ly at RA %.1fh Dec %.0f"), *Spec.Name, (int32)Spec.StarClass, bBinary ? TEXT(" with a companion") : TEXT(""), Sys->Planets.Num(), Secondary.Num(), Spec.DistanceLy, Spec.RightAscensionHours, Spec.DeclinationDeg);
 	return Sys;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Names
+
+const TCHAR* AStarSystem::Numeral(int32 Index)
+{
+	static const TCHAR* Numerals[] = { TEXT("I"), TEXT("II"), TEXT("III"), TEXT("IV"), TEXT("V"), TEXT("VI"), TEXT("VII"), TEXT("VIII"), TEXT("IX"), TEXT("X"), TEXT("XI"), TEXT("XII") };
+	return Numerals[FMath::Clamp(Index, 0, (int32)UE_ARRAY_COUNT(Numerals) - 1)];
+}
+
+FString AStarSystem::GenerateWorldName(FRandomStream& Rng, TSet<FString>& Used)
+{
+	// Two or three syllables of the kind Starfleet charts are full of (Vulcan, Risa, Cestus, Talos, Ceti, Andoria),
+	// with a Prime now and then.
+	static const TCHAR* Onsets[] = { TEXT(""), TEXT("K"), TEXT("T"), TEXT("V"), TEXT("R"), TEXT("S"), TEXT("Th"), TEXT("D"), TEXT("M"), TEXT("N"), TEXT("B"), TEXT("Z"), TEXT("L"), TEXT("G"), TEXT("Sh"), TEXT("Tr"), TEXT("Kh"), TEXT("Ph"), TEXT("C") };
+	static const TCHAR* Vowels[] = { TEXT("a"), TEXT("e"), TEXT("i"), TEXT("o"), TEXT("u"), TEXT("a"), TEXT("e"), TEXT("ai"), TEXT("ia"), TEXT("eo") };
+	static const TCHAR* Plain[] = { TEXT("a"), TEXT("e"), TEXT("i"), TEXT("o"), TEXT("u") };
+	// Syllable soup throws up the odd word nobody wants on a star chart.
+	static const TCHAR* Banned[] = { TEXT("phal"), TEXT("fuk"), TEXT("fuc"), TEXT("cum"), TEXT("shit"), TEXT("ass"), TEXT("tit"), TEXT("coc"), TEXT("dic"), TEXT("pen"), TEXT("sex"), TEXT("vag"), TEXT("nig"), TEXT("kik"), TEXT("rap") };
+	static const TCHAR* Mids[] = { TEXT("r"), TEXT("n"), TEXT("l"), TEXT("th"), TEXT("s"), TEXT("x"), TEXT("m"), TEXT("k"), TEXT("nd"), TEXT("rr"), TEXT("v"), TEXT("d"), TEXT("z"), TEXT("st"), TEXT("ll") };
+	static const TCHAR* Ends[] = { TEXT("a"), TEXT("is"), TEXT("os"), TEXT("ar"), TEXT("on"), TEXT("ia"), TEXT("us"), TEXT("a"), TEXT("en"), TEXT("ir"), TEXT("or"), TEXT("ax"), TEXT("eth") };
+	auto Pick = [&Rng](const TCHAR* const* Table, int32 N) { return Table[Rng.RandRange(0, N - 1)]; };
+	for (int32 Attempt = 0; Attempt < 64; ++Attempt)
+	{
+		FString Name = Pick(Onsets, UE_ARRAY_COUNT(Onsets));
+		Name += Pick(Vowels, UE_ARRAY_COUNT(Vowels));
+		Name += Pick(Mids, UE_ARRAY_COUNT(Mids));
+		if (Rng.FRand() < 0.45f)
+		{
+			Name += Pick(Plain, UE_ARRAY_COUNT(Plain));   // one digraph per name at most
+			Name += Pick(Mids, UE_ARRAY_COUNT(Mids));
+		}
+		Name += Pick(Ends, UE_ARRAY_COUNT(Ends));
+		if (Name.Len() < 4 || Name.Len() > 10) { continue; }
+		bool bBanned = false;
+		for (const TCHAR* B : Banned) { if (Name.ToLower().Contains(B)) { bBanned = true; break; } }
+		if (bBanned) { continue; }
+		Name[0] = FChar::ToUpper(Name[0]);
+		if (Rng.FRand() < 0.15f) { Name += TEXT(" Prime"); }
+		if (!Used.Contains(Name)) { Used.Add(Name); return Name; }
+	}
+	FString Fallback = FString::Printf(TEXT("World %d"), Used.Num() + 1);
+	Used.Add(Fallback);
+	return Fallback;
+}
+
+APlanetBody* AStarSystem::PrimaryOf(UWorld* World, const APlanetBody* Moon)
+{
+	APlanetBody* Primary = nullptr;
+	double Best = TNumericLimits<double>::Max();
+	for (TActorIterator<APlanetBody> It(World); It; ++It)
+	{
+		if (*It == Moon || It->IsMoon()) { continue; }
+		const double D = FVector::Dist(It->GetActorLocation(), Moon->GetActorLocation());
+		if (D < Best && D < 400.0 * It->GetRadiusCm()) { Best = D; Primary = *It; }
+	}
+	return Primary;
+}
+
+FString AStarSystem::MoonDesignation(UWorld* World, const APlanetBody* Primary)
+{
+	const FString Base = Primary->GetDisplayName() + TEXT(" ");
+	TSet<FString> Taken;
+	for (TActorIterator<APlanetBody> It(World); It; ++It)
+	{
+		if (It->IsMoon() && It->PlanetName.StartsWith(Base)) { Taken.Add(It->PlanetName); }
+	}
+	for (int32 i = 0; i < 12; ++i)
+	{
+		const FString Name = Base + Numeral(i);
+		if (!Taken.Contains(Name)) { return Name; }
+	}
+	return Base + TEXT("XIII");
+}
+
+void AStarSystem::NameUnnamedWorlds()
+{
+	UWorld* World = GetWorld();
+	if (!World) { return; }
+	// Planets first, in orbit order, from a stream seeded by the system so the names hold between sessions
+	// (the science log keys on them).
+	TArray<APlanetBody*> Unnamed;
+	TSet<FString> Used;
+	for (APlanetBody* P : Planets)
+	{
+		if (!P || P->IsMoon()) { continue; }
+		if (P->PlanetName.IsEmpty()) { Unnamed.Add(P); } else { Used.Add(P->PlanetName); }
+	}
+	const FVector Centre = GetStarLocation();
+	Unnamed.Sort([&Centre](const APlanetBody& A, const APlanetBody& B) { return FVector::DistSquared(A.GetActorLocation(), Centre) < FVector::DistSquared(B.GetActorLocation(), Centre); });
+	FRandomStream Rng((int32)(FCrc::StrCrc32(*SystemName) ^ (uint32)Seed));
+	for (APlanetBody* P : Unnamed)
+	{
+		P->PlanetName = GenerateWorldName(Rng, Used);
+		UE_LOG(LogTemp, Log, TEXT("Star system %s: %s is named %s"), *SystemName, *P->GetActorNameOrLabel(), *P->PlanetName);
+	}
+	// Then the moons, by distance from their primary.
+	TArray<APlanetBody*> Moons;
+	for (APlanetBody* P : Planets) { if (P && P->IsMoon() && P->PlanetName.IsEmpty()) { Moons.Add(P); } }
+	Moons.Sort([](const APlanetBody& A, const APlanetBody& B)
+	{
+		const APlanetBody* PA = PrimaryOf(A.GetWorld(), &A); const APlanetBody* PB = PrimaryOf(B.GetWorld(), &B);
+		const double DA = PA ? FVector::Dist(PA->GetActorLocation(), A.GetActorLocation()) : 0.0;
+		const double DB = PB ? FVector::Dist(PB->GetActorLocation(), B.GetActorLocation()) : 0.0;
+		return DA < DB;
+	});
+	for (APlanetBody* M : Moons)
+	{
+		if (const APlanetBody* Primary = PrimaryOf(World, M))
+		{
+			M->PlanetName = MoonDesignation(World, Primary);
+			UE_LOG(LogTemp, Log, TEXT("Star system %s: %s is named %s"), *SystemName, *M->GetActorNameOrLabel(), *M->PlanetName);
+		}
+	}
 }

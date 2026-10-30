@@ -1,4 +1,5 @@
 #include "SlonkGameMode.h"
+#include "StarSystem.h"
 #include "Kismet/GameplayStatics.h"
 #include "StarshipPawn.h"
 #include "SlonkTiming.h"
@@ -105,14 +106,13 @@ void ASlonkGameMode::SpawnShowcaseMoons()
 	int32 N = 0;
 	for (APlanetBody* G : Giants)
 	{
-		const FString GiantName = G->GetDisplayName();
 		const FVector Centre = G->GetActorLocation();
 		const double R = G->GetRadiusCm();
 		const FVector Plane1 = G->GetActorRightVector(), Plane2 = G->GetActorForwardVector();
-		struct FMoon { const TCHAR* Suffix; float RadiusKm; EMoonKind Kind; bool bHazy; double Radii; double Angle; };
+		struct FMoon { float RadiusKm; EMoonKind Kind; bool bHazy; double Radii; double Angle; };
 		const FMoon Moons[] = {
-			{ TEXT(" I"), 1561.f, EMoonKind::Icy, false, FMath::Max(G->Style.RingOuter * 1.7, 3.2), 0.6 },
-			{ TEXT(" II"), 2575.f, EMoonKind::Rocky, true, FMath::Max(G->Style.RingOuter * 3.0, 6.0), 2.4 } };
+			{ 1561.f, EMoonKind::Icy, false, FMath::Max(G->Style.RingOuter * 1.7, 3.2), 0.6 },
+			{ 2575.f, EMoonKind::Rocky, true, FMath::Max(G->Style.RingOuter * 3.0, 6.0), 2.4 } };
 		for (const FMoon& M : Moons)
 		{
 			const FVector Loc = Centre + (Plane1 * FMath::Cos(M.Angle) + Plane2 * FMath::Sin(M.Angle)) * (M.Radii * R);
@@ -120,7 +120,7 @@ void ASlonkGameMode::SpawnShowcaseMoons()
 			if (!P) { continue; }
 			P->Archetype = EPlanetArchetype::Moon; P->RadiusKm = M.RadiusKm;
 			P->bForceMoonKind = true; P->ForcedMoonKind = M.Kind; P->bForceHazy = M.bHazy;
-			P->PlanetName = GiantName + M.Suffix;
+			P->PlanetName = AStarSystem::MoonDesignation(World, G);   // the next free numeral after any moon the level gave it
 			P->SeedLocation = Loc; P->bSeedLocationSet = true;
 			P->FinishSpawning(FTransform(Loc));
 			++N;
