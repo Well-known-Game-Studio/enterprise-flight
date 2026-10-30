@@ -92,6 +92,10 @@ public:
 
 	// ---- API ----
 
+	/** Craft without a warp drive (the shuttle) leave this off: EngageWarp and ToggleWarp then do nothing. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Warp")
+	bool bEnabled = true;
+
 	UFUNCTION(BlueprintCallable, Category = "Starship|Warp")
 	void EngageWarp();
 

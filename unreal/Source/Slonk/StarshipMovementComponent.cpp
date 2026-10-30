@@ -70,6 +70,15 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 	// Clamp huge hitches so a frame spike never flings the ship across the system.
 	DeltaTime = FMath::Min(DeltaTime, 0.1f);
 
+	if (bLanded)
+	{
+		HoldLanded(DeltaTime);
+		if (bLanded)
+		{
+			return;
+		}
+	}
+
 	// ---- Attitude ----
 	const float SteerScale = bWarpActive ? WarpSteeringScale : 1.f;
 	const FRotator TargetRates(
@@ -302,6 +311,11 @@ void UStarshipMovementComponent::ApplyTerrainFloor(float DeltaTime)
 		// becomes a climb as it passes under the hull rather than a wall.
 		WantDist = FMath::Lerp(Dist, Target, 1.0 - FMath::Exp(-2.5 * DeltaTime));
 	}
+	else if (bCanLand && Near->HasTerrain() && Dist < SurfR + GroundClearanceCm + 100.0 && Velocity.Size() < LandingSpeedCm && VerticalInput <= 0.05f && Throttle < 0.02)
+	{
+		Land(Near, Centre, Radial, SurfR);
+		return;
+	}
 	else if (Dist < SurfR + GroundClearanceCm)
 	{
 		WantDist = SurfR + GroundClearanceCm;
@@ -437,4 +451,83 @@ FVector UStarshipMovementComponent::UpdateProximity(const FVector& Here, const F
 	if (const APlanetBody* Planet = Cast<APlanetBody>(BestBody)) { if (!Planet->PlanetName.IsEmpty()) { ProximityBodyName = Planet->PlanetName; } }
 	if (const AStarBody* Star = Cast<AStarBody>(BestBody)) { if (!Star->StarName.IsEmpty()) { ProximityBodyName = Star->StarName; } }
 	return BestDir;
+}
+
+void UStarshipMovementComponent::Land(APlanetBody* Body, const FVector& Centre, const FVector& Radial, double SurfR)
+{
+	if (!Body || !UpdatedComponent) { return; }
+	// The slope under the skids, from the ground height a few metres out along two tangents.
+	const FVector Up = Radial;
+	FVector T1 = FVector::CrossProduct(Up, UpdatedComponent->GetForwardVector()).GetSafeNormal();
+	if (T1.IsNearlyZero()) { T1 = FVector::CrossProduct(Up, FVector::RightVector).GetSafeNormal(); }
+	const FVector T2 = FVector::CrossProduct(T1, Up).GetSafeNormal();
+	const double D = 400.0;
+	auto H = [&](const FVector& T) { return Body->GetSurfaceRadiusCm(Centre + Up * SurfR + T * D); };
+	const double S1 = (H(T1) - H(-T1)) / (2.0 * D);
+	const double S2 = (H(T2) - H(-T2)) / (2.0 * D);
+	const FVector Normal = (Up - T1 * S1 - T2 * S2).GetSafeNormal();
+	// Keep the heading; stand the hull on the slope.
+	FVector Fwd = UpdatedComponent->GetForwardVector();
+	Fwd = (Fwd - Normal * FVector::DotProduct(Fwd, Normal)).GetSafeNormal();
+	if (Fwd.IsNearlyZero()) { Fwd = T2; }
+	const FQuat Rot = FRotationMatrix::MakeFromXZ(Fwd, Normal).ToQuat();
+	const FVector Pos = Centre + Up * (SurfR + GroundClearanceCm);
+	UpdatedComponent->SetWorldLocationAndRotation(Pos, Rot, false, nullptr, ETeleportType::TeleportPhysics);
+	const FTransform PlanetT(Body->GetActorQuat(), Centre);
+	LandedLocal = FTransform(Rot, Pos).GetRelativeTransform(PlanetT);
+	LandedBody = Body;
+	bLanded = true;
+	Velocity = FVector::ZeroVector;
+	AngularVelocity = FRotator::ZeroRotator;
+	Throttle = 0.0;
+	ClearTerrainFollow();
+	GroundBody = Body;
+	AltitudeAGLCm = GroundClearanceCm;
+	GroundHeightCm = SurfR - Body->GetRadiusCm();
+	UE_LOG(LogTemp, Log, TEXT("Landed on %s, ground %.0f m above sea, slope %.1f deg"), *Body->GetDisplayName(), GroundHeightCm / 100.0, FMath::RadiansToDegrees(FMath::Acos(FVector::DotProduct(Normal, Up))));
+}
+
+void UStarshipMovementComponent::HoldLanded(float DeltaTime)
+{
+	APlanetBody* Body = LandedBody.Get();
+	if (!Body || !UpdatedComponent)
+	{
+		bLanded = false;
+		return;
+	}
+	// Throttle or lift asked for: let go of the ground.
+	if (VerticalInput > 0.1f || Throttle > 0.02 || ThrusterInput.Z > 0.1 || ThrusterInput.X > 0.1)
+	{
+		TakeOff();
+		return;
+	}
+	// The planet turns under us: sit where we landed in its frame.
+	const FTransform PlanetT(Body->GetActorQuat(), Body->GetActorLocation());
+	const FTransform W = LandedLocal * PlanetT;
+	UpdatedComponent->SetWorldLocationAndRotation(W.GetLocation(), W.GetRotation(), false, nullptr, ETeleportType::TeleportPhysics);
+	Velocity = FVector::ZeroVector;
+	AngularVelocity = FRotator::ZeroRotator;
+	LastSteeringInput = FVector::ZeroVector;
+	LastThrusterInput = FVector::ZeroVector;
+	LastVerticalInput = VerticalInput;
+	SteeringInput = FVector::ZeroVector;
+	ThrusterInput = FVector::ZeroVector;
+	VerticalInput = 0.f;
+	GroundBody = Body;
+	AltitudeAGLCm = GroundClearanceCm;
+	const FVector Here = W.GetLocation();
+	GroundHeightCm = Body->GetSurfaceRadiusCm(Here) - Body->GetRadiusCm();
+}
+
+void UStarshipMovementComponent::TakeOff()
+{
+	if (!bLanded) { return; }
+	bLanded = false;
+	if (UpdatedComponent && LandedBody.IsValid())
+	{
+		// A push off the skids, so the floor does not catch us again before the thrusters take over.
+		const FVector Up = (UpdatedComponent->GetComponentLocation() - LandedBody->GetActorLocation()).GetSafeNormal();
+		Velocity = Up * FMath::Max(LandingSpeedCm, 300.0);
+	}
+	LandedBody = nullptr;
 }

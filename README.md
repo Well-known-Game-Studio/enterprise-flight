@@ -128,6 +128,10 @@ https://github.com/user-attachments/assets/9d4fed35-9918-4979-8f7b-9d059d708661
 
 <img width="49%" alt="Enterprise backlit by the sun, floodlights on the saucer" src="docs/media/still_enterprise.jpg" /> <img width="49%" alt="Starbase 11 on its night side, windows and docking ring lit" src="docs/media/still_station.jpg" />
 
+## Shuttlecraft
+
+C launches a shuttle from the fantail bay (the ship has to be out of warp and under 500 m/s), and you fly it in place of the ship: the same controls, a few kilometres a second flat out, no warp. Ease it onto a planet's ground below walking pace and it sets down on the slope and turns with the planet; throttle or Page Up lifts it off again. The ship stays parked where you left it and is the nav target, so the way home is the marker; within 500 m of the bay, C flies the shuttle back in and puts you on the bridge again.
+
 ## Combat
 
 Phasers, photon torpedoes, shields with a visible bubble, hull damage, a tractor beam and a Borg cube that shoots back. Lock the nearest target and fire; the HUD tracks shields and hull. On the Enterprise-A the phaser banks fire from the emitters painted on the hull, twin beams from each dual bank, and the RCS plumes leave its painted thruster ports; both come from one scan of the hull textures (`tools/rcs_ports/find_ports.py`).
@@ -152,6 +156,7 @@ Mouse or the left stick steers; H shows the full key list in game.
 | I | nav filter: all, stars, worlds, stations, ships, nebulae and belts (applies to the markers, the map and L) |
 | P | autopilot to the nav target: a warp leg when it is far, an impulse approach when it is near; P again disengages |
 | O | orbit hold round the nav target or the nearest body |
+| C | shuttlecraft: launch from the bay; aboard it, dock when within 500 m of the bay |
 | T, Y | lock / clear a weapons target; left mouse or F phasers, Space or G torpedo, B tractor beam |
 | V, R, right mouse | cycle camera (chase, bridge, cinematic, front, port, starboard, top, bottom), reset, free look |
 | N, M, Tab, U | nav markers, system map, HUD, classic / relativistic warp view |

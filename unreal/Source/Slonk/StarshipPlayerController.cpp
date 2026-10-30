@@ -115,6 +115,7 @@ void AStarshipPlayerController::CreateDefaultInputAssets()
 	Ensure(IA_ThrusterSide, TEXT("IA_ThrusterSide"), EInputActionValueType::Axis1D);
 	Ensure(IA_CycleNavFilter, TEXT("IA_CycleNavFilter"), EInputActionValueType::Boolean);
 	Ensure(IA_Autopilot, TEXT("IA_Autopilot"), EInputActionValueType::Boolean);
+	Ensure(IA_Shuttle, TEXT("IA_Shuttle"), EInputActionValueType::Boolean);
 
 	if (MappingContext)
 	{
@@ -196,6 +197,7 @@ void AStarshipPlayerController::CreateDefaultInputAssets()
 	Map(Ctx, IA_ClearNavTarget, EKeys::K);
 	Map(Ctx, IA_CycleNavFilter, EKeys::I);
 	Map(Ctx, IA_Autopilot, EKeys::P);
+	Map(Ctx, IA_Shuttle, EKeys::C);
 	Map(Ctx, IA_JumpToNavTarget, EKeys::Home);
 	Map(Ctx, IA_ToggleWarpVisuals, EKeys::U);
 
@@ -292,6 +294,7 @@ void AStarshipPlayerController::SetupInputComponent()
 	EIC->BindAction(IA_ToggleWarpVisuals, ETriggerEvent::Started, this, &AStarshipPlayerController::OnToggleWarpVisuals);
 	EIC->BindAction(IA_CycleNavFilter, ETriggerEvent::Started, this, &AStarshipPlayerController::OnCycleNavFilter);
 	EIC->BindAction(IA_Autopilot, ETriggerEvent::Started, this, &AStarshipPlayerController::OnAutopilot);
+	EIC->BindAction(IA_Shuttle, ETriggerEvent::Started, this, &AStarshipPlayerController::OnShuttle);
 }
 
 void AStarshipPlayerController::OnPossess(APawn* InPawn)
@@ -662,6 +665,14 @@ void AStarshipPlayerController::OnAutopilot()
 	if (AStarshipPawn* Ship = GetStarship())
 	{
 		Ship->ToggleAutopilot();
+	}
+}
+
+void AStarshipPlayerController::OnShuttle()
+{
+	if (AStarshipPawn* Ship = GetStarship())
+	{
+		Ship->ToggleShuttle();
 	}
 }
 
