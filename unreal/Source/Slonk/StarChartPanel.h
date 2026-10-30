@@ -63,6 +63,8 @@ private:
 	};
 	FVector2D Project(const FVector& Rel) const;
 	void Layout(const FVector2D& Size) const;
+	/** Whether the body is drawn under the current nav filter (the star, course and selection always are). */
+	bool IsShown(const FBody& B, const AStarshipHUD* H) const;
 	int32 HitBody(const FVector2D& Local) const;
 	int32 HitFarStar(const FVector2D& Local) const;
 	FString DescribeBody(const FBody& B, TArray<FString>& OutLines) const;

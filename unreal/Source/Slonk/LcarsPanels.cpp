@@ -236,6 +236,7 @@ void UScienceLogPanel::BuildContent()
 		FillRecords();
 	});
 	AddSidebarButton(TEXT("Star Chart"), Lcars::Periwinkle, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UStarChartPanel>(); } });
+	AddSidebarButton(TEXT("Main Menu"), Lcars::Lavender, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UMainMenuPanel>(); } });
 	AddSidebarButton(TEXT("Erase Log"), Lcars::Salmon, [this]()
 	{
 		ULcarsPopup::Show(GetUIRoot(), TEXT("Erase Science Log"), TEXT("Forget every scan on record? The save file goes too."), { TEXT("Erase"), TEXT("Keep") }, [this](int32 Choice)

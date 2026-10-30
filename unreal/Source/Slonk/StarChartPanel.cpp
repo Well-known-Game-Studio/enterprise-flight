@@ -51,7 +51,10 @@ bool UStarChartWidget::Initialize()
 		WidgetTree->RootWidget = Bg;
 		SetVisibility(ESlateVisibility::Visible);
 		SetIsFocusable(false);
-		DotBrush = FSlateRoundedBoxBrush(FLinearColor::White, 64.f);
+		// The rounded-box shader never clamps its radius, so a fixed radius larger than half the box fills nothing;
+		// HalfHeightRadius makes a square box a disc at any size.
+		DotBrush = FSlateRoundedBoxBrush(FLinearColor::White, 4.f);
+		DotBrush.OutlineSettings.RoundingType = ESlateBrushRoundingType::HalfHeightRadius;
 		BoxBrush = Lcars::Rounded(FLinearColor(0.02f, 0.03f, 0.06f, 0.9f), FVector4(6.f, 6.f, 6.f, 6.f));
 	}
 	return bFirst;
@@ -162,11 +165,24 @@ void UStarChartWidget::Layout(const FVector2D& Size) const
 	}
 }
 
+bool UStarChartWidget::IsShown(const FBody& B, const AStarshipHUD* H) const
+{
+	// The star, the course and the selection always show; everything else obeys the HUD's nav filter.
+	if (B.Kind == ENavObjectKind::Star || !H) { return true; }
+	if (H->NavTarget.IsValid() && B.Actor.Get() == H->NavTarget.Get()) { return true; }
+	if (Selected.IsValid() && B.Actor.Get() == Selected.Get()) { return true; }
+	return H->PassesNavFilter(B.Kind);
+}
+
 int32 UStarChartWidget::HitBody(const FVector2D& Local) const
 {
+	APlayerController* PC = GetOwningPlayer();
+	const AStarshipHUD* H = PC ? Cast<AStarshipHUD>(PC->GetHUD()) : nullptr;
 	int32 Best = -1; double BestD = 18.0 * 18.0;
 	for (int32 i = 0; i < Bodies.Num(); ++i)
 	{
+		// Only what is drawn can be picked, so a hidden nebula never steals the click from the world under it.
+		if (!IsShown(Bodies[i], H)) { continue; }
 		const double D = FVector2D::DistSquared(Bodies[i].Screen, Local);
 		if (D < BestD) { BestD = D; Best = i; }
 	}
@@ -298,7 +314,7 @@ int32 UStarChartWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geo
 		const FBody& B = Bodies[i];
 		const bool bIsNav = H && H->NavTarget.IsValid() && B.Actor.Get() == H->NavTarget.Get();
 		const bool bIsSel = Selected.IsValid() && B.Actor.Get() == Selected.Get();
-		if (!bIsNav && !bIsSel && B.Kind != ENavObjectKind::Star && H && !H->PassesNavFilter(B.Kind)) { continue; }
+		if (!IsShown(B, H)) { continue; }
 		const FLinearColor C = H ? H->KindColor(B.Kind) : FLinearColor::White;
 		const float D = B.Kind == ENavObjectKind::Star ? 12.f : B.Kind == ENavObjectKind::Planet ? 8.f : B.Kind == ENavObjectKind::Moon ? 4.f : 5.f;
 		if (FMath::Abs(B.Screen.Y - B.Base.Y) > 1.0) { Lines({ FVector2f(B.Base), FVector2f(B.Screen) }, FLinearColor(C.R, C.G, C.B, 0.35f), 1.f, L1); }
@@ -500,6 +516,7 @@ void UStarChartPanel::BuildContent()
 	AddSidebarButton(TEXT("Reset View"), Lcars::Tan, [this]() { if (Chart) { Chart->ResetView(); } });
 	MinimapButton = AddSidebarButton(TEXT("Minimap On"), Lcars::Peach, [this]() { if (AStarshipHUD* H = GetHUD()) { H->ToggleMinimap(); } });
 	AddSidebarButton(TEXT("Science Log"), Lcars::Gold, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UScienceLogPanel>(); } });
+	AddSidebarButton(TEXT("Main Menu"), Lcars::Lavender, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UMainMenuPanel>(); } });
 
 	// Start with the nav target selected.
 	if (AStarshipHUD* H = GetHUD())
