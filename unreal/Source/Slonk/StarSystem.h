@@ -83,9 +83,11 @@ public:
 	FVector GetStarLocation() const;
 	double DistanceFrom(const FVector& Location) const { return FVector::Dist(GetStarLocation(), Location); }
 
+	/** sqrt of a class's luminosity relative to the Sun: orbit radii scale by it so the temperate band stays put. */
+	static double LuminosityScale(EStarClass Class);
+
 private:
 	static void ApplyStarClass(AStarBody* S, EStarClass Class, FRandomStream& Rng);
-	static double LuminosityScale(EStarClass Class);
 	/** Planets on geometric orbits out from `StartAu` about `Centre`, named "<Prefix> I, II, ..." until MaxAu. */
 	void SpawnPlanets(UWorld* World, FRandomStream& Rng, const FVector& Centre, const FString& Prefix, EStarClass Class, int32 Count, double MaxAu, TArray<APlanetBody*>& Out);
 	UPROPERTY() TObjectPtr<USceneComponent> Anchor;

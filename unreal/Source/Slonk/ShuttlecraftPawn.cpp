@@ -1,4 +1,5 @@
 #include "ShuttlecraftPawn.h"
+#include "ScienceScannerComponent.h"
 #include "Components/BoxComponent.h"
 #include "Components/DynamicMeshComponent.h"
 #include "GeometryScript/MeshNormalsFunctions.h"
@@ -85,6 +86,13 @@ AShuttlecraftPawn::AShuttlecraftPawn()
 	if (WarpDrive)
 	{
 		WarpDrive->bEnabled = false;
+	}
+	if (Scanner)
+	{
+		// Short-range sensors: worlds from two radii, vessels from 50 km, but quicker once there.
+		Scanner->WorldRangeRadii = 2.f;
+		Scanner->VesselRangeCm = 5.0e6;
+		Scanner->SpeedFactor = 1.5f;
 	}
 	if (Weapons)
 	{

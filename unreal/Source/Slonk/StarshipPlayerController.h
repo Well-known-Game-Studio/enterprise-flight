@@ -105,6 +105,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_CycleNavFilter;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_Autopilot;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_Shuttle;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_Scan;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_ScienceLog;
 
 	UFUNCTION(BlueprintPure, Category = "Starship|Input")
 	FVector2D GetVirtualStick() const { return MouseStick; }
@@ -161,6 +163,8 @@ protected:
 	void OnCycleNavFilter();
 	void OnAutopilot();
 	void OnShuttle();
+	void OnScan();
+	void OnScienceLog();
 
 private:
 	FVector2D MouseDeltaThisFrame = FVector2D::ZeroVector;

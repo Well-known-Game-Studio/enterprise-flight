@@ -58,6 +58,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HUD")
 	bool bShowHelp = true;
 
+	/** The science catalogue panel: every scan on record, points and rating (/). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HUD")
+	bool bShowScienceLog = false;
+	UFUNCTION(BlueprintCallable, Category = "HUD") void ToggleScienceLog() { bShowScienceLog = !bShowScienceLog; }
+
 	/** Diamonds, names and distances for every body in the system (N). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HUD|Nav")
 	bool bShowNavMarkers = true;
@@ -112,6 +117,14 @@ private:
 	void GatherNavObjects(bool bForce = false);
 	void DrawNavMarkers(const AActor* Ship, float UIScale);
 	void DrawMinimap(const AActor* Ship, float UIScale);
+	/** The science rows of the left panel: points, rating, system survey, scan progress or the range hint. */
+	void DrawScienceRows(const class AStarshipPawn* Ship, float& X, float& Y, float Line, float UIScale);
+	void DrawScienceLog(const class AStarshipPawn* Ship, float UIScale);
+	/** Whether a nav object is in the science log already. */
+	bool IsScanned(const FNavObject& O) const;
+	/** A small tick mark: the object is catalogued. */
+	void DrawTick(float X, float Y, float Size, const FLinearColor& Color);
+	class UScienceLogSubsystem* ScienceLog() const;
 	void DrawCircle(float CX, float CY, float R, const FLinearColor& Color, int32 Segments = 32, float Thickness = 1.f);
 	void DrawEllipse(float CX, float CY, float RX, float RY, const FLinearColor& Color, int32 Segments = 48, float Thickness = 1.f);
 	void DrawArc(float CX, float CY, float R, float FromDeg, float ToDeg, const FLinearColor& Color, int32 Segments = 12, float Thickness = 1.f);
