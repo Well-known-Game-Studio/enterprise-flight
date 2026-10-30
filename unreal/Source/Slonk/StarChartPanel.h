@@ -57,6 +57,8 @@ public:
 	float GetTilt() const { return TiltDeg; }
 	/** Called on a double click or Enter with the body (or far star) chosen. */
 	TFunction<void(AActor*)> OnSetCourse;
+	/** Called on any mouse press over the map (the panel closes its drop-down). */
+	TFunction<void()> OnPressed;
 
 private:
 	struct FBody
@@ -137,8 +139,13 @@ protected:
 
 private:
 	void SetCourse(AActor* Actor);
+	void ShowFilterMenu(bool bOpen);
 	UPROPERTY() TObjectPtr<UStarChartWidget> Chart;
 	UPROPERTY() TObjectPtr<UButton> FilterButton;
+	UPROPERTY() TObjectPtr<UVerticalBox> FilterMenu;
+	UPROPERTY() TObjectPtr<UBorder> FilterBacking;
+	UPROPERTY() TArray<TObjectPtr<UButton>> FilterItems;
+	int32 StyledFilter = -1;
 	UPROPERTY() TObjectPtr<UButton> TiltButton;
 	UPROPERTY() TObjectPtr<UButton> HeadingButton;
 	UPROPERTY() TObjectPtr<UButton> MinimapButton;

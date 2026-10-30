@@ -19,6 +19,8 @@
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/SizeBox.h"
+#include "Components/Overlay.h"
+#include "Components/OverlaySlot.h"
 #include "Rendering/DrawElements.h"
 #include "Fonts/FontMeasure.h"
 #include "Framework/Application/SlateApplication.h"
@@ -414,6 +416,8 @@ int32 UStarChartWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geo
 		}
 	};
 	const int32 L0 = LayerId + 1, L1 = LayerId + 2, L2 = LayerId + 3, L3 = LayerId + 4, L4 = LayerId + 5;
+	APlayerController* PC = GetOwningPlayer();
+	AStarshipHUD* H = PC ? Cast<AStarshipHUD>(PC->GetHUD()) : nullptr;
 
 	// Grid: the plane as concentric rings at a round distance, labelled, and the cardinal axes.
 	{
@@ -436,7 +440,7 @@ int32 UStarChartWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geo
 		TArray<double> Orbits;
 		for (const FBody& B : Bodies)
 		{
-			if (B.Kind != Orbiting) { continue; }
+			if (B.Kind != Orbiting || !IsShown(B, H)) { continue; }   // a hidden moon leaves no orbit behind
 			const double R = FVector2D(B.Rel.X, B.Rel.Y).Size();
 			bool bDup = false;
 			for (double E : Orbits) { if (FMath::Abs(E - R) < R * 0.03) { bDup = true; break; } }
@@ -446,9 +450,8 @@ int32 UStarChartWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geo
 		if (BeltRadiusCm > 0.0) { Orbit(BeltRadiusCm, ChartBeltColor, 2.f, L1, true); }
 	}
 	// Bodies.
-	APlayerController* PC = GetOwningPlayer();
-	AStarshipHUD* H = PC ? Cast<AStarshipHUD>(PC->GetHUD()) : nullptr;
 	const int32 HoverI = Hover.X >= 0.0 ? HitBody(Hover) : -1;
+	const bool bNarrow = H && H->NavFilter != ENavFilter::All;   // a filtered map has room to name everything
 	// Labels step down rather than print over one another (binaries, a ship beside its world).
 	TArray<FSlateRect> Placed;
 	auto PlaceLabel = [&](FVector2D At, const FVector2D& Sz) -> FVector2D
@@ -484,7 +487,7 @@ int32 UStarChartWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geo
 			Ring(B.Screen, D * 0.5f + 15.f, FLinearColor(1.f, 1.f, 1.f, Pulse), 1.5f, L3, 48);
 		}
 		if (i == HoverI) { Ring(B.Screen, D * 0.5f + 6.f, FLinearColor(1.f, 1.f, 1.f, 0.6f), 1.f, L3); }
-		const bool bLabel = Scope != EChartScope::System || B.Kind == ENavObjectKind::Star || B.Kind == ENavObjectKind::Planet || B.Kind == ENavObjectKind::Nebula || bIsNav || bIsSel || i == HoverI || Zoom > 6.0 || (B.Kind == ENavObjectKind::Station && Zoom > 2.5);
+		const bool bLabel = Scope != EChartScope::System || bNarrow || B.Kind == ENavObjectKind::Star || B.Kind == ENavObjectKind::Planet || B.Kind == ENavObjectKind::Nebula || bIsNav || bIsSel || i == HoverI || Zoom > 6.0 || (B.Kind == ENavObjectKind::Station && Zoom > 2.5);
 		if (bLabel)
 		{
 			const FSlateFontInfo& F = B.Kind == ENavObjectKind::Star ? Big : Label;
@@ -569,6 +572,7 @@ FReply UStarChartWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, co
 {
 	LastMouse = InGeometry.AbsoluteToLocal(E.GetScreenSpacePosition());
 	bDragged = false;
+	if (OnPressed) { OnPressed(); }
 	if (E.GetEffectingButton() == EKeys::LeftMouseButton) { bLeftDown = true; }
 	else if (E.GetEffectingButton() == EKeys::RightMouseButton) { bRightDown = true; }
 	else { return FReply::Unhandled(); }
@@ -668,7 +672,7 @@ void UStarChartPanel::BuildContent()
 		auto Tab = [&](const TCHAR* L, EChartScope S)
 		{
 			UButton* B = Lcars::MakeButton(WidgetTree, L, Lcars::Lilac);
-			Bind(B, [this, S]() { if (Chart) { Chart->SetScope(S); } }, L);
+			Bind(B, [this, S]() { if (Chart) { Chart->SetScope(S); } ShowFilterMenu(false); }, L);
 			USizeBox* Box = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
 			Box->SetWidthOverride(118.f);
 			Box->SetHeightOverride(30.f);
@@ -680,10 +684,46 @@ void UStarChartPanel::BuildContent()
 		Tab(TEXT("System"), EChartScope::System);
 		Tab(TEXT("Local"), EChartScope::Local);
 		ScopeTitle = Lcars::MakeText(WidgetTree, TEXT(""), 18.f, Lcars::Peach);
-		if (UHorizontalBoxSlot* HS = Tabs->AddChildToHorizontalBox(ScopeTitle)) { HS->SetPadding(FMargin(18.f, 0.f, 0.f, 0.f)); HS->SetVerticalAlignment(VAlign_Center); }
+		if (UHorizontalBoxSlot* HS = Tabs->AddChildToHorizontalBox(ScopeTitle)) { HS->SetPadding(FMargin(18.f, 0.f, 0.f, 0.f)); HS->SetVerticalAlignment(VAlign_Center); HS->SetSize(FSlateChildSize(ESlateSizeRule::Fill)); }
+		// The nav filter as a drop-down at the right: the button names the current filter, the list opens over the map.
+		FilterButton = Lcars::MakeButton(WidgetTree, TEXT("Filter: All"), Lcars::Lavender);
+		Bind(FilterButton, [this]() { ShowFilterMenu(!FilterBacking || FilterBacking->GetVisibility() != ESlateVisibility::Visible); }, TEXT("Filter"));
+		USizeBox* FBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+		FBox->SetWidthOverride(236.f);
+		FBox->SetHeightOverride(30.f);
+		FBox->AddChild(FilterButton);
+		if (UHorizontalBoxSlot* HS = Tabs->AddChildToHorizontalBox(FBox)) { HS->SetHorizontalAlignment(HAlign_Right); }
 		if (UVerticalBoxSlot* S = Content->AddChildToVerticalBox(Tabs)) { S->SetPadding(FMargin(0.f, 0.f, 0.f, 8.f)); }
 	}
-	if (UVerticalBoxSlot* S = Content->AddChildToVerticalBox(Chart)) { S->SetSize(FSlateChildSize(ESlateSizeRule::Fill)); }
+	{
+		UOverlay* Map = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass());
+		if (UOverlaySlot* OS = Map->AddChildToOverlay(Chart)) { OS->SetHorizontalAlignment(HAlign_Fill); OS->SetVerticalAlignment(VAlign_Fill); }
+		FilterMenu = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+		struct FChoice { const TCHAR* Label; ENavFilter Filter; };
+		const FChoice Choices[] = {
+			{ TEXT("All"), ENavFilter::All }, { TEXT("Stars"), ENavFilter::Stars }, { TEXT("Worlds"), ENavFilter::Worlds }, { TEXT("Moons"), ENavFilter::Moons },
+			{ TEXT("Stations"), ENavFilter::Stations }, { TEXT("Ships"), ENavFilter::Ships }, { TEXT("Nebulae & Belts"), ENavFilter::Nebulae } };
+		for (const FChoice& C : Choices)
+		{
+			UButton* B = Lcars::MakeButton(WidgetTree, C.Label, Lcars::Lilac);
+			const ENavFilter F = C.Filter;
+			Bind(B, [this, F]() { if (AStarshipHUD* H = GetHUD()) { H->NavFilter = F; } ShowFilterMenu(false); }, C.Label);
+			USizeBox* Box = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+			Box->SetWidthOverride(236.f);
+			Box->SetHeightOverride(30.f);
+			Box->AddChild(B);
+			if (UVerticalBoxSlot* VS = FilterMenu->AddChildToVerticalBox(Box)) { VS->SetPadding(FMargin(0.f, 0.f, 0.f, 4.f)); }
+			FilterItems.Add(B);
+		}
+		// A dark backing so the map's own text does not show between the pills.
+		FilterBacking = Lcars::MakeBlock(WidgetTree, FLinearColor(0.02f, 0.03f, 0.06f, 0.96f), FVector4(6.f, 6.f, 6.f, 6.f));
+		FilterBacking->SetPadding(FMargin(6.f, 6.f, 6.f, 2.f));
+		FilterBacking->AddChild(FilterMenu);
+		FilterBacking->SetVisibility(ESlateVisibility::Collapsed);
+		if (UOverlaySlot* OS = Map->AddChildToOverlay(FilterBacking)) { OS->SetHorizontalAlignment(HAlign_Right); OS->SetVerticalAlignment(VAlign_Top); OS->SetPadding(FMargin(0.f, 4.f, 0.f, 0.f)); }
+		Chart->OnPressed = [this]() { ShowFilterMenu(false); };
+		if (UVerticalBoxSlot* S = Content->AddChildToVerticalBox(Map)) { S->SetSize(FSlateChildSize(ESlateSizeRule::Fill)); }
+	}
 	Footer = AddLine(Content, TEXT(""), 13.f, Lcars::Peach, false, false, 8.f);
 
 	AddSidebarButton(TEXT("Close"), Lcars::Orange, [this]() { Close(); });
@@ -694,7 +734,6 @@ void UStarChartPanel::BuildContent()
 		if (AStarshipPawn* S = GetShip()) { S->Ship(TEXT("autopilot")); Close(); }
 	});
 	AddSidebarButton(TEXT("Clear Course"), Lcars::Tan, [this]() { if (AStarshipHUD* H = GetHUD()) { H->ClearNavTarget(); } });
-	FilterButton = AddSidebarButton(TEXT("Filter: All"), Lcars::Lavender, [this]() { if (AStarshipHUD* H = GetHUD()) { H->CycleNavFilter(); } });
 	TiltButton = AddSidebarButton(TEXT("Tilt 55"), Lcars::Periwinkle, [this]() { if (Chart) { Chart->CycleTilt(); } });
 	HeadingButton = AddSidebarButton(TEXT("North Up"), Lcars::Lilac, [this]() { if (Chart) { Chart->ToggleHeadingUp(); } });
 	AddSidebarButton(TEXT("Centre Ship"), Lcars::Sky, [this]() { if (Chart) { Chart->CentreOnShip(); } });
@@ -711,6 +750,11 @@ void UStarChartPanel::BuildContent()
 	}
 }
 
+void UStarChartPanel::ShowFilterMenu(bool bOpen)
+{
+	if (FilterBacking) { FilterBacking->SetVisibility(bOpen ? ESlateVisibility::Visible : ESlateVisibility::Collapsed); }
+}
+
 void UStarChartPanel::SetCourse(AActor* Actor)
 {
 	AStarshipHUD* H = GetHUD();
@@ -723,7 +767,17 @@ void UStarChartPanel::Refresh()
 	Super::Refresh();
 	AStarshipHUD* H = GetHUD();
 	auto Relabel = [](UButton* B, const FString& S) { if (UTextBlock* T = B ? Cast<UTextBlock>(B->GetChildAt(0)) : nullptr) { const FString U = S.ToUpper(); if (!T->GetText().ToString().Equals(U)) { T->SetText(FText::FromString(U)); } } };
-	if (H) { Relabel(FilterButton, TEXT("Filter: ") + H->NavFilterName()); Relabel(MinimapButton, H->bShowMinimap ? TEXT("Minimap On") : TEXT("Minimap Off")); }
+	if (H)
+	{
+		Relabel(FilterButton, TEXT("Filter: ") + H->NavFilterName());
+		Relabel(MinimapButton, H->bShowMinimap ? TEXT("Minimap On") : TEXT("Minimap Off"));
+		const int32 F = (int32)H->NavFilter;
+		if (F != StyledFilter)
+		{
+			StyledFilter = F;
+			for (int32 i = 0; i < FilterItems.Num(); ++i) { Lcars::SetButtonColor(FilterItems[i], i == F ? Lcars::Orange : Lcars::Lilac); }
+		}
+	}
 	if (Chart) { Relabel(TiltButton, FString::Printf(TEXT("Tilt %.0f"), Chart->GetTilt())); Relabel(HeadingButton, Chart->IsHeadingUp() ? TEXT("Heading Up") : TEXT("North Up")); }
 	if (Chart)
 	{
@@ -764,6 +818,7 @@ FReply UStarChartPanel::NativeOnKeyDown(const FGeometry& InGeometry, const FKeyE
 		return FReply::Handled();
 	}
 	if (InKeyEvent.GetKey() == EKeys::M) { Close(); return FReply::Handled(); }
+	if (InKeyEvent.GetKey() == EKeys::I) { if (AStarshipHUD* H = GetHUD()) { H->CycleNavFilter(); } return FReply::Handled(); }
 	if (Chart && InKeyEvent.GetKey() == EKeys::One) { Chart->SetScope(EChartScope::Sector); return FReply::Handled(); }
 	if (Chart && InKeyEvent.GetKey() == EKeys::Two) { Chart->SetScope(EChartScope::System); return FReply::Handled(); }
 	if (Chart && InKeyEvent.GetKey() == EKeys::Three) { Chart->SetScope(EChartScope::Local); return FReply::Handled(); }

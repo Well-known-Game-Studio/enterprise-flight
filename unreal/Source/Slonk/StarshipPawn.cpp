@@ -2019,9 +2019,9 @@ void AStarshipPawn::ProcessDebugCommand()
 				}
 				else if (What == TEXT("filter"))
 				{
-					// nav filter [all|stars|worlds|stations|ships|nebulae]: bare cycles.
+					// nav filter [all|stars|worlds|moons|stations|ships|nebulae]: bare cycles.
 					if (Args.Num() < 3) { H->CycleNavFilter(); }
-					else if (!H->SetNavFilterByName(ArgStr(2))) { ScreenMessage(TEXT("nav filter: all, stars, worlds, stations, ships or nebulae"), FColor::Orange); }
+					else if (!H->SetNavFilterByName(ArgStr(2))) { ScreenMessage(TEXT("nav filter: all, stars, worlds, moons, stations, ships or nebulae"), FColor::Orange); }
 				}
 				else { ScreenMessage(TEXT("nav target <name> | nav next | nav clear | nav filter [kind] | nav markers | nav map"), FColor::Orange); }
 			}
@@ -2078,7 +2078,7 @@ void AStarshipPawn::ProcessDebugCommand()
 	else if (Op == TEXT("help"))
 	{
 		static const TCHAR* Lines[] = {
-			TEXT("ship nav target <name> | nav next | nav clear | nav filter [all|stars|worlds|stations|ships|nebulae] | nav markers | nav map"),
+			TEXT("ship nav target <name> | nav next | nav clear | nav filter [all|stars|worlds|moons|stations|ships|nebulae] | nav markers | nav map"),
 			TEXT("ship autopilot [warp|impulse|off] [standoff km] [seconds]      ship jump  (to the nav target, dev)"),
 			TEXT("ship warp [on|off] | warpfactor <f> | impulse <1-4> | throttle <0-1> | stop | orbit [on|off]"),
 			TEXT("ship camera [chase|bridge|cinematic|front|port|starboard|top|bottom] | zoom <x> | look <yaw> <pitch> [s]"),

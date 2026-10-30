@@ -27,6 +27,7 @@ enum class ENavFilter : uint8
 	All,
 	Stars,
 	Worlds,
+	Moons,
 	Stations,
 	Ships,
 	Nebulae

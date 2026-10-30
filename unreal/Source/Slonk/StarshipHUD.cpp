@@ -631,7 +631,8 @@ bool AStarshipHUD::PassesNavFilter(ENavObjectKind Kind) const
 	switch (NavFilter)
 	{
 	case ENavFilter::Stars: return Kind == ENavObjectKind::Star;
-	case ENavFilter::Worlds: return Kind == ENavObjectKind::Planet || Kind == ENavObjectKind::Moon;
+	case ENavFilter::Worlds: return Kind == ENavObjectKind::Planet;
+	case ENavFilter::Moons: return Kind == ENavObjectKind::Moon;
 	case ENavFilter::Stations: return Kind == ENavObjectKind::Station;
 	case ENavFilter::Ships: return Kind == ENavObjectKind::Ship || Kind == ENavObjectKind::Hostile;
 	case ENavFilter::Nebulae: return Kind == ENavObjectKind::Nebula || Kind == ENavObjectKind::Belt;
@@ -641,7 +642,7 @@ bool AStarshipHUD::PassesNavFilter(ENavObjectKind Kind) const
 
 void AStarshipHUD::CycleNavFilter()
 {
-	NavFilter = static_cast<ENavFilter>((static_cast<uint8>(NavFilter) + 1) % 6);
+	NavFilter = static_cast<ENavFilter>((static_cast<uint8>(NavFilter) + 1) % 7);
 }
 
 bool AStarshipHUD::SetNavFilterByName(const FString& Name)
@@ -649,7 +650,8 @@ bool AStarshipHUD::SetNavFilterByName(const FString& Name)
 	const FString N = Name.ToLower();
 	if (N == TEXT("all") || N == TEXT("off") || N == TEXT("none")) { NavFilter = ENavFilter::All; }
 	else if (N.StartsWith(TEXT("star")) || N.StartsWith(TEXT("sun"))) { NavFilter = ENavFilter::Stars; }
-	else if (N.StartsWith(TEXT("world")) || N.StartsWith(TEXT("planet")) || N.StartsWith(TEXT("moon")) || N.StartsWith(TEXT("bod"))) { NavFilter = ENavFilter::Worlds; }
+	else if (N.StartsWith(TEXT("world")) || N.StartsWith(TEXT("planet")) || N.StartsWith(TEXT("bod"))) { NavFilter = ENavFilter::Worlds; }
+	else if (N.StartsWith(TEXT("moon"))) { NavFilter = ENavFilter::Moons; }
 	else if (N.StartsWith(TEXT("station")) || N.StartsWith(TEXT("base"))) { NavFilter = ENavFilter::Stations; }
 	else if (N.StartsWith(TEXT("ship")) || N.StartsWith(TEXT("vessel"))) { NavFilter = ENavFilter::Ships; }
 	else if (N.StartsWith(TEXT("nebula")) || N.StartsWith(TEXT("belt")) || N.StartsWith(TEXT("field"))) { NavFilter = ENavFilter::Nebulae; }
@@ -663,6 +665,7 @@ FString AStarshipHUD::NavFilterName() const
 	{
 	case ENavFilter::Stars: return TEXT("STARS");
 	case ENavFilter::Worlds: return TEXT("WORLDS");
+	case ENavFilter::Moons: return TEXT("MOONS");
 	case ENavFilter::Stations: return TEXT("STATIONS");
 	case ENavFilter::Ships: return TEXT("SHIPS");
 	case ENavFilter::Nebulae: return TEXT("NEBULAE & BELTS");
