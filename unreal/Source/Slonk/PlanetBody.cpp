@@ -624,10 +624,10 @@ void APlanetBody::ResolveStyleFromArchetype()
 	{
 		switch (Type)
 		{
-		case EPlanetArchetype::Terrestrial: S.CloudBaseKm = Rng.FRandRange(1.5f, 2.5f); S.CloudThicknessKm = 8.f; S.CloudDensity = 1.f; S.CloudDeck = 0.f; break;
-		case EPlanetArchetype::Ocean: S.CloudBaseKm = Rng.FRandRange(0.8f, 1.5f); S.CloudThicknessKm = 7.f; S.CloudDensity = 1.f; S.CloudDeck = 0.3f; break;
+		case EPlanetArchetype::Terrestrial: S.CloudBaseKm = Rng.FRandRange(1.5f, 2.5f); S.CloudThicknessKm = 6.f; S.CloudDensity = 1.f; S.CloudDeck = 0.f; break;
+		case EPlanetArchetype::Ocean: S.CloudBaseKm = Rng.FRandRange(1.5f, 2.5f); S.CloudThicknessKm = 6.f; S.CloudDensity = 1.f; S.CloudDeck = 0.3f; break;
 		case EPlanetArchetype::Desert: S.CloudBaseKm = Rng.FRandRange(3.f, 5.f); S.CloudThicknessKm = 4.f; S.CloudDensity = 0.6f; S.CloudDeck = 0.f; break;
-		case EPlanetArchetype::Ice: S.CloudBaseKm = Rng.FRandRange(0.8f, 1.5f); S.CloudThicknessKm = 5.f; S.CloudDensity = 0.8f; S.CloudDeck = 0.4f; break;
+		case EPlanetArchetype::Ice: S.CloudBaseKm = Rng.FRandRange(1.2f, 2.f); S.CloudThicknessKm = 5.f; S.CloudDensity = 0.8f; S.CloudDeck = 0.4f; break;
 		case EPlanetArchetype::Lava: S.CloudBaseKm = 2.f; S.CloudThicknessKm = 6.f; S.CloudDensity = 1.2f; S.CloudDeck = 0.5f; break;
 		// Venus: the sulphuric acid deck from 48 to 70 km, continuous and opaque.
 		case EPlanetArchetype::Venus: S.CloudBaseKm = 48.f; S.CloudThicknessKm = 22.f; S.CloudDensity = 2.f; S.CloudDeck = 1.f; break;
@@ -650,6 +650,34 @@ void APlanetBody::ResolveStyleFromArchetype()
 		S.IceCapStart = FMath::Min(S.IceCapStart, Rng.FRandRange(0.7f, 0.9f));
 	}
 	Style = S;
+	// The layer was placed from sea level, but on a world with relief most land stands a kilometre or more above
+	// it, so over the plateaus people fly across and land on the cloud base sat on the ground. Lift the layer by
+	// the typical land height, read once from the height field at a coarse wavelength (a hundred-odd samples).
+	if (Style.CloudThicknessKm > 0.f && Style.ReliefFraction > 0.f && Style.BandStrength < 0.5f
+		&& Type != EPlanetArchetype::GasGiant && Type != EPlanetArchetype::IceGiant)
+	{
+		const FPlanetTerrainParams P = MakeTerrainParams();
+		TArray<double> Land;
+		const int32 N = 128;
+		for (int32 i = 0; i < N; ++i)
+		{
+			const double Z = 1.0 - 2.0 * (i + 0.5) / N;
+			const double Rxy = FMath::Sqrt(FMath::Max(0.0, 1.0 - Z * Z));
+			const double Phi = i * 2.399963229728653; // Fibonacci sphere
+			const FPlanetTerrainSample Sm = SlonkTerrain::Sample(P, FVector(Rxy * FMath::Cos(Phi), Rxy * FMath::Sin(Phi), Z), 2.0e6);
+			if (!Sm.bWater && Sm.HeightCm > 0.0) { Land.Add(Sm.HeightCm); }
+		}
+		if (Land.Num() >= 8)
+		{
+			// The upper-middle of the land heights (not the median): the uplands are where the mountains, and the
+			// shuttle landings, are, and a base that clears two thirds of the land reads as a sky, not a ceiling.
+			Land.Sort();
+			const float LandKm = (float)FMath::Clamp(Land[(Land.Num() * 2) / 3] / 1.0e5, 0.0, 6.0);
+			Style.CloudBaseKm += LandKm;
+			Style.CloudHeightFraction = (Style.CloudBaseKm + Style.CloudThicknessKm) / FMath::Max(RadiusKm, 1.f);
+			UE_LOG(LogTemp, Log, TEXT("%s: cloud base lifted %.1f km over the land (median %.1f km, peaks %.1f km) to %.1f km"), *GetDisplayName(), LandKm, Land[Land.Num() / 2] / 1.0e5, Land.Last() / 1.0e5, Style.CloudBaseKm);
+		}
+	}
 	// Real day lengths (9 to 70 hours): the ground under a ship flying the terrain must not race past at km/s.
 	SpinDegPerSec = Rng.FRandRange(0.1f, 0.8f) * (Rng.FRand() < 0.2f ? -1.f : 1.f) * 0.014f;
 	if (Type == EPlanetArchetype::GasGiant || Type == EPlanetArchetype::IceGiant)
@@ -791,6 +819,9 @@ void APlanetBody::ApplyMaterials()
 		Mid->SetScalarParameterValue(TEXT("PlanetRadiusCm"), GetRadiusCm());
 		Mid->SetScalarParameterValue(TEXT("CloudScale"), S.CloudScale);
 		Mid->SetScalarParameterValue(TEXT("Coverage"), S.bClouds ? S.CloudCoverage : 0.f);
+		// Worlds with a ray-marched layer get the shell broken into kilometre cells near the planet, so the two
+		// match at the hand-over; the giants' decks stay whole.
+		Mid->SetScalarParameterValue(TEXT("CellStrength"), S.CloudThicknessKm > 0.f ? 0.6f : 0.f);
 		Mid->SetVectorParameterValue(TEXT("CloudSeedOffset"), Seed * 0.37f);
 		Mid->SetScalarParameterValue(TEXT("CloudYaw"), FMath::DegreesToRadians(CloudYawDeg));
 		Mid->SetVectorParameterValue(TEXT("OceanColor"), S.OceanColor);

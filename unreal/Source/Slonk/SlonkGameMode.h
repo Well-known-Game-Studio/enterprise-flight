@@ -70,17 +70,19 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
 	float SkyLightIntensityNearPlanet = 0.5f;
 
-	/** Volumetric clouds on the atmosphere planet, replacing its cloud shell while the view is within VolumetricCloudRadii. */
+	/** Volumetric clouds on the atmosphere planet, replacing its cloud shell while the view is within VolumetricCloudRangeKm of the surface. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
 	bool bUseVolumetricClouds = true;
 
-	/** Radii from the planet centre below which the volumetric layer is at full density (1.015 is 95 km up on an Earth). */
+	/** Altitude (km) up to which the ray-marched layer is at full density; beyond it the layer thins as the cloud
+	 *  shell comes in over the next VolumetricCloudFadeKm. In km, not radii: the renderer stops tracing the layer
+	 *  from about 2,000 km out whatever the world's size, and the look holds to 1,500. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
-	float VolumetricCloudRadii = 1.015f;
+	float VolumetricCloudRangeKm = 900.f;
 
-	/** Over this many further radii the layer thins out and the cloud shell fades in (0.03 is 190 km on an Earth; the ray-marched layer streaks from a few hundred km up). */
+	/** Width of the hand-over band above VolumetricCloudRangeKm, km. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
-	float VolumetricCloudFadeRadii = 0.03f;
+	float VolumetricCloudFadeKm = 600.f;
 
 	/** Cloud layer bottom and thickness, km (Earth: cumulus from 1.5 km, tops by 6). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
@@ -156,6 +158,7 @@ private:
 	UPROPERTY() TObjectPtr<class UVolumetricCloudComponent> VolumetricCloud;
 	UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> CloudMID;
 	TWeakObjectPtr<class APlanetBody> CloudStyledPlanet;
+	float CloudViewSamples = 0.6f;
 	UPROPERTY() TObjectPtr<class APlanetBody> AtmospherePlanet;
 	void SpawnTestTargets();
 };

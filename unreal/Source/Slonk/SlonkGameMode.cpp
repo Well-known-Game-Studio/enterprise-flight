@@ -434,10 +434,12 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 	if (VolumetricCloud)
 	{
 		// Crossfade between the ray-marched layer and the cloud shell over a band of altitude: the layer at full
-		// density below VolumetricCloudRadii, the shell at full opacity VolumetricCloudFadeRadii further out, and
+		// density out to VolumetricCloudRangeKm, the shell at full opacity VolumetricCloudFadeKm further out, and
 		// in between the layer thins as the shell comes in, so nothing pops at the hand-over.
 		const bool bHasLayer = bUseVolumetricClouds && S.bClouds && S.CloudThicknessKm > 0.f;
-		const float Shell = bHasLayer ? FMath::SmoothStep(VolumetricCloudRadii, VolumetricCloudRadii + VolumetricCloudFadeRadii, (float)BestRadii) : 1.f;
+		const float RangeRadii = 1.f + VolumetricCloudRangeKm / FMath::Max(RadiusKm, 1.f);
+		const float FadeRadii = VolumetricCloudFadeKm / FMath::Max(RadiusKm, 1.f);
+		const float Shell = bHasLayer ? FMath::SmoothStep(RangeRadii, RangeRadii + FadeRadii, (float)BestRadii) : 1.f;
 		const bool bVolumetric = bHasLayer && Shell < 0.999f;
 		if (VolumetricCloud->IsVisible() != bVolumetric)
 		{
@@ -448,15 +450,35 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 		{
 			CloudMID->SetScalarParameterValue(TEXT("Cloud_GlobalDensity"), 0.008f * S.CloudDensity * (1.f - Shell));
 		}
+		if (bVolumetric)
+		{
+			// From orbit the layer is a texture on a disc, not a sky overhead: fewer samples per ray do, and the
+			// cost from low orbit (a third again on top of the frame at 300 km) comes back down.
+			// 0.6 inside the atmosphere, 0.3 from 300 km up: measured at 300 km the layer went from 10 ms to under 1 at
+			// 720p with no visible change, and from 900 km it is 3 ms either way.
+			const float High = FMath::Clamp((float)((BestRadii - 1.0) * RadiusKm / 300.0), 0.f, 1.f);
+			const float Samples = FMath::Lerp(0.6f, 0.3f, High);
+			if (!FMath::IsNearlyEqual(Samples, CloudViewSamples, 0.02f))
+			{
+				CloudViewSamples = Samples;
+				VolumetricCloud->SetViewSampleCountScale(Samples);
+			}
+		}
 		if (bVolumetric && CloudStyledPlanet.Get() != AtmospherePlanet)
 		{
 			// The layer from the style: where it sits, how thick, how dense, how continuous, what colour. The
 			// engine's simple cloud material reads a coverage bias (its default -0.2 is a scattered sky) and a
 			// density per metre (0.008 is a cumulus), and a deck pushes the bias up so the gaps close.
 			CloudStyledPlanet = AtmospherePlanet;
-			VolumetricCloud->SetLayerBottomAltitude(S.CloudBaseKm);
+			// The layer's altitude is measured from the Sky Atmosphere's ground, which sits 0.05% of the radius under
+			// the surface (see SetBottomRadius above): without the offset every layer was 3 km low, with its bottom
+			// under the sea, where the ocean surface cut the ray march into dark arcs from orbit.
+			VolumetricCloud->SetLayerBottomAltitude(S.CloudBaseKm + RadiusKm * 0.0005f);
 			VolumetricCloud->SetLayerHeight(S.CloudThicknessKm);
-			VolumetricCloud->SetTracingMaxDistance(FMath::Max(50.f, (S.CloudBaseKm + S.CloudThicknessKm) * 3.f));
+			// Rays may start as far off as the hand-over band's outer edge plus the way round to the limb, and run
+			// a long way inside the layer at grazing angles from up there.
+			VolumetricCloud->SetTracingStartMaxDistance((VolumetricCloudRangeKm + VolumetricCloudFadeKm) * 3.f);
+			VolumetricCloud->SetTracingMaxDistance(150.f);
 			if (CloudMID)
 			{
 				CloudMID->SetScalarParameterValue(TEXT("Cloud_GlobalCoverage"), S.CloudCoverage * 1.2f - 0.7f + S.CloudDeck * 0.3f);
