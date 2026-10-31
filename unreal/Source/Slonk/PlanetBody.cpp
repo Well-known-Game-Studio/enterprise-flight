@@ -1,6 +1,7 @@
 #include "PlanetBody.h"
 #include "PlanetTerrainComponent.h"
 #include "PlanetWeather.h"
+#include "PlanetCities.h"
 #include "Async/Async.h"
 #include "SlonkTiming.h"
 
@@ -137,6 +138,7 @@ APlanetBody::APlanetBody()
 
 	SurfaceMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_PlanetSurface.M_PlanetSurface")));
 	CloudMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_PlanetClouds.M_PlanetClouds")));
+	BuildingMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_Building.M_Building")));
 	AtmosphereMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_PlanetAtmosphere.M_PlanetAtmosphere")));
 	RingMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_PlanetRings.M_PlanetRings")));
 	TerrainMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_PlanetTerrain.M_PlanetTerrain")));
@@ -961,6 +963,107 @@ void APlanetBody::PollWeatherMap(float DeltaTime)
 	}
 }
 
+bool APlanetBody::HasCities() const
+{
+	return Style.NightLightIntensity > 0.f && !IsGiant() && Style.ReliefFraction > 0.f && CityReachKm > 0.f;
+}
+
+void APlanetBody::ClearCities()
+{
+	if (Buildings && Buildings->GetInstanceCount() > 0) { Buildings->ClearInstances(); }
+	CityActiveTowns.Reset();
+	CityCentreLocal = FVector(1.0e30, 0.0, 0.0);
+}
+
+void APlanetBody::UpdateCities(const FVector& ViewLoc, float DeltaTime)
+{
+	// A finished build lands first.
+	if (CityFuture.IsValid() && CityFuture.IsReady())
+	{
+		CityFuture = TFuture<void>();
+		if (CityPending.IsValid())
+		{
+			if (!Buildings)
+			{
+				Buildings = NewObject<UHierarchicalInstancedStaticMeshComponent>(this, TEXT("Buildings"));
+				Buildings->SetupAttachment(GetRootComponent());
+				Buildings->SetUsingAbsoluteScale(true);		// the root carries the sphere's scale; instances are planet-local cm
+				Buildings->SetMobility(EComponentMobility::Movable);
+				Buildings->SetStaticMesh(LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube")));
+				Buildings->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+				Buildings->SetCollisionProfileName(TEXT("BlockAll"));
+				Buildings->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Block);		// the crew's boots
+				Buildings->SetGenerateOverlapEvents(false);
+				Buildings->CastShadow = true;
+				Buildings->bAffectDistanceFieldLighting = false;
+				Buildings->SetCullDistances(0, (int32)(CityReachKm * 100000.f));
+				Buildings->NumCustomDataFloats = 3;		// the building's size in metres, for the window grid
+				if (UMaterialInterface* Mat = SlonkMaterials::LoadOrFallback(BuildingMaterial, TEXT("Building"), false))
+				{
+					BuildingMID = UMaterialInstanceDynamic::Create(Mat, this);
+					Buildings->SetMaterial(0, BuildingMID);
+				}
+				Buildings->RegisterComponent();
+			}
+			if (CityPending->Towns.Difference(CityActiveTowns).Num() > 0 || CityActiveTowns.Difference(CityPending->Towns).Num() > 0)
+			{
+				Buildings->ClearInstances();
+				if (CityPending->Instances.Num() > 0)
+				{
+					Buildings->AddInstances(CityPending->Instances, false, false);
+					for (int32 i = 0; i < CityPending->Instances.Num(); ++i)
+					{
+						const FVector Sc = CityPending->Instances[i].GetScale3D();
+						Buildings->SetCustomDataValue(i, 0, (float)Sc.X, false);
+						Buildings->SetCustomDataValue(i, 1, (float)Sc.Y, false);
+						Buildings->SetCustomDataValue(i, 2, (float)Sc.Z, false);
+					}
+					Buildings->MarkRenderStateDirty();
+				}
+				CityActiveTowns = CityPending->Towns;
+				UE_LOG(LogTemp, Log, TEXT("%s: %d towns, %d buildings within %.0f km"), *GetDisplayName(), CityPending->TownCount, CityPending->Instances.Num(), CityReachKm);
+			}
+		}
+		CityPending.Reset();
+	}
+	if (BuildingMID)
+	{
+		// The material compares the sun with each instance's up in world space.
+		BuildingMID->SetVectorParameterValue(TEXT("SunDirectionLocal"), FLinearColor(CachedStarDirection.X, CachedStarDirection.Y, CachedStarDirection.Z, 0.f));
+	}
+	CityTimer -= DeltaTime;
+	if (CityTimer > 0.f || CityFuture.IsValid()) { return; }
+	CityTimer = 0.7f;
+	if (!HasCities()) { return; }
+	const FVector Local = Body ? Body->GetComponentTransform().InverseTransformPosition(ViewLoc) : ViewLoc - GetActorLocation();
+	const double AltitudeCm = Local.Size() - GetRadiusCm();
+	if (AltitudeCm > CityReachKm * 100000.0 * 4.0)
+	{
+		if (CityActiveTowns.Num() > 0) { ClearCities(); }
+		return;
+	}
+	// Only re-enumerate once the view has moved a sixth of the reach.
+	const FVector Centre = Local.GetSafeNormal() * GetRadiusCm();
+	if (FVector::Dist(Centre, CityCentreLocal) < CityReachKm * 100000.0 / 6.0) { return; }
+	CityCentreLocal = Centre;
+	const FPlanetTerrainParams P = TerrainParams;
+	const double Reach = CityReachKm * 100000.0;
+	CityPending = MakeShared<FCityBuild, ESPMode::ThreadSafe>();
+	TSharedPtr<FCityBuild, ESPMode::ThreadSafe> Res = CityPending;
+	CityFuture = Async(EAsyncExecution::ThreadPool, [P, Centre, Reach, Res]()
+	{
+		TArray<FTownSite> Towns;
+		SlonkCities::EnumerateTowns(P, Centre, Reach, Towns);
+		Res->TownCount = Towns.Num();
+		for (const FTownSite& T : Towns)
+		{
+			Res->Towns.Add(T.Seed);
+			if (Res->Instances.Num() > 60000) { break; }
+			SlonkCities::BuildTown(P, T, Res->Instances, 5000);
+		}
+	});
+}
+
 float APlanetBody::PressureBarAt(double AltitudeCm) const
 {
 	const float ScaleKm = Style.AtmosphereScaleHeightKm > 0.f ? Style.AtmosphereScaleHeightKm : 20.f;
@@ -1394,6 +1497,7 @@ void APlanetBody::Tick(float DeltaTime)
 			FVector ViewLoc; FRotator ViewRot;
 			PC->GetPlayerViewPoint(ViewLoc, ViewRot);
 			Terrain->UpdateView(ViewLoc);
+			UpdateCities(ViewLoc, DeltaTime);
 		}
 	}
 

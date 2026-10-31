@@ -1844,7 +1844,10 @@ void AStarshipPawn::ProcessDebugCommand()
 		}
 		const FVector GiantDirW = Giant && Planet ? (Giant->GetActorLocation() - Planet->GetActorLocation()).GetSafeNormal() : FVector::ZeroVector;
 		const FVector NearLocal = Giant && Planet && Planet->Terrain ? Planet->Terrain->GetComponentTransform().InverseTransformVectorNoScale(GiantDirW) : FVector::ZeroVector;
-		if (Planet && Planet->Terrain && Planet->HasTerrain() && Planet->Terrain->FindFeature(ArgStr(2), NearLocal, Dir, H, SunLocal))
+		// Towns are searched out from where the ship is, not from the giant's bearing.
+		const bool bTown = ArgStr(2).ToLower() == TEXT("city") || ArgStr(2).ToLower() == TEXT("town");
+		const FVector ShipLocal = Planet && Planet->Terrain ? Planet->Terrain->GetComponentTransform().InverseTransformPosition(GetActorLocation()).GetSafeNormal() : FVector::ZeroVector;
+		if (Planet && Planet->Terrain && Planet->HasTerrain() && Planet->Terrain->FindFeature(ArgStr(2), bTown ? ShipLocal : NearLocal, Dir, H, SunLocal))
 		{
 			const FTransform& TT = Planet->Terrain->GetComponentTransform();
 			const FVector Up = TT.TransformVectorNoScale(Dir).GetSafeNormal();

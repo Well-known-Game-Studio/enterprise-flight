@@ -1,4 +1,5 @@
 #include "PlanetTerrainComponent.h"
+#include "PlanetCities.h"
 
 #include "Components/DynamicMeshComponent.h"
 #include "DynamicMesh/DynamicMesh3.h"
@@ -451,6 +452,25 @@ FPlanetTerrainSample UPlanetTerrainComponent::SampleAtWorld(const FVector& World
 bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& NearDir, FVector& OutDir, double& OutHeightCm, const FVector& SunDirLocal) const
 {
 	if (!bConfigured) { return false; }
+	if (Kind.ToLower() == TEXT("city") || Kind.ToLower() == TEXT("town"))
+	{
+		// The biggest town within 600 km of the bearing (or of the sub-point), weighted toward the near ones.
+		const FVector Centre = (NearDir.IsNearlyZero() ? FVector::ZAxisVector : NearDir.GetSafeNormal()) * Params.RadiusCm;
+		TArray<FTownSite> Towns;
+		SlonkCities::EnumerateTowns(Params, Centre, 6.0e7, Towns, 2000);
+		const FTownSite* Best = nullptr; double BestScore = -1.0e9;
+		for (const FTownSite& T : Towns)
+		{
+			// Daylight preferred, not required.
+			const double Lit = SunDirLocal.IsNearlyZero() ? 0.0 : (FVector::DotProduct(T.Dir, SunDirLocal.GetSafeNormal()) < 0.26 ? -20.0 : 0.0);
+			const double Score = T.Strength * 10.0 - FVector::Dist(T.LocalCm, Centre) / 6.0e7 * 3.0 + Lit;
+			if (Score > BestScore) { BestScore = Score; Best = &T; }
+		}
+		if (!Best) { return false; }
+		OutDir = Best->Dir;
+		OutHeightCm = SlonkTerrain::SampleStructure(Params, Best->Dir).HeightCm;
+		return true;
+	}
 	const FString K = Kind.ToLower();
 	// Fibonacci sphere: even coverage; the coarse pass samples at ~30 km, the refine pass walks the best few.
 	const int32 N = 6000;

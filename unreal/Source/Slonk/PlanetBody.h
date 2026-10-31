@@ -270,6 +270,11 @@ public:
 	/** Keep the cloud shell drawn beyond this many km from the camera while the ray-marched layer covers the near disc. */
 	void SetLayerReachKm(float ReachKm);
 
+	/** Whether this world has settlements (lit at night, built by day). */
+	bool HasCities() const;
+	/** Reach (km) within which towns are built around the view; 0 switches the buildings off. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Cities") float CityReachKm = 30.f;
+
 	/** Display name: PlanetName if set, else the actor label. */
 	UFUNCTION(BlueprintPure, Category = "Planet")
 	FString GetDisplayName() const;
@@ -280,6 +285,7 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Materials") TSoftObjectPtr<UMaterialInterface> SurfaceMaterial;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Materials") TSoftObjectPtr<UMaterialInterface> CloudMaterial;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Materials") TSoftObjectPtr<UMaterialInterface> BuildingMaterial;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Materials") TSoftObjectPtr<UMaterialInterface> AtmosphereMaterial;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Materials") TSoftObjectPtr<UMaterialInterface> RingMaterial;
 
@@ -486,6 +492,16 @@ private:
 	float CloudYawDeg = 0.f;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> CloudMID;
 	UPROPERTY() TObjectPtr<UTexture2D> WeatherMap;
+	UPROPERTY() TObjectPtr<UHierarchicalInstancedStaticMeshComponent> Buildings;
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> BuildingMID;
+	struct FCityBuild { TSet<uint32> Towns; TArray<FTransform> Instances; int32 TownCount = 0; };
+	TSharedPtr<FCityBuild, ESPMode::ThreadSafe> CityPending;
+	TFuture<void> CityFuture;
+	TSet<uint32> CityActiveTowns;
+	FVector CityCentreLocal = FVector(1.0e30, 0.0, 0.0);
+	float CityTimer = 0.f;
+	void UpdateCities(const FVector& ViewLoc, float DeltaTime);
+	void ClearCities();
 	TSharedPtr<TArray<FColor>, ESPMode::ThreadSafe> WeatherPixels;
 	TFuture<void> WeatherFuture;
 	int32 WeatherW = 0;
