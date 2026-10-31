@@ -344,10 +344,14 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 			}
 			// The clouds throw their shadows on the ground and take the ship's and the terrain's; the sun also
 			// shades the atmosphere through them.
-			if (!LightComp->bCastCloudShadows || !LightComp->bCastShadowsOnClouds)
+			if (LightComp->bCastShadowsOnClouds != bShadowsOnClouds)
+			{
+				LightComp->bCastShadowsOnClouds = bShadowsOnClouds;
+				LightComp->MarkRenderStateDirty();
+			}
+			if (!LightComp->bCastCloudShadows)
 			{
 				LightComp->bCastCloudShadows = true;
-				LightComp->bCastShadowsOnClouds = true;
 				LightComp->bCastShadowsOnAtmosphere = true;
 				LightComp->CloudShadowStrength = CloudShadowStrength;
 				LightComp->CloudShadowExtent = 150.f;
@@ -399,6 +403,24 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 	// from orbit stays a thin blue line instead of a white ring.
 	const double AltitudeKm = (FVector::Dist(ViewLoc, AtmospherePlanet->GetActorLocation()) - AtmospherePlanet->GetRadiusCm()) / 100000.0;
 	const float Blend = FMath::Clamp((float)(AltitudeKm / (HeightKm * 8.0)), 0.f, 1.f);
+	// The cloud shadow map covers 150 km about the view: from orbit its edge texels smear along a low sun into long
+	// dark arcs across the sea, and a clump's shadow is under a pixel from up there anyway. Fade the shadows out
+	// between 50 and 250 km up (the light is one actor; the setter is cheap but still gated).
+	{
+		const float ShadowFade = 1.f - FMath::Clamp((float)((AltitudeKm - 50.0) / 200.0), 0.f, 1.f);
+		const float Strength = CloudShadowStrength * ShadowFade;
+		for (TActorIterator<ADirectionalLight> It(World); It; ++It)
+		{
+			if (UDirectionalLightComponent* LightComp = Cast<UDirectionalLightComponent>(It->GetLightComponent()))
+			{
+				if (!FMath::IsNearlyEqual(LightComp->CloudShadowStrength, Strength, 0.02f))
+				{
+					LightComp->CloudShadowStrength = Strength;
+					LightComp->MarkRenderStateDirty();
+				}
+			}
+		}
+	}
 	const float Boost = FMath::Lerp(SkyLuminanceBoost, FMath::Max(SkyLuminanceBoost * 0.3f, 1.f), Blend);
 	// Aerial perspective washes the surface out from orbit at anything above 1x; only boost it when inside.
 	const float ApBoost = FMath::Lerp(FMath::Max(SkyLuminanceBoost * 0.5f, 1.f), 1.f, Blend);

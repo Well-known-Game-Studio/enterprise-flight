@@ -80,6 +80,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
 	float VolumetricCloudRangeKm = 900.f;
 
+	/** Whether the sun's shadow maps shade the cloud layer (the terrain's and the ship's shadows on the clouds). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
+	bool bShadowsOnClouds = true;
+
 	/** Width of the hand-over band above VolumetricCloudRangeKm, km. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
 	float VolumetricCloudFadeKm = 600.f;
