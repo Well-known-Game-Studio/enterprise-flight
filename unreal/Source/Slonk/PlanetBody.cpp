@@ -428,7 +428,7 @@ void APlanetBody::ResolveStyleFromArchetype()
 		// and "mountain" the bright zones. Finer bands and a lighter cloud deck add the layering.
 		{
 			const bool bIce = Type == EPlanetArchetype::IceGiant;
-			const float Family = bIce ? 0.95f : Extra.FRand();
+			const float Family = PaletteFamily >= 0.f ? PaletteFamily : (bIce ? 0.95f : Extra.FRand());
 			FLinearColor Belt, Edge, Dark, Dark2, Zone, Cloud, Atmo, Sunset;
 			if (Family < 0.45f)      // Jovian: cream, rust and orange belts, white zones
 			{
@@ -456,8 +456,8 @@ void APlanetBody::ResolveStyleFromArchetype()
 			S.MountainColor = J(Zone); S.CloudColor = J(Cloud); S.AtmosphereColor = J(Atmo); S.SunsetColor = Sunset;
 			S.SeaLevel = Extra.FRandRange(0.42f, 0.56f);
 			S.BandScale *= Extra.FRandRange(1.2f, 1.8f);
-			// Sparse, small storms: a blotchy deck hides the banding.
-			S.CloudCoverage = Extra.FRandRange(0.10f, 0.18f);
+			// The zones carry the high white deck, the belts show the deeper, darker cloud: a little over half covered.
+			S.CloudCoverage = Extra.FRandRange(0.5f, 0.6f);
 			S.CloudScale = 4.0f;
 			if (bIce)
 			{
@@ -601,9 +601,8 @@ void APlanetBody::ResolveStyleFromArchetype()
 	// few radii out; the clouds and relief sit inside the dense part instead of on top of it.
 	if (S.bAtmosphere)
 	{
-		// Real scale heights in km (Earth 8.5, Venus 16, Mars 11, Titan 40): the sky has to read right from a
-		// canyon floor, and from orbit a real atmosphere is the thin blue rim it is in photographs. The giants
-		// keep a deep stylised haze since nothing flies into them.
+		// Real scale heights in km (Earth 8.5, Venus 16, Mars 11, Titan 40, Jupiter 27): the sky has to read right
+		// from a canyon floor, and from orbit a real atmosphere is the thin blue rim it is in photographs.
 		float ScaleKm = 8.5f;
 		switch (Type)
 		{
@@ -613,8 +612,8 @@ void APlanetBody::ResolveStyleFromArchetype()
 		case EPlanetArchetype::Lava: ScaleKm = 11.f; break;
 		case EPlanetArchetype::Venus: ScaleKm = 16.f; break;
 		case EPlanetArchetype::Mars: ScaleKm = 11.f; break;
-		case EPlanetArchetype::GasGiant: ScaleKm = 0.018f * RadiusKm; break;
-		case EPlanetArchetype::IceGiant: ScaleKm = 0.014f * RadiusKm; break;
+		case EPlanetArchetype::GasGiant: ScaleKm = 27.f; break;      // Jupiter's hydrogen, 27 km
+		case EPlanetArchetype::IceGiant: ScaleKm = 20.f; break;
 		case EPlanetArchetype::Moon: ScaleKm = 40.f; break;       // Titan-like haze
 		default: break;
 		}
@@ -635,8 +634,10 @@ void APlanetBody::ResolveStyleFromArchetype()
 		case EPlanetArchetype::Venus: S.CloudBaseKm = 48.f; S.CloudThicknessKm = 22.f; S.CloudDensity = 2.f; S.CloudDeck = 1.f; break;
 		// Mars: thin water-ice clouds 10 to 20 km up, wisps.
 		case EPlanetArchetype::Mars: S.CloudBaseKm = 10.f; S.CloudThicknessKm = 10.f; S.CloudDensity = 0.6f; S.CloudDeck = 0.f; break;
-		// The giants are all cloud: the shell is the look and there is no ray-marched layer (the sky never parks on them).
-		case EPlanetArchetype::GasGiant: case EPlanetArchetype::IceGiant: S.CloudThicknessKm = 0.f; break;
+		// The giants: a deep layer over the painted deck (the 10 bar level), zones and belts from the weather map;
+		// an ice giant only a few white streaks over its blue haze.
+		case EPlanetArchetype::GasGiant: S.CloudBaseKm = 8.f; S.CloudThicknessKm = 50.f; S.CloudDensity = 1.2f; S.CloudDeck = 0.f; break;
+		case EPlanetArchetype::IceGiant: S.CloudBaseKm = 5.f; S.CloudThicknessKm = 25.f; S.CloudDensity = 0.6f; S.CloudDeck = 0.f; break;
 		default:
 			// A hazy moon (Titan): a photochemical haze from 30 km up to 90, thin and continuous.
 			if (S.bClouds) { S.CloudBaseKm = 30.f; S.CloudThicknessKm = 60.f; S.CloudDensity = 0.15f; S.CloudDeck = 1.f; }
@@ -858,7 +859,8 @@ void APlanetBody::ApplyMaterials()
 	}
 	if (CloudMID)
 	{
-		CloudMID->SetScalarParameterValue(TEXT("CloudOpacity"), 0.85f * CloudShellFade);
+		// A giant's shell zones let the painted belts show through: the deck is the look, the shell its white tops.
+		CloudMID->SetScalarParameterValue(TEXT("CloudOpacity"), (IsGiant() ? 0.6f : 0.85f) * CloudShellFade);
 		// Unlit clouds: match the radiance a white lit surface would have under the scene's sunlight (E / pi).
 		CloudMID->SetScalarParameterValue(TEXT("RingInner"), RingInner);
 		CloudMID->SetScalarParameterValue(TEXT("RingOuter"), RingOuter);
@@ -921,6 +923,9 @@ void APlanetBody::RequestWeatherMap(const FLinearColor& Seed)
 	Spec.Scale = Style.CloudScale;
 	// Ocean worlds run to long fronts; cold and thin-aired worlds to scattered masses.
 	Spec.Fronts = Archetype == EPlanetArchetype::Ocean ? 0.7f : (Archetype == EPlanetArchetype::Terrestrial ? 0.5f : 0.3f);
+	// Giants: zones and belts by latitude, festooned, with a few storm ovals; the type channel is zone against belt.
+	Spec.Zonal = IsGiant() ? 1.f : 0.f;
+	Spec.BandScale = Style.BandScale;
 	// 20 km texels on an Earth, 40 on a small world: the cells are a few texels, the fronts hundreds.
 	WeatherW = RadiusKm > 4000.f ? 2048 : 1024;
 	WeatherH = WeatherW / 2;
@@ -954,6 +959,21 @@ void APlanetBody::PollWeatherMap(float DeltaTime)
 		WeatherStrength = FMath::Min(1.f, WeatherStrength + DeltaTime * 0.5f);
 		if (CloudMID) { CloudMID->SetScalarParameterValue(TEXT("WeatherStrength"), WeatherStrength); }
 	}
+}
+
+float APlanetBody::PressureBarAt(double AltitudeCm) const
+{
+	const float ScaleKm = Style.AtmosphereScaleHeightKm > 0.f ? Style.AtmosphereScaleHeightKm : 20.f;
+	return 10.f * FMath::Exp(-(float)(AltitudeCm / 100000.0) / ScaleKm);
+}
+
+void APlanetBody::SetLayerReachKm(float ReachKm)
+{
+	if (FMath::IsNearlyEqual(LayerReachKm, ReachKm, 1.f)) { return; }
+	const bool bWasOn = LayerReachKm < 1.0e8f;
+	LayerReachKm = ReachKm;
+	if (CloudMID) { CloudMID->SetScalarParameterValue(TEXT("LayerReachKm"), ReachKm); }
+	if (bWasOn != (ReachKm < 1.0e8f)) { UpdateShellVisibility(); }
 }
 
 FTransform APlanetBody::GetCloudFrame() const
@@ -1156,7 +1176,8 @@ void APlanetBody::UpdateShellVisibility()
 		Body->SetVisibility(false);
 		Clouds->SetVisibility(false);
 		FarBody->SetVisibility(bShow && !bDetailActive && !bTerrainActive);
-		CloudsMesh->SetVisibility(bShow && Style.bClouds && CloudShellFade > 0.001f);
+		// With the ray-marched layer on, the shell stays drawn for the per-pixel distance fade beyond the layer's reach.
+		CloudsMesh->SetVisibility(bShow && Style.bClouds && (CloudShellFade > 0.001f || LayerReachKm < 1.0e8f));
 	}
 	else
 	{

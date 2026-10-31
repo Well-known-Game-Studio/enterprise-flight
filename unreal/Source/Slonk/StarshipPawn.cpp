@@ -1341,6 +1341,24 @@ void AStarshipPawn::Tick(float DeltaTime)
 		ShieldStrength = FMath::Min(ShieldStrength + ShieldRechargePerSecond * DeltaTime, MaxShieldStrength);
 	}
 	ApplyExposure();
+	// A giant has no ground: the painted deck is the 10 bar level, and above about 3 bar the hull starts to give.
+	if (Movement && !Movement->bWarpActive && Movement->AltitudeAGLCm < 2.0e7)
+	{
+		if (const APlanetBody* P = Cast<APlanetBody>(Movement->GroundBody.Get()); P && P->IsGiant())
+		{
+			const float Bar = P->PressureBarAt(Movement->AltitudeAGLCm);
+			if (Bar > 3.f)
+			{
+				TakeDamage((Bar - 3.f) * 1.5f * DeltaTime, FDamageEvent(), nullptr, nullptr);
+				CrushWarnTimer -= DeltaTime;
+				if (CrushWarnTimer <= 0.f)
+				{
+					CrushWarnTimer = 3.f;
+					ScreenMessage(FString::Printf(TEXT("HULL STRESS: %.1f bar outside. Climb."), Bar), FColor::Red, 3.f);
+				}
+			}
+		}
+	}
 	if (DebugSteerTime > 0.f && Movement)
 	{
 		DebugSteerTime -= DeltaTime;
@@ -2185,6 +2203,10 @@ bool AStarshipPawn::CanStepOutside(FString& Reason) const
 {
 	if (Movement && Movement->bWarpActive) { Reason = TEXT("drop out of warp first"); return false; }
 	if (Movement && Movement->GetSpeed() > ShuttleLaunchMaxSpeed) { Reason = FString::Printf(TEXT("slow below %.0f m/s first"), ShuttleLaunchMaxSpeed / 100.0); return false; }
+	if (Movement && Movement->AltitudeAGLCm < 3.0e7)
+	{
+		if (const APlanetBody* P = Cast<APlanetBody>(Movement->GroundBody.Get()); P && P->IsGiant()) { Reason = TEXT("no surface below, and the pressure would crush a suit"); return false; }
+	}
 	return true;
 }
 

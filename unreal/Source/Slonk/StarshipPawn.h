@@ -634,6 +634,7 @@ public:
 
 private:
 	float ShieldRechargeTimer = 0.f;
+	float CrushWarnTimer = 0.f;
 
 	int32 ThrusterMaterialIndex = INDEX_NONE;
 	EStarshipCameraMode CameraMode = EStarshipCameraMode::Chase;

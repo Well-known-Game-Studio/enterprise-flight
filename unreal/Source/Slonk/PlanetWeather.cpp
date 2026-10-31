@@ -52,6 +52,35 @@ void SlonkWeather::Generate(const FPlanetWeatherSpec& Spec, int32 W, int32 H, TA
 			const float Lon = ((Col + 0.5f) / W - 0.5f) * 2.f * PI;
 			const FVector D(CosLat * FMath::Cos(Lon), CosLat * FMath::Sin(Lon), SinLat);
 			const int32 I = Row * W + Col;
+			if (Spec.Zonal > 0.f)
+			{
+				// Zones and belts: a sine of latitude at the band scale, its phase warped into festoons; eddies stretched
+				// along the parallels; a few storm ovals from jittered points.
+				const float Warp = Fbm(D * Scale * 1.6f + Seed, 3) * 0.35f + Fbm(D * Scale * 0.6f + Seed * 1.7f, 2) * 0.5f;
+				const float NB = FMath::Max(Spec.BandScale * 0.45f, 4.f);
+				const float Band = FMath::Sin(Lat * NB + Warp);
+				const float Zone = FMath::SmoothStep(-0.35f, 0.35f, Band);
+				const float Eddy = Fbm(FVector(D.X * Scale * 3.f, D.Y * Scale * 3.f, D.Z * Scale * 12.f) + Seed * 2.3f, 4);
+				float Storm = 0.f;
+				{
+					const FVector Q = D * 2.2f + Seed * 0.11f - FVector(0.5f, 0.5f, 0.5f);
+					const FVector Fl(FMath::Floor(Q.X), FMath::Floor(Q.Y), FMath::Floor(Q.Z));
+					for (int32 k = 0; k < 8; ++k)
+					{
+						const FVector C = Fl + FVector(k & 1, (k >> 1) & 1, (k >> 2) & 1);
+						uint32 Hs = (uint32)(int32)C.X * 73856093u ^ (uint32)(int32)C.Y * 19349663u ^ (uint32)(int32)C.Z * 83492791u;
+						Hs = (Hs ^ (Hs >> 13)) * 0x5bd1e995u; Hs ^= Hs >> 15;
+						if ((Hs >> 29) > 1u) { continue; }					// a quarter of the cells hold a storm
+						const FVector P0 = C + FVector((Hs & 0x3ffu) / 1023.f, ((Hs >> 10) & 0x3ffu) / 1023.f, ((Hs >> 20) & 0x3ffu) / 1023.f);
+						FVector Dp = Q - P0; Dp.Z *= 2.5f;						// an oval, long along the parallel
+						Storm = FMath::Max(Storm, 1.f - FMath::SmoothStep(0.f, 0.06f, (float)Dp.SizeSquared()));
+					}
+				}
+				Masses[I] = (Zone - 0.5f) * 0.9f + Eddy * 0.5f + Storm * 0.7f;
+				Cells[I] = Fbm(FVector(D.X * Scale * 25.f, D.Y * Scale * 25.f, D.Z * Scale * 75.f) + Seed * 3.1f, 3, 2.2f, 0.55f);
+				Type[I] = FMath::Lerp(Zone, 1.f, Storm);
+				continue;
+			}
 			// Masses: domain-warped fractal noise on the sphere, as the shell's own noise was.
 			const FVector P = D * Scale + Seed;
 			const FVector Warp(Fbm(P * 1.3f + FVector(1.7f, 9.2f, 0.4f), 2), Fbm(P * 1.3f + FVector(8.3f, 2.8f, 5.1f), 2), Fbm(P * 1.3f + FVector(0.9f, 4.4f, 6.1f), 2));
@@ -69,9 +98,9 @@ void SlonkWeather::Generate(const FPlanetWeatherSpec& Spec, int32 W, int32 H, TA
 			Type[I] = Fbm(D * Scale * 1.5f + Seed * 1.9f + FVector(5.5f, 2.2f, 8.8f), 2);
 		}
 	});
-	Normalise(Masses, 0.17f);
+	Normalise(Masses, Spec.Zonal > 0.f ? 0.2f : 0.17f);
 	Normalise(Cells, 0.17f);
-	Normalise(Type, 0.2f);
+	if (Spec.Zonal <= 0.f) { Normalise(Type, 0.2f); }
 	Out.SetNumUninitialized(N);
 	for (int32 I = 0; I < N; ++I)
 	{

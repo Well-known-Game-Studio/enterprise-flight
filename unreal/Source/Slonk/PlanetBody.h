@@ -226,6 +226,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet") bool bForceMoonKind = false;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (EditCondition = "bForceMoonKind")) EMoonKind ForcedMoonKind = EMoonKind::Icy;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet") bool bForceHazy = false;
+	/** Giants: the palette family (0 Jovian, 0.6 Saturnian, 0.95 Neptunian) instead of rolling it; negative rolls. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet") float PaletteFamily = -1.f;
+	/** Give this world the showcase moons even without rings. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet") bool bShowcaseMoons = false;
 
 	/** When true, Style is (re)filled from the archetype on construction; set false to hand-tune Style. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
@@ -257,6 +261,14 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Planet")
 	bool IsMoon() const { return ResolvedArchetype == EPlanetArchetype::Moon; }
+	/** Gas and ice giants: no ground; the painted sphere is a pressure level (the 10 bar deck). */
+	UFUNCTION(BlueprintPure, Category = "Planet")
+	bool IsGiant() const { return ResolvedArchetype == EPlanetArchetype::GasGiant || ResolvedArchetype == EPlanetArchetype::IceGiant; }
+	bool HasSolidSurface() const { return !IsGiant(); }
+	/** Atmospheric pressure in bar at an altitude above the deck of a giant (10 bar at the deck, a scale height per e-fold). */
+	float PressureBarAt(double AltitudeCm) const;
+	/** Keep the cloud shell drawn beyond this many km from the camera while the ray-marched layer covers the near disc. */
+	void SetLayerReachKm(float ReachKm);
 
 	/** Display name: PlanetName if set, else the actor label. */
 	UFUNCTION(BlueprintPure, Category = "Planet")
@@ -462,6 +474,7 @@ private:
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> DetailSurfaceMID;
 	bool bUsingSkyAtmosphere = false;
 	float CloudShellFade = 1.f;
+	float LayerReachKm = 1.0e9f;
 	bool bTerrainActive = false;
 	float SkyBehind = 0.f;
 	FPlanetTerrainParams TerrainParams;

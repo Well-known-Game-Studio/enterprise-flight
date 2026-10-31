@@ -123,6 +123,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Systems")
 	TArray<FStarSystemSpec> StarSystems;
 	void SpawnStarSystems();
+	/** A Jovian gas giant for the home system (the level's own giant is the ice giant Caerulea), at this orbit and bearing. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Systems") bool bSpawnHomeGiant = true;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Systems") float HomeGiantOrbitAu = 9.5f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Systems") float HomeGiantBearingDeg = -60.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Systems") float HomeGiantRadiusKm = 69000.f;
+	void SpawnHomeGiant(class AStarSystem* Home);
 	bool bStarSystemsSpawned = false;
 	float AdoptTimer = 0.f;
 
