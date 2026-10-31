@@ -140,6 +140,8 @@ F opens the airlock. From the starship you step out onto the top of the saucer i
 
 ![On the saucer over a moon, at the rim, flying the pack, and on the ground beside the shuttle](https://github.com/user-attachments/assets/49298242-9194-4654-8b7e-700fd39216cc)
 
+https://github.com/user-attachments/assets/060101b3-9c50-4922-9e4b-0001edd3ebba
+
 
 ## Science
 
