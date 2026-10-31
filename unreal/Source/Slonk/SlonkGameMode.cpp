@@ -18,6 +18,7 @@
 #include "Components/DirectionalLightComponent.h"
 #include "Components/SkyAtmosphereComponent.h"
 #include "Components/VolumetricCloudComponent.h"
+#include "Engine/Texture2D.h"
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "GameFramework/WorldSettings.h"
@@ -310,7 +311,14 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 		// cloud layer's centre and ground radius from it, so the layer wraps this planet wherever it is.
 		VolumetricCloud = NewObject<UVolumetricCloudComponent>(AtmosphereHolder, TEXT("VolumetricCloud"));
 		VolumetricCloud->SetupAttachment(Root);
-		if (UMaterialInterface* CloudMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/EngineSky/VolumetricClouds/m_SimpleVolumetricCloud_Inst.m_SimpleVolumetricCloud_Inst")))
+		// The project's copy of the engine's simple cloud material, which lays the coverage out from each world's
+		// weather map instead of a tiled 256 km pattern; the engine instance if the copy is missing.
+		UMaterialInterface* CloudMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Slonk/Materials/M_SlonkVolumetricCloud.M_SlonkVolumetricCloud"));
+		if (!CloudMat)
+		{
+			CloudMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/EngineSky/VolumetricClouds/m_SimpleVolumetricCloud_Inst.m_SimpleVolumetricCloud_Inst"));
+		}
+		if (CloudMat)
 		{
 			// A dynamic instance so each world can set its coverage, density and colour.
 			CloudMID = UMaterialInstanceDynamic::Create(CloudMat, this);
@@ -471,6 +479,41 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 		if (bVolumetric && CloudMID)
 		{
 			CloudMID->SetScalarParameterValue(TEXT("Cloud_GlobalDensity"), 0.008f * S.CloudDensity * (1.f - Shell));
+			// The weather map is laid over the cloud shell's frame: the layer samples it by the direction from the
+			// planet's centre in that frame, so the two agree wherever the hand-over catches them.
+			const FTransform Frame = AtmospherePlanet->GetCloudFrame();
+			const FVector C = AtmospherePlanet->GetActorLocation();
+			CloudMID->SetVectorParameterValue(TEXT("PlanetCenter"), FLinearColor((float)C.X, (float)C.Y, (float)C.Z, 0.f));
+			const FVector AX = Frame.GetUnitAxis(EAxis::X), AY = Frame.GetUnitAxis(EAxis::Y), AZ = Frame.GetUnitAxis(EAxis::Z);
+			CloudMID->SetVectorParameterValue(TEXT("PlanetAxisX"), FLinearColor(AX.X, AX.Y, AX.Z, 0.f));
+			CloudMID->SetVectorParameterValue(TEXT("PlanetAxisY"), FLinearColor(AY.X, AY.Y, AY.Z, 0.f));
+			CloudMID->SetVectorParameterValue(TEXT("PlanetAxisZ"), FLinearColor(AZ.X, AZ.Y, AZ.Z, 0.f));
+			const float WeatherIn = AtmospherePlanet->GetWeatherStrength();
+			CloudMID->SetScalarParameterValue(TEXT("WeatherStrength"), WeatherIn);
+			// With the map in, its masses carry the coverage: the bias sits at a scattered sky and the map pushes it
+			// to a deck inside a mass and clear air outside; without it the style's bias sets a uniform sky.
+			const float StyleBias = S.CloudCoverage * 1.2f - 0.7f + S.CloudDeck * 0.3f;
+			CloudMID->SetScalarParameterValue(TEXT("Cloud_GlobalCoverage"), FMath::Lerp(StyleBias, -0.25f + S.CloudDeck * 0.3f, WeatherIn));
+			if (!CloudParamOverrides.IsEmpty())
+			{
+				TArray<FString> Items; CloudParamOverrides.ParseIntoArray(Items, TEXT(";"));
+				for (const FString& Item : Items)
+				{
+					FString Name, Value;
+					if (!Item.Split(TEXT("="), &Name, &Value)) { continue; }
+					TArray<FString> Comps; Value.ParseIntoArray(Comps, TEXT(","));
+					if (Comps.Num() >= 4) { CloudMID->SetVectorParameterValue(*Name.TrimStartAndEnd(), FLinearColor(FCString::Atof(*Comps[0]), FCString::Atof(*Comps[1]), FCString::Atof(*Comps[2]), FCString::Atof(*Comps[3]))); }
+					else if (Comps.Num() >= 1) { CloudMID->SetScalarParameterValue(*Name.TrimStartAndEnd(), FCString::Atof(*Comps[0])); }
+				}
+			}
+			if (UTexture2D* Weather = AtmospherePlanet->GetWeatherMap())
+			{
+				if (CloudWeatherSet.Get() != Weather)
+				{
+					CloudWeatherSet = Weather;
+					CloudMID->SetTextureParameterValue(TEXT("Layout_CloudGlobalPattern"), Weather);
+				}
+			}
 		}
 		if (bVolumetric)
 		{
@@ -503,7 +546,8 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 			VolumetricCloud->SetTracingMaxDistance(150.f);
 			if (CloudMID)
 			{
-				CloudMID->SetScalarParameterValue(TEXT("Cloud_GlobalCoverage"), S.CloudCoverage * 1.2f - 0.7f + S.CloudDeck * 0.3f);
+				CloudMID->SetScalarParameterValue(TEXT("Coverage"), S.CloudCoverage);
+				CloudMID->SetScalarParameterValue(TEXT("CloudDeck"), S.CloudDeck);
 				CloudMID->SetVectorParameterValue(TEXT("Cloud_AlbedoColor"), FLinearColor(S.CloudColor.R, S.CloudColor.G, S.CloudColor.B, 0.5f));
 			}
 		}

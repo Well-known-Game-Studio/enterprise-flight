@@ -7,6 +7,7 @@
 #include "GameFramework/Actor.h"
 #include "FarBody.h"
 #include "PlanetTerrain.h"
+#include "Async/Future.h"
 #include "PlanetBody.generated.h"
 
 class UPlanetTerrainComponent;
@@ -384,6 +385,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Planet")
 	bool IsUsingSkyAtmosphere() const { return bUsingSkyAtmosphere; }
 
+	/** The world's weather map once generated (equirectangular over the cloud shell's frame: R masses, G cells, B type). */
+	UTexture2D* GetWeatherMap() const { return WeatherMap; }
+	/** 0..1: how far the weather map has faded in over the shell's own noise. */
+	float GetWeatherStrength() const { return WeatherStrength; }
+	/** The cloud shell's frame (the body's spin plus the shell's own drift): what the weather map is laid over. */
+	FTransform GetCloudFrame() const;
+
 	UFUNCTION(BlueprintPure, Category = "Planet")
 	bool IsDetailMeshActive() const { return bDetailActive; }
 
@@ -464,6 +472,15 @@ private:
 	float LODTimer = 0.f;
 	float CloudYawDeg = 0.f;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> CloudMID;
+	UPROPERTY() TObjectPtr<UTexture2D> WeatherMap;
+	TSharedPtr<TArray<FColor>, ESPMode::ThreadSafe> WeatherPixels;
+	TFuture<void> WeatherFuture;
+	int32 WeatherW = 0;
+	int32 WeatherH = 0;
+	bool bWeatherRequested = false;
+	float WeatherStrength = 0.f;
+	void RequestWeatherMap(const FLinearColor& Seed);
+	void PollWeatherMap(float DeltaTime);
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> AtmosphereMID;
 
 	int32 SettleTicks = 3;
