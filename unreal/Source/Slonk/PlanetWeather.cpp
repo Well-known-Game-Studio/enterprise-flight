@@ -58,7 +58,9 @@ void SlonkWeather::Generate(const FPlanetWeatherSpec& Spec, int32 W, int32 H, TA
 			const float M = Fbm(P + Warp * 0.6f, 4);
 			// Fronts: the same noise stretched ten to one along the parallels, so a threshold cuts east-west bands
 			// and the cyclone-scale swirls the warp puts in them.
-			const FVector Q(FMath::Cos(Lon) * Scale * 0.45f, FMath::Sin(Lon) * Scale * 0.45f, SinLat * Scale * 3.5f);
+			// D.xy, not (cos, sin) of the longitude: with the latter the field kept a full circle of variation however
+			// close to the pole, so the fronts narrowed into radial wedges there. With D.xy the stretch fades out at the pole.
+			const FVector Q(D.X * Scale * 0.45f, D.Y * Scale * 0.45f, D.Z * Scale * 3.5f);
 			const float F = Fbm(Q + Seed * 0.7f + Warp * 0.35f + FVector(3.3f, 1.1f, 7.7f), 3);
 			Masses[I] = M * (1.f - 0.55f * Fronts) + F * (0.9f * Fronts);
 			// Cells: the kilometre clumps, with a little of the masses so they thin toward clear air.
