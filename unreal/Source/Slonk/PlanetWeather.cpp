@@ -8,7 +8,7 @@
 namespace
 {
 	// Fractal Perlin, roughly -1..1 (the amplitude sum is divided out).
-	float Fbm(const FVector& P, int32 Octaves, float Lacunarity = 2.1f, float Gain = 0.5f)
+	float WeatherFbm(const FVector& P, int32 Octaves, float Lacunarity = 2.1f, float Gain = 0.5f)
 	{
 		float Sum = 0.f, Amp = 1.f, Norm = 0.f;
 		FVector Q = P;
@@ -56,11 +56,11 @@ void SlonkWeather::Generate(const FPlanetWeatherSpec& Spec, int32 W, int32 H, TA
 			{
 				// Zones and belts: a sine of latitude at the band scale, its phase warped into festoons; eddies stretched
 				// along the parallels; a few storm ovals from jittered points.
-				const float Warp = Fbm(D * Scale * 1.6f + Seed, 3) * 0.35f + Fbm(D * Scale * 0.6f + Seed * 1.7f, 2) * 0.5f;
+				const float Warp = WeatherFbm(D * Scale * 1.6f + Seed, 3) * 0.35f + WeatherFbm(D * Scale * 0.6f + Seed * 1.7f, 2) * 0.5f;
 				const float NB = FMath::Max(Spec.BandScale * 0.45f, 4.f);
 				const float Band = FMath::Sin(Lat * NB + Warp);
 				const float Zone = FMath::SmoothStep(-0.35f, 0.35f, Band);
-				const float Eddy = Fbm(FVector(D.X * Scale * 3.f, D.Y * Scale * 3.f, D.Z * Scale * 12.f) + Seed * 2.3f, 4);
+				const float Eddy = WeatherFbm(FVector(D.X * Scale * 3.f, D.Y * Scale * 3.f, D.Z * Scale * 12.f) + Seed * 2.3f, 4);
 				float Storm = 0.f;
 				{
 					const FVector Q = D * 2.2f + Seed * 0.11f - FVector(0.5f, 0.5f, 0.5f);
@@ -77,25 +77,25 @@ void SlonkWeather::Generate(const FPlanetWeatherSpec& Spec, int32 W, int32 H, TA
 					}
 				}
 				Masses[I] = (Zone - 0.5f) * 0.9f + Eddy * 0.5f + Storm * 0.7f;
-				Cells[I] = Fbm(FVector(D.X * Scale * 25.f, D.Y * Scale * 25.f, D.Z * Scale * 75.f) + Seed * 3.1f, 3, 2.2f, 0.55f);
+				Cells[I] = WeatherFbm(FVector(D.X * Scale * 25.f, D.Y * Scale * 25.f, D.Z * Scale * 75.f) + Seed * 3.1f, 3, 2.2f, 0.55f);
 				Type[I] = FMath::Lerp(Zone, 1.f, Storm);
 				continue;
 			}
 			// Masses: domain-warped fractal noise on the sphere, as the shell's own noise was.
 			const FVector P = D * Scale + Seed;
-			const FVector Warp(Fbm(P * 1.3f + FVector(1.7f, 9.2f, 0.4f), 2), Fbm(P * 1.3f + FVector(8.3f, 2.8f, 5.1f), 2), Fbm(P * 1.3f + FVector(0.9f, 4.4f, 6.1f), 2));
-			const float M = Fbm(P + Warp * 0.6f, 4);
+			const FVector Warp(WeatherFbm(P * 1.3f + FVector(1.7f, 9.2f, 0.4f), 2), WeatherFbm(P * 1.3f + FVector(8.3f, 2.8f, 5.1f), 2), WeatherFbm(P * 1.3f + FVector(0.9f, 4.4f, 6.1f), 2));
+			const float M = WeatherFbm(P + Warp * 0.6f, 4);
 			// Fronts: the same noise stretched ten to one along the parallels, so a threshold cuts east-west bands
 			// and the cyclone-scale swirls the warp puts in them.
 			// D.xy, not (cos, sin) of the longitude: with the latter the field kept a full circle of variation however
 			// close to the pole, so the fronts narrowed into radial wedges there. With D.xy the stretch fades out at the pole.
 			const FVector Q(D.X * Scale * 0.45f, D.Y * Scale * 0.45f, D.Z * Scale * 3.5f);
-			const float F = Fbm(Q + Seed * 0.7f + Warp * 0.35f + FVector(3.3f, 1.1f, 7.7f), 3);
+			const float F = WeatherFbm(Q + Seed * 0.7f + Warp * 0.35f + FVector(3.3f, 1.1f, 7.7f), 3);
 			Masses[I] = M * (1.f - 0.55f * Fronts) + F * (0.9f * Fronts);
 			// Cells: the kilometre clumps, with a little of the masses so they thin toward clear air.
-			Cells[I] = Fbm(D * Scale * Spec.CellScale + Seed * 3.1f, 3, 2.2f, 0.55f);
+			Cells[I] = WeatherFbm(D * Scale * Spec.CellScale + Seed * 3.1f, 3, 2.2f, 0.55f);
 			// Type: broad regions of heaped cloud (0) and sheet cloud (1).
-			Type[I] = Fbm(D * Scale * 1.5f + Seed * 1.9f + FVector(5.5f, 2.2f, 8.8f), 2);
+			Type[I] = WeatherFbm(D * Scale * 1.5f + Seed * 1.9f + FVector(5.5f, 2.2f, 8.8f), 2);
 		}
 	});
 	Normalise(Masses, Spec.Zonal > 0.f ? 0.2f : 0.17f);
