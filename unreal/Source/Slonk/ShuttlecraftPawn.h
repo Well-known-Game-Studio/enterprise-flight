@@ -76,6 +76,10 @@ protected:
 	virtual void SetupThrusters() override;
 	virtual void SetupWeaponBanks() override;
 	virtual bool HandleCraftCommand(const FString& Op, const TArray<FString>& Args) override;
+	virtual bool CanStepOutside(FString& Reason) const override;
+	/** The port-side door: on the ground beside it when landed, floating beside it in space. */
+	virtual FTransform GetAirlockTransform() const override;
+	virtual bool PersonStartsOnHull() const override { return false; }
 
 private:
 	void BuildHull();

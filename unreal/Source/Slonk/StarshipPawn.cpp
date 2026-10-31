@@ -21,6 +21,7 @@
 #include "RunningLightsComponent.h"
 #include "RcsThrusterComponent.h"
 #include "ShuttlecraftPawn.h"
+#include "PersonPawn.h"
 #include "ScienceScannerComponent.h"
 #include "ScienceLog.h"
 #include "StarshipPlayerController.h"
@@ -64,12 +65,18 @@ AStarshipPawn::AStarshipPawn()
 	CollisionBox->SetCollisionResponseToAllChannels(ECR_Block);
 	CollisionBox->SetCollisionResponseToChannel(ECC_Visibility, ECR_Ignore);
 	CollisionBox->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+	CollisionBox->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Ignore);
 	CollisionBox->SetGenerateOverlapEvents(false);
 	CollisionBox->SetCanEverAffectNavigation(false);
 
 	ShipMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ShipMesh"));
 	ShipMesh->SetupAttachment(CollisionBox);
-	ShipMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	// The hull answers only the Boots channel, with its complex (per-triangle) collision, so a person on EVA can
+	// stand on it; the flight model keeps sweeping the box, and nothing else ever hits the mesh.
+	ShipMesh->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	ShipMesh->SetCollisionObjectType(ECC_WorldDynamic);
+	ShipMesh->SetCollisionResponseToAllChannels(ECR_Ignore);
+	ShipMesh->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Block);
 	ShipMesh->SetGenerateOverlapEvents(false);
 	ShipMesh->SetMobility(EComponentMobility::Movable);
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> HullFinder(TEXT("/Game/Enterprise/1701-a.1701-a"));
@@ -1993,7 +2000,10 @@ void AStarshipPawn::ProcessDebugCommand()
 		// Everything after "exec" is a console command (e.g. "exec stat unit").
 		FString Rest = Cmd.TrimStartAndEnd();
 		Rest.RemoveFromStart(TEXT("exec"), ESearchCase::IgnoreCase);
-		if (APlayerController* PC = Cast<APlayerController>(GetController()))
+		// The player's controller, or the first one when the player is out on foot or in the shuttle.
+		APlayerController* PC = Cast<APlayerController>(GetController());
+		if (!PC && GetWorld()) { PC = GetWorld()->GetFirstPlayerController(); }
+		if (PC)
 		{
 			PC->ConsoleCommand(Rest.TrimStartAndEnd());
 		}
@@ -2152,7 +2162,118 @@ bool AStarshipPawn::HandleCraftCommand(const FString& Op, const TArray<FString>&
 		Movement->TakeOff();
 		return true;
 	}
+	if (Op == TEXT("away") || Op == TEXT("eva"))
+	{
+		StepOutside();
+		return true;
+	}
+	if (Op == TEXT("person"))
+	{
+		// person <command>: hand the rest of the line to the crew member outside (for the test harness).
+		if (APersonPawn* P = ActivePerson.Get())
+		{
+			TArray<FString> Rest(Args);
+			Rest.RemoveAt(0);
+			P->DebugCommand = FString::Join(Rest, TEXT(" "));
+		}
+		return true;
+	}
 	return false;
+}
+
+bool AStarshipPawn::CanStepOutside(FString& Reason) const
+{
+	if (Movement && Movement->bWarpActive) { Reason = TEXT("drop out of warp first"); return false; }
+	if (Movement && Movement->GetSpeed() > ShuttleLaunchMaxSpeed) { Reason = FString::Printf(TEXT("slow below %.0f m/s first"), ShuttleLaunchMaxSpeed / 100.0); return false; }
+	return true;
+}
+
+FTransform AStarshipPawn::GetAirlockTransform() const
+{
+	// A hatch on top of the saucer: trace the Boots channel down through the hull a quarter length forward of the
+	// centre, then at a few other stations in case the mesh has nothing there.
+	const FTransform T = GetActorTransform();
+	const float L = GetShipLengthCm();
+	const float H = ShipHeightMeters * 100.f;
+	if (UWorld* World = GetWorld())
+	{
+		FCollisionQueryParams Params(SCENE_QUERY_STAT(Airlock), true);
+		for (float Station : { 0.25f, 0.2f, 0.3f, 0.15f, 0.35f, 0.f })
+		{
+			const FVector Top = T.TransformPosition(FVector(Station * L, 0.f, H));
+			const FVector Bottom = T.TransformPosition(FVector(Station * L, 0.f, -H));
+			FHitResult Hit;
+			if (World->LineTraceSingleByChannel(Hit, Top, Bottom, ECC_GameTraceChannel1, Params) && Hit.GetActor() == this)
+			{
+				// Facing aft, toward the bridge dome.
+				const FQuat Rot = FRotationMatrix::MakeFromZX(Hit.ImpactNormal, -GetActorForwardVector()).ToQuat();
+				return FTransform(Rot, Hit.ImpactPoint + Hit.ImpactNormal * APersonPawn::HalfHeightCm);
+			}
+		}
+	}
+	// No hull hit (collision still cooking): the top of the box will do.
+	const FQuat Rot = FRotationMatrix::MakeFromZX(GetActorUpVector(), -GetActorForwardVector()).ToQuat();
+	return FTransform(Rot, T.TransformPosition(FVector(0.25f * L, 0.f, ShipHeightMeters * 50.f + APersonPawn::HalfHeightCm)));
+}
+
+bool AStarshipPawn::StepOutside()
+{
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC) { return false; }
+	if (ActivePerson.IsValid())
+	{
+		ScreenMessage(TEXT("Someone is already outside"), FColor::Orange);
+		return false;
+	}
+	FString Reason;
+	if (!CanStepOutside(Reason))
+	{
+		ScreenMessage(FString::Printf(TEXT("Airlock: %s"), *Reason), FColor::Orange);
+		return false;
+	}
+	if (Movement && !Movement->bLanded)
+	{
+		// The craft parks while the crew is outside.
+		Movement->SetThrottle(0.0);
+		Movement->ClearOrbitHold();
+		Movement->ClearTerrainFollow();
+	}
+	SetAutopilot(0, 0.0, 0.f);
+	const FTransform Airlock = GetAirlockTransform();
+	FActorSpawnParameters Params;
+	Params.Owner = this;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	UClass* Cls = PersonClass ? *PersonClass : APersonPawn::StaticClass();
+	APersonPawn* Person = GetWorld()->SpawnActor<APersonPawn>(Cls, Airlock, Params);
+	if (!Person) { return false; }
+	ActivePerson = Person;
+	Person->BeginEVA(this, Airlock, PersonStartsOnHull() ? this : nullptr);
+	PC->Possess(Person);
+	if (AStarshipHUD* H = Cast<AStarshipHUD>(PC->GetHUD()))
+	{
+		H->SetNavTargetActor(this);
+	}
+	ScreenMessage(PersonStartsOnHull()
+		? TEXT("Airlock open. Boots on the hull: W A S D walk, Space pushes off, the pack flies (W S, A D, PgUp PgDn, X brakes), B boots, F boards from anywhere on the hull.")
+		: TEXT("Hatch open. W A S D walk, Shift runs, Space jumps; F boards again within 10 m of the hatch."), FColor::Cyan, 12.f);
+	UE_LOG(LogTemp, Log, TEXT("Person out of %s at %s"), *GetCraftName(), *Airlock.GetLocation().ToString());
+	return true;
+}
+
+void AStarshipPawn::OnPersonBoarded(APersonPawn* Person)
+{
+	APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+	if (PC && PC->GetPawn() == Person)
+	{
+		PC->Possess(this);
+		if (AStarshipHUD* H = Cast<AStarshipHUD>(PC->GetHUD()))
+		{
+			if (H->NavTarget == this) { H->ClearNavTarget(); }
+		}
+	}
+	if (Person) { Person->Destroy(); }
+	ActivePerson = nullptr;
+	ScreenMessage(TEXT("Back aboard"), FColor::Cyan);
 }
 
 void AStarshipPawn::ToggleShuttle()

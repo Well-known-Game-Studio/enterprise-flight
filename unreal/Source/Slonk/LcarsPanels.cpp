@@ -117,9 +117,22 @@ void UControlsPanel::BuildContent()
 		{ TEXT("P"), TEXT("autopilot to the nav target") },
 		{ TEXT("Home"), TEXT("jump to the nav target (dev)") },
 		{ TEXT("C"), TEXT("shuttlecraft: launch, or dock within 500 m of the bay") },
+		{ TEXT("F"), TEXT("airlock: step out onto the hull, or out of a landed shuttle") },
+	};
+	static const FRow OnFoot[] = {
+		{ TEXT("Mouse"), TEXT("look; in free flight, pitch and yaw") },
+		{ TEXT("W  S,  A  D"), TEXT("walk, sidestep; floating, the pack's fore/aft and sideways jets") },
+		{ TEXT("Shift"), TEXT("run") },
+		{ TEXT("Q  E"), TEXT("turn; in free flight, roll") },
+		{ TEXT("Space"), TEXT("jump, as high as the world's gravity allows; on a hull, push off") },
+		{ TEXT("PgUp  PgDn"), TEXT("pack: up and down") },
+		{ TEXT("X"), TEXT("pack: kill relative motion") },
+		{ TEXT("B"), TEXT("magnetic boots on/off: armed, they hold any hull they touch") },
+		{ TEXT("F"), TEXT("board: from the hull, or within 10 m of the hatch") },
+		{ TEXT("V"), TEXT("third person / helmet view") },
 	};
 	static const FRow Systems[] = {
-		{ TEXT("LMB / F / RT"), TEXT("phasers (hold)") },
+		{ TEXT("LMB / RT"), TEXT("phasers (hold)") },
 		{ TEXT("Space / G / A button"), TEXT("photon torpedo") },
 		{ TEXT("T"), TEXT("cycle weapons target") },
 		{ TEXT("Y"), TEXT("clear weapons target") },
@@ -152,6 +165,7 @@ void UControlsPanel::BuildContent()
 		for (int32 i = 0; i < N; ++i) { AddRow(Col, Rows[i].Key, Rows[i].What, Lcars::Dim, 13.f); }
 	};
 	Column(TEXT("Helm"), Flight, UE_ARRAY_COUNT(Flight));
+	Column(TEXT("On foot"), OnFoot, UE_ARRAY_COUNT(OnFoot));
 	Column(TEXT("Tactical, science, navigation"), Systems, UE_ARRAY_COUNT(Systems));
 }
 

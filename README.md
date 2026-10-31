@@ -134,6 +134,15 @@ C launches a shuttle from the fantail bay (the ship has to be out of warp and un
 
 ![The shuttle slides out of the fantail bay](https://github.com/user-attachments/assets/3ca96bce-d4c3-4beb-946a-583ea673f5a5)
 
+## On foot
+
+F opens the airlock. From the starship you step out onto the top of the saucer in a suit with magnetic boots and a thruster pack; from a landed shuttle you step out of the port door onto the ground. On a world you walk (W A S D, Shift to run) under that world's own gravity, worked out from its size and the density of its kind: a jump takes off at the same speed everywhere, so it is half a metre on an Earth and six on a small moon, and the HUD reads the gravity and the height of the last jump. The terrain is the same height field the shuttle lands on, down to the quarter-metre cells, so slopes, ledges and canyon walls are real; anything steeper than fifty degrees stops you. On the hull the boots hold wherever they touch: the saucer top, up the bridge module, round the rim and on to its side, down a ledge, and across to a nacelle; Space pushes off, and the pack flies with the ship's thruster keys (W S fore and aft, A D sideways, Page Up and Page Down up and down, Q E roll, the mouse pitching and yawing, X killing the relative motion). Armed boots take the hull again on contact; B switches them off to float free. Near a world you fall when nothing holds you, and the pack's two and a half metres per second squared will out-climb a moon's gravity but not a planet's. Everyone rides the world's spin as the craft do, so a parked ship and a person on its hull stay together. V swaps the chase view for the helmet. F boards again from anywhere on the craft's hull or within ten metres of the hatch; the craft sits where you left it and is the nav target while you are out.
+
+![On the saucer over a moon, at the rim, flying the pack, and on the ground beside the shuttle](https://github.com/user-attachments/assets/49298242-9194-4654-8b7e-700fd39216cc)
+
+https://github.com/user-attachments/assets/060101b3-9c50-4922-9e4b-0001edd3ebba
+
+
 ## Science
 
 Every world, star, station, ship, belt and nebula can be scanned into a science log. Pick it as the nav target (or lock it with T), close to sensor range, which the HUD shows, and press Enter: the scan runs for a few seconds while the target stays ahead of the ship, then the readings go on screen and into the log with the points they earned. Planets report their class, size, gravity, day, orbit and zone, atmosphere, oceans, ice, rings, moons and city lights; stars their spectral class and planets; stations and ships their type and condition. Some scans turn up a discovery, dilithium, ruins, life, a protostar, worth extra. Points add up to a Starfleet Science rating, from Field Researcher to Daystrom Fellow, and scanning every star and planet of a system completes its survey for a bonus. Land the shuttle and Enter surveys the ground instead: elevation, slope, a core sample and the air, a record of its own on top of the orbital scan. The log is saved between sessions; `/` opens the catalogue.
@@ -173,12 +182,13 @@ Mouse or the left stick steers; H opens the controls panel with the full key lis
 | P | autopilot to the nav target: a warp leg when it is far, an impulse approach when it is near; P again disengages |
 | O | orbit hold round the nav target or the nearest body |
 | C | shuttlecraft: launch from the bay; aboard it, dock when within 500 m of the bay |
+| F | airlock: step out onto the hull, or out of a landed shuttle; on foot, board again (W A S D walk, Shift run, Space jump or push off, B boots, Page Up / Down and X the pack) |
 | Enter | scan the locked target, else the nav target; aboard a landed shuttle, survey the ground |
 | Escape | main computer: status, star chart, science log, controls, quit |
 | M | stellar cartography: the full star chart, course setting and autopilot (1, 2, 3 pick Sector, System or Local) |
 | / | science log: every scan on record, points, rating and the system survey |
 | H | controls panel |
-| T, Y | lock / clear a weapons target; left mouse or F phasers, Space or G torpedo, B tractor beam |
+| T, Y | lock / clear a weapons target; left mouse phasers, Space or G torpedo, B tractor beam |
 | V, R, right mouse | cycle camera (chase, bridge, cinematic, front, port, starboard, top, bottom), reset, free look |
 | N, Tab, U | nav markers, HUD, classic / relativistic warp view |
 | Page Up / Down, arrows | vertical and RCS thrusters |

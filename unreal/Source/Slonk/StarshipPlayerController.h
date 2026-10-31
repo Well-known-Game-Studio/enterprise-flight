@@ -10,6 +10,7 @@
 class UInputAction;
 class UInputMappingContext;
 class AStarshipPawn;
+class APersonPawn;
 
 UCLASS()
 class SLONK_API AStarshipPlayerController : public APlayerController
@@ -108,6 +109,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_Scan;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_ScienceLog;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_Menu;
+	/** F: step outside the craft, or board it again. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_Away;
+	/** Shift: run (on foot). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_Sprint;
+	/** Mouse degrees per pixel when a person looks round. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Mouse") float PersonLookSensitivity = 0.12f;
 
 	/** The CommonUI layer: LCARS menus and popups. */
 	class USlonkUIRoot* GetUIRoot() const { return UIRoot; }
@@ -119,6 +126,8 @@ public:
 protected:
 	void CreateDefaultInputAssets();
 	AStarshipPawn* GetStarship() const;
+	APersonPawn* GetPerson() const;
+	void PersonTick(float DeltaTime);
 
 	// Handlers
 	void OnSteerMouse(const FInputActionValue& Value);
@@ -171,6 +180,10 @@ protected:
 	void OnScan();
 	void OnScienceLog();
 	void OnMenu();
+	void OnThrottleReleased(const FInputActionValue& Value);
+	void OnAway();
+	void OnSprintStarted();
+	void OnSprintCompleted();
 
 private:
 	FVector2D MouseDeltaThisFrame = FVector2D::ZeroVector;
@@ -183,4 +196,6 @@ private:
 	float ThrusterFore = 0.f;
 	float ThrusterSide = 0.f;
 	bool bFreeLookHeld = false;
+	float ThrottleAxis = 0.f;
+	bool bSprintHeld = false;
 };

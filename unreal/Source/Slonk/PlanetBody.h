@@ -273,6 +273,14 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Planet")
 	double GetRadiusCm() const;
 
+	/** Mean density by archetype, g/cc (1.3 for a gas giant, 5.5 for a rocky world). */
+	UFUNCTION(BlueprintPure, Category = "Planet")
+	float GetMeanDensityGcc() const;
+
+	/** Surface gravity from the radius and the mean density, cm/s^2 (Earth is 981). */
+	UFUNCTION(BlueprintPure, Category = "Planet")
+	double GetSurfaceGravityCmS2() const;
+
 	// ---- Level of detail ----
 
 	/** Use the quadtree terrain on worlds with relief (off: the old displaced spheres and clipmap patches). */

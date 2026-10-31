@@ -18,6 +18,7 @@ class UWarpDriveComponent;
 class UStarshipWeaponsComponent;
 class UWarpStreaksComponent;
 class UBridgeInteriorComponent;
+class APersonPawn;
 class UWarpViewComponent;
 class UDistantStarsComponent;
 class UShieldComponent;
@@ -125,6 +126,22 @@ public:
 	FTransform GetShuttleBayTransform() const;
 	virtual FString GetCraftName() const { return TEXT("U.S.S. Enterprise"); }
 	virtual bool IsShuttle() const { return false; }
+
+	// ---- On foot ----
+	/** The crew member out of the craft (null while everyone is aboard). */
+	UPROPERTY(BlueprintReadOnly, Category = "Person") TWeakObjectPtr<APersonPawn> ActivePerson;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Person") TSubclassOf<APersonPawn> PersonClass;
+	/** F: open the airlock and step out onto the hull (or, from a landed shuttle, onto the ground). */
+	UFUNCTION(BlueprintCallable, Category = "Person") bool StepOutside();
+	/** Whether the craft can let someone out now, and why not. */
+	virtual bool CanStepOutside(FString& Reason) const;
+	/** Where a person appears: a standing transform (Z up off the surface). The starship's is a hatch on the
+	 *  saucer top, found by tracing the Boots channel down onto the hull. */
+	virtual FTransform GetAirlockTransform() const;
+	/** Whether the person starts with the boots on this hull (the starship) or beside/below the craft (the shuttle). */
+	virtual bool PersonStartsOnHull() const { return true; }
+	/** The person is back through the airlock: control returns here and the person is removed. */
+	void OnPersonBoarded(APersonPawn* Person);
 
 	/** Brightness of the star sphere, 0..1: the game mode fades it into a daylit sky. */
 	void SetStarFieldFade(float Fade);

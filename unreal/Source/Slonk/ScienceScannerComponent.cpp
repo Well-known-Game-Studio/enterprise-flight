@@ -46,36 +46,8 @@ namespace
 		}
 	}
 
-	/** Mean density by archetype, g/cc, for the gravity estimate. */
-	float DensityFor(const APlanetBody* P)
-	{
-		switch (P->ResolvedArchetype)
-		{
-		case EPlanetArchetype::GasGiant: return 1.3f;
-		case EPlanetArchetype::IceGiant: return 1.6f;
-		case EPlanetArchetype::Ice: return 3.0f;
-		case EPlanetArchetype::Mars: return 3.9f;
-		case EPlanetArchetype::Desert: return 4.5f;
-		case EPlanetArchetype::Ocean: return 5.0f;
-		case EPlanetArchetype::Lava: return 5.0f;
-		case EPlanetArchetype::Venus: return 5.2f;
-		case EPlanetArchetype::Moon:
-			switch (P->ResolvedMoonKind)
-			{
-			case EMoonKind::Icy: return 1.9f;
-			case EMoonKind::Lava: return 3.5f;
-			default: return 3.3f;
-			}
-		default: return 5.5f;
-		}
-	}
-
-	/** Surface gravity in g from radius and mean density. */
-	double GravityG(double RadiusKm, float DensityGcc)
-	{
-		const double G = 6.674e-11, Rho = DensityGcc * 1000.0, R = RadiusKm * 1000.0;
-		return (4.0 / 3.0) * PI * G * Rho * R / 9.81;
-	}
+	/** Surface gravity in g. */
+	double GravityG(const APlanetBody* P) { return P ? P->GetSurfaceGravityCmS2() / 981.0 : 0.0; }
 
 	/** A Starfleet planetary class and short description for a world. */
 	FString WorldClass(const APlanetBody* P)
@@ -387,7 +359,7 @@ void UScienceScannerComponent::FactsForWorld(const APlanetBody* P, FScanRecord& 
 	const FPlanetStyle& S = P->Style;
 	const bool bGiant = P->ResolvedArchetype == EPlanetArchetype::GasGiant || P->ResolvedArchetype == EPlanetArchetype::IceGiant;
 	R.Facts.Add(WorldClass(P));
-	const double Gravity = GravityG(P->RadiusKm, DensityFor(P));
+	const double Gravity = GravityG(P);
 	R.Facts.Add(FString::Printf(TEXT("Diameter %s, surface gravity %.2f g (est.)"), *Km(2.0 * P->GetRadiusCm()), Gravity));
 	if (P->SpinDegPerSec > 1.0e-6f)
 	{
@@ -497,7 +469,7 @@ void UScienceScannerComponent::FactsForSurface(const APlanetBody* P, FScanRecord
 	const double DY = (P->GetSurfaceRadiusCm(Centre + (Up * SurfR + T2 * Step)) - P->GetSurfaceRadiusCm(Centre + (Up * SurfR - T2 * Step))) / (2.0 * Step);
 	const double SlopeDeg = FMath::RadiansToDegrees(FMath::Atan(FMath::Sqrt(DX * DX + DY * DY)));
 	R.Facts.Add(FString::Printf(TEXT("Landing site %.0f m %s sea level, slope %.1f deg"), FMath::Abs(Elev), Elev >= 0 ? TEXT("above") : TEXT("below"), SlopeDeg));
-	R.Facts.Add(FString::Printf(TEXT("Local gravity %.2f g"), GravityG(P->RadiusKm, DensityFor(P))));
+	R.Facts.Add(FString::Printf(TEXT("Local gravity %.2f g"), GravityG(P)));
 	const FPlanetStyle& S = P->Style;
 	const TCHAR* Ground;
 	switch (P->ResolvedArchetype)

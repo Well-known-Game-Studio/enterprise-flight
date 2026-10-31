@@ -13,6 +13,7 @@
 #include "StarBody.h"
 #include "Nebula.h"
 #include "Engine/Engine.h"
+#include "PersonPawn.h"
 #include "Engine/Font.h"
 #include "GameFramework/PlayerController.h"
 #include "StarshipMovementComponent.h"
@@ -113,6 +114,11 @@ void AStarshipHUD::DrawHUD()
 		}
 	}
 
+	if (const APersonPawn* Person = Cast<APersonPawn>(PlayerOwner->GetPawn()))
+	{
+		DrawPersonHUD(Person, Font, SmallFont, UIScale);
+		return;
+	}
 	if (!Ship)
 	{
 		DrawText(TEXT("No starship possessed"), Warning, 40.f, 40.f, Font, UIScale);
@@ -338,6 +344,66 @@ void AStarshipHUD::DrawHUD()
 		const float W = 240.f * UIScale;
 		DrawBar(Canvas->ClipX * 0.5f - W * 0.5f, Canvas->ClipY * 0.5f + 40.f * UIScale, W, 10.f * UIScale, Warp->GetChargeProgress(), Accent);
 	}
+}
+
+void AStarshipHUD::DrawPersonHUD(const APersonPawn* Person, UFont* Font, UFont* SmallFont, float UIScale)
+{
+	const float Line = 18.f * UIScale;
+	const FLinearColor Dim(1, 1, 1, 0.75f);
+	DrawReticle(UIScale);
+
+	float X = 32.f * UIScale;
+	float Y = 32.f * UIScale;
+	const AStarshipPawn* Craft = Person->Craft.Get();
+	DrawText(FString::Printf(TEXT("AWAY TEAM   %s"), Craft ? *Craft->GetCraftName().ToUpper() : TEXT("")), Accent, X, Y, Font, UIScale); Y += Line * 1.4f;
+	DrawText(Person->FrameDescription(), Accent, X, Y, Font, UIScale); Y += Line;
+
+	// Speed relative to what we stand on or float beside; height of the feet when a world is under us.
+	DrawText(FString::Printf(TEXT("SPEED    %s"), *FormatSpeed(Person->Velocity.Size())), Dim, X, Y, Font, UIScale); Y += Line;
+	if (const APlanetBody* P = Person->GroundPlanet.Get())
+	{
+		DrawText(FString::Printf(TEXT("GRAVITY  %.2f g   (%.1f m/s%s)   %s"), Person->GravityCmS2 / 981.0, Person->GravityCmS2 / 100.0, TEXT("\u00B2"), *P->GetDisplayName().ToUpper()), Dim, X, Y, Font, UIScale); Y += Line;
+		if (Person->AltitudeCm >= 0.0 && !(Person->bGrounded && Person->Frame == EPersonFrame::Ground))
+		{
+			DrawText(FString::Printf(TEXT("HEIGHT   %s above the ground"), *FormatDistance(Person->AltitudeCm)), Dim, X, Y, Font, UIScale); Y += Line;
+		}
+		if (Person->LastJumpHeightCm > 5.0)
+		{
+			DrawText(FString::Printf(TEXT("LAST JUMP  %.2f m"), Person->LastJumpHeightCm / 100.0), Dim, X, Y, SmallFont, UIScale); Y += Line;
+		}
+	}
+	else
+	{
+		DrawText(TEXT("GRAVITY  none"), Dim, X, Y, Font, UIScale); Y += Line;
+	}
+	DrawText(FString::Printf(TEXT("BOOTS    %s   (B)"), Person->bBootsArmed ? (Person->Frame == EPersonFrame::Hull && Person->bGrounded ? TEXT("HOLDING") : TEXT("ARMED")) : TEXT("OFF")), Person->bBootsArmed ? Accent : Dim, X, Y, Font, UIScale); Y += Line;
+	if (Craft)
+	{
+		const double D = Person->DistanceToAirlock();
+		const TCHAR* Hint = Person->CanBoard() ? TEXT("F boards") : TEXT("F boards from the hull or within 10 m of the hatch");
+		DrawText(FString::Printf(TEXT("AIRLOCK  %s   %s"), *FormatDistance(FMath::Max(D, 0.0)), Hint), Person->CanBoard() ? Accent : Dim, X, Y, Font, UIScale); Y += Line;
+	}
+	Y += Line * 0.4f;
+	if (!Person->bGrounded)
+	{
+		DrawText(TEXT("PACK   W S fore/aft   A D sideways   PgUp PgDn up/down   X brakes   Q E roll"), Dim, X, Y, SmallFont, UIScale); Y += Line;
+	}
+	else
+	{
+		DrawText(TEXT("W A S D walk   Shift run   Space jump   Q E turn"), Dim, X, Y, SmallFont, UIScale); Y += Line;
+	}
+	DrawText(FString::Printf(TEXT("NAV FILTER   %s   (I cycles)"), *NavFilterName()), NavFilter == ENavFilter::All ? Dim : Accent, X, Y, Font, UIScale); Y += Line;
+
+	const float RX = Canvas->ClipX - 330.f * UIScale;
+	float RY = 32.f * UIScale;
+	DrawText(FString::Printf(TEXT("CAMERA %s%s"), Person->GetCameraMode() == EPersonCamera::Helmet ? TEXT("HELMET") : TEXT("THIRD PERSON"), Person->IsFreeLooking() ? TEXT("  (free look)") : TEXT("")), Accent, RX, RY, Font, UIScale); RY += Line * 1.4f;
+	if (bShowHelp)
+	{
+		DrawText(TEXT("Esc  menu      M  star chart      /  science log      H  controls      Tab  HUD"), Dim, RX, RY, SmallFont, UIScale); RY += Line * 0.85f;
+	}
+
+	if (bShowNavMarkers) { DrawNavMarkers(Person, UIScale); }
+	if (bShowMinimap) { DrawMinimap(Person, UIScale); }
 }
 
 // ---------------------------------------------------------------------------------------------

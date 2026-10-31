@@ -25,6 +25,7 @@
 #include "StarshipHUD.h"
 #include "StarshipPawn.h"
 #include "StarshipPlayerController.h"
+#include "PersonPawn.h"
 
 ASlonkGameMode::ASlonkGameMode()
 {
@@ -408,7 +409,9 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 	// sprites are sized for space and would burn through the blue).
 	if (APawn* ViewPawn = UGameplayStatics::GetPlayerPawn(this, 0))
 	{
-		if (AStarshipPawn* Ship = Cast<AStarshipPawn>(ViewPawn))
+		AStarshipPawn* Ship = Cast<AStarshipPawn>(ViewPawn);
+		if (const APersonPawn* Person = Cast<APersonPawn>(ViewPawn)) { Ship = Person->Craft.Get(); } // the sky is still the craft's
+		if (Ship)
 		{
 			const FVector Up = (ViewLoc - AtmospherePlanet->GetActorLocation()).GetSafeNormal();
 			const float SunUp = (float)FVector::DotProduct(Up, AtmospherePlanet->GetStarDirection());

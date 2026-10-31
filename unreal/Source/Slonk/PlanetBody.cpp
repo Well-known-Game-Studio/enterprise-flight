@@ -62,6 +62,7 @@ APlanetBody::APlanetBody()
 	CollisionSphere->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	CollisionSphere->SetCollisionObjectType(ECC_WorldStatic);
 	CollisionSphere->SetCollisionResponseToAllChannels(ECR_Block);
+	CollisionSphere->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Ignore);
 	CollisionSphere->SetGenerateOverlapEvents(false);
 	CollisionSphere->SetHiddenInGame(true);
 	Body->SetMobility(EComponentMobility::Movable);
@@ -232,6 +233,36 @@ float APlanetBody::RingDensityAt(float X) const
 FString APlanetBody::GetDisplayName() const
 {
 	return PlanetName.IsEmpty() ? GetActorNameOrLabel() : PlanetName;
+}
+
+float APlanetBody::GetMeanDensityGcc() const
+{
+	switch (ResolvedArchetype)
+	{
+	case EPlanetArchetype::GasGiant: return 1.3f;
+	case EPlanetArchetype::IceGiant: return 1.6f;
+	case EPlanetArchetype::Ice: return 3.0f;
+	case EPlanetArchetype::Mars: return 3.9f;
+	case EPlanetArchetype::Desert: return 4.5f;
+	case EPlanetArchetype::Ocean: return 5.0f;
+	case EPlanetArchetype::Lava: return 5.0f;
+	case EPlanetArchetype::Venus: return 5.2f;
+	case EPlanetArchetype::Moon:
+		switch (ResolvedMoonKind)
+		{
+		case EMoonKind::Icy: return 1.9f;
+		case EMoonKind::Lava: return 3.5f;
+		default: return 3.3f;
+		}
+	default: return 5.5f;
+	}
+}
+
+double APlanetBody::GetSurfaceGravityCmS2() const
+{
+	// g = (4/3) pi G rho R for a uniform sphere, in SI, then to cm/s^2.
+	const double G = 6.674e-11, Rho = GetMeanDensityGcc() * 1000.0, R = GetRadiusCm() / 100.0;
+	return (4.0 / 3.0) * PI * G * Rho * R * 100.0;
 }
 
 double APlanetBody::GetRadiusCm() const
