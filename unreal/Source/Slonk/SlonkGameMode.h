@@ -95,6 +95,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
 	float CloudLayerHeightKm = 5.f;
 
+	/** Debugging: cloud material parameters forced every tick, "Name=1.5;Other=0,1,0,0" (one value a scalar, four a vector). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Clouds")
+	FString CloudParamOverrides;
+
 	/** How dark the clouds' shadows fall on the ground (0 none, 1 full). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
 	float CloudShadowStrength = 1.f;
@@ -163,6 +167,7 @@ private:
 	UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> CloudMID;
 	TWeakObjectPtr<class APlanetBody> CloudStyledPlanet;
 	float CloudViewSamples = 0.6f;
+	TWeakObjectPtr<class UTexture2D> CloudWeatherSet;
 	UPROPERTY() TObjectPtr<class APlanetBody> AtmospherePlanet;
 	void SpawnTestTargets();
 };

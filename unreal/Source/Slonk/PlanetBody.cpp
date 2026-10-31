@@ -1,5 +1,7 @@
 #include "PlanetBody.h"
 #include "PlanetTerrainComponent.h"
+#include "PlanetWeather.h"
+#include "Async/Async.h"
 #include "SlonkTiming.h"
 
 #include "Components/DirectionalLightComponent.h"
@@ -413,7 +415,7 @@ void APlanetBody::ResolveStyleFromArchetype()
 		S.CloudCoverage = 0.3f;
 		S.CloudScale = 2.0f;
 		S.CloudColor = A * 1.05f;
-		S.CloudSpinDegPerSec = 0.4f;
+		S.CloudSpinDegPerSec = 0.0006f;
 		S.AtmosphereColor = A;
 		S.SunsetColor = B;
 		S.AtmosphereDepth = 0.1f;
@@ -481,7 +483,7 @@ void APlanetBody::ResolveStyleFromArchetype()
 		S.CloudCoverage = Rng.FRandRange(0.9f, 1.0f);
 		S.CloudScale = 3.f;
 		S.CloudColor = Jitter(FLinearColor(1.0f, 0.88f, 0.55f), 0.1f);
-		S.CloudSpinDegPerSec = 1.2f;
+		S.CloudSpinDegPerSec = 0.0012f;		// Venus: the deck laps the planet in four days
 		S.CloudDrift = 0.08f;
 		S.CloudHeightFraction = 0.012f;
 		S.AtmosphereColor = Jitter(FLinearColor(1.0f, 0.8f, 0.45f), 0.1f);
@@ -684,8 +686,9 @@ void APlanetBody::ResolveStyleFromArchetype()
 	{
 		SpinDegPerSec *= 2.f;
 	}
-	// Weather moves against or well ahead of the ground so the deck visibly slides over the surface.
-	Style.CloudSpinDegPerSec = (Rng.FRand() < 0.5f ? -1.f : 1.f) * Rng.FRandRange(0.6f, 1.4f) * FMath::Max(FMath::Abs(SpinDegPerSec), 0.3f);
+	// Weather drifts over the ground at a jet-stream pace (30 to 70 m/s on an Earth): the ray-marched layer is
+	// anchored to the shell's frame, so anything faster races across the sky from the ground.
+	Style.CloudSpinDegPerSec = (Rng.FRand() < 0.5f ? -1.f : 1.f) * Rng.FRandRange(0.3f, 0.7f) * 0.001f * (6371.f / FMath::Max(RadiusKm, 300.f));
 	Style.CloudDrift = Rng.FRandRange(0.02f, 0.05f);
 	if (Type == EPlanetArchetype::GasGiant || Type == EPlanetArchetype::IceGiant)
 	{
@@ -872,6 +875,9 @@ void APlanetBody::ApplyMaterials()
 		CloudMID->SetScalarParameterValue(TEXT("CloudScale"), S.CloudScale);
 		CloudMID->SetVectorParameterValue(TEXT("CloudColor"), S.CloudColor);
 		CloudMID->SetVectorParameterValue(TEXT("SeedOffset"), Seed * 0.37f);
+		if (WeatherMap) { CloudMID->SetTextureParameterValue(TEXT("WeatherMap"), WeatherMap); }
+		CloudMID->SetScalarParameterValue(TEXT("WeatherStrength"), WeatherStrength);
+		CloudMID->SetScalarParameterValue(TEXT("CloudDeck"), S.CloudDeck);
 	}
 	if (AtmosphereMID)
 	{
@@ -905,6 +911,55 @@ void APlanetBody::ApplyMaterials()
 		RingMID->SetScalarParameterValue(TEXT("RingBrightness"), SunLux / PI * 0.8f);
 	}
 	UpdateSunDirectionParams();
+}
+
+void APlanetBody::RequestWeatherMap(const FLinearColor& Seed)
+{
+	bWeatherRequested = true;
+	FPlanetWeatherSpec Spec;
+	Spec.Seed = FVector(Seed.R, Seed.G, Seed.B) * 0.37f;
+	Spec.Scale = Style.CloudScale;
+	// Ocean worlds run to long fronts; cold and thin-aired worlds to scattered masses.
+	Spec.Fronts = Archetype == EPlanetArchetype::Ocean ? 0.7f : (Archetype == EPlanetArchetype::Terrestrial ? 0.5f : 0.3f);
+	// 20 km texels on an Earth, 40 on a small world: the cells are a few texels, the fronts hundreds.
+	WeatherW = RadiusKm > 4000.f ? 2048 : 1024;
+	WeatherH = WeatherW / 2;
+	WeatherPixels = MakeShared<TArray<FColor>, ESPMode::ThreadSafe>();
+	TSharedPtr<TArray<FColor>, ESPMode::ThreadSafe> Px = WeatherPixels;
+	const int32 W = WeatherW, H = WeatherH;
+	const FString Dump = FPlatformMisc::GetEnvironmentVariable(TEXT("SLONK_DUMP_WEATHER")).IsEmpty() ? FString() : FPaths::ProjectSavedDir() / TEXT("Weather") / GetName() + TEXT(".png");
+	WeatherFuture = Async(EAsyncExecution::ThreadPool, [Spec, W, H, Px, Dump]()
+	{
+		SlonkWeather::Generate(Spec, W, H, *Px);
+		if (!Dump.IsEmpty()) { SlonkWeather::SavePng(*Px, W, H, Dump); }
+	});
+}
+
+void APlanetBody::PollWeatherMap(float DeltaTime)
+{
+	if (WeatherFuture.IsValid() && WeatherFuture.IsReady())
+	{
+		WeatherFuture = TFuture<void>();
+		if (WeatherPixels.IsValid())
+		{
+			WeatherMap = SlonkWeather::MakeTexture(*WeatherPixels, WeatherW, WeatherH, *FString::Printf(TEXT("Weather_%s"), *GetName()));
+			UE_LOG(LogTemp, Log, TEXT("%s: weather map %dx%d ready"), *GetName(), WeatherW, WeatherH);
+		}
+		WeatherPixels.Reset();
+		if (WeatherMap && CloudMID) { CloudMID->SetTextureParameterValue(TEXT("WeatherMap"), WeatherMap); }
+	}
+	if (WeatherMap && WeatherStrength < 1.f)
+	{
+		// Fade the map in over the shell's own noise rather than swapping the sky in one frame.
+		WeatherStrength = FMath::Min(1.f, WeatherStrength + DeltaTime * 0.5f);
+		if (CloudMID) { CloudMID->SetScalarParameterValue(TEXT("WeatherStrength"), WeatherStrength); }
+	}
+}
+
+FTransform APlanetBody::GetCloudFrame() const
+{
+	const USceneComponent* Frame = CloudsMesh ? static_cast<const USceneComponent*>(CloudsMesh) : static_cast<const USceneComponent*>(Clouds);
+	return Frame ? Frame->GetComponentTransform() : GetActorTransform();
 }
 
 void APlanetBody::UpdateSunDirectionParams()
@@ -1261,6 +1316,7 @@ void APlanetBody::Tick(float DeltaTime)
 			RingFrame->SetRelativeRotation(FRotator(0.f, -SpinAccumDeg * (1.f - RingOrbitRateScale), 0.f));
 		}
 	}
+	PollWeatherMap(DeltaTime);
 	if (Clouds && Style.bClouds && !FMath::IsNearlyZero(Style.CloudSpinDegPerSec))
 	{
 		CloudYawDeg = FMath::Fmod(CloudYawDeg + Style.CloudSpinDegPerSec * DeltaTime, 360.f);
@@ -1280,6 +1336,31 @@ void APlanetBody::Tick(float DeltaTime)
 		// The floating origin keeps the player near the world origin, so distance from the origin is what the GPU sees.
 		SetBeyondHorizon(IsLocationBeyondHorizon(GetActorLocation()));
 		UpdateLOD();
+		// Worlds with a ray-marched layer get a weather map, laid over the shell and the layer alike: built when the
+		// player comes within 40 radii (a 2k map is 10 MB, and a few dozen worlds have clouds), dropped past 80.
+		if (Style.bClouds && Style.CloudThicknessKm > 0.f)
+		{
+			UWorld* World = GetWorld();
+			APlayerController* PC = World && World->IsGameWorld() ? World->GetFirstPlayerController() : nullptr;
+			if (PC)
+			{
+				FVector ViewLoc; FRotator ViewRot;
+				PC->GetPlayerViewPoint(ViewLoc, ViewRot);
+				const double Radii = FVector::Dist(ViewLoc, GetActorLocation()) / FMath::Max((double)GetRadiusCm(), 1.0);
+				if (Radii < 40.0 && !bWeatherRequested)
+				{
+					const FVector L = GetSeedLocation();
+					RequestWeatherMap(FLinearColor(FMath::Frac(L.X / 7.3e9) * 100.f, FMath::Frac(L.Y / 5.1e9) * 100.f, FMath::Frac(L.Z / 3.7e9) * 100.f, 0.f));
+				}
+				else if (Radii > 80.0 && bWeatherRequested && !WeatherFuture.IsValid())
+				{
+					bWeatherRequested = false;
+					WeatherMap = nullptr;
+					WeatherStrength = 0.f;
+					if (CloudMID) { CloudMID->SetScalarParameterValue(TEXT("WeatherStrength"), 0.f); }
+				}
+			}
+		}
 	}
 
 	// Terrain LOD every frame: the traversal is cheap and finished chunks should land the frame they are ready.
