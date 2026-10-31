@@ -179,6 +179,7 @@ private:
 	float TurnInput = 0.f;
 	FVector2D LookDelta = FVector2D::ZeroVector;
 	bool bSprint = false;
+	bool bDebugSprint = false; // the harness's sprint, held until "sprint off"
 	bool bFreeLook = false;
 	bool bBraking = false;
 	bool bJumpQueued = false;

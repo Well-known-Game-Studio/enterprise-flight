@@ -601,7 +601,7 @@ void APersonPawn::TickWalking(float DeltaTime)
 
 	FVector Want = Fwd * MoveInput.X + Right * MoveInput.Y;
 	if (Want.SizeSquared() > 1.0) { Want.Normalize(); }
-	Want *= bSprint ? RunSpeedCm : WalkSpeedCm;
+	Want *= (bSprint || bDebugSprint) ? RunSpeedCm : WalkSpeedCm;
 	FVector Vt = Velocity - Up * FVector::DotProduct(Velocity, Up);
 	Vt = MoveToward(Vt, Want, WalkAccelCm * DeltaTime);
 	Velocity = Vt;
@@ -763,7 +763,7 @@ void APersonPawn::TickHull(float DeltaTime)
 
 		FVector Want = Fwd * MoveInput.X + Right * MoveInput.Y;
 		if (Want.SizeSquared() > 1.0) { Want.Normalize(); }
-		Want *= bSprint ? RunSpeedCm : WalkSpeedCm;
+		Want *= (bSprint || bDebugSprint) ? RunSpeedCm : WalkSpeedCm;
 		FVector Vt = Velocity - Up * FVector::DotProduct(Velocity, Up);
 		Vt = MoveToward(Vt, Want, WalkAccelCm * DeltaTime);
 		Velocity = Vt;
@@ -992,7 +992,7 @@ void APersonPawn::ProcessDebugCommand()
 	else if (Op == TEXT("jump")) { Jump(); }
 	else if (Op == TEXT("boots")) { if ((ArgStr(1) == TEXT("on")) != bBootsArmed) { ToggleBoots(); } }
 	else if (Op == TEXT("brake")) { Brake(); }
-	else if (Op == TEXT("sprint")) { bSprint = ArgStr(1) != TEXT("off"); }
+	else if (Op == TEXT("sprint")) { bDebugSprint = ArgStr(1) != TEXT("off"); }
 	else if (Op == TEXT("camera")) { SetCameraMode(ArgStr(1) == TEXT("helmet") || ArgStr(1) == TEXT("first") ? EPersonCamera::Helmet : EPersonCamera::Third); }
 	else if (Op == TEXT("freelook")) { bFreeLook = ArgStr(1) != TEXT("off"); }
 	else if (Op == TEXT("zoom")) { Zoom = FMath::Clamp(Arg(1, 1.f), 0.35f, 4.f); }

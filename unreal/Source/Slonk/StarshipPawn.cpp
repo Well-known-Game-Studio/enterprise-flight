@@ -2000,7 +2000,10 @@ void AStarshipPawn::ProcessDebugCommand()
 		// Everything after "exec" is a console command (e.g. "exec stat unit").
 		FString Rest = Cmd.TrimStartAndEnd();
 		Rest.RemoveFromStart(TEXT("exec"), ESearchCase::IgnoreCase);
-		if (APlayerController* PC = Cast<APlayerController>(GetController()))
+		// The player's controller, or the first one when the player is out on foot or in the shuttle.
+		APlayerController* PC = Cast<APlayerController>(GetController());
+		if (!PC && GetWorld()) { PC = GetWorld()->GetFirstPlayerController(); }
+		if (PC)
 		{
 			PC->ConsoleCommand(Rest.TrimStartAndEnd());
 		}
