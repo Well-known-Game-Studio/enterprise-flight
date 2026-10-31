@@ -14,6 +14,7 @@
 #include "UDynamicMesh.h"
 #include "WarpDriveComponent.h"
 #include "BridgeInteriorComponent.h"
+#include "PersonPawn.h"
 
 namespace
 {
@@ -179,6 +180,12 @@ void AShuttlecraftPawn::BuildHull()
 	}
 
 	FinishPart(HullPart, HM);
+	// The hull answers the Boots channel per triangle, so a person can stand on the roof.
+	HullPart->SetCollisionObjectType(ECC_WorldDynamic);
+	HullPart->SetCollisionResponseToAllChannels(ECR_Ignore);
+	HullPart->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Block);
+	HullPart->SetComplexAsSimpleCollisionEnabled(true, true);
+	HullPart->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 	FinishPart(GlowPart, GM);
 	FinishPart(WarmPart, WM);
 	FinishPart(GlassPart, XM);
@@ -325,6 +332,24 @@ bool AShuttlecraftPawn::RequestDock()
 	SetPhase(EShuttlePhase::Docking);
 	ScreenMessage(TEXT("Docking: approach under the bay's control"), FColor::Cyan);
 	return true;
+}
+
+bool AShuttlecraftPawn::CanStepOutside(FString& Reason) const
+{
+	if (Phase != EShuttlePhase::Flying) { Reason = TEXT("wait until the shuttle is clear of the bay"); return false; }
+	if (Movement && !Movement->bLanded && Movement->GetSpeed() > 500.0) { Reason = TEXT("set down, or come to a stop, first"); return false; }
+	return true;
+}
+
+FTransform AShuttlecraftPawn::GetAirlockTransform() const
+{
+	// Beside the port door, feet at ground level when the skids are down (the hull sits GroundClearance above
+	// the ground), standing the way the shuttle stands.
+	const FTransform T = GetActorTransform();
+	const double Drop = Movement ? Movement->GroundClearanceCm : 150.0;
+	const FVector Pos = T.TransformPosition(FVector(0.0, -330.0, -Drop + APersonPawn::HalfHeightCm));
+	const FQuat Rot = FRotationMatrix::MakeFromZX(GetActorUpVector(), -GetActorRightVector()).ToQuat();
+	return FTransform(Rot, Pos);
 }
 
 bool AShuttlecraftPawn::HandleCraftCommand(const FString& Op, const TArray<FString>& Args)

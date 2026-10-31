@@ -120,6 +120,8 @@ public:
 private:
 	void GatherNavObjects(bool bForce = false);
 	void DrawNavMarkers(const AActor* Ship, float UIScale);
+	/** The whole HUD for a crew member outside the craft. */
+	void DrawPersonHUD(const class APersonPawn* Person, class UFont* Font, class UFont* SmallFont, float UIScale);
 	void DrawMinimap(const AActor* Ship, float UIScale);
 	/** The science rows of the left panel: points, rating, system survey, scan progress or the range hint. */
 	void DrawScienceRows(const class AStarshipPawn* Ship, float& X, float& Y, float Line, float UIScale);

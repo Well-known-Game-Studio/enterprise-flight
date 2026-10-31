@@ -10,6 +10,7 @@
 #include "StarshipMovementComponent.h"
 #include "Engine/Engine.h"
 #include "StarshipPawn.h"
+#include "PersonPawn.h"
 #include "StarshipWeaponsComponent.h"
 #include "SlonkUIRoot.h"
 #include "LcarsPanels.h"
@@ -26,6 +27,11 @@ AStarshipPlayerController::AStarshipPlayerController()
 AStarshipPawn* AStarshipPlayerController::GetStarship() const
 {
 	return Cast<AStarshipPawn>(GetPawn());
+}
+
+APersonPawn* AStarshipPlayerController::GetPerson() const
+{
+	return Cast<APersonPawn>(GetPawn());
 }
 
 namespace
@@ -123,6 +129,8 @@ void AStarshipPlayerController::CreateDefaultInputAssets()
 	Ensure(IA_Scan, TEXT("IA_Scan"), EInputActionValueType::Boolean);
 	Ensure(IA_ScienceLog, TEXT("IA_ScienceLog"), EInputActionValueType::Boolean);
 	Ensure(IA_Menu, TEXT("IA_Menu"), EInputActionValueType::Boolean);
+	Ensure(IA_Away, TEXT("IA_Away"), EInputActionValueType::Boolean);
+	Ensure(IA_Sprint, TEXT("IA_Sprint"), EInputActionValueType::Boolean);
 
 	if (MappingContext)
 	{
@@ -176,8 +184,10 @@ void AStarshipPlayerController::CreateDefaultInputAssets()
 
 	// Weapons.
 	Map(Ctx, IA_FirePhasers, EKeys::LeftMouseButton);
-	Map(Ctx, IA_FirePhasers, EKeys::F);
 	Map(Ctx, IA_FirePhasers, EKeys::Gamepad_RightTrigger);
+	// On foot: F opens the airlock and boards again; Shift runs.
+	Map(Ctx, IA_Away, EKeys::F);
+	Map(Ctx, IA_Sprint, EKeys::LeftShift);
 	Map(Ctx, IA_FireTorpedo, EKeys::SpaceBar);
 	Map(Ctx, IA_FireTorpedo, EKeys::G);
 	Map(Ctx, IA_FireTorpedo, EKeys::Gamepad_FaceButton_Bottom);
@@ -274,6 +284,10 @@ void AStarshipPlayerController::SetupInputComponent()
 	EIC->BindAction(IA_YawKeys, ETriggerEvent::Triggered, this, &AStarshipPlayerController::OnYawKeys);
 	EIC->BindAction(IA_YawKeys, ETriggerEvent::Completed, this, &AStarshipPlayerController::OnYawKeysReleased);
 	EIC->BindAction(IA_Throttle, ETriggerEvent::Triggered, this, &AStarshipPlayerController::OnThrottle);
+	EIC->BindAction(IA_Throttle, ETriggerEvent::Completed, this, &AStarshipPlayerController::OnThrottleReleased);
+	EIC->BindAction(IA_Away, ETriggerEvent::Started, this, &AStarshipPlayerController::OnAway);
+	EIC->BindAction(IA_Sprint, ETriggerEvent::Started, this, &AStarshipPlayerController::OnSprintStarted);
+	EIC->BindAction(IA_Sprint, ETriggerEvent::Completed, this, &AStarshipPlayerController::OnSprintCompleted);
 	EIC->BindAction(IA_ThrottleWheel, ETriggerEvent::Triggered, this, &AStarshipPlayerController::OnThrottleWheel);
 	EIC->BindAction(IA_Impulse1, ETriggerEvent::Started, this, &AStarshipPlayerController::OnImpulse1);
 	EIC->BindAction(IA_Impulse2, ETriggerEvent::Started, this, &AStarshipPlayerController::OnImpulse2);
@@ -334,6 +348,11 @@ void AStarshipPlayerController::PlayerTick(float DeltaTime)
 {
 	Super::PlayerTick(DeltaTime);
 
+	if (GetPerson())
+	{
+		PersonTick(DeltaTime);
+		return;
+	}
 	AStarshipPawn* Ship = GetStarship();
 	if (!Ship || !Ship->Movement)
 	{
@@ -397,6 +416,36 @@ void AStarshipPlayerController::PlayerTick(float DeltaTime)
 	}
 }
 
+void AStarshipPlayerController::PersonTick(float DeltaTime)
+{
+	APersonPawn* Person = GetPerson();
+	if (!Person) { return; }
+	if (UIRoot && UIRoot->IsMenuOpen())
+	{
+		MouseDeltaThisFrame = FVector2D::ZeroVector;
+	}
+	// The mouse looks: body yaw and eye pitch on a surface, the whole person in free flight. The right stick too.
+	Person->SetFreeLook(bFreeLookHeld || LookStickInput.SizeSquared() > 0.0025f);
+	FVector2D Look = MouseDeltaThisFrame * (bFreeLookHeld ? MouseLookSensitivity : PersonLookSensitivity);
+	if (bInvertMousePitch) { Look.Y = -Look.Y; }
+	if (LookStickInput.SizeSquared() > 0.0025f)
+	{
+		Look += LookStickInput * StickLookRate * DeltaTime;
+	}
+	Person->AddLookInput(Look.X, Look.Y);
+	MouseDeltaThisFrame = FVector2D::ZeroVector;
+
+	// W S walk or thrust fore/aft, A D sidestep (the ship's roll keys), the arrows and the left stick the same;
+	// Q E turn, or roll in free flight.
+	const bool bStick = StickInput.SizeSquared() > 0.0025f;
+	const float Fwd = FMath::Clamp(ThrottleAxis + ThrusterFore + (bStick ? StickInput.Y : 0.f), -1.f, 1.f);
+	const float Right = FMath::Clamp(RollInput + ThrusterSide + (bStick ? StickInput.X : 0.f), -1.f, 1.f);
+	Person->SetMoveInput(Fwd, Right);
+	Person->SetVerticalInput(VerticalInput);
+	Person->SetTurnInput(YawKeyInput);
+	Person->SetSprint(bSprintHeld);
+}
+
 // ---- Handlers ----
 
 void AStarshipPlayerController::OnSteerMouse(const FInputActionValue& Value)
@@ -439,8 +488,23 @@ void AStarshipPlayerController::OnYawKeysReleased(const FInputActionValue& Value
 	YawKeyInput = 0.f;
 }
 
+void AStarshipPlayerController::OnThrottleReleased(const FInputActionValue& Value)
+{
+	ThrottleAxis = 0.f;
+}
+
+void AStarshipPlayerController::OnAway()
+{
+	if (APersonPawn* Person = GetPerson()) { Person->RequestBoard(); }
+	else if (AStarshipPawn* Ship = GetStarship()) { Ship->StepOutside(); }
+}
+
+void AStarshipPlayerController::OnSprintStarted() { bSprintHeld = true; }
+void AStarshipPlayerController::OnSprintCompleted() { bSprintHeld = false; }
+
 void AStarshipPlayerController::OnThrottle(const FInputActionValue& Value)
 {
+	ThrottleAxis = Value.Get<float>();
 	if (AStarshipPawn* Ship = GetStarship())
 	{
 		Ship->Movement->AdjustThrottle(Value.Get<float>() * ThrottleRate * GetWorld()->GetDeltaSeconds());
@@ -449,6 +513,7 @@ void AStarshipPlayerController::OnThrottle(const FInputActionValue& Value)
 
 void AStarshipPlayerController::OnThrottleWheel(const FInputActionValue& Value)
 {
+	if (APersonPawn* Person = GetPerson()) { Person->AdjustZoom(Value.Get<float>()); return; }
 	if (AStarshipPawn* Ship = GetStarship())
 	{
 		// While free-looking the wheel frames the shot instead of changing speed.
@@ -470,6 +535,7 @@ void AStarshipPlayerController::OnImpulse4() { if (AStarshipPawn* Ship = GetStar
 
 void AStarshipPlayerController::OnAllStop()
 {
+	if (APersonPawn* Person = GetPerson()) { Person->Brake(); return; }
 	if (AStarshipPawn* Ship = GetStarship())
 	{
 		Ship->Movement->SetThrottle(0.0);
@@ -545,6 +611,7 @@ void AStarshipPlayerController::OnFirePhasersCompleted()
 
 void AStarshipPlayerController::OnFireTorpedo()
 {
+	if (APersonPawn* Person = GetPerson()) { Person->Jump(); return; }
 	if (AStarshipPawn* Ship = GetStarship())
 	{
 		if (Ship->Weapons)
@@ -578,6 +645,7 @@ void AStarshipPlayerController::OnClearTarget()
 
 void AStarshipPlayerController::OnCycleCamera()
 {
+	if (APersonPawn* Person = GetPerson()) { Person->CycleCamera(); return; }
 	if (AStarshipPawn* Ship = GetStarship())
 	{
 		Ship->CycleCameraMode();
@@ -596,6 +664,7 @@ void AStarshipPlayerController::OnFreeLookCompleted()
 
 void AStarshipPlayerController::OnResetCamera()
 {
+	if (APersonPawn* Person = GetPerson()) { Person->ResetCamera(); return; }
 	if (AStarshipPawn* Ship = GetStarship())
 	{
 		Ship->ResetCamera();
@@ -720,6 +789,7 @@ void AStarshipPlayerController::OnMenu()
 
 void AStarshipPlayerController::OnTractorBeam()
 {
+	if (APersonPawn* Person = GetPerson()) { Person->ToggleBoots(); return; }
 	if (AStarshipPawn* Ship = Cast<AStarshipPawn>(GetPawn()))
 	{
 		Ship->ToggleTractorBeam();
