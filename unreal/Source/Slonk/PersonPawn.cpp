@@ -530,6 +530,14 @@ void APersonPawn::CarryWithWorld(float DeltaTime)
 	Velocity = Q.RotateVector(Velocity);
 }
 
+bool APersonPawn::TraceSolid(const FVector& Start, const FVector& End, FHitResult& Hit) const
+{
+	UWorld* World = GetWorld();
+	if (!World) { return false; }
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(PersonSolid), true, this);
+	return World->LineTraceSingleByChannel(Hit, Start, End, BootsChannel, Params);
+}
+
 bool APersonPawn::TraceBoots(const FVector& Start, const FVector& End, FHitResult& Hit) const
 {
 	UWorld* World = GetWorld();
@@ -630,10 +638,11 @@ void APersonPawn::TickWalking(float DeltaTime)
 		}
 		else
 		{
-			// A hull in the way (the shuttle's flank): the legs stop; the boots only take a hull from the air.
+			// A hull or a wall in the way (the shuttle's flank, a building): the legs stop; the boots only take a
+			// hull from the air. A kerb under half a metre is stepped up by the floor probe below.
 			FHitResult Hit;
 			const FVector Feet = Here - Up * HalfHeightCm;
-			if (TraceBoots(Feet + Up * 45.f, Feet + Up * 45.f + Vt.GetSafeNormal() * (Run + 25.0), Hit))
+			if (TraceSolid(Feet + Up * 55.f, Feet + Up * 55.f + Vt.GetSafeNormal() * (Run + 25.0), Hit))
 			{
 				Velocity = FVector::ZeroVector;
 				Next = Here;
@@ -644,7 +653,17 @@ void APersonPawn::TickWalking(float DeltaTime)
 	const FVector Rv = Next - Centre;
 	const double Dist = Rv.Size();
 	const FVector UpN = Rv / FMath::Max(Dist, 1.0);
-	const double Target = SurfaceRadiusAt(Next) + HalfHeightCm;
+	double Target = SurfaceRadiusAt(Next) + HalfHeightCm;
+	{
+		// A roof, a pad or a kerb under the feet stands in for the ground where it is higher.
+		FHitResult Floor;
+		const FVector Head = Next + UpN * 50.0, Below = Next - UpN * (HalfHeightCm + 120.0);
+		if (TraceSolid(Head, Below, Floor))
+		{
+			const double FloorR = (Floor.ImpactPoint - Centre).Size();
+			if (FloorR > Target - HalfHeightCm) { Target = FloorR + HalfHeightCm; }
+		}
+	}
 	if (Target < Dist - 60.0)
 	{
 		bGrounded = false; // the ground fell away: fall

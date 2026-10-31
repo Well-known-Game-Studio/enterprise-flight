@@ -19,13 +19,17 @@ struct FTownSite
 	uint32 Seed = 0;
 	/** Radius of the built-up area, cm. */
 	double RadiusCm = 0.0;
+	/** A city at a cluster point (towers, a pad) rather than a town at a town point. */
+	bool bCity = false;
 };
 
 namespace SlonkCities
 {
 	/** The settlement weight (region x cluster x town) at a planet-local point, the shader's formula without the land gating. */
 	float SettlementAt(const FVector& LocalCm);
-	/** Towns within ReachCm of a planet-local point that stand on land the shader would light: level, wet, low, dry-shod. */
+	double CityRadiusCm(float Region);
+	double TownRadiusCm(float Strength);
+	/** Cities at the cluster points and towns at the town points outside them, within ReachCm of a planet-local point that stand on land the shader would light: level, wet, low, dry-shod. */
 	void EnumerateTowns(const FPlanetTerrainParams& P, const FVector& CentreLocalCm, double ReachCm, TArray<FTownSite>& Out, int32 MaxTowns = 300);
 	/** Building transforms for a town (planet-local, for a 1 m cube: scale is the building's size in metres). Safe off the game thread. */
 	void BuildTown(const FPlanetTerrainParams& P, const FTownSite& Town, TArray<FTransform>& Out, int32 MaxBuildings = 2500);

@@ -168,6 +168,8 @@ private:
 	/** Boots armed and a hull within reach: plant the feet on it. */
 	bool TryStick(bool bAhead = true);
 	bool TraceBoots(const FVector& Start, const FVector& End, FHitResult& Hit) const;
+	/** Anything the boots channel blocks: a hull or a building. */
+	bool TraceSolid(const FVector& Start, const FVector& End, FHitResult& Hit) const;
 	void SetFrame(EPersonFrame NewFrame);
 	void StandOn(const FVector& Feet, const FVector& Normal, bool bSnapUp);
 	FVector FeetLocation() const;

@@ -46,71 +46,106 @@ float SlonkCities::SettlementAt(const FVector& LocalCm)
 	return Region * Cluster * Town;
 }
 
-void SlonkCities::EnumerateTowns(const FPlanetTerrainParams& P, const FVector& CentreLocalCm, double ReachCm, TArray<FTownSite>& Out, int32 MaxTowns)
+namespace
 {
-	const double Cell = LevelCm[2];
-	const double R = P.RadiusCm;
-	struct FCand { FVector LocalCm; float Strength; uint32 Seed; double DistSq; };
-	TArray<FCand> Cands;
-	// Walk the cells along the sphere, not through a box of them: columns over the two axes the centre direction
-	// is least aligned with, and in each column only the few cells about where the sphere passes.
-	const FVector CDir = CentreLocalCm.GetSafeNormal();
-	int32 Axis = 0; if (FMath::Abs(CDir.Y) > FMath::Abs(CDir[Axis])) { Axis = 1; } if (FMath::Abs(CDir.Z) > FMath::Abs(CDir[Axis])) { Axis = 2; }
-	const int32 A1 = (Axis + 1) % 3, A2 = (Axis + 2) % 3;
-	const double Sign = CDir[Axis] >= 0.0 ? 1.0 : -1.0;
-	const int32 N = FMath::CeilToInt(ReachCm / Cell) + 1;
-	// Cell c spans [(c + 0.5) Cell, (c + 1.5) Cell) in q-space shifted by half a cell; its point sits at (c + jitter + 0.5) Cell.
-	const int32 C1 = (int32)FMath::Floor(CentreLocalCm[A1] / Cell - 0.5), C2 = (int32)FMath::Floor(CentreLocalCm[A2] / Cell - 0.5);
-	for (int32 j = -N; j <= N; ++j)
-	for (int32 i = -N; i <= N; ++i)
+	/** Present points of one Worley level within reach of a planet-local point, walking the cells along the sphere. */
+	struct FPoint { FVector LocalCm; uint32 Seed; double DistSq; };
+	void WalkLevel(int32 Level, double R, const FVector& CentreLocalCm, double ReachCm, TArray<FPoint>& Out)
 	{
-		const double X1 = (C1 + i + 1.0) * Cell, X2 = (C2 + j + 1.0) * Cell;	// the column's centre
-		const double Rho2 = X1 * X1 + X2 * X2;
-		if (Rho2 >= R * R) { continue; }
-		const double Sa = Sign * FMath::Sqrt(R * R - Rho2);					// where the sphere crosses this column
-		const int32 Ca = (int32)FMath::Floor(Sa / Cell - 1.0);
-		for (int32 k = -1; k <= 1; ++k)
+		const double Cell = LevelCm[Level];
+		const FVector CDir = CentreLocalCm.GetSafeNormal();
+		int32 Axis = 0; if (FMath::Abs(CDir.Y) > FMath::Abs(CDir[Axis])) { Axis = 1; } if (FMath::Abs(CDir.Z) > FMath::Abs(CDir[Axis])) { Axis = 2; }
+		const int32 A1 = (Axis + 1) % 3, A2 = (Axis + 2) % 3;
+		const double Sign = CDir[Axis] >= 0.0 ? 1.0 : -1.0;
+		const int32 N = FMath::CeilToInt(ReachCm / Cell) + 1;
+		const int32 C1 = (int32)FMath::Floor(CentreLocalCm[A1] / Cell - 0.5), C2 = (int32)FMath::Floor(CentreLocalCm[A2] / Cell - 0.5);
+		for (int32 j = -N; j <= N; ++j)
+		for (int32 i = -N; i <= N; ++i)
 		{
-			FIntVector C; C[Axis] = Ca + k; C[A1] = C1 + i; C[A2] = C2 + j;
-			const uint32 H = CellHash(C, LevelSalt(2));
-			if ((H >> 30) >= LevelKeep[2]) { continue; }
-			const FVector Pt = (FVector(C) + Jitter(H) + FVector(0.5, 0.5, 0.5)) * Cell;
-			if (FMath::Abs(Pt.Size() - R) > Cell * 0.9) { continue; }
-			const double DistSq = FVector::DistSquared(Pt, CentreLocalCm);
-			if (DistSq > ReachCm * ReachCm) { continue; }
-			const float Region = 1.f - SmoothStep(0.05f, 0.7f, (float)NearestSq(Pt, 0));
-			const float Cluster = 1.f - SmoothStep(0.02f, 0.5f, (float)NearestSq(Pt, 1));
-			const float Strength = Region * Cluster;
-			if (Strength < 0.3f) { continue; }
-			Cands.Add({ Pt, Strength, H, DistSq });
+			const double X1 = (C1 + i + 1.0) * Cell, X2 = (C2 + j + 1.0) * Cell;
+			const double Rho2 = X1 * X1 + X2 * X2;
+			if (Rho2 >= R * R) { continue; }
+			const double Sa = Sign * FMath::Sqrt(R * R - Rho2);
+			const int32 Ca = (int32)FMath::Floor(Sa / Cell - 1.0);
+			for (int32 k = -1; k <= 1; ++k)
+			{
+				FIntVector C; C[Axis] = Ca + k; C[A1] = C1 + i; C[A2] = C2 + j;
+				const uint32 H = CellHash(C, LevelSalt(Level));
+				if ((H >> 30) >= LevelKeep[Level]) { continue; }
+				const FVector Pt = (FVector(C) + Jitter(H) + FVector(0.5, 0.5, 0.5)) * Cell;
+				if (FMath::Abs(Pt.Size() - R) > Cell * 0.9) { continue; }
+				const double DistSq = FVector::DistSquared(Pt, CentreLocalCm);
+				if (DistSq > ReachCm * ReachCm) { continue; }
+				Out.Add({ Pt, H, DistSq });
+			}
 		}
 	}
-	Cands.Sort([](const FCand& A, const FCand& B) { return A.DistSq < B.DistSq; });
-	int32 NWater = 0, NDry = 0, NHigh = 0, NSteep = 0;
-	for (const FCand& Cd : Cands)
+	/** The shader's land gating at a point: dry, wet enough, low, level. Returns the slope penalty factor, or -1 to reject. */
+	float LandFactor(const FPlanetTerrainParams& P, const FVector& Dir, int32& NWater, int32& NDry, int32& NHigh, int32& NSteep)
 	{
-		if (Out.Num() >= MaxTowns) { break; }
-		// The shader's land gating: dry, wet enough, low, and level (two samples 200 m apart).
-		const FVector Dir = Cd.LocalCm.GetSafeNormal();
 		const FPlanetTerrainSample S = SlonkTerrain::SampleStructure(P, Dir);
-		if (S.bWater) { ++NWater; continue; }
-		if (S.Wet < 0.3f) { ++NDry; continue; }
-		if (S.HeightCm > 200000.0 || S.Canyon > 0.3f) { ++NHigh; continue; }
+		if (S.bWater) { ++NWater; return -1.f; }
+		if (S.Wet < 0.3f) { ++NDry; return -1.f; }
+		if (S.HeightCm > 200000.0 || S.Canyon > 0.3f) { ++NHigh; return -1.f; }
+		const double R = P.RadiusCm;
 		const FVector East = FVector::CrossProduct(FVector::ZAxisVector, Dir).GetSafeNormal();
 		const FVector North = FVector::CrossProduct(Dir, East);
 		const double Step = 20000.0;
 		const double HE = SlonkTerrain::SampleStructure(P, (Dir * R + East * Step).GetSafeNormal()).HeightCm;
 		const double HN = SlonkTerrain::SampleStructure(P, (Dir * R + North * Step).GetSafeNormal()).HeightCm;
 		const double Slope = FMath::Sqrt(FMath::Square(HE - S.HeightCm) + FMath::Square(HN - S.HeightCm)) / Step;
-		if (Slope > 0.25) { ++NSteep; continue; }
-		FTownSite T;
-		T.Dir = Dir; T.LocalCm = Dir * R; T.Strength = Cd.Strength * (1.f - (float)FMath::Clamp(Slope / 0.25, 0.0, 0.6)); T.Seed = Cd.Seed;
-		// A hamlet at the weak end, a city two and a half kilometres across at the strong end.
-		T.RadiusCm = Cell * (0.3 + 1.2 * Cd.Strength);
+		if (Slope > 0.25) { ++NSteep; return -1.f; }
+		return 1.f - (float)FMath::Clamp(Slope / 0.25, 0.0, 0.6);
+	}
+}
+
+// Radii: a city at a cluster point grows with the region weight there; a town at a town point with region x cluster.
+// Towns inside a city's radius are the city's own blocks and are not built again (overlapping grids made a carpet).
+double SlonkCities::CityRadiusCm(float Region) { return LevelCm[1] * (0.25 + 0.2 * Region); }
+double SlonkCities::TownRadiusCm(float Strength) { return LevelCm[2] * (0.2 + 0.3 * Strength); }
+
+void SlonkCities::EnumerateTowns(const FPlanetTerrainParams& P, const FVector& CentreLocalCm, double ReachCm, TArray<FTownSite>& Out, int32 MaxTowns)
+{
+	const double R = P.RadiusCm;
+	int32 NWater = 0, NDry = 0, NHigh = 0, NSteep = 0;
+	// Cities first: the cluster points, by distance.
+	TArray<FPoint> Clusters; WalkLevel(1, R, CentreLocalCm, ReachCm + LevelCm[1], Clusters);
+	Clusters.Sort([](const FPoint& A, const FPoint& B) { return A.DistSq < B.DistSq; });
+	TArray<FTownSite> Cities;
+	for (const FPoint& C : Clusters)
+	{
+		const float Region = 1.f - SmoothStep(0.05f, 0.7f, (float)NearestSq(C.LocalCm, 0));
+		if (Region < 0.35f) { continue; }
+		const FVector Dir = C.LocalCm.GetSafeNormal();
+		const float Land = LandFactor(P, Dir, NWater, NDry, NHigh, NSteep);
+		if (Land < 0.f) { continue; }
+		FTownSite T; T.Dir = Dir; T.LocalCm = Dir * R; T.Strength = FMath::Min(1.f, 0.5f + Region * 0.6f) * Land; T.Seed = C.Seed; T.RadiusCm = CityRadiusCm(Region); T.bCity = true;
+		Cities.Add(T);
+	}
+	// Then the towns, skipping any inside a city.
+	TArray<FPoint> Towns; WalkLevel(2, R, CentreLocalCm, ReachCm, Towns);
+	Towns.Sort([](const FPoint& A, const FPoint& B) { return A.DistSq < B.DistSq; });
+	for (const FTownSite& C : Cities) { if (C.LocalCm.SizeSquared() > 0.0 && FVector::DistSquared(C.LocalCm, CentreLocalCm) <= ReachCm * ReachCm && Out.Num() < MaxTowns) { Out.Add(C); } }
+	for (const FPoint& Tp : Towns)
+	{
+		if (Out.Num() >= MaxTowns) { break; }
+		const float Region = 1.f - SmoothStep(0.05f, 0.7f, (float)NearestSq(Tp.LocalCm, 0));
+		const float Cluster = 1.f - SmoothStep(0.02f, 0.5f, (float)NearestSq(Tp.LocalCm, 1));
+		const float Strength = Region * Cluster;
+		if (Strength < 0.3f) { continue; }
+		bool bInCity = false;
+		for (const FTownSite& C : Cities)
+		{
+			if (FVector::DistSquared(C.LocalCm, Tp.LocalCm) < FMath::Square(C.RadiusCm + TownRadiusCm(Strength) + 30000.0)) { bInCity = true; break; }
+		}
+		if (bInCity) { continue; }
+		const FVector Dir = Tp.LocalCm.GetSafeNormal();
+		const float Land = LandFactor(P, Dir, NWater, NDry, NHigh, NSteep);
+		if (Land < 0.f) { continue; }
+		FTownSite T; T.Dir = Dir; T.LocalCm = Dir * R; T.Strength = Strength * Land * 0.6f; T.Seed = Tp.Seed; T.RadiusCm = TownRadiusCm(Strength); T.bCity = false;
 		Out.Add(T);
 	}
-	UE_LOG(LogTemp, Verbose, TEXT("EnumerateTowns: %d candidates within %.0f km, %d towns (water %d, dry %d, high %d, steep %d)"), Cands.Num(), ReachCm / 1e5, Out.Num(), NWater, NDry, NHigh, NSteep);
-
+	UE_LOG(LogTemp, Verbose, TEXT("EnumerateTowns: %d cities, %d sites within %.0f km (water %d, dry %d, high %d, steep %d)"), Cities.Num(), Out.Num(), ReachCm / 1e5, NWater, NDry, NHigh, NSteep);
 }
 
 void SlonkCities::BuildTown(const FPlanetTerrainParams& P, const FTownSite& Town, TArray<FTransform>& Out, int32 MaxBuildings)
@@ -128,6 +163,18 @@ void SlonkCities::BuildTown(const FPlanetTerrainParams& P, const FTownSite& Town
 	const int32 Half = FMath::CeilToInt(Town.RadiusCm / Pitch);
 	const FQuat Base = FRotationMatrix::MakeFromZX(Up, GX).ToQuat();
 	int32 Count = 0;
+	// A strong town has a landing pad at its heart: a 90 m slab half a metre proud of the ground, the lots around it
+	// left clear. The material reads the slab's height (under a metre) to paint it as a pad.
+	const bool bPad = Town.bCity;
+	if (bPad)
+	{
+		const FPlanetTerrainSample S0 = SlonkTerrain::Sample(P, Up, 400.0);
+		if (!S0.bWater)
+		{
+			Out.Emplace(Base, Up * (R + S0.HeightCm - 150.0 + 100.0), FVector(90.0, 90.0, 2.0));
+			++Count;
+		}
+	}
 	for (int32 gy = -Half; gy <= Half && Count < MaxBuildings; ++gy)
 	for (int32 gx = -Half; gx <= Half && Count < MaxBuildings; ++gx)
 	{
@@ -138,6 +185,7 @@ void SlonkCities::BuildTown(const FPlanetTerrainParams& P, const FTownSite& Town
 		const float Density = FMath::Min(1.f, 0.45f + Town.Strength) * (float)(1.0 - D2 * D2);
 		if (Hash01(H) > Density) { continue; }
 		if ((gx % 5 == 0) || (gy % 7 == 0)) { continue; }
+		if (bPad && FMath::Abs(gx) * Pitch < 7000.0 && FMath::Abs(gy) * Pitch < 7000.0) { continue; }
 		const FVector Jit((Hash01(Mix(H, 3u)) - 0.5) * 0.3 * Pitch, (Hash01(Mix(H, 5u)) - 0.5) * 0.3 * Pitch, 0.0);
 		const FVector Flat = GX * (gx * Pitch + Jit.X) + GY * (gy * Pitch + Jit.Y);
 		const FVector Dir = (Town.LocalCm + Flat).GetSafeNormal();
