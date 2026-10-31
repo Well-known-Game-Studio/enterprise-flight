@@ -821,7 +821,10 @@ void APlanetBody::ApplyMaterials()
 		Mid->SetScalarParameterValue(TEXT("Coverage"), S.bClouds ? S.CloudCoverage : 0.f);
 		// Worlds with a ray-marched layer get the shell broken into kilometre cells near the planet, so the two
 		// match at the hand-over; the giants' decks stay whole.
-		Mid->SetScalarParameterValue(TEXT("CellStrength"), S.CloudThicknessKm > 0.f ? 0.6f : 0.f);
+		Mid->SetScalarParameterValue(TEXT("CellStrength"), S.CloudThicknessKm > 0.f ? 0.85f : 0.f);
+		// While the Sky Atmosphere is parked here the shell is lit by the sun through that atmosphere (the same
+		// reddening toward the terminator the ray-marched layer gets); elsewhere by its own analytic sun.
+		Mid->SetScalarParameterValue(TEXT("SkyLit"), bUsingSkyAtmosphere ? 1.f : 0.f);
 		Mid->SetVectorParameterValue(TEXT("CloudSeedOffset"), Seed * 0.37f);
 		Mid->SetScalarParameterValue(TEXT("CloudYaw"), FMath::DegreesToRadians(CloudYawDeg));
 		Mid->SetVectorParameterValue(TEXT("OceanColor"), S.OceanColor);
@@ -1317,6 +1320,7 @@ void APlanetBody::SetUsingSkyAtmosphere(bool bEnabled)
 	if (bUsingSkyAtmosphere != bEnabled)
 	{
 		bUsingSkyAtmosphere = bEnabled;
+		if (CloudMID) { CloudMID->SetScalarParameterValue(TEXT("SkyLit"), bEnabled ? 1.f : 0.f); }
 		UpdateShellVisibility();
 	}
 }
