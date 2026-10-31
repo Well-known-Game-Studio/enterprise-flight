@@ -968,9 +968,28 @@ bool APlanetBody::HasCities() const
 	return Style.NightLightIntensity > 0.f && !IsGiant() && Style.ReliefFraction > 0.f && CityReachKm > 0.f;
 }
 
+void APlanetBody::UpdateNearCollision(const FVector& ViewLocal, bool bForce)
+{
+	if (!BuildingsNear) { return; }
+	const FVector View = ViewLocal;
+	if (!bForce && FVector::Dist(View, CityNearCentre) < 15000.0) { return; }
+	CityNearCentre = View;
+	TArray<FTransform> Near;
+	const double ReachSq = FMath::Square(50000.0);		// 500 m
+	for (const FTransform& Tm : CityInstances)
+	{
+		if (FVector::DistSquared(Tm.GetLocation(), View) < ReachSq) { Near.Add(Tm); }
+	}
+	BuildingsNear->ClearInstances();
+	if (Near.Num() > 0) { BuildingsNear->AddInstances(Near, false, false); }
+}
+
 void APlanetBody::ClearCities()
 {
 	if (Buildings && Buildings->GetInstanceCount() > 0) { Buildings->ClearInstances(); }
+	if (BuildingsNear && BuildingsNear->GetInstanceCount() > 0) { BuildingsNear->ClearInstances(); }
+	CityInstances.Reset();
+	CityNearCentre = FVector(1.0e30, 0.0, 0.0);
 	CityActiveTowns.Reset();
 	CityCentreLocal = FVector(1.0e30, 0.0, 0.0);
 }
@@ -990,9 +1009,7 @@ void APlanetBody::UpdateCities(const FVector& ViewLoc, float DeltaTime)
 				Buildings->SetUsingAbsoluteScale(true);		// the root carries the sphere's scale; instances are planet-local cm
 				Buildings->SetMobility(EComponentMobility::Movable);
 				Buildings->SetStaticMesh(LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube")));
-				Buildings->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-				Buildings->SetCollisionProfileName(TEXT("BlockAll"));
-				Buildings->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Block);		// the crew's boots
+				Buildings->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 				Buildings->SetGenerateOverlapEvents(false);
 				Buildings->CastShadow = true;
 				Buildings->bAffectDistanceFieldLighting = false;
@@ -1004,6 +1021,19 @@ void APlanetBody::UpdateCities(const FVector& ViewLoc, float DeltaTime)
 					Buildings->SetMaterial(0, BuildingMID);
 				}
 				Buildings->RegisterComponent();
+				BuildingsNear = NewObject<UHierarchicalInstancedStaticMeshComponent>(this, TEXT("BuildingsNear"));
+				BuildingsNear->SetupAttachment(GetRootComponent());
+				BuildingsNear->SetUsingAbsoluteScale(true);
+				BuildingsNear->SetMobility(EComponentMobility::Movable);
+				BuildingsNear->SetStaticMesh(Buildings->GetStaticMesh());
+				BuildingsNear->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+				BuildingsNear->SetCollisionProfileName(TEXT("BlockAll"));
+				BuildingsNear->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Block);		// the crew's boots
+				BuildingsNear->SetGenerateOverlapEvents(false);
+				BuildingsNear->SetVisibility(false);		// collision only: the visual copy is in Buildings
+				BuildingsNear->SetHiddenInGame(true);
+				BuildingsNear->CastShadow = false;
+				BuildingsNear->RegisterComponent();
 			}
 			if (CityPending->Towns.Difference(CityActiveTowns).Num() > 0 || CityActiveTowns.Difference(CityPending->Towns).Num() > 0)
 			{
@@ -1021,7 +1051,9 @@ void APlanetBody::UpdateCities(const FVector& ViewLoc, float DeltaTime)
 					Buildings->MarkRenderStateDirty();
 				}
 				CityActiveTowns = CityPending->Towns;
-				UE_LOG(LogTemp, Log, TEXT("%s: %d towns, %d buildings within %.0f km"), *GetDisplayName(), CityPending->TownCount, CityPending->Instances.Num(), CityReachKm);
+				CityInstances = MoveTemp(CityPending->Instances);
+				UpdateNearCollision(Body ? Body->GetComponentTransform().InverseTransformPosition(ViewLoc) * Body->GetComponentScale() : ViewLoc - GetActorLocation(), true);
+				UE_LOG(LogTemp, Log, TEXT("%s: %d towns, %d buildings within %.0f km"), *GetDisplayName(), CityPending->TownCount, CityInstances.Num(), CityReachKm);
 			}
 		}
 		CityPending.Reset();
@@ -1035,7 +1067,9 @@ void APlanetBody::UpdateCities(const FVector& ViewLoc, float DeltaTime)
 	if (CityTimer > 0.f || CityFuture.IsValid()) { return; }
 	CityTimer = 0.7f;
 	if (!HasCities()) { return; }
-	const FVector Local = Body ? Body->GetComponentTransform().InverseTransformPosition(ViewLoc) : ViewLoc - GetActorLocation();
+	// The root carries the sphere's scale: back to planet-local centimetres.
+	const FVector Local = Body ? Body->GetComponentTransform().InverseTransformPosition(ViewLoc) * Body->GetComponentScale() : ViewLoc - GetActorLocation();
+	UpdateNearCollision(Local, false);
 	const double AltitudeCm = Local.Size() - GetRadiusCm();
 	if (AltitudeCm > CityReachKm * 100000.0 * 4.0)
 	{
@@ -1058,8 +1092,8 @@ void APlanetBody::UpdateCities(const FVector& ViewLoc, float DeltaTime)
 		for (const FTownSite& T : Towns)
 		{
 			Res->Towns.Add(T.Seed);
-			if (Res->Instances.Num() > 60000) { break; }
-			SlonkCities::BuildTown(P, T, Res->Instances, 5000);
+			if (Res->Instances.Num() > 100000) { break; }
+			SlonkCities::BuildTown(P, T, Res->Instances, 7000);
 		}
 	});
 }

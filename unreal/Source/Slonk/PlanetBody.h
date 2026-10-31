@@ -493,6 +493,12 @@ private:
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> CloudMID;
 	UPROPERTY() TObjectPtr<UTexture2D> WeatherMap;
 	UPROPERTY() TObjectPtr<UHierarchicalInstancedStaticMeshComponent> Buildings;
+	/** The few hundred buildings around the view carry collision; the planet turns every tick and a body per
+	 *  instance across the whole town set cost 300 ms a frame in the physics scene. */
+	UPROPERTY() TObjectPtr<UHierarchicalInstancedStaticMeshComponent> BuildingsNear;
+	TArray<FTransform> CityInstances;
+	FVector CityNearCentre = FVector(1.0e30, 0.0, 0.0);
+	void UpdateNearCollision(const FVector& ViewLocal, bool bForce);
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> BuildingMID;
 	struct FCityBuild { TSet<uint32> Towns; TArray<FTransform> Instances; int32 TownCount = 0; };
 	TSharedPtr<FCityBuild, ESPMode::ThreadSafe> CityPending;
