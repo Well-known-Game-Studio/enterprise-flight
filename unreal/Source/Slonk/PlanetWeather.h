@@ -17,6 +17,10 @@ struct FPlanetWeatherSpec
 	float Fronts = 0.5f;
 	/** Scale of the cell field relative to the masses (60 puts the cells at 100 to 200 km on an Earth). */
 	float CellScale = 60.f;
+	/** 1 for a giant: zones and belts by latitude with festoons and storm ovals; B is then zone (1) against belt (0). */
+	float Zonal = 0.f;
+	/** Band frequency for a zonal map (the style's BandScale). */
+	float BandScale = 14.f;
 };
 
 namespace SlonkWeather

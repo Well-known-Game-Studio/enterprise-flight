@@ -220,6 +220,11 @@ void AStarshipHUD::DrawHUD()
 			{
 				DrawText(FString::Printf(TEXT("TERRAIN FOLLOW  %s   hover %s   ground %s above sea   (PgUp/PgDn height)"), *GroundName.ToUpper(), *FormatDistance(Movement->HoverAltitudeCm), *FormatDistance(Movement->GroundHeightCm)), Accent, X, Y, Font, UIScale); Y += Line;
 			}
+			else if (const APlanetBody* Giant = Cast<APlanetBody>(Movement->GroundBody.Get()); Giant && Giant->IsGiant() && Movement->AltitudeAGLCm < 1.0e8)
+			{
+				const float Bar = Giant->PressureBarAt(Movement->AltitudeAGLCm);
+				DrawText(FString::Printf(TEXT("ALTITUDE %s above the cloud deck   %.2f bar   %s   no surface%s"), *FormatDistance(Movement->AltitudeAGLCm), Bar, *GroundName.ToUpper(), Bar > 3.f ? TEXT("   HULL STRESS") : TEXT("")), Bar > 3.f ? Accent : Dim, X, Y, Font, UIScale); Y += Line;
+			}
 			else if (Movement->AltitudeAGLCm < 1.0e8)
 			{
 				DrawText(FString::Printf(TEXT("ALTITUDE %s above ground   ground %s above sea   %s"), *FormatDistance(Movement->AltitudeAGLCm), *FormatDistance(Movement->GroundHeightCm), *GroundName.ToUpper()), Dim, X, Y, Font, UIScale); Y += Line;

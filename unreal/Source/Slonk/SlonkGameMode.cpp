@@ -88,11 +88,35 @@ void ASlonkGameMode::SpawnStarSystems()
 	if (!World) { return; }
 	FSlonkScopeTimer Timer(TEXT("ASlonkGameMode::SpawnStarSystems"));
 	AStarSystem* Home = AStarSystem::CreateHome(World, HomeSystemName);
+	if (Home && bSpawnHomeGiant) { SpawnHomeGiant(Home); }
 	const FVector HomeStar = Home ? Home->GetStarLocation() : FVector::ZeroVector;
 	for (const FStarSystemSpec& Spec : StarSystems)
 	{
 		AStarSystem::Generate(World, Spec, HomeStar);
 	}
+}
+
+void ASlonkGameMode::SpawnHomeGiant(AStarSystem* Home)
+{
+	UWorld* World = GetWorld();
+	if (!World || !Home) { return; }
+	for (TActorIterator<APlanetBody> It(World); It; ++It)
+	{
+		if (It->Archetype == EPlanetArchetype::GasGiant && It->RadiusKm > 30000.f) { return; }		// the level already has a big one
+	}
+	const double A = FMath::DegreesToRadians((double)HomeGiantBearingDeg);
+	const FVector Loc = Home->GetStarLocation() + FVector(FMath::Cos(A), FMath::Sin(A), 0.0) * (HomeGiantOrbitAu * AStarSystem::AuCm);
+	APlanetBody* P = World->SpawnActorDeferred<APlanetBody>(APlanetBody::StaticClass(), FTransform(Loc), nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (!P) { return; }
+	P->Archetype = EPlanetArchetype::GasGiant; P->RadiusKm = HomeGiantRadiusKm;
+	P->PaletteFamily = 0.2f;			// Jovian: cream, rust and orange belts, white zones
+	P->bShowcaseMoons = true;
+	P->SeedLocation = Loc; P->bSeedLocationSet = true;
+	P->FinishSpawning(FTransform(Loc));
+	Home->Adopt(P);
+	Home->Planets.Add(P);
+	Home->NameUnnamedWorlds();
+	UE_LOG(LogTemp, Log, TEXT("Home giant %s: %.0f km at %.1f AU"), *P->GetDisplayName(), P->RadiusKm, HomeGiantOrbitAu);
 }
 
 void ASlonkGameMode::SpawnShowcaseMoons()
@@ -104,7 +128,7 @@ void ASlonkGameMode::SpawnShowcaseMoons()
 	TArray<APlanetBody*> Giants;
 	for (TActorIterator<APlanetBody> It(World); It; ++It)
 	{
-		if (It->Style.bRings && (It->ResolvedArchetype == EPlanetArchetype::GasGiant || It->ResolvedArchetype == EPlanetArchetype::IceGiant)) { Giants.Add(*It); }
+		if ((It->Style.bRings || It->bShowcaseMoons) && It->IsGiant()) { Giants.Add(*It); }
 	}
 	int32 N = 0;
 	for (APlanetBody* G : Giants)
@@ -239,7 +263,7 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 	double BestRadii = TNumericLimits<double>::Max();
 	for (TActorIterator<APlanetBody> It(World); It; ++It)
 	{
-		if (!It->Style.bAtmosphere || It->RadiusKm > 10000.f)
+		if (!It->Style.bAtmosphere)
 		{
 			continue;
 		}
@@ -475,6 +499,7 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 		{
 			VolumetricCloud->SetVisibility(bVolumetric);
 		}
+		if (!bVolumetric) { AtmospherePlanet->SetLayerReachKm(1.0e9f); }
 		AtmospherePlanet->SetCloudShellFade(Shell);
 		if (bVolumetric && CloudMID)
 		{
@@ -490,6 +515,13 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 			CloudMID->SetVectorParameterValue(TEXT("PlanetAxisZ"), FLinearColor(AZ.X, AZ.Y, AZ.Z, 0.f));
 			const float WeatherIn = AtmospherePlanet->GetWeatherStrength();
 			CloudMID->SetScalarParameterValue(TEXT("WeatherStrength"), WeatherIn);
+			// Giants: the layer's albedo by zone and belt from the map and darker with depth; other worlds keep one colour.
+			const bool bGiant = AtmospherePlanet->IsGiant();
+			CloudMID->SetScalarParameterValue(TEXT("BandTint"), bGiant ? WeatherIn : 0.f);
+			CloudMID->SetVectorParameterValue(TEXT("ZoneColor"), S.MountainColor);
+			CloudMID->SetVectorParameterValue(TEXT("BeltColor"), S.OceanColor);
+			// Beyond the layer's reach the shell covers the rest of the disc (on a giant the horizon is thousands of km off).
+			AtmospherePlanet->SetLayerReachKm((VolumetricCloudRangeKm + VolumetricCloudFadeKm) * 1.8f);
 			// With the map in, its masses carry the coverage: the bias sits at a scattered sky and the map pushes it
 			// to a deck inside a mass and clear air outside; without it the style's bias sets a uniform sky.
 			const float StyleBias = S.CloudCoverage * 1.2f - 0.7f + S.CloudDeck * 0.3f;
@@ -543,7 +575,18 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 			// Rays may start as far off as the hand-over band's outer edge plus the way round to the limb, and run
 			// a long way inside the layer at grazing angles from up there.
 			VolumetricCloud->SetTracingStartMaxDistance((VolumetricCloudRangeKm + VolumetricCloudFadeKm) * 3.f);
-			VolumetricCloud->SetTracingMaxDistance(150.f);
+			// A giant's deck is seen at grazing angles for hundreds of km before the horizon.
+			const bool bGiantLayer = AtmospherePlanet->IsGiant();
+			VolumetricCloud->SetTracingMaxDistance(bGiantLayer ? 400.f : 150.f);
+			if (CloudMID)
+			{
+				// The engine material's shape noises are sized for Earth cumulus; a giant's cells are ten times the size.
+				const float K = bGiantLayer ? 0.1f : 1.f;
+				CloudMID->SetVectorParameterValue(TEXT("Noise1_Coordinates"), FLinearColor(4.167f * K, 4.444f * K, 9.091f * K, 7.f));
+				CloudMID->SetVectorParameterValue(TEXT("Noise2_Coordinates"), FLinearColor(60.f * K, 60.f * K, 75.f * K, -6.f));
+				CloudMID->SetVectorParameterValue(TEXT("Noise3_Coordinates"), FLinearColor(30.f * K, 40.f * K, 25.f * K, 8.f));
+				CloudMID->SetScalarParameterValue(TEXT("DeepTint"), 0.75f);
+			}
 			if (CloudMID)
 			{
 				CloudMID->SetScalarParameterValue(TEXT("Coverage"), S.CloudCoverage);
