@@ -148,7 +148,7 @@ void SlonkCities::EnumerateTowns(const FPlanetTerrainParams& P, const FVector& C
 	UE_LOG(LogTemp, Verbose, TEXT("EnumerateTowns: %d cities, %d sites within %.0f km (water %d, dry %d, high %d, steep %d)"), Cities.Num(), Out.Num(), ReachCm / 1e5, NWater, NDry, NHigh, NSteep);
 }
 
-void SlonkCities::BuildTown(const FPlanetTerrainParams& P, const FTownSite& Town, TArray<FTransform>& Out, int32 MaxBuildings)
+void SlonkCities::BuildTown(const FPlanetTerrainParams& P, const FTownSite& Town, TArray<FTransform>* OutByKind, int32 MaxBuildings)
 {
 	const double R = P.RadiusCm;
 	const FVector Up = Town.Dir;
@@ -171,7 +171,7 @@ void SlonkCities::BuildTown(const FPlanetTerrainParams& P, const FTownSite& Town
 		const FPlanetTerrainSample S0 = SlonkTerrain::Sample(P, Up, 400.0);
 		if (!S0.bWater)
 		{
-			Out.Emplace(Base, Up * (R + S0.HeightCm - 150.0 + 100.0), FVector(90.0, 90.0, 2.0));
+			OutByKind[(int32)EBuildingKind::Block].Emplace(Base, Up * (R + S0.HeightCm - 150.0 + 100.0), FVector(90.0, 90.0, 2.0));
 			++Count;
 		}
 	}
@@ -191,15 +191,19 @@ void SlonkCities::BuildTown(const FPlanetTerrainParams& P, const FTownSite& Town
 		const FVector Dir = (Town.LocalCm + Flat).GetSafeNormal();
 		const FPlanetTerrainSample S = SlonkTerrain::Sample(P, Dir, 400.0);
 		if (S.bWater) { continue; }
-		const double W = Pitch * (0.5 + 0.4 * Hash01(Mix(H, 7u)));
-		const double Dp = Pitch * (0.5 + 0.4 * Hash01(Mix(H, 9u)));
+		double W = Pitch * (0.5 + 0.4 * Hash01(Mix(H, 7u)));
+		double Dp = Pitch * (0.5 + 0.4 * Hash01(Mix(H, 9u)));
 		// Towers in the middle of a strong town, houses at the edge of a weak one.
 		const double Core = FMath::Square(1.0 - D2) * Town.Strength;
 		const double Hgt = (500.0 + 15000.0 * Core * Core + 2500.0 * Core) * (0.5 + 1.0 * Hash01(Mix(H, 13u)));
 		const double Sink = 150.0;
+		// The shape: tall ones are tiered towers (square in plan), low ones at the edge pitched-roof houses, the rest blocks.
+		EBuildingKind Kind = EBuildingKind::Block;
+		if (Hgt > 4500.0) { Kind = EBuildingKind::Tower; W = Dp = FMath::Max(W, Dp); }
+		else if (Hgt < 1400.0 && Hash01(Mix(H, 19u)) < 0.7) { Kind = EBuildingKind::House; }
 		const FVector Loc = Dir * (R + S.HeightCm - Sink + Hgt * 0.5);
 		const FQuat Rot = FRotationMatrix::MakeFromZX(Dir, GX - Dir * FVector::DotProduct(GX, Dir)).ToQuat();
-		Out.Emplace(Rot, Loc, FVector(W / 100.0, Dp / 100.0, (Hgt + Sink) / 100.0));
+		OutByKind[(int32)Kind].Emplace(Rot, Loc, FVector(W / 100.0, Dp / 100.0, (Hgt + Sink) / 100.0));
 		++Count;
 	}
 }

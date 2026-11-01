@@ -6,6 +6,7 @@
 
 #include "CoreMinimal.h"
 #include "PlanetTerrain.h"
+#include "BuildingMeshes.h"
 
 struct FTownSite
 {
@@ -31,6 +32,6 @@ namespace SlonkCities
 	double TownRadiusCm(float Strength);
 	/** Cities at the cluster points and towns at the town points outside them, within ReachCm of a planet-local point that stand on land the shader would light: level, wet, low, dry-shod. */
 	void EnumerateTowns(const FPlanetTerrainParams& P, const FVector& CentreLocalCm, double ReachCm, TArray<FTownSite>& Out, int32 MaxTowns = 300);
-	/** Building transforms for a town (planet-local, for a 1 m cube: scale is the building's size in metres). Safe off the game thread. */
-	void BuildTown(const FPlanetTerrainParams& P, const FTownSite& Town, TArray<FTransform>& Out, int32 MaxBuildings = 2500);
+	/** Building transforms for a town by kind (planet-local, for a 1 m unit mesh: scale is the building's size in metres). Safe off the game thread. */
+	void BuildTown(const FPlanetTerrainParams& P, const FTownSite& Town, TArray<FTransform>* OutByKind, int32 MaxBuildings = 2500);
 }

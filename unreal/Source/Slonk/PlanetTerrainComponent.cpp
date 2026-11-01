@@ -463,7 +463,8 @@ bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& Ne
 		{
 			// Daylight preferred, not required.
 			const double Lit = SunDirLocal.IsNearlyZero() ? 0.0 : (FVector::DotProduct(T.Dir, SunDirLocal.GetSafeNormal()) < 0.26 ? -20.0 : 0.0);
-			const double Score = T.Strength * 10.0 - FVector::Dist(T.LocalCm, Centre) / 6.0e7 * 3.0 + Lit;
+			// Cities first, then the big ones, near ones, lit ones, and the temperate latitudes over the snow.
+			const double Score = (T.bCity ? 6.0 : 0.0) + T.Strength * 10.0 - FVector::Dist(T.LocalCm, Centre) / 6.0e7 * 3.0 + Lit - FMath::Max(0.0, FMath::Abs(T.Dir.Z) - 0.5) * 12.0;
 			if (Score > BestScore) { BestScore = Score; Best = &T; }
 		}
 		if (!Best) { return false; }

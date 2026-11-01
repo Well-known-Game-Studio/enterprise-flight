@@ -2,6 +2,7 @@
 #include "PlanetTerrainComponent.h"
 #include "PlanetWeather.h"
 #include "PlanetCities.h"
+#include "BuildingMeshes.h"
 #include "Async/Async.h"
 #include "SlonkTiming.h"
 
@@ -986,7 +987,7 @@ void APlanetBody::UpdateNearCollision(const FVector& ViewLocal, bool bForce)
 
 void APlanetBody::ClearCities()
 {
-	if (Buildings && Buildings->GetInstanceCount() > 0) { Buildings->ClearInstances(); }
+	for (UHierarchicalInstancedStaticMeshComponent* H : BuildingSets) { if (H && H->GetInstanceCount() > 0) { H->ClearInstances(); } }
 	if (BuildingsNear && BuildingsNear->GetInstanceCount() > 0) { BuildingsNear->ClearInstances(); }
 	CityInstances.Reset();
 	CityNearCentre = FVector(1.0e30, 0.0, 0.0);
@@ -1002,30 +1003,34 @@ void APlanetBody::UpdateCities(const FVector& ViewLoc, float DeltaTime)
 		CityFuture = TFuture<void>();
 		if (CityPending.IsValid())
 		{
-			if (!Buildings)
+			if (BuildingSets.Num() == 0)
 			{
-				Buildings = NewObject<UHierarchicalInstancedStaticMeshComponent>(this, TEXT("Buildings"));
-				Buildings->SetupAttachment(GetRootComponent());
-				Buildings->SetUsingAbsoluteScale(true);		// the root carries the sphere's scale; instances are planet-local cm
-				Buildings->SetMobility(EComponentMobility::Movable);
-				Buildings->SetStaticMesh(LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube")));
-				Buildings->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-				Buildings->SetGenerateOverlapEvents(false);
-				Buildings->CastShadow = true;
-				Buildings->bAffectDistanceFieldLighting = false;
-				Buildings->SetCullDistances(0, (int32)(CityReachKm * 100000.f));
-				Buildings->NumCustomDataFloats = 3;		// the building's size in metres, for the window grid
 				if (UMaterialInterface* Mat = SlonkMaterials::LoadOrFallback(BuildingMaterial, TEXT("Building"), false))
 				{
 					BuildingMID = UMaterialInstanceDynamic::Create(Mat, this);
-					Buildings->SetMaterial(0, BuildingMID);
 				}
-				Buildings->RegisterComponent();
+				for (int32 K = 0; K < (int32)EBuildingKind::Count; ++K)
+				{
+					UHierarchicalInstancedStaticMeshComponent* H = NewObject<UHierarchicalInstancedStaticMeshComponent>(this, *FString::Printf(TEXT("Buildings%d"), K));
+					H->SetupAttachment(GetRootComponent());
+					H->SetUsingAbsoluteScale(true);		// the root carries the sphere's scale; instances are planet-local cm
+					H->SetMobility(EComponentMobility::Movable);
+					H->SetStaticMesh(SlonkBuildings::GetMesh((EBuildingKind)K));
+					H->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+					H->SetGenerateOverlapEvents(false);
+					H->CastShadow = true;
+					H->bAffectDistanceFieldLighting = false;
+					H->SetCullDistances(0, (int32)(CityReachKm * 100000.f));
+					H->NumCustomDataFloats = 3;		// the building's size in metres, for the window grid
+					if (BuildingMID) { H->SetMaterial(0, BuildingMID); }
+					H->RegisterComponent();
+					BuildingSets.Add(H);
+				}
 				BuildingsNear = NewObject<UHierarchicalInstancedStaticMeshComponent>(this, TEXT("BuildingsNear"));
 				BuildingsNear->SetupAttachment(GetRootComponent());
 				BuildingsNear->SetUsingAbsoluteScale(true);
 				BuildingsNear->SetMobility(EComponentMobility::Movable);
-				BuildingsNear->SetStaticMesh(Buildings->GetStaticMesh());
+				BuildingsNear->SetStaticMesh(SlonkBuildings::GetMesh(EBuildingKind::Block));
 				BuildingsNear->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 				BuildingsNear->SetCollisionProfileName(TEXT("BlockAll"));
 				BuildingsNear->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Block);		// the crew's boots
@@ -1037,21 +1042,27 @@ void APlanetBody::UpdateCities(const FVector& ViewLoc, float DeltaTime)
 			}
 			if (CityPending->Towns.Difference(CityActiveTowns).Num() > 0 || CityActiveTowns.Difference(CityPending->Towns).Num() > 0)
 			{
-				Buildings->ClearInstances();
-				if (CityPending->Instances.Num() > 0)
+				CityInstances.Reset();
+				for (int32 K = 0; K < BuildingSets.Num(); ++K)
 				{
-					Buildings->AddInstances(CityPending->Instances, false, false);
-					for (int32 i = 0; i < CityPending->Instances.Num(); ++i)
+					UHierarchicalInstancedStaticMeshComponent* H = BuildingSets[K];
+					const TArray<FTransform>& Inst = CityPending->Instances[K];
+					H->ClearInstances();
+					if (Inst.Num() > 0)
 					{
-						const FVector Sc = CityPending->Instances[i].GetScale3D();
-						Buildings->SetCustomDataValue(i, 0, (float)Sc.X, false);
-						Buildings->SetCustomDataValue(i, 1, (float)Sc.Y, false);
-						Buildings->SetCustomDataValue(i, 2, (float)Sc.Z, false);
+						H->AddInstances(Inst, false, false);
+						for (int32 i = 0; i < Inst.Num(); ++i)
+						{
+							const FVector Sc = Inst[i].GetScale3D();
+							H->SetCustomDataValue(i, 0, (float)Sc.X, false);
+							H->SetCustomDataValue(i, 1, (float)Sc.Y, false);
+							H->SetCustomDataValue(i, 2, (float)Sc.Z, false);
+						}
+						H->MarkRenderStateDirty();
 					}
-					Buildings->MarkRenderStateDirty();
+					CityInstances.Append(Inst);
 				}
 				CityActiveTowns = CityPending->Towns;
-				CityInstances = MoveTemp(CityPending->Instances);
 				UpdateNearCollision(Body ? Body->GetComponentTransform().InverseTransformPosition(ViewLoc) * Body->GetComponentScale() : ViewLoc - GetActorLocation(), true);
 				UE_LOG(LogTemp, Log, TEXT("%s: %d towns, %d buildings within %.0f km"), *GetDisplayName(), CityPending->TownCount, CityInstances.Num(), CityReachKm);
 			}
@@ -1092,7 +1103,7 @@ void APlanetBody::UpdateCities(const FVector& ViewLoc, float DeltaTime)
 		for (const FTownSite& T : Towns)
 		{
 			Res->Towns.Add(T.Seed);
-			if (Res->Instances.Num() > 100000) { break; }
+			if (Res->Instances[0].Num() + Res->Instances[1].Num() + Res->Instances[2].Num() > 100000) { break; }
 			SlonkCities::BuildTown(P, T, Res->Instances, 7000);
 		}
 	});
