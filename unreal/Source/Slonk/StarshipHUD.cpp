@@ -257,6 +257,10 @@ void AStarshipHUD::DrawHUD()
 				if (Hi - Lo > 0.02f || (Ship->Systems && Ship->Systems->GetReinforcedFacing() >= 0)) { Facings = FString::Printf(TEXT("  F%d A%d P%d S%d"), Pct[0], Pct[1], Pct[2], Pct[3]); }
 			}
 			DrawText(FString::Printf(TEXT("SHIELDS %3.0f%%%s%s   HULL %3.0f%%%s"), SF * 100.f, SF <= 0.f ? TEXT(" DOWN") : TEXT(""), *Facings, Ship->GetHullFraction() * 100.f, *Alert), ShieldColor, X, Y, Font, UIScale); Y += Line;
+			if (Ship->Systems && !Ship->Systems->CaptainHasConn())
+			{
+				DrawText(FString::Printf(TEXT("CONN     %s has the conn"), *Ship->Systems->ConnName()), Accent, X, Y, Font, UIScale); Y += Line;
+			}
 			if (Ship->Systems)
 			{
 				// Damaged systems, one line, only when something is hurt.
@@ -405,6 +409,30 @@ void AStarshipHUD::DrawPersonHUD(const APersonPawn* Person, UFont* Font, UFont* 
 	float X = 32.f * UIScale;
 	float Y = 32.f * UIScale;
 	const AStarshipPawn* Craft = Person->Craft.Get();
+	if (Person->IsAboard())
+	{
+		// Walking the decks: where we are, who has the ship, how she is, and what F does here.
+		DrawText(FString::Printf(TEXT("ABOARD   %s"), Craft ? *Craft->GetCraftName().ToUpper() : TEXT("")), Accent, X, Y, Font, UIScale); Y += Line * 1.4f;
+		DrawText(FString::Printf(TEXT("%s   DECK %s"), *UShipInteriorComponent::RoomName(Person->GetRoom()).ToUpper(), *UShipInteriorComponent::DeckOf(Person->GetRoom())), Accent, X, Y, Font, UIScale); Y += Line;
+		if (Craft && Craft->Systems)
+		{
+			DrawText(FString::Printf(TEXT("CONN     %s has the conn"), *Craft->Systems->ConnName()), Dim, X, Y, Font, UIScale); Y += Line;
+			const float SF = Craft->GetShieldFraction();
+			const EAlertState A = Craft->Systems->GetAlert();
+			const FString AlertText = A != EAlertState::Green ? FString::Printf(TEXT("   %s"), *UShipSystemsComponent::AlertName(A)) : FString();
+			DrawText(FString::Printf(TEXT("SHIELDS %3.0f%%   HULL %3.0f%%   %s%s"), SF * 100.f, Craft->GetHullFraction() * 100.f, *FormatSpeed(Craft->Movement ? Craft->Movement->GetSpeed() : 0.0), *AlertText), A == EAlertState::Red ? FLinearColor(1.f, 0.3f, 0.25f) : (A == EAlertState::Yellow ? FLinearColor(1.f, 0.75f, 0.3f) : Dim), X, Y, Font, UIScale); Y += Line;
+		}
+		const FString Hint = Person->UseHint();
+		if (!Hint.IsEmpty()) { DrawText(Hint, Hint.StartsWith(TEXT("F ")) ? Accent : Dim, X, Y, Font, UIScale); Y += Line; }
+		Y += Line * 0.4f;
+		DrawText(TEXT("W A S D walk   Shift run   Q E turn   F use"), Dim, X, Y, SmallFont, UIScale); Y += Line;
+		DrawText(TEXT(",  engineering    .  tactical    ;  sickbay    '  systems display"), Dim, X, Y, SmallFont, UIScale); Y += Line;
+		const float RX = Canvas->ClipX - 330.f * UIScale;
+		float RY = 32.f * UIScale;
+		DrawText(TEXT("CAMERA HELMET"), Accent, RX, RY, Font, UIScale); RY += Line * 1.4f;
+		if (bShowHelp) { DrawText(TEXT("Esc  menu      M  star chart      /  science log      H  controls      Tab  HUD"), Dim, RX, RY, SmallFont, UIScale); }
+		return;
+	}
 	DrawText(FString::Printf(TEXT("AWAY TEAM   %s"), Craft ? *Craft->GetCraftName().ToUpper() : TEXT("")), Accent, X, Y, Font, UIScale); Y += Line * 1.4f;
 	DrawText(Person->FrameDescription(), Accent, X, Y, Font, UIScale); Y += Line;
 
@@ -427,7 +455,13 @@ void AStarshipHUD::DrawPersonHUD(const APersonPawn* Person, UFont* Font, UFont* 
 		DrawText(TEXT("GRAVITY  none"), Dim, X, Y, Font, UIScale); Y += Line;
 	}
 	DrawText(FString::Printf(TEXT("BOOTS    %s   (B)"), Person->bBootsArmed ? (Person->Frame == EPersonFrame::Hull && Person->bGrounded ? TEXT("HOLDING") : TEXT("ARMED")) : TEXT("OFF")), Person->bBootsArmed ? Accent : Dim, X, Y, Font, UIScale); Y += Line;
-	if (Craft)
+	if (Craft && Person->bBeamedDown)
+	{
+		const double D = FVector::Dist(Person->GetActorLocation(), Craft->GetActorLocation());
+		const bool bInRange = D <= Craft->TransporterRangeCm;
+		DrawText(FString::Printf(TEXT("TRANSPORTER  ship %s   %s"), *FormatDistance(D), bInRange ? TEXT("F beams up") : TEXT("out of range")), bInRange ? Accent : Dim, X, Y, Font, UIScale); Y += Line;
+	}
+	else if (Craft)
 	{
 		const double D = Person->DistanceToAirlock();
 		const TCHAR* Hint = Person->CanBoard() ? TEXT("F boards") : TEXT("F boards from the hull or within 10 m of the hatch");

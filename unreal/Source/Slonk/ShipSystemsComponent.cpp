@@ -543,6 +543,46 @@ void UShipSystemsComponent::SetAlert(EAlertState NewAlert)
 	}
 }
 
+void UShipSystemsComponent::HandOverConn()
+{
+	if (Conn != EStation::Count) { return; }
+	for (EStation St : { EStation::Tactical, EStation::Helm, EStation::Science, EStation::Operations })
+	{
+		const FOfficer* O = OfficerAt(St);
+		if (O && O->OnDuty())
+		{
+			Conn = St;
+			Report(St, TEXT("I have the conn, Captain."), FLinearColor(1.f, 0.85f, 0.5f));
+			return;
+		}
+	}
+	// Everyone senior is in sickbay or lost: the acting helm officer holds her.
+	Conn = EStation::Helm;
+	Report(EStation::Helm, TEXT("Helm has the conn, sir."), FLinearColor(1.f, 0.85f, 0.5f));
+}
+
+void UShipSystemsComponent::TakeConn()
+{
+	if (Conn == EStation::Count) { return; }
+	const EStation Was = Conn;
+	Conn = EStation::Count;
+	Report(Was, TEXT("Captain has the conn."), FLinearColor(1.f, 0.85f, 0.5f));
+}
+
+FString UShipSystemsComponent::ConnName() const
+{
+	if (Conn == EStation::Count) { return TEXT("the captain"); }
+	const FOfficer* O = OfficerAt(Conn);
+	return O ? O->Speaker() : StationName(Conn);
+}
+
+void UShipSystemsComponent::UnderFire()
+{
+	if (Conn == EStation::Count || Alert != EAlertState::Green) { return; }
+	SetAlert(EAlertState::Yellow);
+	Report(Conn, TEXT("We're taking fire. Shields up. Captain to the bridge."), FLinearColor(1.f, 0.8f, 0.3f));
+}
+
 void UShipSystemsComponent::DivertPower(EShipSystem To)
 {
 	// 150 % to the one, the rest share the remainder of the budget (Count systems at 100 % each).

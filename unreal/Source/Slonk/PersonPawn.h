@@ -5,6 +5,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
+#include "ShipInterior.h"
 #include "PersonPawn.generated.h"
 
 class UCapsuleComponent;
@@ -25,7 +26,9 @@ enum class EPersonFrame : uint8
 	/** Within a world's reach: carried round with its spin, pulled by its gravity, the ground is the floor. */
 	Ground,
 	/** On or beside a craft: positions are kept in the craft's frame so a parked ship is solid ground. */
-	Hull
+	Hull,
+	/** Aboard, inside the ship: the deck is the floor, the walls stop you, the craft's frame is the world. */
+	Deck
 };
 
 UENUM(BlueprintType)
@@ -59,6 +62,17 @@ public:
 
 	/** F: back aboard, when on the craft's hull or within BoardRangeCm of its airlock. */
 	UFUNCTION(BlueprintCallable, Category = "Person") bool RequestBoard();
+	/** F, in general: aboard it uses what you stand at (the chair, a turbolift, the pad, the shuttle, a console);
+	 *  beamed down it beams you up; otherwise it boards. */
+	UFUNCTION(BlueprintCallable, Category = "Person") bool Use();
+	/** What F would do now, for the HUD ("F  sit down"), or empty. */
+	FString UseHint() const;
+	/** Stand aboard the ship in one of its rooms: feet at the given world transform (Z up), the ship's frame from now on. */
+	void PlaceAboard(AStarshipPawn* Ship, EShipRoom InRoom, const FTransform& FeetWorld);
+	bool IsAboard() const { return Frame == EPersonFrame::Deck; }
+	EShipRoom GetRoom() const { return Room; }
+	/** Feet on the floor: the root is HalfHeightCm up the body's axis. */
+	FVector FeetLocation() const;
 	UFUNCTION(BlueprintPure, Category = "Person") bool CanBoard() const;
 	UFUNCTION(BlueprintPure, Category = "Person") double DistanceToAirlock() const;
 
@@ -106,6 +120,10 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Person") TWeakObjectPtr<AStarshipPawn> Craft;
 	UPROPERTY(BlueprintReadOnly, Category = "Person") TWeakObjectPtr<AStarshipPawn> HullCraft;
 	UPROPERTY(BlueprintReadOnly, Category = "Person") TWeakObjectPtr<APlanetBody> GroundPlanet;
+	/** The room we stand in while aboard. */
+	UPROPERTY(BlueprintReadOnly, Category = "Person") EShipRoom Room = EShipRoom::Count;
+	/** Put down by the transporter: F beams back up while the ship is in range. */
+	UPROPERTY(BlueprintReadOnly, Category = "Person") bool bBeamedDown = false;
 	FString FrameDescription() const;
 
 	// ---- Tunables ----
@@ -162,6 +180,7 @@ private:
 	void CarryWithWorld(float DeltaTime);
 	void TickWalking(float DeltaTime);
 	void TickHull(float DeltaTime);
+	void TickDeck(float DeltaTime);
 	void TickFloating(float DeltaTime);
 	/** Integrate the pack and gravity for one tick of floating; returns the new location. */
 	FVector IntegrateFloating(float DeltaTime, const FVector& Up, bool bFeetDown);
@@ -172,7 +191,6 @@ private:
 	bool TraceSolid(const FVector& Start, const FVector& End, FHitResult& Hit) const;
 	void SetFrame(EPersonFrame NewFrame);
 	void StandOn(const FVector& Feet, const FVector& Normal, bool bSnapUp);
-	FVector FeetLocation() const;
 	FVector CraftVelocity(const AStarshipPawn* C) const;
 	double SurfaceRadiusAt(const FVector& WorldPos) const;
 
@@ -190,6 +208,7 @@ private:
 	float Zoom = 1.f;
 	bool bFigureShown = true;
 	EPersonCamera CameraMode = EPersonCamera::Third;
+	EPersonCamera CameraBeforeDeck = EPersonCamera::Third;
 	FRotator TurnRates = FRotator::ZeroRotator;
 
 	/** The person's transform in the hull craft's frame, kept between ticks while Frame == Hull. */

@@ -96,6 +96,19 @@ private:
 	void FillLog();
 };
 
+/** The turbolift: where to, from wherever the crew member stands. Opened with F at a lift door. */
+UCLASS()
+class SLONK_API UTurboliftPanel : public ULcarsPanel
+{
+	GENERATED_BODY()
+
+protected:
+	virtual void BuildContent() override;
+	virtual FString PanelTitle() const override { return TEXT("Turbolift"); }
+	virtual FLinearColor FrameColor() const override { return Lcars::Tan; }
+	virtual FVector2D PanelSize() const override { return FVector2D(760.0, 440.0); }
+};
+
 /** ; : the chief medical officer's board. The crew by condition, sickbay and its supplies, life support and the air,
  *  the senior staff and who is standing in for whom, triage, and the medical and operations reports. */
 UCLASS()

@@ -185,6 +185,19 @@ public:
 	/** The scale a system's output should have now: integrity and power together, with the alert's posture. */
 	UFUNCTION(BlueprintPure, Category = "Ship") float Effectiveness(EShipSystem System) const;
 	UFUNCTION(BlueprintPure, Category = "Ship") EAlertState GetAlert() const { return Alert; }
+
+	// ---- The conn ----
+	/** Whether the captain is in the chair; otherwise an officer holds the conn while the captain is about the ship. */
+	UFUNCTION(BlueprintPure, Category = "Ship") bool CaptainHasConn() const { return Conn == EStation::Count; }
+	EStation ConnStation() const { return Conn; }
+	/** The captain leaves the chair: the senior officer on the bridge takes the conn and says so. */
+	void HandOverConn();
+	/** The captain sits down again. */
+	void TakeConn();
+	/** "the captain", or the rank and name of whoever has the conn. */
+	FString ConnName() const;
+	/** A hit while an officer has the conn: at condition green they go to yellow, raise the shields and call the captain. */
+	void UnderFire();
 	UFUNCTION(BlueprintPure, Category = "Ship") const FShipSystemState& GetSystem(EShipSystem System) const { return Systems[(int32)System]; }
 	UFUNCTION(BlueprintPure, Category = "Ship") EShipSystem GetRepairPriority() const { return RepairPriority; }
 	const TArray<FOfficer>& GetOfficers() const { return Officers; }
@@ -235,6 +248,7 @@ public:
 private:
 	UPROPERTY() TArray<FShipSystemState> Systems;
 	EAlertState Alert = EAlertState::Green;
+	EStation Conn = EStation::Count;
 	EShipSystem RepairPriority = EShipSystem::Count;		// Count = the chief picks
 	TArray<FBridgeLogEntry> Log;
 	int32 LogRevision = 0;
