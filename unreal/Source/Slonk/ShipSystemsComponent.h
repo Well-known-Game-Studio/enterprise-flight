@@ -127,6 +127,16 @@ struct FCompartment
 	FBox Box() const { return FBox(Center - Extent, Center + Extent); }
 };
 
+/** Where a hit landed, in pawn space, for the display's flash. */
+struct FShipHitMark
+{
+	FVector Point = FVector::ZeroVector;
+	float Time = -1000.f;
+	int32 Facing = -1;
+	/** Whether any of it reached the hull, or the shield took it all. */
+	bool bThrough = false;
+};
+
 UCLASS(ClassGroup = (Slonk), meta = (BlueprintSpawnableComponent))
 class SLONK_API UShipSystemsComponent : public UActorComponent
 {
@@ -166,6 +176,9 @@ public:
 	/** A located hit: LocalPoint and LocalDir in pawn space pick the compartment, and what is in it suffers. */
 	void OnHitAt(float Applied, float ThroughShields, const FVector& LocalPoint, const FVector& LocalDir);
 	const TArray<FCompartment>& GetCompartments() const { return Compartments; }
+	/** The last few located hits, newest last; the pawn marks every one, shields or not. */
+	const TArray<FShipHitMark>& GetRecentHits() const { return RecentHits; }
+	void MarkHit(const FVector& LocalPoint, int32 Facing, bool bThrough);
 	TArray<FCompartment>& MutableCompartments() { return Compartments; }
 	/** Rebuild the compartment map from the pawn's hull anchors (called at BeginPlay; again if the hull changes). */
 	void BuildCompartments();
@@ -233,6 +246,7 @@ private:
 	float MedicalReportCooldown = 0.f, LifeSupportReportCooldown = 0.f, PendingWounded = 0.f, PendingDead = 0.f;
 	bool bPartsOutReported = false, bSuppliesOutReported = false, bAirWarned = false;
 	TArray<FCompartment> Compartments;
+	TArray<FShipHitMark> RecentHits;
 	int32 ReinforcedFacing = -1;
 	/** Break a system by Loss, with the chief's report; Where names the compartment when known. */
 	void DamageSystem(int32 Index, float Loss, const FString& Where);

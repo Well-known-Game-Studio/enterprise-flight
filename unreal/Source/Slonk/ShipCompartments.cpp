@@ -20,12 +20,13 @@ void SlonkCompartments::BuildRefit(TArray<FCompartment>& Out, float L, const FVe
 	Add(TEXT("Crew quarters"), TEXT("F-G"), EShipSystem::Count, EStation::Count, FVector(10800.f, 0.f, 1900.f) * X, FVector(3600.f, 5500.f, 300.f) * X, 0.30f);
 	Add(TEXT("Security and armoury"), TEXT("G"), EShipSystem::Count, EStation::Security, FVector(13700.f, 0.f, 1800.f) * X, FVector(900.f, 1200.f, 220.f) * X, 0.03f);
 	Add(TEXT("Sickbay"), TEXT("G"), EShipSystem::Count, EStation::Medical, FVector(6600.f, 0.f, 1900.f) * X, FVector(1500.f, 1800.f, 300.f) * X, 0.05f);
-	Add(TEXT("Impulse engineering"), TEXT("G-H"), EShipSystem::Impulse, EStation::Count, FVector(5500.f, 0.f, 1750.f) * X, FVector(900.f, 1100.f, 500.f) * X, 0.06f);
+	Add(TEXT("Impulse engineering"), TEXT("G-H"), EShipSystem::Impulse, EStation::Count, FVector(6000.f, 0.f, 1750.f) * X, FVector(900.f, 1100.f, 500.f) * X, 0.06f);
 	Add(TEXT("Phaser control"), TEXT("H"), EShipSystem::Phasers, EStation::Count, FVector(8300.f, 0.f, 1350.f) * X, FVector(1300.f, 1300.f, 280.f) * X, 0.03f);
 	Add(TEXT("Sensor bay"), TEXT("J"), EShipSystem::Sensors, EStation::Count, FVector(8000.f, 0.f, 720.f) * X, FVector(800.f, 800.f, 330.f) * X, 0.02f);
-	// Neck.
-	Add(TEXT("Shield generators"), TEXT("Dorsal I-K"), EShipSystem::Shields, EStation::Count, FVector(2700.f, 0.f, 600.f) * X, FVector(900.f, 500.f, 450.f) * X, 0.03f);
-	Add(TEXT("Torpedo bay"), TEXT("Dorsal L-M"), EShipSystem::Torpedoes, EStation::Count, FVector(Tube.X - 300.f * X, 0.f, Tube.Z), FVector(1100.f, 650.f, 450.f) * X, 0.04f);
+	// The saucer's rear and the neck: the shield generators under the saucer where it meets the neck, the torpedo bay
+	// running back along the neck behind the tubes, so in plan the two read one behind the other rather than stacked.
+	Add(TEXT("Shield generators"), TEXT("I-K"), EShipSystem::Shields, EStation::Count, FVector(4400.f, 0.f, 1000.f) * X, FVector(700.f, 900.f, 450.f) * X, 0.03f);
+	Add(TEXT("Torpedo bay"), TEXT("Dorsal L-M"), EShipSystem::Torpedoes, EStation::Count, FVector(Tube.X - 800.f * X, 0.f, Tube.Z), FVector(1300.f, 650.f, 450.f) * X, 0.04f);
 	// Secondary hull, fore to aft.
 	Add(TEXT("Deflector"), TEXT("R"), EShipSystem::Sensors, EStation::Count, FVector(3900.f, 0.f, -2200.f) * X, FVector(700.f, 1100.f, 800.f) * X, 0.02f);
 	Add(TEXT("Environmental control"), TEXT("R"), EShipSystem::LifeSupport, EStation::Count, FVector(1900.f, 0.f, -2700.f) * X, FVector(1000.f, 900.f, 500.f) * X, 0.04f);

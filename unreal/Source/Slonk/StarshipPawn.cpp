@@ -30,6 +30,7 @@
 #include "LcarsPanels.h"
 #include "StarChartPanel.h"
 #include "MsdPanel.h"
+#include "Kismet/GameplayStatics.h"
 #include "Rendering/PositionVertexBuffer.h"
 #include "StaticMeshResources.h"
 #include "Engine/DamageEvents.h"
@@ -1214,7 +1215,11 @@ void AStarshipPawn::HandleCollision(const FHitResult& Hit)
 
 int32 AStarshipPawn::ShieldFacingOf(const FVector& WorldPoint) const
 {
-	const FVector L = GetActorTransform().InverseTransformPosition(WorldPoint);
+	return ShieldFacingOfLocal(GetActorTransform().InverseTransformPosition(WorldPoint));
+}
+
+int32 AStarshipPawn::ShieldFacingOfLocal(const FVector& L) const
+{
 	// The hull is long: a point counts as fore or aft only when it is clearly ahead of or behind the beam.
 	const double Fx = L.X / FMath::Max(GetShipLengthCm() * 0.5, 1.0), Fy = L.Y / FMath::Max(ShipWidthMeters * 50.0, 1.0);
 	return FMath::Abs(Fx) >= FMath::Abs(Fy) ? (Fx >= 0.0 ? 0 : 1) : (Fy >= 0.0 ? 3 : 2);
@@ -1237,8 +1242,22 @@ float AStarshipPawn::TakeDamage(float DamageAmount, const FDamageEvent& DamageEv
 	}
 	else if (DamageEvent.IsOfType(FRadialDamageEvent::ClassID))
 	{
-		Point = static_cast<const FRadialDamageEvent&>(DamageEvent).Origin;
-		Dir = (GetActorLocation() - Point).GetSafeNormal(); bLocated = true;
+		// The origin is the blast, somewhere off the hull: it gives the direction, but the mark and the compartment
+		// belong where the blast reached us, the trace's contact when the engine found one, else the origin pulled
+		// into the hull's box.
+		const FRadialDamageEvent& RE = static_cast<const FRadialDamageEvent&>(DamageEvent);
+		Dir = (GetActorLocation() - RE.Origin).GetSafeNormal(); bLocated = true;
+		Point = RE.Origin;
+		bool bContact = false;
+		// (the engine fakes a hit at the component's centre when its trace found nothing: only a real blocking hit counts)
+		for (const FHitResult& H : RE.ComponentHits) { if (H.bBlockingHit && H.GetActor() == this && !H.ImpactPoint.IsNearlyZero()) { Point = H.ImpactPoint; bContact = true; break; } }
+		if (!bContact)
+		{
+			const FTransform& T = GetActorTransform();
+			const FVector Ext(GetShipLengthCm() * 0.5f, ShipWidthMeters * 50.f, ShipHeightMeters * 50.f);
+			const FVector L = T.InverseTransformPosition(RE.Origin);
+			Point = T.TransformPosition(FVector(FMath::Clamp(L.X, -Ext.X, Ext.X), FMath::Clamp(L.Y, -Ext.Y, Ext.Y), FMath::Clamp(L.Z, -Ext.Z, Ext.Z)));
+		}
 	}
 	else if (DamageCauser)
 	{
@@ -1268,7 +1287,13 @@ float AStarshipPawn::TakeDamage(float DamageAmount, const FDamageEvent& DamageEv
 	HullIntegrity = FMath::Max(HullIntegrity - (Applied - Absorbed) * 0.5f, 1.f);
 	if (Systems)
 	{
-		if (bLocated) { const FTransform& T = GetActorTransform(); Systems->OnHitAt(Applied, Applied - Absorbed, T.InverseTransformPosition(Point), T.InverseTransformVectorNoScale(Dir)); }
+		if (bLocated)
+		{
+			const FTransform& T = GetActorTransform();
+			const FVector LocalPoint = T.InverseTransformPosition(Point);
+			Systems->MarkHit(LocalPoint, ShieldFacingOf(Point), Applied - Absorbed > 0.f);
+			Systems->OnHitAt(Applied, Applied - Absorbed, LocalPoint, T.InverseTransformVectorNoScale(Dir));
+		}
 		else { Systems->OnHit(Applied, Applied - Absorbed); }
 	}
 	ShieldRechargeTimer = ShieldRechargeDelay;
@@ -2042,6 +2067,21 @@ void AStarshipPawn::ProcessDebugCommand()
 		E.HitInfo.ImpactPoint = GetActorLocation() + GetActorRightVector() * ShipWidthMeters * 60.f;
 		TakeDamage(Arg(1, 15.f), E, nullptr, nullptr);
 	}
+	else if (Op == TEXT("hitblast"))
+	{
+		// Test: hitblast <x> <y> <z> [damage]: a radial damage event with its origin at a pawn-space point, as a torpedo
+		// bursting off the hull delivers; no contact in it, so the mark must be placed by the hull's box.
+		// The engine's radial damage, finding nothing in the way, fakes its hit at the component's centre and then
+		// scales the damage by the distance from the blast to that centre: a hull three hundred metres long takes
+		// nothing from a burst off its rim. The test hit mirrors the fake and sets the minimum damage to the full figure.
+		FRadialDamageEvent E;
+		E.Origin = GetActorTransform().TransformPosition(FVector(Arg(1, 0.f), Arg(2, 0.f), Arg(3, 0.f)));
+		E.Params = FRadialDamageParams(Arg(4, 60.f), Arg(4, 60.f), 0.f, 6000.f, 1.f);
+		FHitResult Fake; Fake.Init(E.Origin, CollisionBox ? CollisionBox->Bounds.Origin : GetActorLocation());
+		Fake.Component = CollisionBox; Fake.HitObjectHandle = FActorInstanceHandle(this);
+		E.ComponentHits.Add(Fake);
+		TakeDamage(Arg(4, 60.f), E, nullptr, nullptr);
+	}
 	else if (Op == TEXT("hitblind"))
 	{
 		// Test: damage with no place to it, as the crush of an atmosphere arrives; the whole grid bears it.
@@ -2150,6 +2190,13 @@ void AStarshipPawn::ProcessDebugCommand()
 		else if (What == TEXT("medical") || What == TEXT("sickbay")) { UI->TogglePanel(UMedicalPanel::StaticClass()); }
 		else if (What == TEXT("msd") || What == TEXT("systems") || What == TEXT("damage")) { UI->TogglePanel(UMsdPanel::StaticClass()); }
 		else if (What == TEXT("close")) { UI->CloseAll(); }
+		else if (What == TEXT("view"))
+		{
+			// ui view plan|side: which drawing the open systems display shows (testing).
+			UMsdPanel* Msd = Cast<UMsdPanel>(UI->TopMenu());
+			if (Msd && Msd->GetDisplay()) { Msd->GetDisplay()->SetView(Args.IsValidIndex(2) && Args[2].StartsWith(TEXT("plan")) ? EMsdView::Plan : EMsdView::Elevation); }
+			else { ScreenMessage(TEXT("ui view: open the systems display first"), FColor::Orange); }
+		}
 		else if (What == TEXT("select"))
 		{
 			// ui select <compartment name>: pick a compartment on the open systems display (testing).
@@ -2168,7 +2215,7 @@ void AStarshipPawn::ProcessDebugCommand()
 			UE_LOG(LogTemp, Log, TEXT("ui click \"%s\": %s"), *Label, bHit ? TEXT("pressed") : TEXT("no such button"));
 			if (!bHit) { ScreenMessage(FString::Printf(TEXT("ui click: no button \"%s\""), *Label), FColor::Orange); }
 		}
-		else { ScreenMessage(TEXT("ui menu | chart | science | engineering | tactical | medical | msd | controls | settings | close | click <button>"), FColor::Orange); }
+		else { ScreenMessage(TEXT("ui menu | chart | science | engineering | tactical | medical | msd | view plan|side | controls | settings | close | click <button>"), FColor::Orange); }
 	}
 	else if (Op == TEXT("hullprofile"))
 	{
