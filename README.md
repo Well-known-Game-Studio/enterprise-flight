@@ -171,6 +171,8 @@ Hits land somewhere in particular. The ship carries a compartment map in her own
 
 ![Sickbay after a battering, the air failing with life support at 18 %, engineering alongside Starbase 11 resupplying, and sickbay afterwards](https://github.com/user-attachments/assets/7817e2ad-81d4-425d-937a-5730cc1d83a0)
 
+![The master systems display: the hull in cutaway, hits flashing where they landed, a compartment selected, the forward shield reinforced](https://github.com/user-attachments/assets/e495908c-137e-4491-8fe6-6aac3edb57ac)
+
 ## The bridge
 
 The Star Trek VI bridge is built from code in Blender (`blender/bridge-st6`) and imported as one mesh with its Okudagram screens bound to live readouts. From the captain's chair the viewscreen shows the real view ahead; the crew figures are placeholders for now.
