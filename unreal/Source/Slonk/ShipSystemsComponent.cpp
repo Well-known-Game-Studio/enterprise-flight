@@ -464,6 +464,12 @@ void UShipSystemsComponent::OnHitAt(float Applied, float ThroughShields, const F
 	InjureOfficer(ThroughShields, &K);
 }
 
+void UShipSystemsComponent::MarkHit(const FVector& LocalPoint, int32 Facing, bool bThrough)
+{
+	RecentHits.Add({ LocalPoint, GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f, Facing, bThrough });
+	if (RecentHits.Num() > 12) { RecentHits.RemoveAt(0); }
+}
+
 void UShipSystemsComponent::InjureOfficer(float ThroughShields, const FCompartment* Where)
 {
 	// A heavy hit can put a senior officer in sickbay, or worse: only the ones whose post is where it landed.

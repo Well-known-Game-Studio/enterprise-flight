@@ -168,6 +168,7 @@ public:
 	float ShieldFacingMax[4] = { 100.f, 100.f, 100.f, 100.f };
 	/** Which facing a world point lies on, from the hull's own axes. */
 	int32 ShieldFacingOf(const FVector& WorldPoint) const;
+	int32 ShieldFacingOfLocal(const FVector& LocalPoint) const;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Defence") float ShieldRechargePerSecond = 5.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Defence") float ShieldRechargeDelay = 4.f;
 	UPROPERTY(BlueprintReadOnly, Category = "Defence") float HullIntegrity = 100.f;
