@@ -3,6 +3,7 @@
 #include "LcarsPanel.h"
 #include "SlonkUIRoot.h"
 #include "StarshipPawn.h"
+#include "PersonPawn.h"
 #include "StarshipHUD.h"
 #include "StarshipPlayerController.h"
 #include "Blueprint/WidgetTree.h"
@@ -86,7 +87,14 @@ void ULcarsPanel::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 	Refresh();
 }
 
-AStarshipPawn* ULcarsPanel::GetShip() const { return Cast<AStarshipPawn>(GetOwningPlayerPawn()); }
+AStarshipPawn* ULcarsPanel::GetShip() const
+{
+	APawn* P = GetOwningPlayerPawn();
+	if (AStarshipPawn* S = Cast<AStarshipPawn>(P)) { return S; }
+	// On foot the boards still answer for the ship we came from.
+	if (const APersonPawn* Person = Cast<APersonPawn>(P)) { return Person->Craft.Get(); }
+	return nullptr;
+}
 AStarshipHUD* ULcarsPanel::GetHUD() const { APlayerController* PC = GetOwningPlayer(); return PC ? Cast<AStarshipHUD>(PC->GetHUD()) : nullptr; }
 USlonkUIRoot* ULcarsPanel::GetUIRoot() const { AStarshipPlayerController* PC = Cast<AStarshipPlayerController>(GetOwningPlayer()); return PC ? PC->GetUIRoot() : nullptr; }
 

@@ -147,6 +147,16 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Bridge")
 	bool IsBuilt() const { return Pieces.Num() > 0; }
 
+	/** Walking the set: invisible Boots-channel collision on the main deck (the floor, the outer wall short of the
+	 *  stations, the rail round the well, the captain's chair), on only while someone is on the bridge. */
+	void SetWalkCollision(bool bOn);
+	/** Standing spots in this component's space: feet in front of the captain's chair facing the viewscreen, and by
+	 *  each turbolift door facing into the room (0 port, 1 starboard). */
+	FTransform GetChairStandSpot() const;
+	FTransform GetLiftSpot(int32 Index) const;
+	/** Where the chair stands (feet level), component space. */
+	FVector GetChairSpot() const;
+
 private:
 	void BuildOriginal();
 	void BuildRefit();
@@ -186,6 +196,13 @@ private:
 	UPROPERTY() TObjectPtr<UStaticMesh> SphereMesh;
 	UPROPERTY() TArray<TObjectPtr<USceneComponent>> Pieces;
 	UPROPERTY() TArray<TObjectPtr<UMaterialInstanceDynamic>> Materials;
+	/** The set's own frame (the modelled mesh carries RefitMeshRotation); the walk blocks and spots live in it. */
+	UPROPERTY() TObjectPtr<USceneComponent> SetFrame;
+	UPROPERTY() TArray<TObjectPtr<class UPrimitiveComponent>> WalkBlocks;
+	void BuildWalkCollision();
+	void WalkBlock(const FVector& Center, const FVector& Half, float YawDeg = 0.f);
+	/** The set's deck numbers for the current style: deck height, well radius, outer walk radius, chair x, lift bearing and radius. */
+	void DeckNumbers(float& DeckZ, float& WellR, float& WalkR, float& ChairX, float& LiftDeg, float& LiftR) const;
 
 	// Palette, filled by Build().
 	UMaterialInterface* WallBlue = nullptr;

@@ -237,12 +237,18 @@ void APersonPawn::BuildFigure()
 
 void APersonPawn::BeginEVA(AStarshipPawn* FromCraft, const FTransform& Airlock, AStarshipPawn* HullOf)
 {
+	if (Frame == EPersonFrame::Deck) { SetCameraMode(CameraBeforeDeck); }
+	Room = EShipRoom::Count;
+	bBeamedDown = false;
 	Craft = FromCraft;
 	SetActorLocationAndRotation(Airlock.GetLocation(), Airlock.GetRotation(), false, nullptr, ETeleportType::TeleportPhysics);
 	Velocity = FVector::ZeroVector;
 	LookPitch = 0.f;
 	PlanetScanTimer = 0.f;
 	FindWorld();
+	// The carry starts from the world's turn now, not from a tick later: a frame of its spin is metres of ground.
+	CarryPlanet = GroundPlanet;
+	if (APlanetBody* G = GroundPlanet.Get()) { CarryPlanetQuat = G->GetActorQuat(); }
 	if (HullOf)
 	{
 		HullCraft = HullOf;
@@ -307,6 +313,106 @@ bool APersonPawn::RequestBoard()
 	return true;
 }
 
+bool APersonPawn::Use()
+{
+	AStarshipPawn* C = Craft.Get();
+	if (Frame == EPersonFrame::Deck) { return C ? C->PersonUse(this) : false; }
+	if (bBeamedDown && C)
+	{
+		if (FVector::Dist(GetActorLocation(), C->GetActorLocation()) <= C->TransporterRangeCm) { return C->BeamUp(this); }
+		Message(FString::Printf(TEXT("The %s is out of transporter range"), *C->GetCraftName()), FColor::Orange);
+		return false;
+	}
+	return RequestBoard();
+}
+
+FString APersonPawn::UseHint() const
+{
+	const AStarshipPawn* C = Craft.Get();
+	if (Frame == EPersonFrame::Deck) { return C ? C->PersonUseHint(this) : FString(); }
+	if (bBeamedDown && C)
+	{
+		return FVector::Dist(GetActorLocation(), C->GetActorLocation()) <= C->TransporterRangeCm ? TEXT("F  beam up") : TEXT("out of transporter range");
+	}
+	return FString();
+}
+
+void APersonPawn::PlaceAboard(AStarshipPawn* Ship, EShipRoom InRoom, const FTransform& FeetWorld)
+{
+	if (!Ship) { return; }
+	Craft = Ship;
+	HullCraft = Ship;
+	Room = InRoom;
+	bBeamedDown = false;
+	if (Frame != EPersonFrame::Deck)
+	{
+		// Indoors the lens goes to the helmet: a third-person arm has no room between the walls.
+		CameraBeforeDeck = CameraMode;
+		SetCameraMode(EPersonCamera::Helmet);
+	}
+	Frame = EPersonFrame::Deck;
+	bGrounded = true;
+	Velocity = FVector::ZeroVector;
+	StickGrace = 0.f;
+	LookPitch = 0.f;
+	FreeLookAngles = FVector2D::ZeroVector;
+	const FVector Up = FeetWorld.GetRotation().GetUpVector();
+	SetActorLocationAndRotation(FeetWorld.GetLocation() + Up * HalfHeightCm, FeetWorld.GetRotation(), false, nullptr, ETeleportType::TeleportPhysics);
+	HullLocal = GetActorTransform().GetRelativeTransform(FTransform(Ship->GetActorQuat(), Ship->GetActorLocation()));
+	Limber = 0.f;
+}
+
+void APersonPawn::TickDeck(float DeltaTime)
+{
+	AStarshipPawn* C = HullCraft.Get();
+	if (!C) { SetFrame(EPersonFrame::Free); bGrounded = false; return; }
+	const FVector Up = C->GetActorUpVector();
+	const float YawDeg = LookDelta.X + TurnInput * TurnRateDeg * DeltaTime;
+	const FQuat Rot = FQuat(Up, FMath::DegreesToRadians(YawDeg)) * GetActorQuat();
+	LookPitch = FMath::Clamp(LookPitch + LookDelta.Y, -80.f, 85.f);
+	const FVector Fwd = (Rot.GetForwardVector() - Up * FVector::DotProduct(Rot.GetForwardVector(), Up)).GetSafeNormal();
+	const FVector Right = FVector::CrossProduct(Up, Fwd).GetSafeNormal();
+
+	FVector Want = Fwd * MoveInput.X + Right * MoveInput.Y;
+	if (Want.SizeSquared() > 1.0) { Want.Normalize(); }
+	Want *= (bSprint || bDebugSprint) ? RunSpeedCm : WalkSpeedCm;
+	FVector Vt = Velocity - Up * FVector::DotProduct(Velocity, Up);
+	Vt = MoveToward(Vt, Want, WalkAccelCm * DeltaTime);
+
+	// Walls and furniture: probed at the knee and the chest; slide along whatever is in the way, stop if boxed in.
+	const FVector Feet = FeetLocation();
+	for (int32 Pass = 0; Pass < 3 && Vt.SizeSquared() > 1.0; ++Pass)
+	{
+		const double Run = Vt.Size() * DeltaTime;
+		const FVector Dir = Vt.GetSafeNormal();
+		FHitResult Hit;
+		bool bHit = false;
+		for (float Height : { 45.f, 130.f })
+		{
+			if (TraceSolid(Feet + Up * Height, Feet + Up * Height + Dir * (Run + 30.0), Hit)) { bHit = true; break; }
+		}
+		if (!bHit) { break; }
+		FVector N = Hit.ImpactNormal - Up * FVector::DotProduct(Hit.ImpactNormal, Up);
+		N = N.GetSafeNormal();
+		const double Into = FVector::DotProduct(Vt, N);
+		if (Pass == 2 || N.IsNearlyZero() || Into >= 0.0) { Vt = FVector::ZeroVector; break; }
+		Vt -= N * Into;
+	}
+	Velocity = Vt;
+	FVector NextFeet = Feet + Vt * DeltaTime;
+	// The floor under the next step: a kerb or a pad up to StepUpCm is taken, a drop found below.
+	FHitResult Floor;
+	if (TraceSolid(NextFeet + Up * StepUpCm, NextFeet - Up * 120.0, Floor)) { NextFeet = Floor.ImpactPoint; }
+	else if (Vt.SizeSquared() > 1.0)
+	{
+		// No deck under the next step (an opening, a gap in the set): stop at the edge rather than walk out on air.
+		Velocity = FVector::ZeroVector;
+		NextFeet = Feet;
+	}
+	SetActorLocationAndRotation(NextFeet + Up * HalfHeightCm, StandingQuat(Up, Fwd), false, nullptr, ETeleportType::TeleportPhysics);
+	bGrounded = true;
+}
+
 void APersonPawn::Away(const FString& Command)
 {
 	DebugCommand = Command;
@@ -325,6 +431,8 @@ FString APersonPawn::FrameDescription() const
 	{
 	case EPersonFrame::Hull:
 		return bGrounded ? FString::Printf(TEXT("ON THE HULL  %s   boots holding"), H ? *H->GetCraftName().ToUpper() : TEXT("")) : FString::Printf(TEXT("FLOATING BESIDE  %s"), H ? *H->GetCraftName().ToUpper() : TEXT(""));
+	case EPersonFrame::Deck:
+		return FString::Printf(TEXT("ABOARD  %s   %s"), H ? *H->GetCraftName().ToUpper() : TEXT(""), *UShipInteriorComponent::RoomName(Room).ToUpper());
 	case EPersonFrame::Ground:
 		if (bGrounded) { return FString::Printf(TEXT("ON THE GROUND  %s"), P ? *P->GetDisplayName().ToUpper() : TEXT("")); }
 		return FString::Printf(TEXT("%s  %s"), P && FVector::DotProduct(Velocity, (GetActorLocation() - P->GetActorLocation()).GetSafeNormal()) > 0.0 ? TEXT("RISING") : TEXT("FALLING"), P ? *P->GetDisplayName().ToUpper() : TEXT(""));
@@ -411,10 +519,11 @@ void APersonPawn::Tick(float DeltaTime)
 	switch (Frame)
 	{
 	case EPersonFrame::Hull: TickHull(DeltaTime); break;
+	case EPersonFrame::Deck: TickDeck(DeltaTime); break;
 	case EPersonFrame::Ground: if (bGrounded) { TickWalking(DeltaTime); } else { TickFloating(DeltaTime); } break;
 	default: TickFloating(DeltaTime); break;
 	}
-	if (Frame == EPersonFrame::Hull && HullCraft.IsValid())
+	if ((Frame == EPersonFrame::Hull || Frame == EPersonFrame::Deck) && HullCraft.IsValid())
 	{
 		HullLocal = GetActorTransform().GetRelativeTransform(FTransform(HullCraft->GetActorQuat(), HullCraft->GetActorLocation()));
 	}
@@ -489,12 +598,14 @@ void APersonPawn::SetFrame(EPersonFrame NewFrame)
 {
 	if (NewFrame == Frame) { return; }
 	// Velocities are relative to the frame: hand them over when a hull is left or joined.
-	if (Frame == EPersonFrame::Hull)
+	const bool bWasCraft = Frame == EPersonFrame::Hull || Frame == EPersonFrame::Deck;
+	const bool bToCraft = NewFrame == EPersonFrame::Hull || NewFrame == EPersonFrame::Deck;
+	if (bWasCraft)
 	{
 		Velocity += CraftVelocity(HullCraft.Get());
-		if (NewFrame != EPersonFrame::Hull) { HullCraft = nullptr; }
+		if (!bToCraft) { HullCraft = nullptr; }
 	}
-	if (NewFrame == EPersonFrame::Hull)
+	if (bToCraft && !bWasCraft)
 	{
 		Velocity -= CraftVelocity(HullCraft.Get());
 	}
@@ -503,7 +614,7 @@ void APersonPawn::SetFrame(EPersonFrame NewFrame)
 
 void APersonPawn::CarryWithWorld(float DeltaTime)
 {
-	if (Frame == EPersonFrame::Hull)
+	if (Frame == EPersonFrame::Hull || Frame == EPersonFrame::Deck)
 	{
 		AStarshipPawn* C = HullCraft.Get();
 		if (!C)
@@ -514,18 +625,31 @@ void APersonPawn::CarryWithWorld(float DeltaTime)
 		}
 		const FTransform W = HullLocal * FTransform(C->GetActorQuat(), C->GetActorLocation());
 		SetActorLocationAndRotation(W.GetLocation(), W.GetRotation(), false, nullptr, ETeleportType::TeleportPhysics);
+		// Keep the world's turn in step for when we let go of the hull.
+		CarryPlanet = GroundPlanet;
+		if (APlanetBody* G = GroundPlanet.Get()) { CarryPlanetQuat = G->GetActorQuat(); }
 		return;
 	}
 	APlanetBody* P = GroundPlanet.Get();
-	if (!P) { return; }
-	// Ride the world's spin as the craft do: full below 1.05 radii, none above 1.35.
+	if (!P) { CarryPlanet = nullptr; return; }
+	// Ride the world's spin as the craft do: full below 1.05 radii, none above 1.35. The turn is the planet's own
+	// since our last tick, not its rate times our (clamped) frame time: a long frame while the terrain builds
+	// would otherwise leave us behind the ground, and the shuttle we stepped out of, by metres.
+	const FQuat PlanetQ = P->GetActorQuat();
+	if (CarryPlanet.Get() != P)
+	{
+		CarryPlanet = P;
+		CarryPlanetQuat = PlanetQ;
+		return;
+	}
+	FQuat Q = PlanetQ * CarryPlanetQuat.Inverse();
+	CarryPlanetQuat = PlanetQ;
 	const FVector Centre = P->GetActorLocation();
 	const FVector Rv = GetActorLocation() - Centre;
 	const double Radii = Rv.Size() / FMath::Max(P->GetRadiusCm(), 1.0);
 	const double Carry = FMath::Clamp((1.35 - Radii) / 0.30, 0.0, 1.0);
-	const double SpinRad = FMath::DegreesToRadians(P->SpinDegPerSec) * DeltaTime * Carry;
-	if (FMath::IsNearlyZero(SpinRad)) { return; }
-	const FQuat Q(P->GetActorQuat().GetAxisZ(), SpinRad);
+	if (Carry <= 0.0 || Q.IsIdentity(1e-12)) { return; }
+	if (Carry < 1.0) { Q = FQuat::Slerp(FQuat::Identity, Q, (float)Carry); }
 	SetActorLocationAndRotation(Centre + Q.RotateVector(Rv), Q * GetActorQuat(), false, nullptr, ETeleportType::TeleportPhysics);
 	Velocity = Q.RotateVector(Velocity);
 }
@@ -1016,6 +1140,7 @@ void APersonPawn::ProcessDebugCommand()
 	else if (Op == TEXT("freelook")) { bFreeLook = ArgStr(1) != TEXT("off"); }
 	else if (Op == TEXT("zoom")) { Zoom = FMath::Clamp(Arg(1, 1.f), 0.35f, 4.f); }
 	else if (Op == TEXT("board")) { RequestBoard(); }
+	else if (Op == TEXT("use")) { Use(); }
 	else if (Op == TEXT("status"))
 	{
 		UE_LOG(LogTemp, Log, TEXT("Person: %s  speed %.2f m/s  alt %.2f m  g %.2f m/s2  boots %s  jump peak %.2f m  pos %s"), *FrameDescription(), Velocity.Size() / 100.0, AltitudeCm / 100.0, GravityCmS2 / 100.0, bBootsArmed ? TEXT("armed") : TEXT("off"), LastJumpHeightCm / 100.0, *GetActorLocation().ToString());

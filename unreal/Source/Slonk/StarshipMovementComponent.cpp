@@ -265,7 +265,7 @@ void UStarshipMovementComponent::ApplyTerrainFloor(float DeltaTime)
 		const double D = FVector::Dist(Here, P->GetActorLocation());
 		if (D < P->GetRadiusCm() * 1.5 && D < NearDist) { Near = P; NearDist = D; }
 	}
-	if (!Near) { return; }
+	if (!Near) { CarryBody = nullptr; return; }
 	const FVector Centre = Near->GetActorLocation();
 	const FVector Rv = Here - Centre;
 	const double Dist = Rv.Size();
@@ -275,7 +275,7 @@ void UStarshipMovementComponent::ApplyTerrainFloor(float DeltaTime)
 	GroundBody = Near;
 	GroundHeightCm = SurfR - Near->GetRadiusCm();
 	AltitudeAGLCm = Dist - SurfR;
-	if (bWarpActive || bOrbitHold) { return; }
+	if (bWarpActive || bOrbitHold) { CarryBody = nullptr; return; }
 
 	// Ride the ground: the planet turns under us (its spin is about its local Z), so near it turn with it, hull,
 	// position and velocity together. The surface of an Earth-size world does close to half a kilometre a second;
@@ -284,13 +284,25 @@ void UStarshipMovementComponent::ApplyTerrainFloor(float DeltaTime)
 	{
 		const double Radii = Dist / FMath::Max(Near->GetRadiusCm(), 1.0);
 		GroundCarry = bTerrainFollow ? 1.f : (float)FMath::Clamp((CarryZeroRadii - Radii) / FMath::Max(CarryZeroRadii - CarryFullRadii, 0.01f), 0.0, 1.0);
-		const double SpinRad = FMath::DegreesToRadians(Near->SpinDegPerSec) * DeltaTime * GroundCarry;
-		if (!FMath::IsNearlyZero(SpinRad))
+		// The world's actual turn since our last tick (not its rate times a clamped frame time, which fell behind
+		// the ground on every long frame), scaled by the carry.
+		const FQuat PlanetQ = Near->GetActorQuat();
+		if (CarryBody.Get() != Near)
 		{
-			const FQuat Q(Near->GetActorQuat().GetAxisZ(), SpinRad);
-			UpdatedComponent->SetWorldLocationAndRotation(Centre + Q.RotateVector(Rv), Q * UpdatedComponent->GetComponentQuat(), false, nullptr, ETeleportType::TeleportPhysics);
-			Velocity = Q.RotateVector(Velocity);
+			CarryBody = Near;
+			CarryBodyQuat = PlanetQ;
 		}
+		else if (GroundCarry > 0.f)
+		{
+			FQuat Q = PlanetQ * CarryBodyQuat.Inverse();
+			if (!Q.IsIdentity(1e-12))
+			{
+				if (GroundCarry < 1.f) { Q = FQuat::Slerp(FQuat::Identity, Q, GroundCarry); }
+				UpdatedComponent->SetWorldLocationAndRotation(Centre + Q.RotateVector(Rv), Q * UpdatedComponent->GetComponentQuat(), false, nullptr, ETeleportType::TeleportPhysics);
+				Velocity = Q.RotateVector(Velocity);
+			}
+		}
+		CarryBodyQuat = PlanetQ;
 	}
 
 	double WantDist = -1.0;
@@ -498,6 +510,13 @@ void UStarshipMovementComponent::Land(APlanetBody* Body, const FVector& Centre, 
 	UpdatedComponent->SetWorldLocationAndRotation(Pos, Rot, false, nullptr, ETeleportType::TeleportPhysics);
 	const FTransform PlanetT(Body->GetActorQuat(), Centre);
 	LandedLocal = FTransform(Rot, Pos).GetRelativeTransform(PlanetT);
+	if (LandedBody.Get() != Body)
+	{
+		if (AActor* Old = LandedBody.Get()) { PrimaryComponentTick.RemovePrerequisite(Old, Old->PrimaryActorTick); }
+		// Hold to this frame's planet transform, not last frame's: the hull would otherwise sit a frame's worth of
+		// the ground's speed (metres) behind whoever stands beside it.
+		PrimaryComponentTick.AddPrerequisite(Body, Body->PrimaryActorTick);
+	}
 	LandedBody = Body;
 	bLanded = true;
 	Velocity = FVector::ZeroVector;
@@ -537,6 +556,8 @@ void UStarshipMovementComponent::HoldLanded(float DeltaTime)
 	ThrusterInput = FVector::ZeroVector;
 	VerticalInput = 0.f;
 	GroundBody = Body;
+	CarryBody = Body;
+	CarryBodyQuat = Body->GetActorQuat(); // in step for the take-off
 	AltitudeAGLCm = GroundClearanceCm;
 	const FVector Here = W.GetLocation();
 	GroundHeightCm = Body->GetSurfaceRadiusCm(Here) - Body->GetRadiusCm();
@@ -552,5 +573,6 @@ void UStarshipMovementComponent::TakeOff()
 		const FVector Up = (UpdatedComponent->GetComponentLocation() - LandedBody->GetActorLocation()).GetSafeNormal();
 		Velocity = Up * FMath::Max(LandingSpeedCm, 300.0);
 	}
+	if (AActor* Old = LandedBody.Get()) { PrimaryComponentTick.RemovePrerequisite(Old, Old->PrimaryActorTick); }
 	LandedBody = nullptr;
 }

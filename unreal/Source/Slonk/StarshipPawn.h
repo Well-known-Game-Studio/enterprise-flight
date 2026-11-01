@@ -18,6 +18,9 @@ class UWarpDriveComponent;
 class UStarshipWeaponsComponent;
 class UWarpStreaksComponent;
 class UBridgeInteriorComponent;
+class UShipInteriorComponent;
+struct FShipRoom;
+enum class EShipRoom : uint8;
 class APersonPawn;
 class UWarpViewComponent;
 class UDistantStarsComponent;
@@ -144,6 +147,25 @@ public:
 	/** The person is back through the airlock: control returns here and the person is removed. */
 	void OnPersonBoarded(APersonPawn* Person);
 
+	// ---- The chair and the decks ----
+	/** Transporter reach, cm (40,000 km: a high orbit). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Person") double TransporterRangeCm = 4.0e9;
+	/** F in the chair: stand up onto the bridge on foot; the senior officer takes the conn until you sit again. */
+	UFUNCTION(BlueprintCallable, Category = "Person") bool StandUp();
+	/** Back in the chair: the person is removed, the captain has the conn. */
+	void SitDown(APersonPawn* Person);
+	/** The turbolift: to a room, or Airlock to go out onto the hull. */
+	bool MoveToRoom(APersonPawn* Person, EShipRoom Room);
+	/** From the transporter pad to the ground under the ship, and back to the pad. */
+	bool BeamDown(APersonPawn* Person);
+	bool BeamUp(APersonPawn* Person);
+	/** From the shuttle bay on foot: the launch sequence, the person boarding the shuttle. */
+	bool LaunchShuttleFromBay(APersonPawn* Person);
+	/** What the person standing in one of our rooms can do where they stand, and the HUD's word for it. */
+	bool PersonUse(APersonPawn* Person);
+	FString PersonUseHint(const APersonPawn* Person) const;
+	EShipRoom GetShownRoom() const { return ShownRoom; }
+
 	/** Brightness of the star sphere, 0..1: the game mode fades it into a daylit sky. */
 	void SetStarFieldFade(float Fade);
 
@@ -244,6 +266,9 @@ public:
 	/** Procedural bridge set around the bridge camera; only visible in the bridge view. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|Cameras")
 	TObjectPtr<UBridgeInteriorComponent> BridgeInterior;
+	/** The rooms you can walk to by turbolift (the bridge is BridgeInterior's set). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|Cameras")
+	TObjectPtr<UShipInteriorComponent> Interior;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|FX")
 	TArray<TObjectPtr<UPointLightComponent>> HullLights;
@@ -654,6 +679,24 @@ private:
 
 	int32 ThrusterMaterialIndex = INDEX_NONE;
 	EStarshipCameraMode CameraMode = EStarshipCameraMode::Chase;
+	/** The room someone is walking (Count: nobody is inside). */
+	EShipRoom ShownRoom;
+	FTimerHandle LiftTimer;
+	APersonPawn* SpawnPerson(const FTransform& Where);
+	/** Spawn the person standing in a room, at its lift door or its thing to use, possessed. */
+	APersonPawn* PutAboard(EShipRoom Room, bool bAtUse);
+	void SetInteriorRoom(EShipRoom Room);
+	/** Hull, running lights, the bridge set and the rooms, for the camera mode and whoever is inside. */
+	void ApplyViewVisibility();
+	/** A room's lift and use spots in the ship's own frame (feet transforms), and the word for the use; null when
+	 *  the room has none. Near, also in the ship's frame, picks the nearer of two lifts. */
+	const FShipRoom* RoomSpots(EShipRoom Room, FTransform& Lift, FTransform& Use, FString& Label, const FVector* Near = nullptr) const;
+	/** The ship's frame as the person keeps it: rotation and location, no scale. */
+	FTransform CraftFrame() const { return FTransform(GetActorQuat(), GetActorLocation()); }
+	/** The player's HUD: through our controller, or the player's while they are on foot or in the shuttle from here. */
+	class AStarshipHUD* PlayerHUD() const;
+	/** Black out, do the thing, fade back: the lift ride, the transporter. */
+	void FadeThen(TFunction<void()> Then);
 	bool bFreeLook = false;
 	FVector2D FreeLookAngles = FVector2D::ZeroVector; // (Yaw, Pitch)
 	float ShakeAmplitude = 0.f;

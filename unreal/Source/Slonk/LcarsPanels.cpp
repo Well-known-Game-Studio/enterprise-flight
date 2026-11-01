@@ -4,6 +4,8 @@
 #include "SlonkUIRoot.h"
 #include "StarChartPanel.h"
 #include "StarshipPawn.h"
+#include "PersonPawn.h"
+#include "ShipInterior.h"
 #include "StarshipHUD.h"
 #include "StarshipMovementComponent.h"
 #include "WarpDriveComponent.h"
@@ -780,6 +782,39 @@ void UMedicalPanel::FillStaff()
 		Cell->AddChildToHorizontalBox(NB);
 		if (UHorizontalBoxSlot* Sl = Row->AddChildToHorizontalBox(Cell)) { Sl->SetPadding(FMargin(0.f, 1.f, 20.f, 1.f)); }
 	}
+}
+
+void UTurboliftPanel::BuildContent()
+{
+	AddSidebarButton(TEXT("Close"), Lcars::Orange, [this]() { Close(); });
+	APersonPawn* Me = Cast<APersonPawn>(GetOwningPlayerPawn());
+	const EShipRoom Here = Me ? Me->GetRoom() : EShipRoom::Count;
+	struct FStop { EShipRoom Room; const TCHAR* Label; FLinearColor Color; };
+	const FStop Stops[] = {
+		{ EShipRoom::Bridge, TEXT("Bridge"), Lcars::Peach },
+		{ EShipRoom::Sickbay, TEXT("Sickbay"), Lcars::Sky },
+		{ EShipRoom::Transporter, TEXT("Transporter"), Lcars::Periwinkle },
+		{ EShipRoom::Engineering, TEXT("Engineering"), Lcars::Gold },
+		{ EShipRoom::ShuttleBay, TEXT("Shuttle Bay"), Lcars::Lilac },
+		{ EShipRoom::Airlock, TEXT("Airlock"), Lcars::Lavender },
+	};
+	for (const FStop& S : Stops)
+	{
+		const EShipRoom Room = S.Room;
+		AddSidebarButton(S.Label, Room == Here ? Lcars::Tan : S.Color, [this, Room]()
+		{
+			APersonPawn* P = Cast<APersonPawn>(GetOwningPlayerPawn());
+			AStarshipPawn* Ship = P ? P->Craft.Get() : nullptr;
+			Close();
+			if (P && Ship) { Ship->MoveToRoom(P, Room); }
+		});
+	}
+	AddRow(Content, TEXT("You are on"), Here != EShipRoom::Count ? FString::Printf(TEXT("deck %s, %s"), *UShipInteriorComponent::DeckOf(Here), *UShipInteriorComponent::RoomName(Here)) : FString(TEXT("-")), Lcars::Peach, 16.f);
+	for (const FStop& S : Stops)
+	{
+		AddRow(Content, FString::Printf(TEXT("Deck %s"), *UShipInteriorComponent::DeckOf(S.Room)), S.Room == EShipRoom::Airlock ? FString(TEXT("Airlock: out onto the saucer, boots on the hull")) : UShipInteriorComponent::RoomName(S.Room), S.Room == Here ? Lcars::Tan : FLinearColor::White, 14.f);
+	}
+	AddRow(Content, TEXT(""), TEXT("Choose a deck on the left. F at any lift door brings you back here."), FLinearColor(1, 1, 1, 0.6f), 12.f);
 }
 
 void UMedicalPanel::Refresh()

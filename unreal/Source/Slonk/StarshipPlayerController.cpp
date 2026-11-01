@@ -518,8 +518,9 @@ void AStarshipPlayerController::OnThrottleReleased(const FInputActionValue& Valu
 
 void AStarshipPlayerController::OnAway()
 {
-	if (APersonPawn* Person = GetPerson()) { Person->RequestBoard(); }
-	else if (AStarshipPawn* Ship = GetStarship()) { Ship->StepOutside(); }
+	// On foot: use what you stand at (or board, or beam up). In the chair: stand up. In the shuttle: the hatch.
+	if (APersonPawn* Person = GetPerson()) { Person->Use(); }
+	else if (AStarshipPawn* Ship = GetStarship()) { if (Ship->IsShuttle()) { Ship->StepOutside(); } else { Ship->StandUp(); } }
 }
 
 void AStarshipPlayerController::OnSprintStarted() { bSprintHeld = true; }

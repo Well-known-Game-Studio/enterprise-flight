@@ -1,5 +1,6 @@
 #include "BridgeInteriorComponent.h"
 
+#include "Components/BoxComponent.h"
 #include "Components/DynamicMeshComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -218,6 +219,8 @@ void UBridgeInteriorComponent::Build()
 	Materials.Reset();
 	TacticalScreens.Reset();
 	HelmScreens.Reset();
+	WalkBlocks.Reset();
+	SetFrame = this;
 	RefitStationIndex = 0;
 	PieceCount = 0;
 
@@ -248,6 +251,111 @@ void UBridgeInteriorComponent::Build()
 	{
 		BuildOriginal();
 	}
+	BuildWalkCollision();
+}
+
+// ---- Walking the set ---------------------------------------------------------------------------
+
+void UBridgeInteriorComponent::DeckNumbers(float& DeckZ, float& WellR, float& WalkR, float& ChairX, float& LiftDeg, float& LiftR) const
+{
+	if (Style == EBridgeStyle::RefitMesh && SetFrame != this)
+	{
+		// The Blender set (build_bridge.py): main deck 0.60 m up, the sunken circle 3.20 m across, the wall at 5.60 m
+		// with the stations reaching in from it, the chair at x -2.25 m, the lift alcoves at +-103 degrees.
+		DeckZ = 60.f; WellR = 320.f; WalkR = 470.f; ChairX = -225.f; LiftDeg = 103.f; LiftR = 440.f;
+	}
+	else
+	{
+		DeckZ = DeckHeight; WellR = 0.f; WalkR = WallRadius - 90.f; ChairX = 0.f; LiftDeg = TurboliftAngle; LiftR = WallRadius - 120.f;
+	}
+}
+
+void UBridgeInteriorComponent::WalkBlock(const FVector& Center, const FVector& Half, float YawDeg)
+{
+	UBoxComponent* B = NewObject<UBoxComponent>(GetOwner(), *FString::Printf(TEXT("BridgeWalk_%d"), PieceCount++));
+	B->SetupAttachment(SetFrame ? SetFrame.Get() : this);
+	B->SetMobility(EComponentMobility::Movable);
+	B->SetBoxExtent(Half, false);
+	B->SetRelativeLocationAndRotation(Center, FRotator(0.f, YawDeg, 0.f));
+	B->SetGenerateOverlapEvents(false);
+	B->SetCollisionObjectType(ECC_WorldDynamic);
+	B->SetCollisionResponseToAllChannels(ECR_Ignore);
+	B->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Block);
+	B->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	B->SetVisibility(false);
+	B->SetHiddenInGame(true);
+	B->RegisterComponent();
+	Pieces.Add(B);
+	WalkBlocks.Add(B);
+}
+
+void UBridgeInteriorComponent::BuildWalkCollision()
+{
+	if (!GetOwner()) { return; }
+	float DeckZ, WellR, WalkR, ChairX, LiftDeg, LiftR;
+	DeckNumbers(DeckZ, WellR, WalkR, ChairX, LiftDeg, LiftR);
+	// The floor: one slab under the whole room at deck height.
+	WalkBlock(FVector(0.f, 0.f, DeckZ - 10.f), FVector(WallRadius + 100.f, WallRadius + 100.f, 10.f));
+	// The outer wall, drawn in to where the stations' desks reach.
+	const int32 N = 28;
+	for (int32 i = 0; i < N; ++i)
+	{
+		const float A = 360.f * i / N;
+		const float Rad = FMath::DegreesToRadians(A);
+		WalkBlock(FVector(FMath::Cos(Rad) * (WalkR + 15.f), FMath::Sin(Rad) * (WalkR + 15.f), DeckZ + 110.f), FVector(15.f, WalkR * PI / N + 6.f, 110.f), A);
+	}
+	if (WellR > 0.f)
+	{
+		// The rail round the sunken well, from the helm chord (x = -0.85 m) round the front, and the chord itself.
+		const float ChordX = -85.f;
+		const float Ac = FMath::RadiansToDegrees(FMath::Acos(ChordX / WellR));
+		const int32 M = 12;
+		for (int32 i = 0; i < M; ++i)
+		{
+			const float A = -Ac + 2.f * Ac * (i + 0.5f) / M;
+			const float Rad = FMath::DegreesToRadians(A);
+			WalkBlock(FVector(FMath::Cos(Rad) * (WellR - 8.f), FMath::Sin(Rad) * (WellR - 8.f), DeckZ + 60.f), FVector(8.f, WellR * FMath::DegreesToRadians(2.f * Ac) / M * 0.5f + 4.f, 60.f), A);
+		}
+		const float Yp = FMath::Sqrt(FMath::Max(WellR * WellR - ChordX * ChordX, 1.f));
+		WalkBlock(FVector(ChordX - 8.f, 0.f, DeckZ + 60.f), FVector(8.f, Yp, 60.f));
+	}
+	// The captain's chair.
+	WalkBlock(FVector(ChairX, 0.f, DeckZ + 40.f), FVector(42.f, 40.f, 40.f));
+}
+
+void UBridgeInteriorComponent::SetWalkCollision(bool bOn)
+{
+	for (UPrimitiveComponent* B : WalkBlocks)
+	{
+		if (B) { B->SetCollisionEnabled(bOn ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision); }
+	}
+}
+
+FVector UBridgeInteriorComponent::GetChairSpot() const
+{
+	float DeckZ, WellR, WalkR, ChairX, LiftDeg, LiftR;
+	DeckNumbers(DeckZ, WellR, WalkR, ChairX, LiftDeg, LiftR);
+	const FVector Local(ChairX, 0.f, DeckZ);
+	return SetFrame && SetFrame != this ? GetComponentTransform().InverseTransformPosition(SetFrame->GetComponentTransform().TransformPosition(Local)) : Local;
+}
+
+FTransform UBridgeInteriorComponent::GetChairStandSpot() const
+{
+	float DeckZ, WellR, WalkR, ChairX, LiftDeg, LiftR;
+	DeckNumbers(DeckZ, WellR, WalkR, ChairX, LiftDeg, LiftR);
+	const FTransform Local(FQuat::Identity, FVector(ChairX + 95.f, 0.f, DeckZ));
+	return SetFrame && SetFrame != this ? (Local * SetFrame->GetComponentTransform()).GetRelativeTransform(GetComponentTransform()) : Local;
+}
+
+FTransform UBridgeInteriorComponent::GetLiftSpot(int32 Index) const
+{
+	float DeckZ, WellR, WalkR, ChairX, LiftDeg, LiftR;
+	DeckNumbers(DeckZ, WellR, WalkR, ChairX, LiftDeg, LiftR);
+	const float A = FMath::DegreesToRadians(Index == 0 ? -LiftDeg : LiftDeg);
+	const FVector Feet(FMath::Cos(A) * LiftR, FMath::Sin(A) * LiftR, DeckZ);
+	// Facing in along the radius.
+	const FTransform Local(FRotationMatrix::MakeFromXZ(-FVector(FMath::Cos(A), FMath::Sin(A), 0.f), FVector::UpVector).ToQuat(), Feet);
+	return SetFrame && SetFrame != this ? (Local * SetFrame->GetComponentTransform()).GetRelativeTransform(GetComponentTransform()) : Local;
 }
 
 void UBridgeInteriorComponent::BuildRefitMesh()
@@ -265,6 +373,7 @@ void UBridgeInteriorComponent::BuildRefitMesh()
 	C->SetRelativeLocationAndRotation(FVector::ZeroVector, RefitMeshRotation);
 	C->RegisterComponent();
 	Pieces.Add(C);
+	SetFrame = C;
 
 	// Bind slots by name: screens to the live Okudagram material, light strips and the clock to emissive instances;
 	// everything else keeps the material the import made from the Blender colours.

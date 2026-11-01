@@ -46,6 +46,10 @@
 #include "WarpDriveComponent.h"
 #include "WarpStreaksComponent.h"
 #include "BridgeInteriorComponent.h"
+#include "ShipInterior.h"
+#include "PhotonTorpedo.h"
+#include "Camera/PlayerCameraManager.h"
+#include "TimerManager.h"
 #include "DistantStarsComponent.h"
 #include "WarpViewComponent.h"
 #include "Misc/FileHelper.h"
@@ -132,6 +136,9 @@ AStarshipPawn::AStarshipPawn()
 	BridgeInterior = CreateDefaultSubobject<UBridgeInteriorComponent>(TEXT("BridgeInterior"));
 	BridgeInterior->SetupAttachment(CollisionBox);
 	BridgeInterior->SetVisibility(false, true);
+	Interior = CreateDefaultSubobject<UShipInteriorComponent>(TEXT("Interior"));
+	Interior->SetupAttachment(CollisionBox);
+	ShownRoom = EShipRoom::Count;
 
 	DistantStars = CreateDefaultSubobject<UDistantStarsComponent>(TEXT("DistantStars"));
 	DistantStars->SetupAttachment(CollisionBox);
@@ -1228,6 +1235,7 @@ int32 AStarshipPawn::ShieldFacingOfLocal(const FVector& L) const
 float AStarshipPawn::TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent, AController* EventInstigator, AActor* DamageCauser)
 {
 	const float Applied = Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
+	if (Applied > 0.f && Systems) { Systems->UnderFire(); }
 	if (Applied <= 0.f)
 	{
 		return Applied;
@@ -1315,8 +1323,7 @@ void AStarshipPawn::ToggleTractorBeam()
 	AActor* Candidate = Weapons ? Weapons->LockedTarget.Get() : nullptr;
 	if (!Candidate)
 	{
-		APlayerController* PC = Cast<APlayerController>(GetController());
-		AStarshipHUD* H = PC ? Cast<AStarshipHUD>(PC->GetHUD()) : nullptr;
+		AStarshipHUD* H = PlayerHUD();
 		FNavObject Info;
 		if (H && H->GetNavTargetInfo(Info))
 		{
@@ -1347,12 +1354,29 @@ void AStarshipPawn::SetCameraMode(EStarshipCameraMode Mode)
 	ChaseCamera->SetActive(Mode == EStarshipCameraMode::Chase);
 	BridgeCamera->SetActive(Mode == EStarshipCameraMode::Bridge);
 	CinematicCamera->SetActive(Mode != EStarshipCameraMode::Chase && Mode != EStarshipCameraMode::Bridge);
-	// Hide the hull from the bridge so the saucer doesn't fill the lens.
-	ShipMesh->SetOwnerNoSee(false);
-	ShipMesh->SetVisibility(Mode != EStarshipCameraMode::Bridge);
-	if (RunningLights) { RunningLights->SetVisibility(Mode != EStarshipCameraMode::Bridge); }
-	if (BridgeInterior) { BridgeInterior->SetVisibility(Mode == EStarshipCameraMode::Bridge, true); }
+	ApplyViewVisibility();
 	AttachStreaksToActiveCamera();
+}
+
+void AStarshipPawn::ApplyViewVisibility()
+{
+	// Hide the hull from the bridge so the saucer doesn't fill the lens, and from anyone walking the decks.
+	// The seated bridge view counts only while someone sits: with the captain out on the hull or beamed down the
+	// camera mode is left at Bridge, but they must see the ship.
+	const bool bInside = ShownRoom != EShipRoom::Count;
+	const bool bBridge = (CameraMode == EStarshipCameraMode::Bridge && !ActivePerson.IsValid()) || ShownRoom == EShipRoom::Bridge;
+	ShipMesh->SetOwnerNoSee(false);
+	ShipMesh->SetVisibility(!bBridge && !bInside);
+	if (RunningLights) { RunningLights->SetVisibility(!bBridge && !bInside); }
+	if (BridgeInterior) { BridgeInterior->SetVisibility(bBridge, true); }
+}
+
+void AStarshipPawn::SetInteriorRoom(EShipRoom Room)
+{
+	ShownRoom = Room;
+	if (Interior) { Interior->ShowRoom(Room == EShipRoom::Bridge ? EShipRoom::Count : Room); }
+	if (BridgeInterior) { BridgeInterior->SetWalkCollision(Room == EShipRoom::Bridge); }
+	ApplyViewVisibility();
 }
 
 void AStarshipPawn::CycleCameraMode()
@@ -1454,7 +1478,7 @@ void AStarshipPawn::Tick(float DeltaTime)
 	UpdateWarpEffects(DeltaTime);
 	UpdateHullGlow(DeltaTime);
 	UpdateThrusters();
-	if (BridgeInterior && CameraMode == EStarshipCameraMode::Bridge)
+	if (BridgeInterior && (CameraMode == EStarshipCameraMode::Bridge || ShownRoom == EShipRoom::Bridge))
 	{
 		const float WarpFrac = WarpDrive ? FMath::Clamp(WarpDrive->WarpFactor / 9.f, 0.f, 1.f) * (WarpDrive->GetState() == EWarpState::AtWarp ? 1.f : 0.3f) : 0.f;
 		const bool bRed = Systems && Systems->GetAlert() == EAlertState::Red;
@@ -1750,7 +1774,7 @@ void AStarshipPawn::ProcessDebugCommand()
 		const FString Which = ArgStr(1);
 		BridgeInterior->SetStyle(Which == TEXT("original") || Which == TEXT("tos") ? EBridgeStyle::Original : (Which == TEXT("refit") || Which == TEXT("prims") ? EBridgeStyle::Refit : EBridgeStyle::RefitMesh));
 		BridgeInterior->SetRelativeLocation(BridgeCameraOffset - BridgeInterior->GetEyeOffset());
-		BridgeInterior->SetVisibility(CameraMode == EStarshipCameraMode::Bridge, true);
+		ApplyViewVisibility();
 	}
 	else if (Op == TEXT("rcs"))
 	{
@@ -2082,6 +2106,26 @@ void AStarshipPawn::ProcessDebugCommand()
 		E.ComponentHits.Add(Fake);
 		TakeDamage(Arg(4, 60.f), E, nullptr, nullptr);
 	}
+	else if (Op == TEXT("torpedoin"))
+	{
+		// Test: torpedoin [damage] [km]: an unowned torpedo launched from ahead and to port, homing on us, so the
+		// torpedo's own damage path against a starship can be watched (the Borg's torpedoes take this road).
+		if (UWorld* World = GetWorld())
+		{
+			const double Km = Arg(2, 3.f);
+			const FVector From = GetActorLocation() + (GetActorForwardVector() * 0.8 - GetActorRightVector() * 0.6).GetSafeNormal() * Km * 1e5;
+			const FVector Dir = (GetActorLocation() - From).GetSafeNormal();
+			FActorSpawnParameters P;
+			P.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+			if (APhotonTorpedo* T = World->SpawnActorDeferred<APhotonTorpedo>(APhotonTorpedo::StaticClass(), FTransform(Dir.Rotation(), From), nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn))
+			{
+				T->Damage = Arg(1, 20.f);
+				UGameplayStatics::FinishSpawningActor(T, FTransform(Dir.Rotation(), From));
+				T->Launch(Dir, 0.0, this, Dir);
+				UE_LOG(LogTemp, Log, TEXT("Torpedo inbound from %.1f km"), Km);
+			}
+		}
+	}
 	else if (Op == TEXT("hitblind"))
 	{
 		// Test: damage with no place to it, as the crush of an atmosphere arrives; the whole grid bears it.
@@ -2176,7 +2220,9 @@ void AStarshipPawn::ProcessDebugCommand()
 	else if (Op == TEXT("ui"))
 	{
 		// ui menu | chart | science | controls | close: the LCARS panels, for scripts and the console.
+		// The player may be on foot: the layer belongs to the player's controller, whoever it drives.
 		AStarshipPlayerController* SPC = Cast<AStarshipPlayerController>(GetController());
+		if (!SPC && GetWorld()) { SPC = Cast<AStarshipPlayerController>(GetWorld()->GetFirstPlayerController()); }
 		USlonkUIRoot* UI = SPC ? SPC->GetUIRoot() : nullptr;
 		const FString What = ArgStr(1);
 		if (!UI) { ScreenMessage(TEXT("ui: no UI layer"), FColor::Orange); }
@@ -2189,6 +2235,7 @@ void AStarshipPawn::ProcessDebugCommand()
 		else if (What == TEXT("tactical") || What == TEXT("tac")) { UI->TogglePanel(UTacticalPanel::StaticClass()); }
 		else if (What == TEXT("medical") || What == TEXT("sickbay")) { UI->TogglePanel(UMedicalPanel::StaticClass()); }
 		else if (What == TEXT("msd") || What == TEXT("systems") || What == TEXT("damage")) { UI->TogglePanel(UMsdPanel::StaticClass()); }
+		else if (What == TEXT("lift") || What == TEXT("turbolift")) { UI->TogglePanel(UTurboliftPanel::StaticClass()); }
 		else if (What == TEXT("close")) { UI->CloseAll(); }
 		else if (What == TEXT("view"))
 		{
@@ -2302,13 +2349,10 @@ void AStarshipPawn::ToggleScan()
 		if (const ASpaceVessel* V = Cast<ASpaceVessel>(Candidate)) { Label = V->GetDisplayName(); }
 		if (!Candidate)
 		{
-			if (APlayerController* PC = Cast<APlayerController>(GetController()))
+			if (AStarshipHUD* H = PlayerHUD())
 			{
-				if (AStarshipHUD* H = Cast<AStarshipHUD>(PC->GetHUD()))
-				{
-					FNavObject Info;
-					if (H->GetNavTargetInfo(Info)) { Candidate = Info.Actor; Label = Info.Label; }
-				}
+				FNavObject Info;
+				if (H->GetNavTargetInfo(Info)) { Candidate = Info.Actor; Label = Info.Label; }
 			}
 		}
 		bOk = Scanner->BeginScan(Candidate, Label, Reason);
@@ -2330,6 +2374,37 @@ bool AStarshipPawn::HandleCraftCommand(const FString& Op, const TArray<FString>&
 	if (Op == TEXT("takeoff") && Movement)
 	{
 		Movement->TakeOff();
+		return true;
+	}
+	if (Op == TEXT("stand")) { StandUp(); return true; }
+	if (Op == TEXT("sit")) { if (APersonPawn* P = ActivePerson.Get()) { if (P->IsAboard()) { SitDown(P); } } return true; }
+	if (Op == TEXT("use")) { if (APersonPawn* P = ActivePerson.Get()) { P->Use(); } return true; }
+	if (Op == TEXT("walkto") && Args.Num() > 1)
+	{
+		// Test: walkto use|lift puts the person at the room's spot without the walk.
+		if (APersonPawn* P = ActivePerson.Get())
+		{
+			FTransform Lift, Use; FString Label;
+			if (P->IsAboard() && RoomSpots(P->GetRoom(), Lift, Use, Label)) { P->PlaceAboard(this, P->GetRoom(), (Args[1].ToLower() == TEXT("lift") ? Lift : Use) * CraftFrame()); }
+		}
+		return true;
+	}
+	if (Op == TEXT("lift") && Args.Num() > 1)
+	{
+		const FString W = Args[1].ToLower();
+		EShipRoom Room = EShipRoom::Count;
+		if (W == TEXT("bridge")) { Room = EShipRoom::Bridge; }
+		else if (W.StartsWith(TEXT("eng"))) { Room = EShipRoom::Engineering; }
+		else if (W.StartsWith(TEXT("sick")) || W.StartsWith(TEXT("med"))) { Room = EShipRoom::Sickbay; }
+		else if (W.StartsWith(TEXT("shuttle")) || W == TEXT("bay")) { Room = EShipRoom::ShuttleBay; }
+		else if (W.StartsWith(TEXT("trans"))) { Room = EShipRoom::Transporter; }
+		else if (W.StartsWith(TEXT("air")) || W == TEXT("hatch")) { Room = EShipRoom::Airlock; }
+		if (APersonPawn* P = ActivePerson.Get()) { if (Room != EShipRoom::Count) { MoveToRoom(P, Room); } }
+		return true;
+	}
+	if (Op == TEXT("beam") && Args.Num() > 1)
+	{
+		if (APersonPawn* P = ActivePerson.Get()) { if (Args[1].ToLower() == TEXT("up")) { BeamUp(P); } else { BeamDown(P); } }
 		return true;
 	}
 	if (Op == TEXT("away") || Op == TEXT("eva"))
@@ -2414,11 +2489,7 @@ bool AStarshipPawn::StepOutside()
 	}
 	SetAutopilot(0, 0.0, 0.f);
 	const FTransform Airlock = GetAirlockTransform();
-	FActorSpawnParameters Params;
-	Params.Owner = this;
-	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	UClass* Cls = PersonClass ? *PersonClass : APersonPawn::StaticClass();
-	APersonPawn* Person = GetWorld()->SpawnActor<APersonPawn>(Cls, Airlock, Params);
+	APersonPawn* Person = SpawnPerson(Airlock);
 	if (!Person) { return false; }
 	ActivePerson = Person;
 	Person->BeginEVA(this, Airlock, PersonStartsOnHull() ? this : nullptr);
@@ -2447,7 +2518,297 @@ void AStarshipPawn::OnPersonBoarded(APersonPawn* Person)
 	}
 	if (Person) { Person->Destroy(); }
 	ActivePerson = nullptr;
+	SetInteriorRoom(EShipRoom::Count);
+	if (Systems) { Systems->TakeConn(); }
 	ScreenMessage(TEXT("Back aboard"), FColor::Cyan);
+}
+
+APersonPawn* AStarshipPawn::SpawnPerson(const FTransform& Where)
+{
+	FActorSpawnParameters Params;
+	Params.Owner = this;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	UClass* Cls = PersonClass ? *PersonClass : APersonPawn::StaticClass();
+	return GetWorld() ? GetWorld()->SpawnActor<APersonPawn>(Cls, Where, Params) : nullptr;
+}
+
+AStarshipHUD* AStarshipPawn::PlayerHUD() const
+{
+	if (const APlayerController* PC = Cast<APlayerController>(GetController())) { return Cast<AStarshipHUD>(PC->GetHUD()); }
+	// Nobody in the chair: the player is our crew member on foot, or in our shuttle. Their HUD still holds the course.
+	const APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+	if (!PC) { return nullptr; }
+	const APawn* Theirs = PC->GetPawn();
+	if (Theirs && (Theirs == ActivePerson.Get() || Theirs == ActiveShuttle.Get())) { return Cast<AStarshipHUD>(PC->GetHUD()); }
+	return nullptr;
+}
+
+const FShipRoom* AStarshipPawn::RoomSpots(EShipRoom Room, FTransform& Lift, FTransform& Use, FString& Label, const FVector* Near) const
+{
+	if (!Interior) { return nullptr; }
+	const FShipRoom* R = Interior->Room(Room);
+	if (!R) { return nullptr; }
+	if (Room == EShipRoom::Bridge)
+	{
+		if (!BridgeInterior) { return nullptr; }
+		// The set's frame in the ship's: both read in the same tick, so a ship under way does not come into it.
+		const FTransform SetToShip = BridgeInterior->GetComponentTransform().GetRelativeTransform(CraftFrame());
+		// Two lifts: the one nearer whoever is asking.
+		const FTransform L0 = BridgeInterior->GetLiftSpot(0) * SetToShip, L1 = BridgeInterior->GetLiftSpot(1) * SetToShip;
+		Lift = Near && FVector::DistSquared(*Near, L1.GetLocation()) < FVector::DistSquared(*Near, L0.GetLocation()) ? L1 : L0;
+		Use = BridgeInterior->GetChairStandSpot() * SetToShip;
+		Label = TEXT("sit down");
+		return R;
+	}
+	if (R->Half.IsNearlyZero()) { return nullptr; }
+	Lift = R->Lift;
+	Use = R->Use;
+	Label = R->UseLabel;
+	return R;
+}
+
+APersonPawn* AStarshipPawn::PutAboard(EShipRoom Room, bool bAtUse)
+{
+	FTransform Lift, Use; FString Label;
+	if (!RoomSpots(Room, Lift, Use, Label)) { return nullptr; }
+	const FTransform Feet = (bAtUse ? Use : Lift) * CraftFrame();
+	APersonPawn* Person = ActivePerson.Get();
+	if (!Person)
+	{
+		Person = SpawnPerson(FTransform(Feet.GetRotation(), Feet.GetLocation() + Feet.GetRotation().GetUpVector() * APersonPawn::HalfHeightCm));
+		if (!Person) { return nullptr; }
+		ActivePerson = Person;
+	}
+	Person->PlaceAboard(this, Room, Feet);
+	SetInteriorRoom(Room);
+	if (APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr)
+	{
+		if (PC->GetPawn() != Person) { PC->Possess(Person); }
+	}
+	return Person;
+}
+
+void AStarshipPawn::FadeThen(TFunction<void()> Then)
+{
+	APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+	APlayerCameraManager* Cam = PC ? PC->PlayerCameraManager : nullptr;
+	if (!Cam)
+	{
+		Then();
+		return;
+	}
+	Cam->StartCameraFade(0.f, 1.f, 0.35f, FLinearColor::Black, false, true);
+	TWeakObjectPtr<AStarshipPawn> Self(this);
+	GetWorldTimerManager().SetTimer(LiftTimer, FTimerDelegate::CreateLambda([Self, Then]()
+	{
+		if (!Self.IsValid()) { return; }
+		Then();
+		APlayerController* PC2 = Self->GetWorld() ? Self->GetWorld()->GetFirstPlayerController() : nullptr;
+		if (PC2 && PC2->PlayerCameraManager) { PC2->PlayerCameraManager->StartCameraFade(1.f, 0.f, 0.5f, FLinearColor::Black, false, false); }
+	}), 0.6f, false);
+}
+
+bool AStarshipPawn::StandUp()
+{
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC || IsShuttle() || !BridgeInterior) { return false; }
+	if (ActivePerson.IsValid())
+	{
+		ScreenMessage(TEXT("Someone is already on their feet"), FColor::Orange);
+		return false;
+	}
+	if (!PutAboard(EShipRoom::Bridge, true)) { return false; }
+	if (Systems) { Systems->HandOverConn(); }
+	ScreenMessage(TEXT("On your feet. W A S D walk, Shift runs, F uses what you stand at: the chair, a turbolift."), FColor::Cyan, 10.f);
+	UE_LOG(LogTemp, Log, TEXT("Captain up from the chair"));
+	return true;
+}
+
+void AStarshipPawn::SitDown(APersonPawn* Person)
+{
+	APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+	if (PC && PC->GetPawn() == Person) { PC->Possess(this); }
+	if (Person) { Person->Destroy(); }
+	ActivePerson = nullptr;
+	SetInteriorRoom(EShipRoom::Count);
+	SetCameraMode(EStarshipCameraMode::Bridge);
+	if (Systems) { Systems->TakeConn(); }
+	ScreenMessage(TEXT("In the chair. F stands up again; V cycles the view."), FColor::Cyan);
+	UE_LOG(LogTemp, Log, TEXT("Captain in the chair"));
+}
+
+bool AStarshipPawn::MoveToRoom(APersonPawn* Person, EShipRoom Room)
+{
+	if (!Person || Person != ActivePerson.Get() || !Person->IsAboard()) { return false; }
+	if (Room == EShipRoom::Airlock)
+	{
+		// The same refusals as the hatch from the chair: not at warp, not too fast, not over a giant.
+		FString Reason;
+		if (!CanStepOutside(Reason))
+		{
+			ScreenMessage(FString::Printf(TEXT("Airlock: %s"), *Reason), FColor::Orange);
+			return false;
+		}
+		TWeakObjectPtr<APersonPawn> P(Person);
+		FadeThen([this, P]()
+		{
+			APersonPawn* Who = P.Get();
+			if (!Who) { return; }
+			FString Why;
+			if (!CanStepOutside(Why)) { ScreenMessage(FString::Printf(TEXT("Airlock: %s"), *Why), FColor::Orange); return; }
+			SetInteriorRoom(EShipRoom::Count); // the hatch trace must not meet a wall
+			const FTransform Airlock = GetAirlockTransform();
+			Who->BeginEVA(this, Airlock, PersonStartsOnHull() ? this : nullptr);
+			ScreenMessage(TEXT("Airlock open. Boots on the hull: W A S D walk, Space pushes off, the pack flies, F boards from anywhere on the hull."), FColor::Cyan, 10.f);
+			UE_LOG(LogTemp, Log, TEXT("Person out of %s at %s"), *GetCraftName(), *Airlock.GetLocation().ToString());
+		});
+		return true;
+	}
+	FTransform Lift, Use; FString Label;
+	if (!RoomSpots(Room, Lift, Use, Label)) { return false; }
+	if (Room == Person->GetRoom())
+	{
+		ScreenMessage(TEXT("You are already there"), FColor::Orange);
+		return false;
+	}
+	TWeakObjectPtr<APersonPawn> P(Person);
+	FadeThen([this, P, Room]()
+	{
+		APersonPawn* Who = P.Get();
+		if (!Who) { return; }
+		FTransform L, U; FString Lb;
+		if (!RoomSpots(Room, L, U, Lb)) { return; }
+		Who->PlaceAboard(this, Room, L * CraftFrame());
+		SetInteriorRoom(Room);
+		ScreenMessage(FString::Printf(TEXT("Deck %s. %s."), *UShipInteriorComponent::DeckOf(Room), *UShipInteriorComponent::RoomName(Room)), FColor::Cyan, 5.f);
+		UE_LOG(LogTemp, Log, TEXT("Turbolift: %s"), *UShipInteriorComponent::RoomName(Room));
+	});
+	return true;
+}
+
+bool AStarshipPawn::BeamDown(APersonPawn* Person)
+{
+	if (!Person || !Person->IsAboard()) { return false; }
+	APlanetBody* World = Movement ? Cast<APlanetBody>(Movement->GroundBody.Get()) : nullptr;
+	FString Reason;
+	if (!World) { Reason = TEXT("no world within transporter range"); }
+	else if (World->IsGiant()) { Reason = TEXT("no surface below, and the pressure would crush a suit"); }
+	else if (!CanStepOutside(Reason)) {}
+	if (!Reason.IsEmpty())
+	{
+		ScreenMessage(FString::Printf(TEXT("Transporter: %s"), *Reason), FColor::Orange);
+		return false;
+	}
+	TWeakObjectPtr<APersonPawn> P(Person);
+	TWeakObjectPtr<APlanetBody> W(World);
+	FadeThen([this, P, W]()
+	{
+		APersonPawn* Who = P.Get();
+		APlanetBody* Body = W.Get();
+		if (!Who || !Body) { return; }
+		// The ground straight below the ship.
+		const FVector Centre = Body->GetActorLocation();
+		const FVector Radial = (GetActorLocation() - Centre).GetSafeNormal();
+		const FVector Feet = Centre + Radial * (Body->GetSurfaceRadiusCm(GetActorLocation()) + 2.0);
+		FVector Fwd = GetActorForwardVector() - Radial * FVector::DotProduct(GetActorForwardVector(), Radial);
+		if (Fwd.IsNearlyZero()) { Fwd = FVector::CrossProduct(Radial, FVector::RightVector); }
+		const FQuat Rot = FRotationMatrix::MakeFromZX(Radial, Fwd.GetSafeNormal()).ToQuat();
+		SetInteriorRoom(EShipRoom::Count);
+		Who->BeginEVA(this, FTransform(Rot, Feet + Radial * APersonPawn::HalfHeightCm), nullptr);
+		Who->bBeamedDown = true;
+		// The course stays as set: the officer with the conn reads the same nav target, and the away team's HUD
+		// finds the ship through its own Craft.
+		ScreenMessage(FString::Printf(TEXT("Energising. On the surface of %s; F beams you back up while the ship is in range."), *Body->GetDisplayName()), FColor::Cyan, 10.f);
+		UE_LOG(LogTemp, Log, TEXT("Beamed down to %s at %s"), *Body->GetDisplayName(), *Feet.ToString());
+	});
+	return true;
+}
+
+bool AStarshipPawn::BeamUp(APersonPawn* Person)
+{
+	if (!Person || Person->IsAboard()) { return false; }
+	if (FVector::Dist(Person->GetActorLocation(), GetActorLocation()) > TransporterRangeCm)
+	{
+		ScreenMessage(TEXT("Transporter: out of range"), FColor::Orange);
+		return false;
+	}
+	TWeakObjectPtr<APersonPawn> P(Person);
+	FadeThen([this, P]()
+	{
+		APersonPawn* Who = P.Get();
+		if (!Who) { return; }
+		FTransform L, U; FString Lb;
+		if (!RoomSpots(EShipRoom::Transporter, L, U, Lb)) { return; }
+		Who->PlaceAboard(this, EShipRoom::Transporter, U * CraftFrame());
+		SetInteriorRoom(EShipRoom::Transporter);
+		ScreenMessage(TEXT("Aboard. Transporter room, deck G."), FColor::Cyan, 5.f);
+		UE_LOG(LogTemp, Log, TEXT("Beamed up"));
+	});
+	return true;
+}
+
+bool AStarshipPawn::LaunchShuttleFromBay(APersonPawn* Person)
+{
+	APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+	if (!PC || !Person) { return false; }
+	// The launch runs from the chair's point of view: take the ship back, then the shuttle takes the controller.
+	PC->Possess(this);
+	Person->Destroy();
+	ActivePerson = nullptr;
+	SetInteriorRoom(EShipRoom::Count);
+	if (LaunchShuttle()) { return true; }
+	// Refused (too fast, already out): back on foot in the bay.
+	PutAboard(EShipRoom::ShuttleBay, true);
+	return false;
+}
+
+bool AStarshipPawn::PersonUse(APersonPawn* Person)
+{
+	if (!Person || !Person->IsAboard()) { return false; }
+	// Everything in the ship's frame: the person's world position is a tick behind the ship's, and under way that
+	// is kilometres.
+	FTransform Lift, Use; FString Label;
+	const EShipRoom Room = Person->GetRoom();
+	const FVector Feet = Person->FeetInCraft();
+	if (!RoomSpots(Room, Lift, Use, Label, &Feet)) { return false; }
+	const double DUse = FVector::Dist(Feet, Use.GetLocation());
+	const double DLift = FVector::Dist(Feet, Lift.GetLocation());
+	const double Reach = 220.0;
+	AStarshipPlayerController* PC = Cast<AStarshipPlayerController>(Person->GetController());
+	USlonkUIRoot* UI = PC ? PC->GetUIRoot() : nullptr;
+	if (DUse <= Reach && DUse <= DLift)
+	{
+		switch (Room)
+		{
+		case EShipRoom::Bridge: SitDown(Person); return true;
+		case EShipRoom::Engineering: if (UI) { UI->TogglePanel(UEngineeringPanel::StaticClass()); } return true;
+		case EShipRoom::Sickbay: if (UI) { UI->TogglePanel(UMedicalPanel::StaticClass()); } return true;
+		case EShipRoom::ShuttleBay: return LaunchShuttleFromBay(Person);
+		case EShipRoom::Transporter: return BeamDown(Person);
+		default: break;
+		}
+	}
+	if (DLift <= Reach)
+	{
+		if (UI) { UI->TogglePanel(UTurboliftPanel::StaticClass()); }
+		return true;
+	}
+	ScreenMessage(FString::Printf(TEXT("Nothing here to use: the turbolift is %.0f m off, the %s %.0f m"), DLift / 100.0, Room == EShipRoom::Bridge ? TEXT("chair") : TEXT("console"), DUse / 100.0), FColor::Orange, 3.f);
+	UE_LOG(LogTemp, Log, TEXT("Person use: nothing within reach in %s (lift %.1f m, use spot %.1f m)"), *UShipInteriorComponent::RoomName(Room), DLift / 100.0, DUse / 100.0);
+	return false;
+}
+
+FString AStarshipPawn::PersonUseHint(const APersonPawn* Person) const
+{
+	if (!Person || !Person->IsAboard()) { return FString(); }
+	FTransform Lift, Use; FString Label;
+	const FVector Feet = Person->FeetInCraft();
+	if (!RoomSpots(Person->GetRoom(), Lift, Use, Label, &Feet)) { return FString(); }
+	const double DUse = FVector::Dist(Feet, Use.GetLocation());
+	const double DLift = FVector::Dist(Feet, Lift.GetLocation());
+	if (DUse <= 220.0 && DUse <= DLift) { return FString::Printf(TEXT("F  %s"), *Label); }
+	if (DLift <= 220.0) { return TEXT("F  turbolift"); }
+	return FString::Printf(TEXT("turbolift %.0f m   %s %.0f m"), DLift / 100.0, Person->GetRoom() == EShipRoom::Bridge ? TEXT("chair") : TEXT("console"), DUse / 100.0);
 }
 
 void AStarshipPawn::ToggleShuttle()
@@ -2527,6 +2888,7 @@ void AStarshipPawn::OnShuttleDocked(AShuttlecraftPawn* Shuttle)
 	}
 	if (StarSphere) { StarSphere->SetVisibility(!bStarFieldHidden); }
 	if (DistantStars) { DistantStars->SetVisibility(true, true); }
+	if (Systems) { Systems->TakeConn(); }
 	if (Shuttle)
 	{
 		CollisionBox->IgnoreActorWhenMoving(Shuttle, false);
@@ -2555,8 +2917,7 @@ void AStarshipPawn::ToggleAutopilot()
 		SetAutopilot(0, 0.0, 0.f);
 		return;
 	}
-	APlayerController* PC = Cast<APlayerController>(GetController());
-	AStarshipHUD* H = PC ? Cast<AStarshipHUD>(PC->GetHUD()) : nullptr;
+	AStarshipHUD* H = PlayerHUD();
 	FNavObject O;
 	if (!H || !H->GetNavTargetInfo(O))
 	{
@@ -2591,8 +2952,7 @@ void AStarshipPawn::SetAutopilot(int32 Mode, double StandoffKm, float Seconds)
 void AStarshipPawn::TickAutopilot(float DeltaTime)
 {
 	NavDistanceKm = -1.f;
-	APlayerController* PC = Cast<APlayerController>(GetController());
-	AStarshipHUD* H = PC ? Cast<AStarshipHUD>(PC->GetHUD()) : nullptr;
+	AStarshipHUD* H = PlayerHUD();
 	FNavObject O;
 	if (!H || !H->GetNavTargetInfo(O))
 	{
@@ -2779,8 +3139,7 @@ void AStarshipPawn::JumpToActor(AActor* Target, double TargetRadiusCm, float Sta
 
 void AStarshipPawn::JumpToNavTarget()
 {
-	APlayerController* PC = Cast<APlayerController>(GetController());
-	AStarshipHUD* H = PC ? Cast<AStarshipHUD>(PC->GetHUD()) : nullptr;
+	AStarshipHUD* H = PlayerHUD();
 	if (!H)
 	{
 		return;
@@ -2822,8 +3181,7 @@ void AStarshipPawn::SetOrbitHold(bool bEnable)
 	double Radius = 0.0;
 	FString Name;
 	// Prefer the nav target, then whatever body is nearest.
-	APlayerController* PC = Cast<APlayerController>(GetController());
-	AStarshipHUD* H = PC ? Cast<AStarshipHUD>(PC->GetHUD()) : nullptr;
+	AStarshipHUD* H = PlayerHUD();
 	FNavObject Info;
 	if (H && H->GetNavTargetInfo(Info) && Info.Actor && Info.RadiusCm > 0.0)
 	{
