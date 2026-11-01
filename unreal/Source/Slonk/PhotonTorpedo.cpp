@@ -1,4 +1,8 @@
 #include "PhotonTorpedo.h"
+#include "StarshipPawn.h"
+#include "EngineUtils.h"
+#include "Engine/DamageEvents.h"
+#include "Components/BoxComponent.h"
 
 #include "Components/PointLightComponent.h"
 #include "Components/SphereComponent.h"
@@ -171,6 +175,39 @@ void APhotonTorpedo::Detonate(const FVector& Location)
 	if (AActor* MyOwner = GetOwner())
 	{
 		Ignore.Add(MyOwner);
+	}
+	// The starships take the burst directly. The engine's radial damage traces the visibility channel to each
+	// victim, which a hull's box ignores, so it fakes its contact at the box's centre and then scales the damage by
+	// the distance to that centre: a hull three hundred metres long takes nothing from a burst off its rim. Each hull
+	// in reach gets the event with the real nearest point of its box as the contact.
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AStarshipPawn> It(World); It; ++It)
+		{
+			AStarshipPawn* Ship = *It;
+			if (!Ship || Ship == GetOwner() || !Ship->CollisionBox || Ship->IsActorBeingDestroyed()) { continue; }
+			const FTransform& BoxT = Ship->CollisionBox->GetComponentTransform();
+			const FVector E = Ship->CollisionBox->GetUnscaledBoxExtent();
+			const FVector L = BoxT.InverseTransformPosition(Location);
+			const FVector Closest = BoxT.TransformPosition(FVector(FMath::Clamp(L.X, -E.X, E.X), FMath::Clamp(L.Y, -E.Y, E.Y), FMath::Clamp(L.Z, -E.Z, E.Z)));
+			const double Dist = FVector::Dist(Closest, Location);
+			if (Dist > DamageRadius) { continue; }
+			FRadialDamageEvent Event;
+			Event.Origin = Location;
+			Event.Params = FRadialDamageParams(Damage, Damage, 0.f, DamageRadius, 1.f);
+			FHitResult Hit;
+			Hit.Init(Location, Closest);
+			Hit.bBlockingHit = true;
+			Hit.Location = Closest;
+			Hit.ImpactPoint = Closest;
+			Hit.ImpactNormal = Dist > 1.0 ? (Location - Closest) / Dist : FVector::UpVector;
+			Hit.Normal = Hit.ImpactNormal;
+			Hit.Component = Ship->CollisionBox;
+			Hit.HitObjectHandle = FActorInstanceHandle(Ship);
+			Event.ComponentHits.Add(Hit);
+			Ship->TakeDamage(Damage, Event, GetInstigatorController(), this);
+			Ignore.Add(Ship);
+		}
 	}
 	UGameplayStatics::ApplyRadialDamage(this, Damage, Location, DamageRadius, nullptr, Ignore, this, GetInstigatorController(), /*bDoFullDamage*/ true);
 	AExplosionEffect::SpawnExplosion(GetWorld(), Location, ExplosionRadius, 1.0f);
