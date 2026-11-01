@@ -540,7 +540,9 @@ void UBridgeInteriorComponent::SetAlertLighting(int32 Level, float Time)
 	// Gather the point lights once (or again after a rebuild).
 	int32 Count = 0;
 	for (USceneComponent* P : Pieces) { if (Cast<UPointLightComponent>(P)) { ++Count; } }
-	if (Count != AlertLights.Num())
+	bool bStale = Count != AlertLights.Num();
+	for (const FAlertLight& A : AlertLights) { if (bStale) { break; } UPointLightComponent* L = A.Light.Get(); bStale = !L || !Pieces.Contains(L); }
+	if (bStale)
 	{
 		AlertLights.Reset();
 		for (USceneComponent* P : Pieces) { if (UPointLightComponent* L = Cast<UPointLightComponent>(P)) { AlertLights.Add({ L, L->Intensity }); } }

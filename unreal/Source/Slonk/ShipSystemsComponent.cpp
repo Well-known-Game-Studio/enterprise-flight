@@ -82,6 +82,7 @@ void UShipSystemsComponent::Report(EStation From, const FString& Text, const FLi
 	const FString Speaker = O ? FString::Printf(TEXT("%s %s"), *O->Rank, *O->Name) : StationName(From);
 	FBridgeLogEntry E; E.Time = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f; E.Speaker = Speaker; E.Text = Text; E.Color = Color;
 	Log.Add(E);
+	++LogRevision;
 	if (Log.Num() > 200) { Log.RemoveAt(0, Log.Num() - 200); }
 	if (AStarshipPawn* S = Ship()) { S->ScreenMessage(FString::Printf(TEXT("%s: %s"), *Speaker, *Text), Color.ToFColor(true), 5.f); }
 }
@@ -100,7 +101,6 @@ void UShipSystemsComponent::CacheBase()
 	if (S->Weapons) { BasePhaserDps = S->Weapons->PhaserDamagePerSecond; BasePhaserRecharge = S->Weapons->PhaserRechargeSeconds; BaseTorpedoCooldown = S->Weapons->TorpedoCooldown; }
 	if (S->WarpDrive) { BaseMaxWarp = S->WarpDrive->MaxWarpFactor; }
 	if (S->Movement) { BaseImpulse = S->Movement->FullImpulseSpeed; }
-	if (S->Scanner) { BaseScanRadii = S->Scanner->WorldRangeRadii; }
 	bBaseCached = true;
 }
 
@@ -134,9 +134,11 @@ void UShipSystemsComponent::ApplyEffects()
 		// Warp holds its top factor until the drive is well hurt, then falls off fast: 9.99 down to 1 at 30 % integrity.
 		const float W = Systems[(int32)EShipSystem::Warp].Integrity;
 		S->WarpDrive->MaxWarpFactor = FMath::Clamp(FMath::Lerp(1.f, BaseMaxWarp, FMath::Clamp((W - 0.3f) / 0.5f, 0.f, 1.f)) * FMath::Clamp(0.6f + 0.4f * Systems[(int32)EShipSystem::Warp].Power, 0.5f, 1.f), 1.f, BaseMaxWarp);
+		// The selected factor drives the cruise speed directly: pull it down to the new limit.
+		if (S->WarpDrive->WarpFactor > S->WarpDrive->MaxWarpFactor) { S->WarpDrive->SetWarpFactor(S->WarpDrive->MaxWarpFactor); }
 	}
 	if (S->Movement) { S->Movement->FullImpulseSpeed = BaseImpulse * FMath::Max(Effectiveness(EShipSystem::Impulse), 0.1f); }
-	if (S->Scanner) { S->Scanner->WorldRangeRadii = BaseScanRadii * FMath::Max(Effectiveness(EShipSystem::Sensors), 0.15f); }
+	if (S->Scanner) { S->Scanner->RangeScale = FMath::Max(Effectiveness(EShipSystem::Sensors), 0.15f); }
 }
 
 void UShipSystemsComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -199,7 +201,7 @@ void UShipSystemsComponent::OnHit(float Applied, float ThroughShields)
 	int32 Hit = 0;
 	for (int32 i = 0; i < (int32)EShipSystem::Count; ++i) { Pick -= Weights[i]; if (Pick <= 0.f) { Hit = i; break; } }
 	FShipSystemState& St = Systems[Hit];
-	const float Loss = ThroughShields * DamagePerHullPoint * (Alert == EAlertState::Red ? 0.75f : 1.f);
+	const float Loss = ThroughShields * DamagePerHullPoint * (Alert == EAlertState::Red ? 0.5f : 1.f);
 	const float Before = St.Integrity;
 	St.Integrity = FMath::Max(0.f, St.Integrity - Loss);
 	if (Before - St.Integrity > 0.02f && ReportCooldown[Hit] <= 0.f)

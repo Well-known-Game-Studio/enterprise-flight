@@ -501,7 +501,7 @@ void UEngineeringPanel::Refresh()
 		if (R.RepairButton && bRep != R.bLastRepair) { R.bLastRepair = bRep; Lcars::SetButtonColor(R.RepairButton, bRep ? Lcars::Orange : Lcars::Lilac, &Radii); }
 	}
 	if (AutoRepairButton) { Lcars::SetButtonColor(AutoRepairButton, Priority == EShipSystem::Count ? Lcars::Orange : Lcars::Peach, nullptr); }
-	if (Sys->GetLog().Num() != LastLogCount) { LastLogCount = Sys->GetLog().Num(); FillBridgeLog(this, WidgetTree, LogBox, Sys, 12); }
+	if (Sys->GetLogRevision() != LastLogCount) { LastLogCount = Sys->GetLogRevision(); FillBridgeLog(this, WidgetTree, LogBox, Sys, 12); }
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

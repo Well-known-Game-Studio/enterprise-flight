@@ -98,6 +98,8 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Ship") EShipSystem GetRepairPriority() const { return RepairPriority; }
 	const TArray<FOfficer>& GetOfficers() const { return Officers; }
 	const TArray<FBridgeLogEntry>& GetLog() const { return Log; }
+	/** Counts every report ever made; the log itself is capped, so watch this to know it changed. */
+	int32 GetLogRevision() const { return LogRevision; }
 	/** The officer at a station, or null if the post is empty. */
 	const FOfficer* OfficerAt(EStation Station) const;
 	/** An officer speaks: on the screen, and into the bridge log. */
@@ -120,9 +122,10 @@ private:
 	EAlertState Alert = EAlertState::Green;
 	EShipSystem RepairPriority = EShipSystem::Count;		// Count = the chief picks
 	TArray<FBridgeLogEntry> Log;
+	int32 LogRevision = 0;
 	float ReportCooldown[(int32)EShipSystem::Count] = { 0 };
 	// the pawn's own numbers before any system scales them
-	float BaseMaxShield = 100.f, BaseShieldRecharge = 5.f, BasePhaserDps = 30.f, BasePhaserRecharge = 8.f, BaseTorpedoCooldown = 2.5f, BaseMaxWarp = 9.99f, BaseScanRadii = 6.f;
+	float BaseMaxShield = 100.f, BaseShieldRecharge = 5.f, BasePhaserDps = 30.f, BasePhaserRecharge = 8.f, BaseTorpedoCooldown = 2.5f, BaseMaxWarp = 9.99f;
 	double BaseImpulse = 7.4948e9;
 	bool bBaseCached = false;
 	void CacheBase();
