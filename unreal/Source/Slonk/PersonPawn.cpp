@@ -514,18 +514,31 @@ void APersonPawn::CarryWithWorld(float DeltaTime)
 		}
 		const FTransform W = HullLocal * FTransform(C->GetActorQuat(), C->GetActorLocation());
 		SetActorLocationAndRotation(W.GetLocation(), W.GetRotation(), false, nullptr, ETeleportType::TeleportPhysics);
+		// Keep the world's turn in step for when we let go of the hull.
+		CarryPlanet = GroundPlanet;
+		if (APlanetBody* G = GroundPlanet.Get()) { CarryPlanetQuat = G->GetActorQuat(); }
 		return;
 	}
 	APlanetBody* P = GroundPlanet.Get();
-	if (!P) { return; }
-	// Ride the world's spin as the craft do: full below 1.05 radii, none above 1.35.
+	if (!P) { CarryPlanet = nullptr; return; }
+	// Ride the world's spin as the craft do: full below 1.05 radii, none above 1.35. The turn is the planet's own
+	// since our last tick, not its rate times our (clamped) frame time: a long frame while the terrain builds
+	// would otherwise leave us behind the ground, and the shuttle we stepped out of, by metres.
+	const FQuat PlanetQ = P->GetActorQuat();
+	if (CarryPlanet.Get() != P)
+	{
+		CarryPlanet = P;
+		CarryPlanetQuat = PlanetQ;
+		return;
+	}
+	FQuat Q = PlanetQ * CarryPlanetQuat.Inverse();
+	CarryPlanetQuat = PlanetQ;
 	const FVector Centre = P->GetActorLocation();
 	const FVector Rv = GetActorLocation() - Centre;
 	const double Radii = Rv.Size() / FMath::Max(P->GetRadiusCm(), 1.0);
 	const double Carry = FMath::Clamp((1.35 - Radii) / 0.30, 0.0, 1.0);
-	const double SpinRad = FMath::DegreesToRadians(P->SpinDegPerSec) * DeltaTime * Carry;
-	if (FMath::IsNearlyZero(SpinRad)) { return; }
-	const FQuat Q(P->GetActorQuat().GetAxisZ(), SpinRad);
+	if (Carry <= 0.0 || Q.IsIdentity(1e-12)) { return; }
+	if (Carry < 1.0) { Q = FQuat::Slerp(FQuat::Identity, Q, (float)Carry); }
 	SetActorLocationAndRotation(Centre + Q.RotateVector(Rv), Q * GetActorQuat(), false, nullptr, ETeleportType::TeleportPhysics);
 	Velocity = Q.RotateVector(Velocity);
 }

@@ -340,6 +340,9 @@ private:
 	void HoldLanded(float DeltaTime);
 	TWeakObjectPtr<class APlanetBody> LandedBody;
 	FTransform LandedLocal;
+	/** The ground body's rotation when we last rode it: the carry follows its actual turn since then. */
+	TWeakObjectPtr<AActor> CarryBody;
+	FQuat CarryBodyQuat = FQuat::Identity;
 	TArray<TWeakObjectPtr<class APlanetBody>> TerrainBodies;
 	float TerrainScanTimer = 0.f;
 

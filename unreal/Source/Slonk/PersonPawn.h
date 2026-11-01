@@ -195,6 +195,9 @@ private:
 	/** The person's transform in the hull craft's frame, kept between ticks while Frame == Hull. */
 	FTransform HullLocal;
 	float StickGrace = 0.f;
+	/** The ground planet's rotation when we last rode it: the carry follows the world's actual turn since then. */
+	TWeakObjectPtr<APlanetBody> CarryPlanet;
+	FQuat CarryPlanetQuat = FQuat::Identity;
 	float WalkPhase = 0.f;
 	float Stride = 0.f;
 	float Limber = 0.f;      // 0 standing, 1 floating (limbs loose)
