@@ -9,6 +9,7 @@
 #include "WarpDriveComponent.h"
 #include "StarshipWeaponsComponent.h"
 #include "ShipSystemsComponent.h"
+#include "MsdPanel.h"
 #include "SpaceTarget.h"
 #include "SpaceVessel.h"
 #include "BorgCube.h"
@@ -43,6 +44,7 @@ void UMainMenuPanel::BuildContent()
 	AddSidebarButton(TEXT("Engineering"), Lcars::Tan, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UEngineeringPanel>(); } });
 	AddSidebarButton(TEXT("Tactical"), Lcars::Red, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UTacticalPanel>(); } });
 	AddSidebarButton(TEXT("Sickbay"), Lcars::Sky, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UMedicalPanel>(); } });
+	AddSidebarButton(TEXT("Systems Display"), Lcars::Lilac, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UMsdPanel>(); } });
 	AddSidebarButton(TEXT("Controls"), Lcars::Lavender, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UControlsPanel>(); } });
 	AddSidebarButton(TEXT("Settings"), Lcars::Tan, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<USettingsPanel>(); } });
 	AddSidebarButton(TEXT("Quit"), Lcars::Salmon, [this]()
@@ -152,7 +154,7 @@ void UControlsPanel::BuildContent()
 		{ TEXT("N"), TEXT("nav markers") },
 		{ TEXT("M"), TEXT("star chart") },
 		{ TEXT("/"), TEXT("science log") },
-		{ TEXT(",  .  ;"), TEXT("engineering, tactical, sickbay boards") },
+		{ TEXT(",  .  ;  '"), TEXT("engineering, tactical, sickbay boards, master systems display") },
 		{ TEXT("5  6  7"), TEXT("condition green, yellow alert, red alert") },
 		{ TEXT("H"), TEXT("this list") },
 		{ TEXT("Escape"), TEXT("main menu") },
@@ -552,6 +554,32 @@ void UTacticalPanel::BuildContent()
 		const FShipSystemState& St = S->Systems ? S->Systems->GetSystem(EShipSystem::Shields) : FShipSystemState();
 		return FString::Printf(TEXT("%d%%  of a %.0f point grid   emitters %d%%   power %d%%"), FMath::RoundToInt(S->GetShieldFraction() * 100.f), S->MaxShieldStrength, FMath::RoundToInt(St.Integrity * 100.f), FMath::RoundToInt(St.Power * 100.f));
 	});
+	AddLiveRow(Content, TEXT("Facings"), [this]()
+	{
+		AStarshipPawn* S = GetShip(); if (!S) { return FString(); }
+		const int32 R = S->Systems ? S->Systems->GetReinforcedFacing() : -1;
+		return FString::Printf(TEXT("fore %.0f / %.0f   aft %.0f / %.0f   port %.0f / %.0f   starboard %.0f / %.0f%s"), S->ShieldFacing[0], S->ShieldFacingMax[0], S->ShieldFacing[1], S->ShieldFacingMax[1], S->ShieldFacing[2], S->ShieldFacingMax[2], S->ShieldFacing[3], S->ShieldFacingMax[3], R >= 0 ? *FString::Printf(TEXT("   reinforcing %s"), *UShipSystemsComponent::FacingName(R)) : TEXT(""));
+	});
+	{
+		// Reinforce: a row of five pills under the facings.
+		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+		USizeBox* L = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass()); L->SetMinDesiredWidth(200.f);
+		L->AddChild(Lcars::MakeText(WidgetTree, TEXT("Reinforce"), 15.f, Lcars::Peach));
+		if (UHorizontalBoxSlot* Sl = Row->AddChildToHorizontalBox(L)) { Sl->SetVerticalAlignment(VAlign_Center); Sl->SetPadding(FMargin(0.f, 0.f, 16.f, 0.f)); }
+		const TCHAR* Names[5] = { TEXT("Forward"), TEXT("Aft"), TEXT("Port"), TEXT("Starboard"), TEXT("Even") };
+		const int32 Values[5] = { 0, 1, 2, 3, -1 };
+		const FVector4 Radii(Lcars::PillR, Lcars::PillR, Lcars::PillR, Lcars::PillR);
+		for (int32 i = 0; i < 5; ++i)
+		{
+			UButton* B = Lcars::MakeButton(WidgetTree, Names[i], Lcars::Lilac, nullptr, &Radii);
+			USizeBox* Box = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass()); Box->SetHeightOverride(30.f); Box->SetMinDesiredWidth(120.f); Box->AddChild(B);
+			if (UHorizontalBoxSlot* Sl = Row->AddChildToHorizontalBox(Box)) { Sl->SetPadding(FMargin(0.f, 0.f, Lcars::Gap, 0.f)); }
+			const int32 V = Values[i];
+			Bind(B, [this, V]() { if (AStarshipPawn* S = GetShip()) { if (S->Systems) { S->Systems->ReinforceShields(V); } } }, FString::Printf(TEXT("Reinforce %s"), Names[i]));
+			ReinforceButtons.Add(B);
+		}
+		if (UVerticalBoxSlot* Sl = Content->AddChildToVerticalBox(Row)) { Sl->SetPadding(FMargin(0.f, 4.f, 0.f, 4.f)); }
+	}
 	AddLiveRow(Content, TEXT("Hull"), [this]() { AStarshipPawn* S = GetShip(); return S ? FString::Printf(TEXT("%d%%"), FMath::RoundToInt(S->GetHullFraction() * 100.f)) : FString(); });
 	AddLiveRow(Content, TEXT("Phasers"), [this]()
 	{
@@ -638,6 +666,12 @@ void UTacticalPanel::Refresh()
 		const FLinearColor Cols[3] = { Lcars::Red, Lcars::Gold, FLinearColor(0.45f, 0.85f, 0.5f) };
 		const int32 Lit = Sys->GetAlert() == EAlertState::Red ? 0 : Sys->GetAlert() == EAlertState::Yellow ? 1 : 2;
 		for (int32 i = 0; i < AlertButtons.Num(); ++i) { if (AlertButtons[i]) { Lcars::SetButtonColor(AlertButtons[i], i == Lit ? Lcars::Brighter(Cols[i], 0.25f) : Lcars::Darker(Cols[i], 0.45f), nullptr); } }
+	}
+	if (Sys && Sys->GetReinforcedFacing() != LastReinforced)
+	{
+		LastReinforced = Sys->GetReinforcedFacing();
+		const FVector4 Radii(Lcars::PillR, Lcars::PillR, Lcars::PillR, Lcars::PillR);
+		for (int32 i = 0; i < ReinforceButtons.Num(); ++i) { const int32 V = i < 4 ? i : -1; if (ReinforceButtons[i]) { Lcars::SetButtonColor(ReinforceButtons[i], V == LastReinforced ? Lcars::Orange : Lcars::Lilac, &Radii); } }
 	}
 	ContactsTimer -= GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.016f;
 	if (ContactsTimer <= 0.f) { ContactsTimer = 0.5f; FillContacts(); }

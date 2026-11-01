@@ -163,11 +163,15 @@ The ship is a crewed machine. Seven systems carry their own integrity and power 
 
 The crew are counted too: 502 aboard, 76 of them officers, every one fit, wounded, critical or dead. A hit through the shields wounds people in proportion, a third of them critically, and a hard enough hit kills; at red alert the decks are braced and it hurts less. Sickbay has 24 beds and treats a few people a minute, stabilising the critical into the wounded and returning the wounded to duty, with the triage order choosing which comes first; the critical beyond the beds, or without supplies, slip away. Fewer fit hands means slower repairs and sloppier systems. Life support at half or better keeps the air; below that the decks slowly lose it and people go down with it, until power is diverted or the team gets it back. A heavy hit can put a senior officer in sickbay, when their junior takes the post and the reports, or lose them outright. `;` opens sickbay: the crew by condition, the air, supplies, beds, the staff and who is standing in for whom, and the medical and operations log. Stores run out: torpedoes come from a magazine of 96, repairs use spare parts, treatment uses medical supplies, and with the lockers empty the chief cannibalises and the doctor can only keep people alive. All of it is made good alongside a starbase: within fifty kilometres at all stop, Resupply on the engineering or sickbay board (or `ship order resupply`) takes about forty-five seconds, with the station's repair teams aboard, the wounded going across and replacements coming on.
 
+Hits land somewhere in particular. The ship carries a compartment map in her own frame, laid out from the refit's deck plans and measured against the hull mesh: the bridge, computer core and quarters in the saucer, sickbay and the armoury on G deck, phaser control and the sensor bay beneath, impulse engineering at the saucer's rear, the shield generators and the torpedo bay in the neck, the deflector, environmental control, main engineering, the reactor, the cargo and shuttle bays along the secondary hull, and the two nacelles. A phaser or torpedo hit is traced into the first compartment on its line, and what lives there takes most of the harm: a hit in environmental control hurts life support, one in the nacelles the warp drive, one in the quarters mostly people. The chief names the place in his report, and only an officer whose post was hit can be the one carried to sickbay. The shields are four facings, fore, aft, port and starboard, each with its own strength and recharge; a hit drains the facing it lands on and goes through where that one is down, so coming about to present a fresh shield is a real helm decision. Reinforce one facing from the tactical board or `ship order shields fore`, and it gets half again at the other three's expense. `'` opens the master systems display: the hull's own silhouette rasterised from its mesh with the deck lines through it, every compartment drawn over it coloured by its system's state and darkening with structural damage, a hit flashing where it struck, the four facings as bars round the hull, and a click on any compartment for its details and the orders to send the team or the power there.
+
 ![The engineering board clean and under repair, the team on the warp drive, and the status report in the bridge log](https://github.com/user-attachments/assets/39a22321-0c0b-4f47-a523-e08d594336e1)
 
 ![Tactical at condition green and at red alert; the bridge lit for red and for yellow alert](https://github.com/user-attachments/assets/1bf5ede7-269c-41d7-8b36-f9a30604fddc)
 
 ![Sickbay after a battering, the air failing with life support at 18 %, engineering alongside Starbase 11 resupplying, and sickbay afterwards](https://github.com/user-attachments/assets/7817e2ad-81d4-425d-937a-5730cc1d83a0)
+
+![The master systems display: the hull in cutaway, hits flashing where they landed, a compartment selected, the forward shield reinforced](https://github.com/user-attachments/assets/4754445c-2f7e-48dc-9d0e-2571de9080e5)
 
 ## The bridge
 
@@ -201,7 +205,7 @@ Mouse or the left stick steers; H opens the controls panel with the full key lis
 | Escape | main computer: status, star chart, science log, controls, quit |
 | M | stellar cartography: the full star chart, course setting and autopilot (1, 2, 3 pick Sector, System or Local) |
 | / | science log: every scan on record, points, rating and the system survey |
-| , . ; | engineering board (power, repairs, stores), tactical board (alert, weapons, contacts), sickbay (crew, air, supplies, triage) |
+| , . ; ' | engineering board (power, repairs, stores), tactical board (alert, weapons, facings, contacts), sickbay (crew, air, supplies, triage), master systems display (the cutaway) |
 | 5 6 7 | condition green, yellow alert, red alert |
 | H | controls panel |
 | T, Y | lock / clear a weapons target; left mouse phasers, Space or G torpedo, B tractor beam |

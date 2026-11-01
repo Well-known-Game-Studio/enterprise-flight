@@ -104,6 +104,29 @@ struct FBridgeLogEntry
 
 class AStarshipPawn;
 
+/** A place inside the ship, in pawn space, with what lives there. See ShipCompartments.h for the map. */
+struct FCompartment
+{
+	FString Name;
+	FString Deck;
+	/** The system that lives here, or Count for quarters, bays and the like. */
+	EShipSystem System = EShipSystem::Count;
+	/** The senior officer whose post is here, or Count. The bridge holds several; see bBridge. */
+	EStation Station = EStation::Count;
+	bool bBridge = false;
+	/** Pawn-space box, cm. */
+	FVector Center = FVector::ZeroVector;
+	FVector Extent = FVector::ZeroVector;
+	/** Share of the complement normally in here, for casualties. */
+	float CrewShare = 0.f;
+	/** Visible damage 0..1 for the display; eases off with repairs. */
+	float Damage = 0.f;
+	float LastHitTime = -1000.f;
+
+	bool Contains(const FVector& P) const { return FMath::Abs(P.X - Center.X) <= Extent.X && FMath::Abs(P.Y - Center.Y) <= Extent.Y && FMath::Abs(P.Z - Center.Z) <= Extent.Z; }
+	FBox Box() const { return FBox(Center - Extent, Center + Extent); }
+};
+
 UCLASS(ClassGroup = (Slonk), meta = (BlueprintSpawnableComponent))
 class SLONK_API UShipSystemsComponent : public UActorComponent
 {
@@ -130,12 +153,22 @@ public:
 	bool CanResupplyAt(const AActor* Station, FString& OutWhy) const;
 	/** An order typed at the console: "alert red", "power shields", "repair warp", "balance", "triage", "resupply". */
 	bool HandleOrder(const TArray<FString>& Args, FString& OutReply);
+	/** Shields: reinforce one facing (0 fore, 1 aft, 2 port, 3 starboard) at the others' expense, or -1 for even. */
+	UFUNCTION(BlueprintCallable, Category = "Ship|Orders") void ReinforceShields(int32 Facing);
+	int32 GetReinforcedFacing() const { return ReinforcedFacing; }
+	static FString FacingName(int32 Facing);
 	/** Dev: set a system's integrity outright. */
 	void DevSetIntegrity(EShipSystem System, float Integrity) { Systems[(int32)System].Integrity = FMath::Clamp(Integrity, 0.f, 1.f); }
 
 	// ---- what happens to the ship ----
 	/** Called by the pawn when a hit lands: some of what got through the shields breaks something. */
 	void OnHit(float Applied, float ThroughShields);
+	/** A located hit: LocalPoint and LocalDir in pawn space pick the compartment, and what is in it suffers. */
+	void OnHitAt(float Applied, float ThroughShields, const FVector& LocalPoint, const FVector& LocalDir);
+	const TArray<FCompartment>& GetCompartments() const { return Compartments; }
+	TArray<FCompartment>& MutableCompartments() { return Compartments; }
+	/** Rebuild the compartment map from the pawn's hull anchors (called at BeginPlay; again if the hull changes). */
+	void BuildCompartments();
 	/** The scale a system's output should have now: integrity and power together, with the alert's posture. */
 	UFUNCTION(BlueprintPure, Category = "Ship") float Effectiveness(EShipSystem System) const;
 	UFUNCTION(BlueprintPure, Category = "Ship") EAlertState GetAlert() const { return Alert; }
@@ -199,7 +232,14 @@ private:
 	TWeakObjectPtr<AActor> ResupplyStation;
 	float MedicalReportCooldown = 0.f, LifeSupportReportCooldown = 0.f, PendingWounded = 0.f, PendingDead = 0.f;
 	bool bPartsOutReported = false, bSuppliesOutReported = false, bAirWarned = false;
-	void ApplyCasualties(float ThroughShields);
+	TArray<FCompartment> Compartments;
+	int32 ReinforcedFacing = -1;
+	/** Break a system by Loss, with the chief's report; Where names the compartment when known. */
+	void DamageSystem(int32 Index, float Loss, const FString& Where);
+	int32 PickRandomSystem() const;
+	void InjureOfficer(float ThroughShields, const FCompartment* Where);
+	/** Wound and kill in proportion to what got through; Scale weights it by how many people are where it landed. */
+	void ApplyCasualties(float ThroughShields, float Scale = 1.f);
 	void TickCrew(float DeltaTime);
 	void TickLifeSupport(float DeltaTime);
 	void TickResupply(float DeltaTime);
