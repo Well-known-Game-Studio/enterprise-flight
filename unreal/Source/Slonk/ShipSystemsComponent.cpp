@@ -1,4 +1,5 @@
 #include "ShipSystemsComponent.h"
+#include "ShipCompartments.h"
 #include "EngineUtils.h"
 #include "ScienceScannerComponent.h"
 #include "SpaceVessel.h"
@@ -101,6 +102,7 @@ void UShipSystemsComponent::BeginPlay()
 	CacheBase();
 	// The magazine is ours to keep.
 	if (AStarshipPawn* S = Ship()) { if (S->Weapons) { S->Weapons->bUnlimitedTorpedoes = false; S->Weapons->TorpedoesCarried = FMath::Min(S->Weapons->TorpedoesCarried, Stores.TorpedoCapacity); } }
+	BuildCompartments();
 }
 
 void UShipSystemsComponent::CacheBase()
@@ -135,6 +137,8 @@ void UShipSystemsComponent::ApplyEffects()
 	CacheBase();
 	const float Sh = Effectiveness(EShipSystem::Shields);
 	S->MaxShieldStrength = BaseMaxShield * FMath::Max(Sh, 0.05f);
+	// Reinforcing a facing gives it half again at the cost of the other three; the total stays the same.
+	for (int32 i = 0; i < 4; ++i) { S->ShieldFacingMax[i] = S->MaxShieldStrength * (ReinforcedFacing < 0 ? 1.f : i == ReinforcedFacing ? 1.5f : 5.f / 6.f); S->ShieldFacing[i] = FMath::Min(S->ShieldFacing[i], S->ShieldFacingMax[i]); }
 	S->ShieldStrength = FMath::Min(S->ShieldStrength, S->MaxShieldStrength);
 	S->ShieldRechargePerSecond = BaseShieldRecharge * Sh;
 	if (S->Weapons)
@@ -271,26 +275,6 @@ void UShipSystemsComponent::ApplyCasualties(float ThroughShields)
 	const float Crit = Wounded * 0.33f;
 	Crew.Fit -= Wounded + Dead; Crew.Injured += Wounded - Crit; Crew.Critical += Crit; Crew.Dead += Dead;
 	PendingWounded += Wounded; PendingDead += Dead;
-	// A heavy hit can put a senior officer in sickbay, or worse.
-	if (ThroughShields > 40.f && FMath::FRand() < ThroughShields / 400.f)
-	{
-		TArray<int32> Up; for (int32 i = 0; i < Officers.Num(); ++i) { if (Officers[i].OnDuty()) { Up.Add(i); } }
-		if (Up.Num())
-		{
-			FOfficer& O = Officers[Up[FMath::RandHelper(Up.Num())]];
-			const FString Who = FString::Printf(TEXT("%s %s"), *O.Rank, *O.Name);
-			if (ThroughShields > 100.f && FMath::FRand() < 0.15f)
-			{
-				O.bLost = true;
-				Report(EStation::Medical, FString::Printf(TEXT("%s is dead, Captain. %s has %s."), *Who, *O.Acting, *StationName(O.Station).ToLower()), FLinearColor(1.f, 0.4f, 0.4f));
-			}
-			else
-			{
-				O.bInjured = true; O.RecoverSeconds = 90.f + ThroughShields;
-				Report(EStation::Medical, FString::Printf(TEXT("%s is down, we have them in sickbay. %s has %s."), *Who, *O.Acting, *StationName(O.Station).ToLower()), FLinearColor(1.f, 0.6f, 0.5f));
-			}
-		}
-	}
 }
 
 bool UShipSystemsComponent::CanResupply(FString& OutWhy, AActor** OutStation) const
@@ -379,6 +363,7 @@ void UShipSystemsComponent::SetTriage(ETriage NewTriage)
 
 void UShipSystemsComponent::TickRepairs(float DeltaTime)
 {
+	for (FCompartment& K : Compartments) { K.Damage = FMath::Max(0.f, K.Damage - RepairPerSecond * 0.6f * CrewFactor() * DeltaTime); }
 	// The chief's pick: the worst system, shields and warp first when tied.
 	EShipSystem Target = RepairPriority;
 	if (Target == EShipSystem::Count || Systems[(int32)Target].Integrity >= 1.f)
@@ -427,27 +412,109 @@ void UShipSystemsComponent::TickRepairs(float DeltaTime)
 	}
 }
 
-void UShipSystemsComponent::OnHit(float Applied, float ThroughShields)
+int32 UShipSystemsComponent::PickRandomSystem() const
 {
-	if (ThroughShields <= 0.f) { return; }
-	ApplyCasualties(ThroughShields);
-	// A hit through the shields breaks something: which, by weight; the big systems are big targets.
+	// By weight; the big systems are big targets.
 	static const float Weights[(int32)EShipSystem::Count] = { 2.f, 2.f, 1.f, 1.5f, 1.5f, 1.f, 0.7f };
 	float Total = 0.f; for (float W : Weights) { Total += W; }
 	float Pick = FMath::FRand() * Total;
-	int32 Hit = 0;
-	for (int32 i = 0; i < (int32)EShipSystem::Count; ++i) { Pick -= Weights[i]; if (Pick <= 0.f) { Hit = i; break; } }
+	for (int32 i = 0; i < (int32)EShipSystem::Count; ++i) { Pick -= Weights[i]; if (Pick <= 0.f) { return i; } }
+	return 0;
+}
+
+void UShipSystemsComponent::DamageSystem(int32 Hit, float Loss, const FString& Where)
+{
 	FShipSystemState& St = Systems[Hit];
-	const float Loss = ThroughShields * DamagePerHullPoint * (Alert == EAlertState::Red ? 0.5f : 1.f);
 	const float Before = St.Integrity;
 	St.Integrity = FMath::Max(0.f, St.Integrity - Loss);
 	if (Before - St.Integrity > 0.02f && ReportCooldown[Hit] <= 0.f)
 	{
 		ReportCooldown[Hit] = 6.f;
 		const int32 Pct = FMath::RoundToInt(St.Integrity * 100.f);
-		Report(EStation::Engineering, St.Integrity <= 0.f ? FString::Printf(TEXT("%s are out!"), *SystemName((EShipSystem)Hit))
-			: FString::Printf(TEXT("%s at %d percent."), *SystemName((EShipSystem)Hit), Pct), FLinearColor(1.f, 0.7f, 0.5f));
+		const FString Lead = Where.IsEmpty() ? FString() : FString::Printf(TEXT("Hit in %s: "), *Where.ToLower());
+		Report(EStation::Engineering, Lead + (St.Integrity <= 0.f ? FString::Printf(TEXT("%s are out!"), *SystemName((EShipSystem)Hit))
+			: FString::Printf(TEXT("%s at %d percent."), *SystemName((EShipSystem)Hit), Pct)), FLinearColor(1.f, 0.7f, 0.5f));
 	}
+}
+
+void UShipSystemsComponent::OnHit(float Applied, float ThroughShields)
+{
+	// No position (crush, scripted): the old spread.
+	if (ThroughShields <= 0.f) { return; }
+	ApplyCasualties(ThroughShields);
+	InjureOfficer(ThroughShields, nullptr);
+	DamageSystem(PickRandomSystem(), ThroughShields * DamagePerHullPoint * (Alert == EAlertState::Red ? 0.5f : 1.f), FString());
+}
+
+void UShipSystemsComponent::OnHitAt(float Applied, float ThroughShields, const FVector& LocalPoint, const FVector& LocalDir)
+{
+	if (ThroughShields <= 0.f) { return; }
+	AStarshipPawn* S = Ship();
+	const int32 Ki = SlonkCompartments::Hit(Compartments, LocalPoint, LocalDir, S ? S->GetShipLengthCm() : 30500.f);
+	if (Ki == INDEX_NONE) { OnHit(Applied, ThroughShields); return; }
+	FCompartment& K = Compartments[Ki];
+	const float Loss = ThroughShields * DamagePerHullPoint * (Alert == EAlertState::Red ? 0.5f : 1.f);
+	K.Damage = FMath::Min(1.f, K.Damage + Loss * 2.5f);
+	K.LastHitTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
+	// Most of the harm goes to what lives there; some always finds a conduit somewhere else.
+	if (K.System != EShipSystem::Count) { DamageSystem((int32)K.System, Loss * 0.7f, K.Name); DamageSystem(PickRandomSystem(), Loss * 0.3f, FString()); }
+	else { DamageSystem(PickRandomSystem(), Loss * 0.4f, K.Name); }
+	// Casualties follow the people: a hit on the quarters hurts more than one on a nacelle.
+	const float CrewK = FMath::Clamp(0.4f + K.CrewShare * 10.f, 0.4f, 2.f);
+	const float SavedWounded = WoundedPerHullPoint;
+	WoundedPerHullPoint *= CrewK;
+	ApplyCasualties(ThroughShields * (K.CrewShare > 0.01f ? 1.f : 0.5f));
+	WoundedPerHullPoint = SavedWounded;
+	InjureOfficer(ThroughShields, &K);
+}
+
+void UShipSystemsComponent::InjureOfficer(float ThroughShields, const FCompartment* Where)
+{
+	// A heavy hit can put a senior officer in sickbay, or worse: only the ones whose post is where it landed.
+	if (ThroughShields <= 40.f || FMath::FRand() >= ThroughShields / 400.f) { return; }
+	TArray<int32> Up;
+	for (int32 i = 0; i < Officers.Num(); ++i)
+	{
+		if (!Officers[i].OnDuty()) { continue; }
+		if (Where)
+		{
+			const EStation St = Officers[i].Station;
+			const bool bBridgePost = St == EStation::Tactical || St == EStation::Helm || St == EStation::Operations || St == EStation::Science;
+			if (!(Where->Station == St || (Where->bBridge && bBridgePost))) { continue; }
+		}
+		Up.Add(i);
+	}
+	if (Up.Num() == 0) { return; }
+	FOfficer& O = Officers[Up[FMath::RandHelper(Up.Num())]];
+	const FString Who = FString::Printf(TEXT("%s %s"), *O.Rank, *O.Name);
+	if (ThroughShields > 100.f && FMath::FRand() < 0.15f)
+	{
+		O.bLost = true;
+		Report(EStation::Medical, FString::Printf(TEXT("%s is dead, Captain. %s has %s."), *Who, *O.Acting, *StationName(O.Station).ToLower()), FLinearColor(1.f, 0.4f, 0.4f));
+	}
+	else
+	{
+		O.bInjured = true; O.RecoverSeconds = 90.f + ThroughShields;
+		Report(EStation::Medical, FString::Printf(TEXT("%s is down, we have them in sickbay. %s has %s."), *Who, *O.Acting, *StationName(O.Station).ToLower()), FLinearColor(1.f, 0.6f, 0.5f));
+	}
+}
+
+void UShipSystemsComponent::BuildCompartments()
+{
+	AStarshipPawn* S = Ship();
+	if (!S) { return; }
+	SlonkCompartments::BuildRefit(Compartments, S->GetShipLengthCm(), S->TorpedoTubeCentre, S->ShuttleBayOffset, S->BridgeCameraOffset);
+}
+
+FString UShipSystemsComponent::FacingName(int32 F)
+{
+	return F == 0 ? TEXT("forward") : F == 1 ? TEXT("aft") : F == 2 ? TEXT("port") : F == 3 ? TEXT("starboard") : TEXT("even");
+}
+
+void UShipSystemsComponent::ReinforceShields(int32 Facing)
+{
+	ReinforcedFacing = FMath::Clamp(Facing, -1, 3);
+	Report(EStation::Tactical, ReinforcedFacing < 0 ? TEXT("Shields balanced on all facings.") : FString::Printf(TEXT("Reinforcing the %s shield."), *FacingName(ReinforcedFacing)));
 }
 
 void UShipSystemsComponent::SetAlert(EAlertState NewAlert)
@@ -531,6 +598,15 @@ bool UShipSystemsComponent::HandleOrder(const TArray<FString>& Args, FString& Ou
 		if (Arg.StartsWith(TEXT("walk")) || Arg.StartsWith(TEXT("duty"))) { SetTriage(ETriage::WalkingWounded); return true; }
 		OutReply = TEXT("triage critical|walking"); return false;
 	}
+	if (What == TEXT("shields") || What == TEXT("reinforce"))
+	{
+		if (Arg.StartsWith(TEXT("fore")) || Arg.StartsWith(TEXT("forw")) || Arg.StartsWith(TEXT("front"))) { ReinforceShields(0); return true; }
+		if (Arg.StartsWith(TEXT("aft")) || Arg.StartsWith(TEXT("rear"))) { ReinforceShields(1); return true; }
+		if (Arg.StartsWith(TEXT("port"))) { ReinforceShields(2); return true; }
+		if (Arg.StartsWith(TEXT("star"))) { ReinforceShields(3); return true; }
+		if (Arg.StartsWith(TEXT("even")) || Arg.StartsWith(TEXT("bal")) || Arg.IsEmpty()) { ReinforceShields(-1); return true; }
+		OutReply = TEXT("shields fore|aft|port|starboard|even"); return false;
+	}
 	if (What == TEXT("resupply"))
 	{
 		if (BeginResupply()) { return true; }
@@ -538,6 +614,6 @@ bool UShipSystemsComponent::HandleOrder(const TArray<FString>& Args, FString& Ou
 		OutReply = TEXT("resupply: ") + OutReply;
 		return false;
 	}
-	OutReply = TEXT("order alert|power|repair|report|triage|resupply");
+	OutReply = TEXT("order alert|power|repair|shields|report|triage|resupply");
 	return false;
 }

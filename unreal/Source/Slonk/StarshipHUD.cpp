@@ -249,7 +249,14 @@ void AStarshipHUD::DrawHUD()
 				const bool bRed = Ship->Systems->GetAlert() == EAlertState::Red;
 				if (!bRed || FMath::Fmod(GetWorld()->GetTimeSeconds(), 1.f) < 0.65f) { Alert = FString::Printf(TEXT("   %s"), *UShipSystemsComponent::AlertName(Ship->Systems->GetAlert())); }
 			}
-			DrawText(FString::Printf(TEXT("SHIELDS %3.0f%%%s   HULL %3.0f%%%s"), SF * 100.f, SF <= 0.f ? TEXT(" DOWN") : TEXT(""), Ship->GetHullFraction() * 100.f, *Alert), ShieldColor, X, Y, Font, UIScale); Y += Line;
+			// The facings, when they differ: fore, aft, port, starboard as fractions of their own maxima.
+			FString Facings;
+			{
+				float Lo = 1.f, Hi = 0.f; int32 Pct[4];
+				for (int32 i = 0; i < 4; ++i) { const float f = Ship->ShieldFacingMax[i] > 0.f ? Ship->ShieldFacing[i] / Ship->ShieldFacingMax[i] : 0.f; Pct[i] = FMath::RoundToInt(f * 100.f); Lo = FMath::Min(Lo, f); Hi = FMath::Max(Hi, f); }
+				if (Hi - Lo > 0.02f || (Ship->Systems && Ship->Systems->GetReinforcedFacing() >= 0)) { Facings = FString::Printf(TEXT("  F%d A%d P%d S%d"), Pct[0], Pct[1], Pct[2], Pct[3]); }
+			}
+			DrawText(FString::Printf(TEXT("SHIELDS %3.0f%%%s%s   HULL %3.0f%%%s"), SF * 100.f, SF <= 0.f ? TEXT(" DOWN") : TEXT(""), *Facings, Ship->GetHullFraction() * 100.f, *Alert), ShieldColor, X, Y, Font, UIScale); Y += Line;
 			if (Ship->Systems)
 			{
 				// Damaged systems, one line, only when something is hurt.

@@ -163,6 +163,11 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Defence") float MaxShieldStrength = 100.f;
 	UPROPERTY(BlueprintReadOnly, Category = "Defence") float ShieldStrength = 100.f;
+	/** Four facings: fore, aft, port, starboard. ShieldStrength is their mean; MaxShieldStrength their mean maximum. */
+	float ShieldFacing[4] = { 100.f, 100.f, 100.f, 100.f };
+	float ShieldFacingMax[4] = { 100.f, 100.f, 100.f, 100.f };
+	/** Which facing a world point lies on, from the hull's own axes. */
+	int32 ShieldFacingOf(const FVector& WorldPoint) const;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Defence") float ShieldRechargePerSecond = 5.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Defence") float ShieldRechargeDelay = 4.f;
 	UPROPERTY(BlueprintReadOnly, Category = "Defence") float HullIntegrity = 100.f;
@@ -602,6 +607,11 @@ private:
 	void UpdateThrusters();
 	/** Cache the hull's LOD0 vertices in pawn space for the probes below. */
 	void GatherHullVerts();
+public:
+	const TArray<FVector>& GetHullVerts() const { return HullVerts; }
+	/** LOD0 triangle indices into GetHullVerts, when the index buffer is readable; empty otherwise. */
+	const TArray<uint32>& GetHullTris() const { return HullTris; }
+private:
 	/** The hull vertex furthest along Dir inside Region (pawn space), a hair outside the skin; Fallback when the mesh is not CPU-readable. */
 	FVector ProbeHull(const FVector& Dir, const FBox& Region, const FVector& Fallback) const;
 	/**
@@ -669,4 +679,5 @@ private:
 	float DebugThrustTime = 0.f;
 	TArray<FVector> HullVerts;
 	TArray<FVector> HullNormals;
+	TArray<uint32> HullTris;
 };

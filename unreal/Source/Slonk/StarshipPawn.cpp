@@ -29,6 +29,7 @@
 #include "LcarsPanel.h"
 #include "LcarsPanels.h"
 #include "StarChartPanel.h"
+#include "MsdPanel.h"
 #include "Rendering/PositionVertexBuffer.h"
 #include "StaticMeshResources.h"
 #include "Engine/DamageEvents.h"
@@ -316,6 +317,7 @@ void AStarshipPawn::GatherHullVerts()
 {
 	HullVerts.Reset();
 	HullNormals.Reset();
+	HullTris.Reset();
 	if (ShipMesh && ShipMesh->GetStaticMesh() && ShipMesh->GetStaticMesh()->GetRenderData() && ShipMesh->GetStaticMesh()->GetRenderData()->LODResources.Num() > 0)
 	{
 		const FStaticMeshLODResources& LOD = ShipMesh->GetStaticMesh()->GetRenderData()->LODResources[0];
@@ -323,6 +325,12 @@ void AStarshipPawn::GatherHullVerts()
 		const FStaticMeshVertexBuffer& VB = LOD.VertexBuffers.StaticMeshVertexBuffer;
 		if (PB.GetVertexData() != nullptr && PB.GetNumVertices() > 0)
 		{
+			const FRawStaticIndexBuffer& IB = LOD.IndexBuffer;
+			if (IB.GetNumIndices() > 0 && IB.GetAllowCPUAccess())
+			{
+				HullTris.Reserve(IB.GetNumIndices());
+				for (int32 i = 0; i < IB.GetNumIndices(); ++i) { HullTris.Add(IB.GetIndex(i)); }
+			}
 			const FTransform MeshToPawn = ShipMesh->GetRelativeTransform();
 			const bool bNormals = VB.GetTangentData() != nullptr && VB.GetNumVertices() == PB.GetNumVertices();
 			HullVerts.Reserve(PB.GetNumVertices());
@@ -1199,8 +1207,17 @@ void AStarshipPawn::HandleCollision(const FHitResult& Hit)
 		const FVector Point = Hit.ImpactPoint.IsNearlyZero() ? GetActorLocation() + GetActorForwardVector() * GetShipLengthCm() * 0.5f : FVector(Hit.ImpactPoint);
 		Shield->RegisterImpact(Point, 1.5f);
 	}
-	ShieldStrength = FMath::Max(ShieldStrength - 4.f, 0.f);
+	for (float& F : ShieldFacing) { F = FMath::Max(F - 4.f, 0.f); }
+	ShieldStrength = (ShieldFacing[0] + ShieldFacing[1] + ShieldFacing[2] + ShieldFacing[3]) * 0.25f;
 	ShieldRechargeTimer = ShieldRechargeDelay;
+}
+
+int32 AStarshipPawn::ShieldFacingOf(const FVector& WorldPoint) const
+{
+	const FVector L = GetActorTransform().InverseTransformPosition(WorldPoint);
+	// The hull is long: a point counts as fore or aft only when it is clearly ahead of or behind the beam.
+	const double Fx = L.X / FMath::Max(GetShipLengthCm() * 0.5, 1.0), Fy = L.Y / FMath::Max(ShipWidthMeters * 50.0, 1.0);
+	return FMath::Abs(Fx) >= FMath::Abs(Fy) ? (Fx >= 0.0 ? 0 : 1) : (Fy >= 0.0 ? 3 : 2);
 }
 
 float AStarshipPawn::TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent, AController* EventInstigator, AActor* DamageCauser)
@@ -1211,26 +1228,38 @@ float AStarshipPawn::TakeDamage(float DamageAmount, const FDamageEvent& DamageEv
 		return Applied;
 	}
 	FVector Point = GetActorLocation();
+	FVector Dir = FVector::ZeroVector;
+	bool bLocated = false;
 	if (DamageEvent.IsOfType(FPointDamageEvent::ClassID))
 	{
-		Point = static_cast<const FPointDamageEvent&>(DamageEvent).HitInfo.ImpactPoint;
+		const FPointDamageEvent& PE = static_cast<const FPointDamageEvent&>(DamageEvent);
+		Point = PE.HitInfo.ImpactPoint; Dir = PE.ShotDirection; bLocated = !Point.IsNearlyZero();
 	}
 	else if (DamageEvent.IsOfType(FRadialDamageEvent::ClassID))
 	{
 		Point = static_cast<const FRadialDamageEvent&>(DamageEvent).Origin;
+		Dir = (GetActorLocation() - Point).GetSafeNormal(); bLocated = true;
 	}
 	else if (DamageCauser)
 	{
 		Point = DamageCauser->GetActorLocation();
+		Dir = (GetActorLocation() - Point).GetSafeNormal(); bLocated = true;
 	}
-	if (Shield && ShieldStrength > 0.f)
+	// The facing the hit lands on takes it; what it cannot hold goes through to the hull there.
+	const int32 Facing = ShieldFacingOf(Point);
+	if (Shield && ShieldFacing[Facing] > 0.f)
 	{
 		Shield->RegisterImpact(Point, FMath::Clamp(Applied / 10.f, 0.3f, 3.f));
 	}
-	const float Absorbed = FMath::Min(ShieldStrength, Applied);
-	ShieldStrength -= Absorbed;
+	const float Absorbed = FMath::Min(ShieldFacing[Facing], Applied);
+	ShieldFacing[Facing] -= Absorbed;
+	ShieldStrength = (ShieldFacing[0] + ShieldFacing[1] + ShieldFacing[2] + ShieldFacing[3]) * 0.25f;
 	HullIntegrity = FMath::Max(HullIntegrity - (Applied - Absorbed) * 0.5f, 1.f);
-	if (Systems) { Systems->OnHit(Applied, Applied - Absorbed); }
+	if (Systems)
+	{
+		if (bLocated) { const FTransform& T = GetActorTransform(); Systems->OnHitAt(Applied, Applied - Absorbed, T.InverseTransformPosition(Point), T.InverseTransformVectorNoScale(Dir)); }
+		else { Systems->OnHit(Applied, Applied - Absorbed); }
+	}
 	ShieldRechargeTimer = ShieldRechargeDelay;
 	AddCameraShake(FMath::Clamp(Applied / 40.f, 0.05f, 0.6f));
 	return Applied;
@@ -1339,10 +1368,12 @@ void AStarshipPawn::Tick(float DeltaTime)
 	Super::Tick(DeltaTime);
 	ProcessDebugCommand();
 	ShieldRechargeTimer -= DeltaTime;
-	if (ShieldRechargeTimer <= 0.f && ShieldStrength < MaxShieldStrength)
+	if (ShieldRechargeTimer <= 0.f)
 	{
-		ShieldStrength = FMath::Min(ShieldStrength + ShieldRechargePerSecond * DeltaTime, MaxShieldStrength);
+		for (int32 i = 0; i < 4; ++i) { ShieldFacing[i] = FMath::Min(ShieldFacing[i] + ShieldRechargePerSecond * DeltaTime, ShieldFacingMax[i]); }
 	}
+	for (int32 i = 0; i < 4; ++i) { ShieldFacing[i] = FMath::Min(ShieldFacing[i], ShieldFacingMax[i]); }
+	ShieldStrength = (ShieldFacing[0] + ShieldFacing[1] + ShieldFacing[2] + ShieldFacing[3]) * 0.25f;
 	ApplyExposure();
 	// A giant has no ground: the painted deck is the 10 bar level, and above about 3 bar the hull starts to give.
 	if (Movement && !Movement->bWarpActive && Movement->AltitudeAGLCm < 2.0e7)
@@ -2101,7 +2132,16 @@ void AStarshipPawn::ProcessDebugCommand()
 		else if (What == TEXT("engineering") || What == TEXT("eng")) { UI->TogglePanel(UEngineeringPanel::StaticClass()); }
 		else if (What == TEXT("tactical") || What == TEXT("tac")) { UI->TogglePanel(UTacticalPanel::StaticClass()); }
 		else if (What == TEXT("medical") || What == TEXT("sickbay")) { UI->TogglePanel(UMedicalPanel::StaticClass()); }
+		else if (What == TEXT("msd") || What == TEXT("systems") || What == TEXT("damage")) { UI->TogglePanel(UMsdPanel::StaticClass()); }
 		else if (What == TEXT("close")) { UI->CloseAll(); }
+		else if (What == TEXT("select"))
+		{
+			// ui select <compartment name>: pick a compartment on the open systems display (testing).
+			FString Name; for (int32 i = 2; i < Args.Num(); ++i) { Name += (i > 2 ? TEXT(" ") : TEXT("")) + Args[i]; }
+			UMsdPanel* Msd = Cast<UMsdPanel>(UI->TopMenu());
+			const bool bHit = Msd && Msd->GetDisplay() && Msd->GetDisplay()->SelectByName(Name);
+			if (!bHit) { ScreenMessage(FString::Printf(TEXT("ui select: no compartment \"%s\" (is the systems display open?)"), *Name), FColor::Orange); }
+		}
 		else if (What == TEXT("click"))
 		{
 			// ui click <button label>: press a button on the top popup, else the top panel (testing).
@@ -2112,7 +2152,29 @@ void AStarshipPawn::ProcessDebugCommand()
 			UE_LOG(LogTemp, Log, TEXT("ui click \"%s\": %s"), *Label, bHit ? TEXT("pressed") : TEXT("no such button"));
 			if (!bHit) { ScreenMessage(FString::Printf(TEXT("ui click: no button \"%s\""), *Label), FColor::Orange); }
 		}
-		else { ScreenMessage(TEXT("ui menu | chart | science | engineering | tactical | medical | controls | settings | close | click <button>"), FColor::Orange); }
+		else { ScreenMessage(TEXT("ui menu | chart | science | engineering | tactical | medical | msd | controls | settings | close | click <button>"), FColor::Orange); }
+	}
+	else if (Op == TEXT("hullprofile"))
+	{
+		// Dev: the hull's envelope by length, for placing compartments: X bin, Z min/max, |Y| max (cm).
+		const int32 N = 40; const float L = GetShipLengthCm();
+		TArray<float> Zmin, Zmax, Ymax; Zmin.Init(1e9f, N); Zmax.Init(-1e9f, N); Ymax.Init(0.f, N);
+		for (const FVector& V : HullVerts)
+		{
+			const int32 B = FMath::Clamp((int32)((V.X + L * 0.5f) / L * N), 0, N - 1);
+			Zmin[B] = FMath::Min(Zmin[B], (float)V.Z); Zmax[B] = FMath::Max(Zmax[B], (float)V.Z); Ymax[B] = FMath::Max(Ymax[B], (float)FMath::Abs(V.Y));
+		}
+		for (int32 b = 0; b < N; ++b) { UE_LOG(LogTemp, Log, TEXT("hullprofile %2d x=%6.0f z=[%6.0f %6.0f] |y|<=%6.0f"), b, -L * 0.5f + (b + 0.5f) * L / N, Zmin[b], Zmax[b], Ymax[b]); }
+		UE_LOG(LogTemp, Log, TEXT("hullprofile verts %d tris %d"), HullVerts.Num(), HullTris.Num() / 3);
+	}
+	else if (Op == TEXT("hitat") && Systems)
+	{
+		// Dev: hitat <x> <y> <z> [damage]: a located hit at a pawn-space point, from outside along -point.
+		const FVector Local(Arg(1, 0.f), Arg(2, 0.f), Arg(3, 0.f));
+		const FVector World = GetActorTransform().TransformPosition(Local);
+		FPointDamageEvent E(Arg(4, 60.f), FHitResult(), GetActorTransform().TransformVectorNoScale(-Local.GetSafeNormal()), nullptr);
+		E.HitInfo.ImpactPoint = World;
+		TakeDamage(Arg(4, 60.f), E, nullptr, nullptr);
 	}
 	else if (Op == TEXT("sysdamage") && Systems)
 	{
@@ -2141,8 +2203,8 @@ void AStarshipPawn::ProcessDebugCommand()
 			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km]"),
 			TEXT("ship shuttle  (launch the shuttlecraft; aboard it, dock when the bay is within 500 m) | ship takeoff"),
 			TEXT("ship scan [stop]  (sensors on the locked / nav target; landed: survey the ground) | ship science [reset]"),
-			TEXT("ship ui menu | chart | science | engineering | tactical | medical | controls | settings | close | click <button>   (the LCARS panels)"),
-			TEXT("ship order alert red|yellow|green | power <system>|balance | repair <system>|auto | triage critical|walking | resupply | report"),
+			TEXT("ship ui menu | chart | science | engineering | tactical | medical | msd | controls | settings | close | click <button>   (the LCARS panels)"),
+			TEXT("ship order alert red|yellow|green | power <system>|balance | repair <system>|auto | shields fore|aft|port|starboard|even | triage critical|walking | resupply | report"),
 			TEXT("ship exec <console command>"),
 		};
 		// Reverse order: on-screen messages stack newest on top.

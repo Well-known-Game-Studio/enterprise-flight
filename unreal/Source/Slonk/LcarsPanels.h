@@ -139,7 +139,9 @@ protected:
 private:
 	UPROPERTY() TObjectPtr<UScrollBox> Contacts;
 	UPROPERTY() TArray<TObjectPtr<UButton>> AlertButtons;
+	UPROPERTY() TArray<TObjectPtr<UButton>> ReinforceButtons;
 	float ContactsTimer = 0.f;
 	int32 LastAlert = -1;
+	int32 LastReinforced = -2;
 	void FillContacts();
 };
