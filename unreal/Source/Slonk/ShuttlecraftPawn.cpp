@@ -32,7 +32,7 @@ namespace
 		return C;
 	}
 
-	void FinishPart(UDynamicMeshComponent* C, UDynamicMesh* Scratch)
+	void FinishShuttlePart(UDynamicMeshComponent* C, UDynamicMesh* Scratch)
 	{
 		if (!C || !Scratch) { return; }
 		FGeometryScriptCalculateNormalsOptions NO;
@@ -187,16 +187,16 @@ void AShuttlecraftPawn::BuildHull()
 		Box(XM, FVector(60.f, S * 131.5f, 70.f), FVector(70.f, 3.f, 30.f));
 	}
 
-	FinishPart(HullPart, HM);
+	FinishShuttlePart(HullPart, HM);
 	// The hull answers the Boots channel per triangle, so a person can stand on the roof.
 	HullPart->SetCollisionObjectType(ECC_WorldDynamic);
 	HullPart->SetCollisionResponseToAllChannels(ECR_Ignore);
 	HullPart->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Block);
 	HullPart->SetComplexAsSimpleCollisionEnabled(true, true);
 	HullPart->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-	FinishPart(GlowPart, GM);
-	FinishPart(WarmPart, WM);
-	FinishPart(GlassPart, XM);
+	FinishShuttlePart(GlowPart, GM);
+	FinishShuttlePart(WarmPart, WM);
+	FinishShuttlePart(GlassPart, XM);
 
 	if (UMaterialInterface* Hull = SlonkMaterials::LoadOrFallback(TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(SlonkMaterials::HullPath)), TEXT("Hull"), true))
 	{

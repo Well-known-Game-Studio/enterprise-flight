@@ -30,6 +30,7 @@
 #include "LcarsPanels.h"
 #include "StarChartPanel.h"
 #include "MsdPanel.h"
+#include "Kismet/GameplayStatics.h"
 #include "Rendering/PositionVertexBuffer.h"
 #include "StaticMeshResources.h"
 #include "Engine/DamageEvents.h"
@@ -1241,8 +1242,22 @@ float AStarshipPawn::TakeDamage(float DamageAmount, const FDamageEvent& DamageEv
 	}
 	else if (DamageEvent.IsOfType(FRadialDamageEvent::ClassID))
 	{
-		Point = static_cast<const FRadialDamageEvent&>(DamageEvent).Origin;
-		Dir = (GetActorLocation() - Point).GetSafeNormal(); bLocated = true;
+		// The origin is the blast, somewhere off the hull: it gives the direction, but the mark and the compartment
+		// belong where the blast reached us, the trace's contact when the engine found one, else the origin pulled
+		// into the hull's box.
+		const FRadialDamageEvent& RE = static_cast<const FRadialDamageEvent&>(DamageEvent);
+		Dir = (GetActorLocation() - RE.Origin).GetSafeNormal(); bLocated = true;
+		Point = RE.Origin;
+		bool bContact = false;
+		// (the engine fakes a hit at the component's centre when its trace found nothing: only a real blocking hit counts)
+		for (const FHitResult& H : RE.ComponentHits) { if (H.bBlockingHit && H.GetActor() == this && !H.ImpactPoint.IsNearlyZero()) { Point = H.ImpactPoint; bContact = true; break; } }
+		if (!bContact)
+		{
+			const FTransform& T = GetActorTransform();
+			const FVector Ext(GetShipLengthCm() * 0.5f, ShipWidthMeters * 50.f, ShipHeightMeters * 50.f);
+			const FVector L = T.InverseTransformPosition(RE.Origin);
+			Point = T.TransformPosition(FVector(FMath::Clamp(L.X, -Ext.X, Ext.X), FMath::Clamp(L.Y, -Ext.Y, Ext.Y), FMath::Clamp(L.Z, -Ext.Z, Ext.Z)));
+		}
 	}
 	else if (DamageCauser)
 	{
@@ -2051,6 +2066,21 @@ void AStarshipPawn::ProcessDebugCommand()
 		FPointDamageEvent E(Arg(1, 15.f), FHitResult(), -GetActorRightVector(), nullptr);
 		E.HitInfo.ImpactPoint = GetActorLocation() + GetActorRightVector() * ShipWidthMeters * 60.f;
 		TakeDamage(Arg(1, 15.f), E, nullptr, nullptr);
+	}
+	else if (Op == TEXT("hitblast"))
+	{
+		// Test: hitblast <x> <y> <z> [damage]: a radial damage event with its origin at a pawn-space point, as a torpedo
+		// bursting off the hull delivers; no contact in it, so the mark must be placed by the hull's box.
+		// The engine's radial damage, finding nothing in the way, fakes its hit at the component's centre and then
+		// scales the damage by the distance from the blast to that centre: a hull three hundred metres long takes
+		// nothing from a burst off its rim. The test hit mirrors the fake and sets the minimum damage to the full figure.
+		FRadialDamageEvent E;
+		E.Origin = GetActorTransform().TransformPosition(FVector(Arg(1, 0.f), Arg(2, 0.f), Arg(3, 0.f)));
+		E.Params = FRadialDamageParams(Arg(4, 60.f), Arg(4, 60.f), 0.f, 6000.f, 1.f);
+		FHitResult Fake; Fake.Init(E.Origin, CollisionBox ? CollisionBox->Bounds.Origin : GetActorLocation());
+		Fake.Component = CollisionBox; Fake.HitObjectHandle = FActorInstanceHandle(this);
+		E.ComponentHits.Add(Fake);
+		TakeDamage(Arg(4, 60.f), E, nullptr, nullptr);
 	}
 	else if (Op == TEXT("hitblind"))
 	{

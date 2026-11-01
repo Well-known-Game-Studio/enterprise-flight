@@ -215,13 +215,12 @@ bool UMsdWidget::SelectByName(const FString& Text)
 
 FReply UMsdWidget::NativeOnMouseButtonDown(const FGeometry& G, const FPointerEvent& E)
 {
+	// The shield ring comes first: where an arc crosses a nacelle (the aft arc does, on the refit) the arc is what the
+	// click means; the compartments are everywhere else.
 	const FVector2D P = G.AbsoluteToLocal(E.GetScreenSpacePosition());
+	const int32 F = FacingAt(P);
+	if (F != INDEX_NONE) { if (OnFacingClicked) { OnFacingClicked(F); } return FReply::Handled(); }
 	const int32 Hit = HitTest(P);
-	if (Hit == INDEX_NONE)
-	{
-		const int32 F = FacingAt(P);
-		if (F != INDEX_NONE) { if (OnFacingClicked) { OnFacingClicked(F); } return FReply::Handled(); }
-	}
 	Selected = Hit;
 	if (OnSelected) { OnSelected(Hit); }
 	return FReply::Handled();
@@ -230,8 +229,8 @@ FReply UMsdWidget::NativeOnMouseButtonDown(const FGeometry& G, const FPointerEve
 FReply UMsdWidget::NativeOnMouseMove(const FGeometry& G, const FPointerEvent& E)
 {
 	const FVector2D P = G.AbsoluteToLocal(E.GetScreenSpacePosition());
-	Hovered = HitTest(P);
-	HoveredFacing = Hovered == INDEX_NONE ? FacingAt(P) : INDEX_NONE;
+	HoveredFacing = FacingAt(P);
+	Hovered = HoveredFacing == INDEX_NONE ? HitTest(P) : INDEX_NONE;
 	return FReply::Handled();
 }
 
