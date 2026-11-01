@@ -18,6 +18,7 @@
 #include "GameFramework/PlayerController.h"
 #include "StarshipMovementComponent.h"
 #include "StarshipPawn.h"
+#include "ShipSystemsComponent.h"
 #include "ShuttlecraftPawn.h"
 #include "StarshipWeaponsComponent.h"
 #include "WarpDriveComponent.h"
@@ -99,6 +100,13 @@ void AStarshipHUD::DrawHUD()
 	}
 
 	const AStarshipPawn* Ship = Cast<AStarshipPawn>(PlayerOwner->GetPawn());
+	// The readouts take the alert's colour: amber at yellow alert, red at red alert.
+	Accent = FLinearColor(0.55f, 0.8f, 1.f);
+	if (Ship && Ship->Systems)
+	{
+		if (Ship->Systems->GetAlert() == EAlertState::Red) { Accent = FLinearColor(1.f, 0.45f, 0.4f); }
+		else if (Ship->Systems->GetAlert() == EAlertState::Yellow) { Accent = FLinearColor(1.f, 0.8f, 0.4f); }
+	}
 	UFont* Font = GEngine ? GEngine->GetMediumFont() : nullptr;
 	UFont* SmallFont = GEngine ? GEngine->GetSmallFont() : nullptr;
 	const float UIScale = FMath::Clamp(Canvas->ClipY / 1080.f, 0.7f, 2.f);
@@ -234,7 +242,25 @@ void AStarshipHUD::DrawHUD()
 		{
 			const float SF = Ship->GetShieldFraction();
 			const FLinearColor ShieldColor = SF <= 0.f ? FLinearColor(1.f, 0.3f, 0.25f) : (SF < 0.35f ? FLinearColor(1.f, 0.75f, 0.3f) : Accent);
-			DrawText(FString::Printf(TEXT("SHIELDS %3.0f%%%s   HULL %3.0f%%"), SF * 100.f, SF <= 0.f ? TEXT(" DOWN") : TEXT(""), Ship->GetHullFraction() * 100.f), ShieldColor, X, Y, Font, UIScale); Y += Line;
+			FString Alert;
+			if (Ship->Systems && Ship->Systems->GetAlert() != EAlertState::Green)
+			{
+				// Red alert blinks; yellow holds.
+				const bool bRed = Ship->Systems->GetAlert() == EAlertState::Red;
+				if (!bRed || FMath::Fmod(GetWorld()->GetTimeSeconds(), 1.f) < 0.65f) { Alert = FString::Printf(TEXT("   %s"), *UShipSystemsComponent::AlertName(Ship->Systems->GetAlert())); }
+			}
+			DrawText(FString::Printf(TEXT("SHIELDS %3.0f%%%s   HULL %3.0f%%%s"), SF * 100.f, SF <= 0.f ? TEXT(" DOWN") : TEXT(""), Ship->GetHullFraction() * 100.f, *Alert), ShieldColor, X, Y, Font, UIScale); Y += Line;
+			if (Ship->Systems)
+			{
+				// Damaged systems, one line, only when something is hurt.
+				FString Hurt;
+				for (int32 i = 0; i < (int32)EShipSystem::Count; ++i)
+				{
+					const FShipSystemState& St = Ship->Systems->GetSystem((EShipSystem)i);
+					if (St.Integrity < 0.995f) { Hurt += FString::Printf(TEXT("%s%s %d%%%s"), Hurt.IsEmpty() ? TEXT("") : TEXT("   "), *UShipSystemsComponent::SystemName((EShipSystem)i).ToUpper(), FMath::RoundToInt(St.Integrity * 100.f), St.bRepairing ? TEXT("*") : TEXT("")); }
+				}
+				if (!Hurt.IsEmpty()) { DrawText(Hurt, Warning, X, Y, Font, UIScale); Y += Line; }
+			}
 			if (Ship->TractorBeam && Ship->TractorBeam->IsBeamActive() && Ship->TractorBeam->Target)
 			{
 				DrawText(FString::Printf(TEXT("TRACTOR BEAM  %s   range %s   (B releases)"), *Ship->TractorBeam->Target->GetActorNameOrLabel().ToUpper(), *FormatDistance(Ship->TractorBeam->GetRangeCm())), Accent, X, Y, Font, UIScale); Y += Line;

@@ -109,6 +109,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_Scan;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_ScienceLog;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_Menu;
+	/** , and . : the Engineering and Tactical panels. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_Engineering;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_Tactical;
+	/** 5 6 7: condition green, yellow alert, red alert. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_AlertGreen;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_AlertYellow;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_AlertRed;
 	/** F: step outside the craft, or board it again. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_Away;
 	/** Shift: run (on foot). */
@@ -180,6 +187,11 @@ protected:
 	void OnScan();
 	void OnScienceLog();
 	void OnMenu();
+	void OnEngineering();
+	void OnTactical();
+	void OnAlertGreen();
+	void OnAlertYellow();
+	void OnAlertRed();
 	void OnThrottleReleased(const FInputActionValue& Value);
 	void OnAway();
 	void OnSprintStarted();

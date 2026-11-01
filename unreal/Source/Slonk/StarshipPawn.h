@@ -82,6 +82,7 @@ struct FStarshipLightSpec
 
 class AShuttlecraftPawn;
 class UScienceScannerComponent;
+class UShipSystemsComponent;
 
 UCLASS()
 class SLONK_API AStarshipPawn : public APawn
@@ -197,6 +198,10 @@ public:
 	/** Science sensors: scans of the nav or locked target into the science log. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UScienceScannerComponent> Scanner;
+
+	/** The ship as a crewed machine: subsystem integrity and power, alert state, orders, the senior staff. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UShipSystemsComponent> Systems;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|Cameras")
 	TObjectPtr<USpringArmComponent> ChaseArm;

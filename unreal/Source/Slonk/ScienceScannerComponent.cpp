@@ -192,6 +192,7 @@ bool UScienceScannerComponent::InRange(const AActor* Actor, EScanKind K, double&
 		OutRangeCm = VesselRangeCm;
 		break;
 	}
+	OutRangeCm *= FMath::Max(RangeScale, 0.01f);
 	return OutDistCm <= OutRangeCm;
 }
 

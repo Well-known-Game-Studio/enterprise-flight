@@ -62,6 +62,8 @@ public:
 	/** Half-angle of the sensor cone about the ship's nose (deg); outside it the scan holds. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Science") float ConeDeg = 75.f;
 	/** Worlds: within this many radii of the surface, never closer than WorldMinRangeCm allows. */
+	/** Multiplies every range below; the ship systems set it from the sensors' state. */
+	UPROPERTY(BlueprintReadWrite, Category = "Science") float RangeScale = 1.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Science") float WorldRangeRadii = 6.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Science") double WorldMinRangeCm = 2.0e8;
 	/** Stars: within this many AU of the photosphere. */

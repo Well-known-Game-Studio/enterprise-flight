@@ -1,4 +1,4 @@
-// Slonk - the LCARS panels: main menu, controls, science log.
+// Slonk - the LCARS panels: main menu, controls, science log, engineering, tactical.
 
 #pragma once
 
@@ -7,6 +7,8 @@
 #include "LcarsPanels.generated.h"
 
 class UScrollBox;
+class UProgressBar;
+enum class EShipSystem : uint8;
 
 /** Escape: ship status and the way to every other panel. */
 UCLASS()
@@ -68,4 +70,46 @@ private:
 	UPROPERTY() TObjectPtr<UScrollBox> List;
 	bool bDiscoveriesOnly = false;
 	UPROPERTY() TObjectPtr<UButton> FilterButton;
+};
+
+/** , : the chief engineer's board. Every system's integrity and power share, the orders to divert power and send the
+ *  damage-control team, and the bridge log of what the senior staff reported. */
+UCLASS()
+class SLONK_API UEngineeringPanel : public ULcarsPanel
+{
+	GENERATED_BODY()
+
+protected:
+	virtual void BuildContent() override;
+	virtual void Refresh() override;
+	virtual FString PanelTitle() const override { return TEXT("Engineering"); }
+	virtual FLinearColor FrameColor() const override { return Lcars::Tan; }
+
+private:
+	struct FSystemRow { UProgressBar* Bar = nullptr; UButton* PowerButton = nullptr; UButton* RepairButton = nullptr; float LastIntegrity = -1.f; bool bLastPower = false; bool bLastRepair = false; };
+	TArray<FSystemRow> Rows;
+	UPROPERTY() TObjectPtr<UScrollBox> LogBox;
+	int32 LastLogCount = -1;
+	UPROPERTY() TObjectPtr<UButton> AutoRepairButton;
+	void FillLog();
+};
+
+/** . : the tactical officer's board. Alert state, shields and weapons, the locked target and the contacts in range. */
+UCLASS()
+class SLONK_API UTacticalPanel : public ULcarsPanel
+{
+	GENERATED_BODY()
+
+protected:
+	virtual void BuildContent() override;
+	virtual void Refresh() override;
+	virtual FString PanelTitle() const override { return TEXT("Tactical"); }
+	virtual FLinearColor FrameColor() const override { return Lcars::Red; }
+
+private:
+	UPROPERTY() TObjectPtr<UScrollBox> Contacts;
+	UPROPERTY() TArray<TObjectPtr<UButton>> AlertButtons;
+	float ContactsTimer = 0.f;
+	int32 LastAlert = -1;
+	void FillContacts();
 };

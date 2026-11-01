@@ -8,6 +8,11 @@
 #include "StarshipMovementComponent.h"
 #include "WarpDriveComponent.h"
 #include "StarshipWeaponsComponent.h"
+#include "ShipSystemsComponent.h"
+#include "SpaceTarget.h"
+#include "SpaceVessel.h"
+#include "BorgCube.h"
+#include "Components/ProgressBar.h"
 #include "StarSystem.h"
 #include "ScienceLog.h"
 #include "ScienceScannerComponent.h"
@@ -35,6 +40,8 @@ void UMainMenuPanel::BuildContent()
 	AddSidebarButton(TEXT("Resume"), Lcars::Orange, [this]() { Close(); });
 	AddSidebarButton(TEXT("Star Chart"), Lcars::Periwinkle, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UStarChartPanel>(); } });
 	AddSidebarButton(TEXT("Science Log"), Lcars::Gold, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UScienceLogPanel>(); } });
+	AddSidebarButton(TEXT("Engineering"), Lcars::Tan, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UEngineeringPanel>(); } });
+	AddSidebarButton(TEXT("Tactical"), Lcars::Red, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UTacticalPanel>(); } });
 	AddSidebarButton(TEXT("Controls"), Lcars::Lavender, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UControlsPanel>(); } });
 	AddSidebarButton(TEXT("Settings"), Lcars::Tan, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<USettingsPanel>(); } });
 	AddSidebarButton(TEXT("Quit"), Lcars::Salmon, [this]()
@@ -144,6 +151,8 @@ void UControlsPanel::BuildContent()
 		{ TEXT("N"), TEXT("nav markers") },
 		{ TEXT("M"), TEXT("star chart") },
 		{ TEXT("/"), TEXT("science log") },
+		{ TEXT(",  ."), TEXT("engineering, tactical boards") },
+		{ TEXT("5  6  7"), TEXT("condition green, yellow alert, red alert") },
 		{ TEXT("H"), TEXT("this list") },
 		{ TEXT("Escape"), TEXT("main menu") },
 		{ TEXT("V"), TEXT("camera") },
@@ -351,4 +360,274 @@ void UScienceLogPanel::FillRecords()
 		UTextBlock* T = Lcars::MakeText(WidgetTree, bDiscoveriesOnly ? TEXT("No discoveries on record yet.") : TEXT("Nothing catalogued yet. Pick a nav target (L), close to sensor range and press Enter."), 14.f, Lcars::Dim, false, false);
 		List->AddChild(T);
 	}
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Shared bits for the crew boards
+
+namespace
+{
+	FLinearColor AlertColor(EAlertState A) { return A == EAlertState::Red ? Lcars::Red : A == EAlertState::Yellow ? Lcars::Gold : FLinearColor(0.45f, 0.85f, 0.5f); }
+	FLinearColor IntegrityColor(float I) { return I > 0.66f ? FLinearColor(0.45f, 0.85f, 0.5f) : I > 0.33f ? Lcars::Gold : Lcars::Red; }
+	FString KmText(double Cm)
+	{
+		const double Km = Cm / 1e5;
+		if (Km >= 1e6) { return FString::Printf(TEXT("%.2f Mkm"), Km / 1e6); }
+		if (Km >= 1000.0) { return FString::Printf(TEXT("%.0f km"), Km); }
+		return FString::Printf(TEXT("%.1f km"), Km);
+	}
+	UProgressBar* MakeBar(UWidgetTree* Tree, const FLinearColor& Fill)
+	{
+		UProgressBar* Bar = Tree->ConstructWidget<UProgressBar>(UProgressBar::StaticClass());
+		FProgressBarStyle Style = Bar->GetWidgetStyle();
+		Style.BackgroundImage = Lcars::Rounded(FLinearColor(0.12f, 0.12f, 0.16f), FVector4(4.f, 4.f, 4.f, 4.f));
+		Style.FillImage = Lcars::Rounded(FLinearColor::White, FVector4(4.f, 4.f, 4.f, 4.f));
+		Bar->SetWidgetStyle(Style);
+		Bar->SetFillColorAndOpacity(Fill);
+		Bar->SetPercent(1.f);
+		return Bar;
+	}
+	void FillBridgeLog(ULcarsPanel* Panel, UWidgetTree* Tree, UScrollBox* Box, const UShipSystemsComponent* Sys, int32 MaxLines)
+	{
+		if (!Box || !Sys) { return; }
+		Box->ClearChildren();
+		const TArray<FBridgeLogEntry>& Log = Sys->GetLog();
+		const int32 First = FMath::Max(0, Log.Num() - MaxLines);
+		for (int32 i = Log.Num() - 1; i >= First; --i)
+		{
+			const FBridgeLogEntry& E = Log[i];
+			UHorizontalBox* Row = Tree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+			const int32 M = (int32)E.Time / 60, S = (int32)E.Time % 60;
+			USizeBox* TBox = Tree->ConstructWidget<USizeBox>(USizeBox::StaticClass()); TBox->SetWidthOverride(58.f);
+			TBox->AddChild(Lcars::MakeText(Tree, FString::Printf(TEXT("%02d:%02d"), M, S), 12.f, Lcars::Dim, false, false));
+			Row->AddChildToHorizontalBox(TBox);
+			USizeBox* NBox = Tree->ConstructWidget<USizeBox>(USizeBox::StaticClass()); NBox->SetWidthOverride(190.f);
+			NBox->AddChild(Lcars::MakeText(Tree, E.Speaker, 12.f, E.Color, true, false));
+			Row->AddChildToHorizontalBox(NBox);
+			UTextBlock* T = Lcars::MakeText(Tree, E.Text, 12.f, FLinearColor::White, false, false);
+			T->SetAutoWrapText(true);
+			if (UHorizontalBoxSlot* Sl = Row->AddChildToHorizontalBox(T)) { Sl->SetSize(FSlateChildSize(ESlateSizeRule::Fill)); }
+			if (UScrollBoxSlot* Sl = Cast<UScrollBoxSlot>(Box->AddChild(Row))) { Sl->SetPadding(FMargin(0.f, 2.f, 0.f, 2.f)); }
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Engineering
+
+void UEngineeringPanel::BuildContent()
+{
+	AddSidebarButton(TEXT("Close"), Lcars::Orange, [this]() { Close(); });
+	AddSidebarButton(TEXT("Balance Power"), Lcars::Tan, [this]() { if (AStarshipPawn* S = GetShip()) { if (S->Systems) { S->Systems->BalancePower(); } } });
+	AutoRepairButton = AddSidebarButton(TEXT("Auto Repair"), Lcars::Peach, [this]() { if (AStarshipPawn* S = GetShip()) { if (S->Systems) { S->Systems->SetRepairPriority(EShipSystem::Count); } } });
+	AddSidebarButton(TEXT("Status Report"), Lcars::Lilac, [this]() { if (AStarshipPawn* S = GetShip()) { if (S->Systems) { FString R; S->Systems->HandleOrder({ TEXT("order"), TEXT("report") }, R); } } });
+	AddSidebarButton(TEXT("Tactical"), Lcars::Red, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UTacticalPanel>(); } });
+	AddSidebarButton(TEXT("Main Menu"), Lcars::Lavender, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UMainMenuPanel>(); } });
+
+	AStarshipPawn* Ship = GetShip();
+	UShipSystemsComponent* Sys = Ship ? Ship->Systems.Get() : nullptr;
+	const FOfficer* Chief = Sys ? Sys->OfficerAt(EStation::Engineering) : nullptr;
+	AddRow(Content, TEXT("Chief Engineer"), Chief ? FString::Printf(TEXT("%s %s"), *Chief->Rank, *Chief->Name) : TEXT("post empty"), Lcars::Peach, 15.f);
+	AddLiveRow(Content, TEXT("Condition"), [this]() { AStarshipPawn* S = GetShip(); return S && S->Systems ? UShipSystemsComponent::AlertName(S->Systems->GetAlert()) : FString(); }, Lcars::Gold, 15.f);
+	AddLiveRow(Content, TEXT("Hull"), [this]() { AStarshipPawn* S = GetShip(); return S ? FString::Printf(TEXT("%d%%"), FMath::RoundToInt(S->GetHullFraction() * 100.f)) : FString(); }, Lcars::Peach, 15.f);
+
+	// Column heads.
+	{
+		UHorizontalBox* Head = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+		auto Cell = [&](const TCHAR* Text, float W) { USizeBox* B = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass()); B->SetWidthOverride(W); B->AddChild(Lcars::MakeText(WidgetTree, Text, 12.f, Lcars::Dim)); Head->AddChildToHorizontalBox(B); };
+		Cell(TEXT("System"), 190.f); Cell(TEXT("Integrity"), 360.f); Cell(TEXT("Power"), 90.f); Cell(TEXT("Orders"), 300.f);
+		if (UVerticalBoxSlot* S = Content->AddChildToVerticalBox(Head)) { S->SetPadding(FMargin(0.f, 10.f, 0.f, 4.f)); }
+	}
+	Rows.SetNum((int32)EShipSystem::Count);
+	for (int32 i = 0; i < (int32)EShipSystem::Count; ++i)
+	{
+		const EShipSystem Sy = (EShipSystem)i;
+		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+		USizeBox* NameBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass()); NameBox->SetWidthOverride(190.f);
+		NameBox->AddChild(Lcars::MakeText(WidgetTree, UShipSystemsComponent::SystemName(Sy), 14.f, Lcars::Peach));
+		if (UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(NameBox)) { S->SetVerticalAlignment(VAlign_Center); }
+		// integrity: bar + number
+		UHorizontalBox* IBox = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+		USizeBox* BarBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass()); BarBox->SetWidthOverride(200.f); BarBox->SetHeightOverride(14.f);
+		Rows[i].Bar = MakeBar(WidgetTree, IntegrityColor(1.f));
+		BarBox->AddChild(Rows[i].Bar);
+		if (UHorizontalBoxSlot* S = IBox->AddChildToHorizontalBox(BarBox)) { S->SetVerticalAlignment(VAlign_Center); S->SetPadding(FMargin(0.f, 0.f, 10.f, 0.f)); }
+		UTextBlock* Pct = Lcars::MakeText(WidgetTree, TEXT("100%"), 14.f, FLinearColor::White, true, false);
+		if (UHorizontalBoxSlot* S = IBox->AddChildToHorizontalBox(Pct)) { S->SetVerticalAlignment(VAlign_Center); }
+		Live.Add({ Pct, [this, Sy]() { AStarshipPawn* S = GetShip(); if (!S || !S->Systems) { return FString(); } const FShipSystemState& St = S->Systems->GetSystem(Sy); return FString::Printf(TEXT("%d%%%s"), FMath::RoundToInt(St.Integrity * 100.f), St.bRepairing ? TEXT("  team on it") : TEXT("")); }, FString() });
+		USizeBox* IWrap = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass()); IWrap->SetWidthOverride(360.f); IWrap->AddChild(IBox);
+		if (UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(IWrap)) { S->SetVerticalAlignment(VAlign_Center); }
+		// power
+		UTextBlock* Pow = Lcars::MakeText(WidgetTree, TEXT("100%"), 14.f, FLinearColor::White, true, false);
+		Live.Add({ Pow, [this, Sy]() { AStarshipPawn* S = GetShip(); return S && S->Systems ? FString::Printf(TEXT("%d%%"), FMath::RoundToInt(S->Systems->GetSystem(Sy).Power * 100.f)) : FString(); }, FString() });
+		USizeBox* PWrap = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass()); PWrap->SetWidthOverride(90.f); PWrap->AddChild(Pow);
+		if (UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(PWrap)) { S->SetVerticalAlignment(VAlign_Center); }
+		// orders
+		const FVector4 Radii(Lcars::PillR, Lcars::PillR, Lcars::PillR, Lcars::PillR);
+		auto Small = [&](const FString& Label, const FLinearColor& Col, TFunction<void()> Fn) -> UButton*
+		{
+			UButton* B = Lcars::MakeButton(WidgetTree, Label, Col, nullptr, &Radii);
+			USizeBox* Box = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass()); Box->SetHeightOverride(30.f); Box->SetMinDesiredWidth(130.f);
+			Box->AddChild(B);
+			if (UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(Box)) { S->SetPadding(FMargin(0.f, 0.f, Lcars::Gap, 0.f)); S->SetVerticalAlignment(VAlign_Center); }
+			Bind(B, MoveTemp(Fn), Label);
+			return B;
+		};
+		const FString Short = UShipSystemsComponent::SystemName(Sy);
+		Rows[i].PowerButton = Small(FString::Printf(TEXT("Power to %s"), *Short), Lcars::Lilac, [this, Sy]() { if (AStarshipPawn* S = GetShip()) { if (S->Systems) { S->Systems->DivertPower(Sy); } } });
+		Rows[i].RepairButton = Small(FString::Printf(TEXT("Repair %s"), *Short), Lcars::Lilac, [this, Sy]() { if (AStarshipPawn* S = GetShip()) { if (S->Systems) { S->Systems->SetRepairPriority(Sy); } } });
+		if (UVerticalBoxSlot* S = Content->AddChildToVerticalBox(Row)) { S->SetPadding(FMargin(0.f, 3.f, 0.f, 3.f)); }
+	}
+
+	AddLine(Content, TEXT("Bridge log"), 14.f, Lcars::Peach, true, true, 14.f);
+	LogBox = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass());
+	if (UVerticalBoxSlot* S = Content->AddChildToVerticalBox(LogBox)) { S->SetSize(FSlateChildSize(ESlateSizeRule::Fill)); }
+}
+
+void UEngineeringPanel::Refresh()
+{
+	AStarshipPawn* Ship = GetShip();
+	UShipSystemsComponent* Sys = Ship ? Ship->Systems.Get() : nullptr;
+	if (!Sys) { return; }
+	const FVector4 Radii(Lcars::PillR, Lcars::PillR, Lcars::PillR, Lcars::PillR);
+	const EShipSystem Priority = Sys->GetRepairPriority();
+	for (int32 i = 0; i < Rows.Num(); ++i)
+	{
+		FSystemRow& R = Rows[i];
+		const FShipSystemState& St = Sys->GetSystem((EShipSystem)i);
+		if (R.Bar && FMath::Abs(St.Integrity - R.LastIntegrity) > 0.002f) { R.LastIntegrity = St.Integrity; R.Bar->SetPercent(St.Integrity); R.Bar->SetFillColorAndOpacity(IntegrityColor(St.Integrity)); }
+		const bool bPow = St.Power > 1.01f, bRep = Priority == (EShipSystem)i;
+		if (R.PowerButton && bPow != R.bLastPower) { R.bLastPower = bPow; Lcars::SetButtonColor(R.PowerButton, bPow ? Lcars::Orange : Lcars::Lilac, &Radii); }
+		if (R.RepairButton && bRep != R.bLastRepair) { R.bLastRepair = bRep; Lcars::SetButtonColor(R.RepairButton, bRep ? Lcars::Orange : Lcars::Lilac, &Radii); }
+	}
+	if (AutoRepairButton) { Lcars::SetButtonColor(AutoRepairButton, Priority == EShipSystem::Count ? Lcars::Orange : Lcars::Peach, nullptr); }
+	if (Sys->GetLogRevision() != LastLogCount) { LastLogCount = Sys->GetLogRevision(); FillBridgeLog(this, WidgetTree, LogBox, Sys, 12); }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Tactical
+
+void UTacticalPanel::BuildContent()
+{
+	AddSidebarButton(TEXT("Close"), Lcars::Orange, [this]() { Close(); });
+	AlertButtons.Add(AddSidebarButton(TEXT("Red Alert"), Lcars::Red, [this]() { if (AStarshipPawn* S = GetShip()) { if (S->Systems) { S->Systems->SetAlert(EAlertState::Red); } } }));
+	AlertButtons.Add(AddSidebarButton(TEXT("Yellow Alert"), Lcars::Gold, [this]() { if (AStarshipPawn* S = GetShip()) { if (S->Systems) { S->Systems->SetAlert(EAlertState::Yellow); } } }));
+	AlertButtons.Add(AddSidebarButton(TEXT("Condition Green"), FLinearColor(0.45f, 0.85f, 0.5f), [this]() { if (AStarshipPawn* S = GetShip()) { if (S->Systems) { S->Systems->SetAlert(EAlertState::Green); } } }));
+	AddSidebarButton(TEXT("Next Target"), Lcars::Periwinkle, [this]()
+	{
+		AStarshipPawn* S = GetShip(); if (!S || !S->Weapons) { return; }
+		S->Weapons->CycleTarget();
+		if (S->Systems) { S->Systems->Report(EStation::Tactical, S->Weapons->LockedTarget ? FString::Printf(TEXT("Target locked: %s."), *(Cast<ASpaceVessel>(S->Weapons->LockedTarget) ? Cast<ASpaceVessel>(S->Weapons->LockedTarget)->GetDisplayName() : S->Weapons->LockedTarget->GetActorNameOrLabel())) : TEXT("No targets in range.")); }
+	});
+	AddSidebarButton(TEXT("Lock Nearest"), Lcars::Periwinkle, [this]() { AStarshipPawn* S = GetShip(); if (S && S->Weapons) { S->Weapons->LockNearest(); } });
+	AddSidebarButton(TEXT("Clear Target"), Lcars::Lilac, [this]() { AStarshipPawn* S = GetShip(); if (S && S->Weapons) { S->Weapons->ClearTarget(); } });
+	AddSidebarButton(TEXT("Fire Torpedo"), Lcars::Salmon, [this]()
+	{
+		AStarshipPawn* S = GetShip(); if (!S || !S->Weapons) { return; }
+		const bool bFired = S->Weapons->FireTorpedo();
+		if (S->Systems) { S->Systems->Report(EStation::Tactical, bFired ? TEXT("Torpedo away.") : TEXT("Tubes reloading.")); }
+	});
+	AddSidebarButton(TEXT("Engineering"), Lcars::Tan, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UEngineeringPanel>(); } });
+	AddSidebarButton(TEXT("Main Menu"), Lcars::Lavender, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UMainMenuPanel>(); } });
+
+	AStarshipPawn* Ship = GetShip();
+	UShipSystemsComponent* Sys = Ship ? Ship->Systems.Get() : nullptr;
+	const FOfficer* Tac = Sys ? Sys->OfficerAt(EStation::Tactical) : nullptr;
+	AddRow(Content, TEXT("Tactical Officer"), Tac ? FString::Printf(TEXT("%s %s"), *Tac->Rank, *Tac->Name) : TEXT("post empty"), Lcars::Peach, 15.f);
+	AddLiveRow(Content, TEXT("Condition"), [this]() { AStarshipPawn* S = GetShip(); return S && S->Systems ? UShipSystemsComponent::AlertName(S->Systems->GetAlert()) : FString(); }, Lcars::Gold, 15.f);
+	AddLiveRow(Content, TEXT("Shields"), [this]()
+	{
+		AStarshipPawn* S = GetShip(); if (!S) { return FString(); }
+		const FShipSystemState& St = S->Systems ? S->Systems->GetSystem(EShipSystem::Shields) : FShipSystemState();
+		return FString::Printf(TEXT("%d%%  of a %.0f point grid   emitters %d%%   power %d%%"), FMath::RoundToInt(S->GetShieldFraction() * 100.f), S->MaxShieldStrength, FMath::RoundToInt(St.Integrity * 100.f), FMath::RoundToInt(St.Power * 100.f));
+	});
+	AddLiveRow(Content, TEXT("Hull"), [this]() { AStarshipPawn* S = GetShip(); return S ? FString::Printf(TEXT("%d%%"), FMath::RoundToInt(S->GetHullFraction() * 100.f)) : FString(); });
+	AddLiveRow(Content, TEXT("Phasers"), [this]()
+	{
+		AStarshipPawn* S = GetShip(); if (!S || !S->Weapons) { return FString(); }
+		const FShipSystemState& St = S->Systems ? S->Systems->GetSystem(EShipSystem::Phasers) : FShipSystemState();
+		return FString::Printf(TEXT("charge %d%%   %.0f per second   banks %d%%%s"), FMath::RoundToInt(S->Weapons->GetPhaserEnergy() * 100.f), S->Weapons->PhaserDamagePerSecond, FMath::RoundToInt(St.Integrity * 100.f), S->Weapons->IsFiringPhasers() ? TEXT("   FIRING") : TEXT(""));
+	});
+	AddLiveRow(Content, TEXT("Torpedoes"), [this]()
+	{
+		AStarshipPawn* S = GetShip(); if (!S || !S->Weapons) { return FString(); }
+		FString Tubes;
+		for (int32 t = 0; t < S->Weapons->GetNumTubes(); ++t) { const float R = S->Weapons->GetTubeReadiness(t); Tubes += FString::Printf(TEXT("%stube %d %s"), t ? TEXT("   ") : TEXT(""), t + 1, R >= 1.f ? TEXT("ready") : *FString::Printf(TEXT("%d%%"), FMath::RoundToInt(R * 100.f))); }
+		return FString::Printf(TEXT("%s   fired %d"), *Tubes, S->Weapons->GetTorpedoesFired());
+	});
+	AddLiveRow(Content, TEXT("Target"), [this]()
+	{
+		AStarshipPawn* S = GetShip(); if (!S || !S->Weapons) { return FString(); }
+		AActor* T = S->Weapons->LockedTarget;
+		if (!T) { return FString(TEXT("none locked")); }
+		const ASpaceVessel* V = Cast<ASpaceVessel>(T);
+		const ABorgCube* Borg = Cast<ABorgCube>(T);
+		FString Name = V ? V->GetDisplayName() : T->GetActorNameOrLabel();
+		FString Extra = V ? FString::Printf(TEXT("   hull %d%%"), FMath::RoundToInt(100.f * V->Health / FMath::Max(V->MaxHealth, 1.f))) : FString();
+		if (Borg && Borg->IsHostile()) { Extra += TEXT("   HOSTILE"); }
+		return FString::Printf(TEXT("%s   %s%s"), *Name, *KmText(FVector::Dist(T->GetActorLocation(), S->GetActorLocation())), *Extra);
+	}, Lcars::Orange);
+
+	AddLine(Content, TEXT("Contacts"), 14.f, Lcars::Peach, true, true, 14.f);
+	Contacts = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass());
+	if (UVerticalBoxSlot* S = Content->AddChildToVerticalBox(Contacts)) { S->SetSize(FSlateChildSize(ESlateSizeRule::Fill)); }
+	FillContacts();
+}
+
+void UTacticalPanel::FillContacts()
+{
+	AStarshipPawn* S = GetShip();
+	if (!Contacts || !S) { return; }
+	Contacts->ClearChildren();
+	TArray<AActor*> Found;
+	UGameplayStatics::GetAllActorsWithTag(S->GetWorld(), ASpaceTarget::TargetableTag, Found);
+	struct FC { AActor* A; double D; };
+	TArray<FC> List;
+	const double Reach = S->Weapons ? S->Weapons->TargetScanRange * 20.0 : 3e9;		// 3,000 km
+	for (AActor* A : Found)
+	{
+		if (!A || A == S) { continue; }
+		const double D = FVector::Dist(A->GetActorLocation(), S->GetActorLocation());
+		if (D <= Reach) { List.Add({ A, D }); }
+	}
+	List.Sort([](const FC& a, const FC& b) { return a.D < b.D; });
+	for (int32 i = 0; i < FMath::Min(List.Num(), 14); ++i)
+	{
+		AActor* A = List[i].A;
+		const ASpaceVessel* V = Cast<ASpaceVessel>(A);
+		const ABorgCube* Borg = Cast<ABorgCube>(A);
+		const bool bHostile = Borg && Borg->IsHostile();
+		const bool bLocked = S->Weapons && S->Weapons->LockedTarget == A;
+		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+		USizeBox* NBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass()); NBox->SetWidthOverride(320.f);
+		NBox->AddChild(Lcars::MakeText(WidgetTree, (bLocked ? TEXT("> ") : TEXT("")) + (V ? V->GetDisplayName() : A->GetActorNameOrLabel()), 13.f, bHostile ? Lcars::Red : bLocked ? Lcars::Orange : FLinearColor::White, true, false));
+		Row->AddChildToHorizontalBox(NBox);
+		USizeBox* DBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass()); DBox->SetWidthOverride(120.f);
+		DBox->AddChild(Lcars::MakeText(WidgetTree, KmText(List[i].D), 13.f, Lcars::Dim, false, false));
+		Row->AddChildToHorizontalBox(DBox);
+		// bearing: ahead / port / starboard / astern, from the ship's own axes
+		const FVector L = S->GetActorTransform().InverseTransformPosition(A->GetActorLocation()).GetSafeNormal();
+		const FString Bearing = FMath::Abs(L.X) > 0.7 ? (L.X > 0 ? TEXT("ahead") : TEXT("astern")) : (L.Y > 0 ? TEXT("starboard") : TEXT("port"));
+		FString Kind = Borg ? TEXT("Borg") : Cast<ASpaceStation>(A) ? TEXT("station") : V ? TEXT("vessel") : TEXT("contact");
+		if (bHostile) { Kind += TEXT("   HOSTILE"); }
+		if (V) { Kind += FString::Printf(TEXT("   hull %d%%"), FMath::RoundToInt(100.f * V->Health / FMath::Max(V->MaxHealth, 1.f))); }
+		Row->AddChildToHorizontalBox(Lcars::MakeText(WidgetTree, FString::Printf(TEXT("%s   %s"), *Bearing, *Kind), 13.f, Lcars::Dim, false, false));
+		if (UScrollBoxSlot* Sl = Cast<UScrollBoxSlot>(Contacts->AddChild(Row))) { Sl->SetPadding(FMargin(0.f, 2.f, 0.f, 2.f)); }
+	}
+	if (List.Num() == 0) { Contacts->AddChild(Lcars::MakeText(WidgetTree, TEXT("no contacts within sensor reach"), 12.f, Lcars::Dim, false, false)); }
+}
+
+void UTacticalPanel::Refresh()
+{
+	AStarshipPawn* S = GetShip();
+	UShipSystemsComponent* Sys = S ? S->Systems.Get() : nullptr;
+	if (Sys && (int32)Sys->GetAlert() != LastAlert)
+	{
+		LastAlert = (int32)Sys->GetAlert();
+		const FLinearColor Cols[3] = { Lcars::Red, Lcars::Gold, FLinearColor(0.45f, 0.85f, 0.5f) };
+		const int32 Lit = Sys->GetAlert() == EAlertState::Red ? 0 : Sys->GetAlert() == EAlertState::Yellow ? 1 : 2;
+		for (int32 i = 0; i < AlertButtons.Num(); ++i) { if (AlertButtons[i]) { Lcars::SetButtonColor(AlertButtons[i], i == Lit ? Lcars::Brighter(Cols[i], 0.25f) : Lcars::Darker(Cols[i], 0.45f), nullptr); } }
+	}
+	ContactsTimer -= GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.016f;
+	if (ContactsTimer <= 0.f) { ContactsTimer = 0.5f; FillContacts(); }
 }

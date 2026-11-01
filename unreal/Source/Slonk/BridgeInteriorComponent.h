@@ -134,6 +134,8 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Bridge")
 	void SetLiveReadouts(float ShieldFraction, float HullFraction, float Throttle, float WarpFraction, bool bAlert);
+	/** The bridge lighting for the alert state: 0 green (as built), 1 yellow (warm, a touch dimmer), 2 red (red, pulsing). */
+	void SetAlertLighting(int32 Level, float Time);
 
 	/** (Re)build the set. Safe to call again; existing pieces are destroyed first. */
 	UFUNCTION(BlueprintCallable, Category = "Bridge")
@@ -170,6 +172,9 @@ private:
 	/** Revolve a counter-clockwise (radius, height) profile about the vertical axis through the origin over [StartDeg, EndDeg]. */
 	UDynamicMeshComponent* Revolve(const TArray<FVector2D>& Profile, float StartDeg, float EndDeg, UMaterialInterface* Mat, bool bShadow = true);
 	void Light(const FVector& Pos, float Intensity, float Radius);
+	struct FAlertLight { TWeakObjectPtr<UPointLightComponent> Light; float BaseIntensity = 0.f; };
+	TArray<FAlertLight> AlertLights;
+	int32 LastAlertLevel = 0;
 
 	/** A box lying on the wall at the given bearing: Radial = distance from the centre, Width tangential, Height vertical. */
 	UStaticMeshComponent* WallBox(float AngleDeg, float Radial, float Z, float Thickness, float Width, float Height, UMaterialInterface* Mat, float PitchDeg = 0.f, bool bShadow = true);
