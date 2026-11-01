@@ -171,7 +171,7 @@ Hits land somewhere in particular. The ship carries a compartment map in her own
 
 ![Sickbay after a battering, the air failing with life support at 18 %, engineering alongside Starbase 11 resupplying, and sickbay afterwards](https://github.com/user-attachments/assets/7817e2ad-81d4-425d-937a-5730cc1d83a0)
 
-![The master systems display in elevation and in plan: hits flashing where they landed, the starboard nacelle selected, the aft shield reinforced](https://github.com/user-attachments/assets/8969fbc5-52b8-41fd-a33f-460bd2c19697)
+![The master systems display in elevation and in plan: hits flashing where they landed, the starboard nacelle selected, the aft shield reinforced](https://github.com/user-attachments/assets/f3b0aa4b-e553-4cff-b1f9-16388b896f93)
 
 ## The bridge
 
