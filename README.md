@@ -167,6 +167,8 @@ The crew are counted too: 502 aboard, 76 of them officers, every one fit, wounde
 
 ![Tactical at condition green and at red alert; the bridge lit for red and for yellow alert](https://github.com/user-attachments/assets/1bf5ede7-269c-41d7-8b36-f9a30604fddc)
 
+![Sickbay after a battering, the air failing with life support at 18 %, engineering alongside Starbase 11 resupplying, and sickbay afterwards](https://github.com/user-attachments/assets/7817e2ad-81d4-425d-937a-5730cc1d83a0)
+
 ## The bridge
 
 The Star Trek VI bridge is built from code in Blender (`blender/bridge-st6`) and imported as one mesh with its Okudagram screens bound to live readouts. From the captain's chair the viewscreen shows the real view ahead; the crew figures are placeholders for now.
