@@ -299,30 +299,26 @@ int32 UMsdWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geo, cons
 	{
 		const FCompartment& C = K[i];
 		const FSlateRect Rc = Rects[i];
-		FLinearColor Col = Lcars::Lavender;
-		float Integrity = 1.f;
-		if (C.System != EShipSystem::Count)
-		{
-			Integrity = S->Systems->GetSystem(C.System).Integrity;
-			Col = Integrity > 0.66f ? FLinearColor(0.45f, 0.85f, 0.5f) : Integrity > 0.33f ? Lcars::Gold : Lcars::Red;
-		}
+		// Each box is a gauge: a dim track in the state's colour, filled from the left by the system's integrity where one
+		// lives there, else by the bulkheads' own condition; it pulses while the team is on it. Green, gold and red by
+		// the level, the track reddening with structural damage.
+		const FShipSystemState* St = C.System != EShipSystem::Count ? &S->Systems->GetSystem(C.System) : nullptr;
+		const float Level = St ? St->Integrity : 1.f - FMath::Clamp(C.Damage, 0.f, 1.f);
+		const FLinearColor Col = St ? (Level > 0.66f ? FLinearColor(0.45f, 0.85f, 0.5f) : Level > 0.33f ? Lcars::Gold : Lcars::Red) : (Level > 0.66f ? Lcars::Lavender : Level > 0.33f ? Lcars::Gold : Lcars::Red);
+		const bool bWorking = St ? St->bRepairing : C.Damage > 0.02f;
+		const float Pulse = bWorking ? 0.5f + 0.5f * FMath::Sin(Now * 5.f) : 0.f;
 		const float Flash = FMath::Clamp(1.f - (Now - C.LastHitTime) / 1.5f, 0.f, 1.f);
-		FLinearColor Fill = FLinearColor::LerpUsingHSV(Col, Lcars::Red, FMath::Clamp(C.Damage, 0.f, 1.f) * 0.7f);
-		Fill.A = 0.22f + C.Damage * 0.45f + Flash * 0.4f;
-		Box(Rc, Fill, L1);
+		FLinearColor Track = FLinearColor::LerpUsingHSV(Col, Lcars::Red, FMath::Clamp(C.Damage, 0.f, 1.f) * 0.7f);
+		Track.A = 0.12f + Flash * 0.4f;
+		Box(Rc, Track, L1);
+		if (Level > 0.01f)
+		{
+			FLinearColor Fill = Col; Fill.A = 0.42f + Pulse * 0.4f;
+			Box(FSlateRect(Rc.Left, Rc.Top, Rc.Left + Rc.GetSize().X * Level, Rc.Bottom), Fill, L1);
+		}
 		const bool bSel = i == Selected, bHov = i == Hovered;
 		Outline(Rc, bSel ? Lcars::Orange : bHov ? FLinearColor::White : FLinearColor(Col.R, Col.G, Col.B, 0.9f), bSel ? 2.5f : 1.2f, L2);
 		if (Flash > 0.f) { Outline(Rc, FLinearColor(1.f, 1.f, 1.f, Flash), 3.f, L3); }
-		// Abbreviated state inside the box when it fits.
-		if (Rc.GetSize().X > 48.0 && Rc.GetSize().Y > 16.0)
-		{
-			const FString In = C.System != EShipSystem::Count ? FString::Printf(TEXT("%d%%"), FMath::RoundToInt(Integrity * 100.f)) : (C.Damage > 0.05f ? FString::Printf(TEXT("dmg %d%%"), FMath::RoundToInt(C.Damage * 100.f)) : FString());
-			// A box with a smaller one drawn inside it (the torpedo bay over the shield generators, in plan) keeps its
-			// figure in a corner so the two do not print on top of each other.
-			bool bNested = false;
-			for (int32 j : Order) { if (j != i && Rects[j].GetArea() < Rc.GetArea() && Rc.ContainsPoint(Rects[j].GetCenter())) { bNested = true; break; } }
-			if (!In.IsEmpty()) { if (bNested) { Text(In, FVector2D(Rc.Left + 4.0, Rc.Top + 1.0), Small, FLinearColor::White, L3); } else { Text(In, FVector2D(Rc.GetCenter().X, Rc.GetCenter().Y - 7.0), Small, FLinearColor::White, L3, false, true); } }
-		}
 		// The label goes to the side of the hull the compartment is nearer, measured where the hull actually is at that
 		// length: the bridge and the upper decks read above the saucer, the lower saucer decks beneath it, where the
 		// space under the saucer's forward half is otherwise empty. In plan, port things read above and starboard below.
