@@ -2716,10 +2716,8 @@ bool AStarshipPawn::BeamDown(APersonPawn* Person)
 		SetInteriorRoom(EShipRoom::Count);
 		Who->BeginEVA(this, FTransform(Rot, Feet + Radial * APersonPawn::HalfHeightCm), nullptr);
 		Who->bBeamedDown = true;
-		if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
-		{
-			if (AStarshipHUD* H = Cast<AStarshipHUD>(PC->GetHUD())) { H->SetNavTargetActor(this); }
-		}
+		// The course stays as set: the officer with the conn reads the same nav target, and the away team's HUD
+		// finds the ship through its own Craft.
 		ScreenMessage(FString::Printf(TEXT("Energising. On the surface of %s; F beams you back up while the ship is in range."), *Body->GetDisplayName()), FColor::Cyan, 10.f);
 		UE_LOG(LogTemp, Log, TEXT("Beamed down to %s at %s"), *Body->GetDisplayName(), *Feet.ToString());
 	});
@@ -2743,10 +2741,6 @@ bool AStarshipPawn::BeamUp(APersonPawn* Person)
 		if (!RoomSpots(EShipRoom::Transporter, L, U, Lb)) { return; }
 		Who->PlaceAboard(this, EShipRoom::Transporter, U * CraftFrame());
 		SetInteriorRoom(EShipRoom::Transporter);
-		if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
-		{
-			if (AStarshipHUD* H = Cast<AStarshipHUD>(PC->GetHUD())) { if (H->NavTarget == this) { H->ClearNavTarget(); } }
-		}
 		ScreenMessage(TEXT("Aboard. Transporter room, deck G."), FColor::Cyan, 5.f);
 		UE_LOG(LogTemp, Log, TEXT("Beamed up"));
 	});
