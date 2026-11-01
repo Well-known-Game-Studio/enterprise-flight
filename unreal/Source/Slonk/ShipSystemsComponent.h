@@ -238,7 +238,8 @@ private:
 	void DamageSystem(int32 Index, float Loss, const FString& Where);
 	int32 PickRandomSystem() const;
 	void InjureOfficer(float ThroughShields, const FCompartment* Where);
-	void ApplyCasualties(float ThroughShields);
+	/** Wound and kill in proportion to what got through; Scale weights it by how many people are where it landed. */
+	void ApplyCasualties(float ThroughShields, float Scale = 1.f);
 	void TickCrew(float DeltaTime);
 	void TickLifeSupport(float DeltaTime);
 	void TickResupply(float DeltaTime);

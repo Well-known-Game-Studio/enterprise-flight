@@ -42,7 +42,7 @@ void UMsdWidget::SetShip(AStarshipPawn* InShip)
 	Ship = InShip;
 	Selected = INDEX_NONE; Hovered = INDEX_NONE;
 	Rects.Reset();
-	Silhouette = nullptr;
+	Silhouette = nullptr; ColumnZ.Reset();
 	if (InShip) { LengthCm = InShip->GetShipLengthCm(); }
 	BuildSilhouette();
 }
@@ -102,6 +102,14 @@ void UMsdWidget::BuildSilhouette()
 			}
 		}
 	}
+	// The hull's vertical span per column, for the labels.
+	ColumnZ.Init(FVector2f(Zmin, Zmax), W);
+	for (int32 x = 0; x < W; ++x)
+	{
+		int32 Top = -1, Bottom = -1;
+		for (int32 y = 0; y < H; ++y) { if (Mask[y * W + x]) { if (Top < 0) { Top = y; } Bottom = y; } }
+		if (Top >= 0) { ColumnZ[x] = FVector2f(Zmax - (Bottom + 1.f) / H * (Zmax - Zmin), Zmax - (float)Top / H * (Zmax - Zmin)); }
+	}
 	// Pixels: a lavender fill with the deck lines through it and a bright outline, the MSD look.
 	TArray<FColor> Px; Px.SetNum(W * H);
 	const float DeckCm = 330.f;
@@ -127,6 +135,13 @@ void UMsdWidget::BuildSilhouette()
 		SilBrush.ImageSize = FVector2D(W, H);
 		SilBrush.DrawAs = ESlateBrushDrawType::Image;
 	}
+}
+
+FVector2f UMsdWidget::HullSpanAt(float LocalX) const
+{
+	if (ColumnZ.Num() == 0) { return FVector2f(Zmin, Zmax); }
+	const int32 x = FMath::Clamp((int32)((LocalX + LengthCm * 0.5f) / LengthCm * ColumnZ.Num()), 0, ColumnZ.Num() - 1);
+	return ColumnZ[x];
 }
 
 int32 UMsdWidget::HitTest(const FVector2D& P) const
@@ -260,37 +275,73 @@ int32 UMsdWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geo, cons
 			const FString In = C.System != EShipSystem::Count ? FString::Printf(TEXT("%d%%"), FMath::RoundToInt(Integrity * 100.f)) : (C.Damage > 0.05f ? FString::Printf(TEXT("dmg %d%%"), FMath::RoundToInt(C.Damage * 100.f)) : FString());
 			if (!In.IsEmpty()) { Text(In, FVector2D(R.GetCenter().X, R.GetCenter().Y - 7.0), Small, FLinearColor::White, L3, false, true); }
 		}
-		Slots.Add({ i, FVector2D(R.GetCenter().X, C.Center.Z > (Zmin + Zmax) * 0.5f ? R.Top : R.Bottom), C.Center.Z > (Zmin + Zmax) * 0.5f });
+		// The label goes to the side of the hull the compartment is nearer, measured where the hull actually is at that
+		// length: the bridge and the upper decks read above the saucer, the lower saucer decks beneath it, where the
+		// space under the saucer's forward half is otherwise empty.
+		// A compartment that is the whole hull at its length (a nacelle) reads above, where the display is open.
+		const FVector2f Span = HullSpanAt(C.Center.X);
+		const bool bTop = C.Extent.Z * 2.f >= (Span.Y - Span.X) * 0.8f || C.Center.Z > Span.X + (Span.Y - Span.X) * 0.55f;
+		Slots.Add({ i, FVector2D(R.GetCenter().X, bTop ? R.Top : R.Bottom), bTop });
 	}
-	// Labels in rows above and below, with leader lines; a label that would overlap its neighbour drops a row.
-	// Four passes: above and below, and in each the left half placed outward to the left, the right half outward to the
-	// right, so the labels stay near their compartments and never run off the display.
+	// Labels sit just clear of the hull, above or below, with leader lines. Each label's resting height comes from the
+	// hull's own outline across the label's width (so one under the saucer hugs the saucer while one under the secondary
+	// hull sits beneath that), snapped to a 20 px lattice; a label that would overlap a neighbour on its line either
+	// slides a little along it or moves a line further out, whichever disturbs it less. Four passes: above and below,
+	// each with the left half placed outward to the left and the right half outward to the right.
 	const double Mid = Origin.X + ShipW * 0.5;
-	double LeftReach[4];		// how far right the left half's labels got, per row, so the right half starts beyond them
+	const double Pitch = 20.0;
+	const double TopLimit = Origin.Y - 86.0, BottomLimit = Origin.Y + ShipH + 72.0;	// inside the port/starboard bars
+	auto HullEdgeY = [&](double X0, double X1, bool bTop)
+	{
+		// Screen Y of the hull's outline over [X0, X1]: the highest point for labels above, the lowest for those below.
+		float Z = bTop ? Zmin : Zmax;
+		const double Step = FMath::Max(8.0, (X1 - X0) / 12.0);
+		for (double X = X0; X <= X1 + 0.5; X += Step)
+		{
+			const FVector2f Sp = HullSpanAt((float)((X - Origin.X) / Scale - LengthCm * 0.5));
+			Z = bTop ? FMath::Max(Z, Sp.Y) : FMath::Min(Z, Sp.X);
+		}
+		return Origin.Y + (Zmax - Z) * Scale;
+	};
+	TMap<int32, double> LeftReach;		// per line: how far right the left half's labels got, so the right half starts beyond
 	for (int32 Pass = 0; Pass < 4; ++Pass)
 	{
 		const bool bTop = Pass < 2, bLeft = (Pass % 2) == 0;
 		TArray<FLabelSlot> Group; for (const FLabelSlot& Sl : Slots) { if (Sl.bTop == bTop && (Sl.Anchor.X < Mid) == bLeft) { Group.Add(Sl); } }
 		Group.Sort([bLeft](const FLabelSlot& a, const FLabelSlot& b) { return bLeft ? a.Anchor.X > b.Anchor.X : a.Anchor.X < b.Anchor.X; });
-		double RowEdge[4]; for (int32 r = 0; r < 4; ++r) { RowEdge[r] = bLeft ? 1e9 : LeftReach[r]; }
-		if (bLeft) { for (double& R : LeftReach) { R = -1e9; } }
+		TMap<int32, double> Edge;			// per line: the edge the next label must stay clear of
+		if (bLeft) { LeftReach.Reset(); }
 		for (const FLabelSlot& Sl : Group)
 		{
 			const FCompartment& C = K[Sl.Index];
 			const FString Str = C.Name.ToUpper();
 			const double Wd = Measure->Measure(Str, Label).X;
-			double X = FMath::Clamp(Sl.Anchor.X - Wd * 0.5, 8.0, Size.X - 8.0 - Wd);
-			int32 Row = 0;
-			auto Fits = [&](int32 R) { return bLeft ? X + Wd <= RowEdge[R] - 10.0 : X >= RowEdge[R] + 10.0; };
-			while (Row < 3 && !Fits(Row)) { ++Row; }
-			if (!Fits(Row)) { X = bLeft ? RowEdge[Row] - 10.0 - Wd : RowEdge[Row] + 10.0; X = FMath::Clamp(X, 8.0, Size.X - 8.0 - Wd); }
-			RowEdge[Row] = bLeft ? X : X + Wd;
-			if (bLeft) { LeftReach[Row] = FMath::Max(LeftReach[Row], X + Wd); }
-			const double Y = bTop ? Origin.Y - 26.0 - Row * 20.0 : Origin.Y + ShipH + 12.0 + Row * 20.0;
+			const double Want = FMath::Clamp(Sl.Anchor.X - Wd * 0.5, 8.0, Size.X - 8.0 - Wd);
+			// The resting line: just clear of the hull under or over the label's width.
+			const double Clear = HullEdgeY(Want, Want + Wd, bTop);
+			const double Y0 = bTop ? FMath::Max(TopLimit, FMath::FloorToDouble((Clear - 26.0) / Pitch) * Pitch) : FMath::Min(BottomLimit, FMath::CeilToDouble((Clear + 12.0) / Pitch) * Pitch);
+			auto EdgeOf = [&](int32 Line) { if (const double* E = Edge.Find(Line)) { return *E; } if (!bLeft) { if (const double* R = LeftReach.Find(Line)) { return *R; } } return bLeft ? 1e9 : -1e9; };
+			// Try the resting line and up to three further out; the cheapest of a slide along the line or a move outward wins.
+			double BestX = Want, BestY = Y0, BestCost = 1e18;
+			for (int32 Away = 0; Away < 4; ++Away)
+			{
+				const double Y = bTop ? Y0 - Away * Pitch : Y0 + Away * Pitch;
+				if (Y < TopLimit - 0.5 || Y > BottomLimit + 0.5) { break; }
+				const int32 Line = FMath::RoundToInt(Y / Pitch);
+				const double E = EdgeOf(Line);
+				double X = bLeft ? FMath::Min(Want, E - 10.0 - Wd) : FMath::Max(Want, E + 10.0);
+				X = FMath::Clamp(X, 8.0, Size.X - 8.0 - Wd);
+				const bool bFits = bLeft ? X + Wd <= E - 10.0 : X >= E + 10.0;
+				const double Cost = FMath::Abs(X - Want) + Away * 40.0 + (bFits ? 0.0 : 1e6);
+				if (Cost < BestCost) { BestCost = Cost; BestX = X; BestY = Y; }
+			}
+			const int32 Line = FMath::RoundToInt(BestY / Pitch);
+			Edge.Add(Line, bLeft ? BestX : BestX + Wd);
+			if (bLeft) { double& R = LeftReach.FindOrAdd(Line, -1e9); R = FMath::Max(R, BestX + Wd); }
 			const bool bSel = Sl.Index == Selected;
 			const FLinearColor LC = bSel ? Lcars::Orange : Lcars::Gold;
-			Text(Str, FVector2D(X, Y), Label, LC, L4);
-			const FVector2D Elbow(X + Wd * 0.5, bTop ? Y + 16.0 : Y - 2.0);
+			Text(Str, FVector2D(BestX, BestY), Label, LC, L4);
+			const FVector2D Elbow(BestX + Wd * 0.5, bTop ? BestY + 16.0 : BestY - 2.0);
 			Lines({ FVector2f(Sl.Anchor), FVector2f(Elbow) }, FLinearColor(LC.R, LC.G, LC.B, 0.55f), 1.f, L3);
 		}
 	}
@@ -365,7 +416,7 @@ void UMsdPanel::BuildContent()
 			T += FString::Printf(TEXT("   %s %d%% at %d%% power%s"), *UShipSystemsComponent::SystemName(C->System).ToLower(), FMath::RoundToInt(St.Integrity * 100.f), FMath::RoundToInt(St.Power * 100.f), St.bRepairing ? TEXT(", team on it") : TEXT(""));
 		}
 		if (C->Damage > 0.02f) { T += FString::Printf(TEXT("   structural damage %d%%"), FMath::RoundToInt(C->Damage * 100.f)); }
-		const int32 People = FMath::RoundToInt(C->CrewShare * S->Systems->GetCrew().Complement * S->Systems->CrewFactor());
+		const int32 People = FMath::RoundToInt(C->CrewShare * S->Systems->GetCrew().Fit);
 		if (People > 0) { T += FString::Printf(TEXT("   about %d aboard"), People); }
 		if (C->Station != EStation::Count) { if (const FOfficer* O = S->Systems->OfficerAt(C->Station)) { T += TEXT("   ") + O->Speaker(); } }
 		return T;

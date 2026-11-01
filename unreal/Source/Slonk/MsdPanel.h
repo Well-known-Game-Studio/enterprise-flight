@@ -38,6 +38,10 @@ private:
 	FSlateBrush BoxBrush;
 	float LengthCm = 30500.f;
 	float Zmin = -3600.f, Zmax = 3600.f;
+	/** The hull's lowest and highest Z (cm) per raster column, for placing labels on the open side. */
+	TArray<FVector2f> ColumnZ;
+	/** Where the hull is at this X: its bottom and top in cm, or the whole span when nothing was rasterised. */
+	FVector2f HullSpanAt(float LocalX) const;
 	int32 Selected = INDEX_NONE;
 	int32 Hovered = INDEX_NONE;
 	// laid out each paint for the mouse

@@ -265,10 +265,10 @@ void UShipSystemsComponent::TickCrew(float DeltaTime)
 	}
 }
 
-void UShipSystemsComponent::ApplyCasualties(float ThroughShields)
+void UShipSystemsComponent::ApplyCasualties(float ThroughShields, float Scale)
 {
-	if (!bCrewModel || ThroughShields <= 0.f || Crew.Fit <= 0.f) { return; }
-	const float Brace = Alert == EAlertState::Red ? 0.6f : 1.f;
+	if (!bCrewModel || ThroughShields <= 0.f || Crew.Fit <= 0.f || Scale <= 0.f) { return; }
+	const float Brace = (Alert == EAlertState::Red ? 0.6f : 1.f) * Scale;
 	// The dead come off the fit pool first, so a harder hit never kills fewer; the wounded take what is left.
 	const float Dead = FMath::Min(Crew.Fit, FMath::Max(0.f, ThroughShields - 30.f) * 0.04f * Brace);
 	const float Wounded = FMath::Min(Crew.Fit - Dead, ThroughShields * WoundedPerHullPoint * Brace);
@@ -459,12 +459,8 @@ void UShipSystemsComponent::OnHitAt(float Applied, float ThroughShields, const F
 	// Most of the harm goes to what lives there; some always finds a conduit somewhere else.
 	if (K.System != EShipSystem::Count) { DamageSystem((int32)K.System, Loss * 0.7f, K.Name); DamageSystem(PickRandomSystem(), Loss * 0.3f, FString()); }
 	else { DamageSystem(PickRandomSystem(), Loss * 0.4f, K.Name); }
-	// Casualties follow the people: a hit on the quarters hurts more than one on a nacelle.
-	const float CrewK = FMath::Clamp(0.4f + K.CrewShare * 10.f, 0.4f, 2.f);
-	const float SavedWounded = WoundedPerHullPoint;
-	WoundedPerHullPoint *= CrewK;
-	ApplyCasualties(ThroughShields * (K.CrewShare > 0.01f ? 1.f : 0.5f));
-	WoundedPerHullPoint = SavedWounded;
+	// Casualties follow the people: a hit on the quarters hurts twice the usual, one on a nacelle under half.
+	ApplyCasualties(ThroughShields, FMath::Clamp(0.4f + K.CrewShare * 10.f, 0.4f, 2.f));
 	InjureOfficer(ThroughShields, &K);
 }
 
