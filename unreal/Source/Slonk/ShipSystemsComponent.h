@@ -96,6 +96,7 @@ struct FBridgeLogEntry
 {
 	GENERATED_BODY()
 	UPROPERTY(BlueprintReadOnly) float Time = 0.f;
+	UPROPERTY(BlueprintReadOnly) EStation Station = EStation::Engineering;
 	UPROPERTY(BlueprintReadOnly) FString Speaker;
 	UPROPERTY(BlueprintReadOnly) FString Text;
 	UPROPERTY(BlueprintReadOnly) FLinearColor Color = FLinearColor::White;
@@ -125,6 +126,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Ship|Orders") bool BeginResupply();
 	/** Is a station within ResupplyRangeKm and the ship slow enough? OutWhy says what is missing. */
 	bool CanResupply(FString& OutWhy, AActor** OutStation = nullptr) const;
+	/** The range and speed conditions against one station in particular. */
+	bool CanResupplyAt(const AActor* Station, FString& OutWhy) const;
 	/** An order typed at the console: "alert red", "power shields", "repair warp", "balance", "triage", "resupply". */
 	bool HandleOrder(const TArray<FString>& Args, FString& OutReply);
 	/** Dev: set a system's integrity outright. */
@@ -176,6 +179,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ship|Crew") float WoundedPerHullPoint = 0.12f;
 	/** Treatment rate at full staff and supplies, people per second. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ship|Crew") float BaseTreatRate = 0.15f;
+	/** Off for small craft: no casualties, no sickbay, no air model; repairs and orders still work. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ship|Crew") bool bCrewModel = true;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ship|Crew") FShipCrew Crew;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ship|Stores") FShipStores Stores;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ship|Stores") float ResupplyRangeKm = 50.f;

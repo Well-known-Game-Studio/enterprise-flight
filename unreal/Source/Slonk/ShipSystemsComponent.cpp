@@ -87,7 +87,7 @@ void UShipSystemsComponent::Report(EStation From, const FString& Text, const FLi
 {
 	const FOfficer* O = OfficerAt(From);
 	const FString Speaker = O ? O->Speaker() : StationName(From);
-	FBridgeLogEntry E; E.Time = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f; E.Speaker = Speaker; E.Text = Text; E.Color = Color;
+	FBridgeLogEntry E; E.Time = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f; E.Station = From; E.Speaker = Speaker; E.Text = Text; E.Color = Color;
 	Log.Add(E);
 	++LogRevision;
 	UE_LOG(LogTemp, Log, TEXT("Bridge log: %s: %s"), *Speaker, *Text);
@@ -99,6 +99,8 @@ void UShipSystemsComponent::BeginPlay()
 {
 	Super::BeginPlay();
 	CacheBase();
+	// The magazine is ours to keep.
+	if (AStarshipPawn* S = Ship()) { if (S->Weapons) { S->Weapons->bUnlimitedTorpedoes = false; S->Weapons->TorpedoesCarried = FMath::Min(S->Weapons->TorpedoesCarried, Stores.TorpedoCapacity); } }
 }
 
 void UShipSystemsComponent::CacheBase()
@@ -158,11 +160,9 @@ void UShipSystemsComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 	TickRepairs(DeltaTime);
-	TickLifeSupport(DeltaTime);
-	TickCrew(DeltaTime);
+	if (bCrewModel) { TickLifeSupport(DeltaTime); TickCrew(DeltaTime); }
 	TickResupply(DeltaTime);
 	ApplyEffects();
-	if (AStarshipPawn* S = Ship()) { if (S->Weapons) { S->Weapons->bUnlimitedTorpedoes = false; } }
 	for (float& C : ReportCooldown) { C = FMath::Max(0.f, C - DeltaTime); }
 	MedicalReportCooldown = FMath::Max(0.f, MedicalReportCooldown - DeltaTime);
 	LifeSupportReportCooldown = FMath::Max(0.f, LifeSupportReportCooldown - DeltaTime);
@@ -244,8 +244,17 @@ void UShipSystemsComponent::TickCrew(float DeltaTime)
 	if (MedicalReportCooldown <= 0.f && (PendingWounded >= 3.f || PendingDead >= 1.f))
 	{
 		MedicalReportCooldown = 8.f;
-		FString T = FString::Printf(TEXT("Casualties coming in: %d wounded, %d critical"), FMath::RoundToInt(Crew.Injured), FMath::RoundToInt(Crew.Critical));
-		if (Crew.Dead >= 1.f) { T += FString::Printf(TEXT(", %d dead"), FMath::RoundToInt(Crew.Dead)); }
+		FString T;
+		if (PendingWounded >= 3.f)
+		{
+			T = FString::Printf(TEXT("Casualties coming in: %d wounded, %d critical"), FMath::RoundToInt(Crew.Injured), FMath::RoundToInt(Crew.Critical));
+			if (Crew.Dead >= 1.f) { T += FString::Printf(TEXT(", %d dead"), FMath::RoundToInt(Crew.Dead)); }
+		}
+		else
+		{
+			// Nobody new came in: these are the critical we could not hold.
+			T = FString::Printf(TEXT("We've lost %d in sickbay. %d critical still waiting"), FMath::RoundToInt(PendingDead), FMath::RoundToInt(Crew.Critical));
+		}
 		if (Crew.Critical > Crew.SickbayBeds) { T += TEXT(". Sickbay is full"); }
 		Report(EStation::Medical, T + TEXT("."), FLinearColor(1.f, 0.6f, 0.5f));
 		PendingWounded = 0.f; PendingDead = 0.f;
@@ -254,7 +263,7 @@ void UShipSystemsComponent::TickCrew(float DeltaTime)
 
 void UShipSystemsComponent::ApplyCasualties(float ThroughShields)
 {
-	if (ThroughShields <= 0.f || Crew.Fit <= 0.f) { return; }
+	if (!bCrewModel || ThroughShields <= 0.f || Crew.Fit <= 0.f) { return; }
 	const float Brace = Alert == EAlertState::Red ? 0.6f : 1.f;
 	// The dead come off the fit pool first, so a harder hit never kills fewer; the wounded take what is left.
 	const float Dead = FMath::Min(Crew.Fit, FMath::Max(0.f, ThroughShields - 30.f) * 0.04f * Brace);
@@ -295,8 +304,17 @@ bool UShipSystemsComponent::CanResupply(FString& OutWhy, AActor** OutStation) co
 		if (D < BestD) { BestD = D; Best = *It; }
 	}
 	if (!Best) { OutWhy = FString::Printf(TEXT("no station within %.0f km"), ResupplyRangeKm); return false; }
-	if (S->Movement && S->Movement->GetSpeed() > 2e5) { OutWhy = TEXT("too fast to take on stores, come to all stop"); return false; }
+	if (!CanResupplyAt(Best, OutWhy)) { return false; }
 	if (OutStation) { *OutStation = Best; }
+	return true;
+}
+
+bool UShipSystemsComponent::CanResupplyAt(const AActor* Station, FString& OutWhy) const
+{
+	AStarshipPawn* S = Ship();
+	if (!S || !Station) { OutWhy = TEXT("no station"); return false; }
+	if (FVector::Dist(Station->GetActorLocation(), S->GetActorLocation()) > ResupplyRangeKm * 1e5) { OutWhy = FString::Printf(TEXT("we've pulled away from the station, more than %.0f km out"), ResupplyRangeKm); return false; }
+	if (S->Movement && S->Movement->GetSpeed() > 2e5) { OutWhy = TEXT("too fast to take on stores, come to all stop"); return false; }
 	return true;
 }
 
@@ -319,15 +337,15 @@ void UShipSystemsComponent::TickResupply(float DeltaTime)
 {
 	if (ResupplyLeft <= 0.f) { return; }
 	AStarshipPawn* S = Ship();
-	FString Why; AActor* Station = nullptr;
-	// The same range and speed that let it start keep it going.
-	if (!S || !ResupplyStation.IsValid() || !CanResupply(Why, &Station) || Station != ResupplyStation.Get())
+	FString Why;
+	// The same range and speed that let it start keep it going, against the station that has us.
+	if (!S || !CanResupplyAt(ResupplyStation.Get(), Why))
 	{
 		ResupplyLeft = 0.f;
-		Report(EStation::Operations, FString::Printf(TEXT("Resupply broken off: %s."), Why.IsEmpty() ? TEXT("we've pulled away from the station") : *Why), FLinearColor(1.f, 0.7f, 0.5f));
+		Report(EStation::Operations, FString::Printf(TEXT("Resupply broken off: %s."), *Why), FLinearColor(1.f, 0.7f, 0.5f));
 		return;
 	}
-	// Station teams: repairs five times as fast while alongside.
+	// Station teams on top of our own: every system four times the team's pace, the hull 1.5 points a second.
 	for (FShipSystemState& St : Systems) { St.Integrity = FMath::Min(1.f, St.Integrity + RepairPerSecond * 4.f * DeltaTime); }
 	S->HullIntegrity = FMath::Min(100.f, S->HullIntegrity + 1.5f * DeltaTime);
 	ResupplyLeft -= DeltaTime;

@@ -388,7 +388,7 @@ namespace
 		Bar->SetPercent(1.f);
 		return Bar;
 	}
-	void FillBridgeLog(ULcarsPanel* Panel, UWidgetTree* Tree, UScrollBox* Box, const UShipSystemsComponent* Sys, int32 MaxLines, const TArray<FString>* OnlySpeakersContaining = nullptr)
+	void FillBridgeLog(ULcarsPanel* Panel, UWidgetTree* Tree, UScrollBox* Box, const UShipSystemsComponent* Sys, int32 MaxLines, const TArray<EStation>* OnlyStations = nullptr)
 	{
 		if (!Box || !Sys) { return; }
 		Box->ClearChildren();
@@ -397,12 +397,7 @@ namespace
 		for (int32 i = Log.Num() - 1; i >= 0 && Shown < MaxLines; --i)
 		{
 			const FBridgeLogEntry& E = Log[i];
-			if (OnlySpeakersContaining)
-			{
-				bool bOk = false;
-				for (const FString& W : *OnlySpeakersContaining) { if (E.Speaker.Contains(W)) { bOk = true; break; } }
-				if (!bOk) { continue; }
-			}
+			if (OnlyStations && !OnlyStations->Contains(E.Station)) { continue; }
 			++Shown;
 			UHorizontalBox* Row = Tree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 			const int32 M = (int32)E.Time / 60, S = (int32)E.Time % 60;
@@ -543,7 +538,8 @@ void UTacticalPanel::BuildContent()
 	{
 		AStarshipPawn* S = GetShip(); if (!S || !S->Weapons) { return; }
 		const bool bFired = S->Weapons->FireTorpedo();
-		if (S->Systems) { S->Systems->Report(EStation::Tactical, bFired ? TEXT("Torpedo away.") : TEXT("Tubes reloading.")); }
+		const bool bEmpty = !S->Weapons->bUnlimitedTorpedoes && S->Weapons->TorpedoesCarried <= 0;
+		if (S->Systems) { S->Systems->Report(EStation::Tactical, bFired ? TEXT("Torpedo away.") : bEmpty ? TEXT("Magazine's empty, Captain.") : TEXT("Tubes reloading.")); }
 	});
 	AddSidebarButton(TEXT("Engineering"), Lcars::Tan, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UEngineeringPanel>(); } });
 	AddSidebarButton(TEXT("Main Menu"), Lcars::Lavender, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UMainMenuPanel>(); } });
@@ -568,7 +564,7 @@ void UTacticalPanel::BuildContent()
 		AStarshipPawn* S = GetShip(); if (!S || !S->Weapons) { return FString(); }
 		FString Tubes;
 		for (int32 t = 0; t < S->Weapons->GetNumTubes(); ++t) { const float R = S->Weapons->GetTubeReadiness(t); Tubes += FString::Printf(TEXT("%stube %d %s"), t ? TEXT("   ") : TEXT(""), t + 1, R >= 1.f ? TEXT("ready") : *FString::Printf(TEXT("%d%%"), FMath::RoundToInt(R * 100.f))); }
-		return FString::Printf(TEXT("%s   %d in the magazine   fired %d"), *Tubes, S->Weapons->TorpedoesCarried, S->Weapons->GetTorpedoesFired());
+		return FString::Printf(TEXT("%s   %d in the magazine%s   fired %d"), *Tubes, S->Weapons->TorpedoesCarried, S->Weapons->TorpedoesCarried <= 0 && !S->Weapons->bUnlimitedTorpedoes ? TEXT(" EMPTY") : TEXT(""), S->Weapons->GetTorpedoesFired());
 	});
 	AddLiveRow(Content, TEXT("Target"), [this]()
 	{
@@ -775,7 +771,7 @@ void UMedicalPanel::Refresh()
 	if (Sys->GetLogRevision() != LastLogRevision)
 	{
 		LastLogRevision = Sys->GetLogRevision();
-		static const TArray<FString> Who = { TEXT("Dr."), TEXT("Haskins"), TEXT("Reyes"), TEXT("Kessler") };
+		static const TArray<EStation> Who = { EStation::Medical, EStation::Operations };
 		FillBridgeLog(this, WidgetTree, LogBox, Sys, 10, &Who);
 	}
 }

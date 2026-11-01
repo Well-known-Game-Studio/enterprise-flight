@@ -1,4 +1,5 @@
 #include "ShuttlecraftPawn.h"
+#include "ShipSystemsComponent.h"
 #include "ScienceScannerComponent.h"
 #include "Components/BoxComponent.h"
 #include "Components/DynamicMeshComponent.h"
@@ -115,6 +116,13 @@ AShuttlecraftPawn::AShuttlecraftPawn()
 	BridgeFOV = 95.f;
 	CinematicDistanceFactor = 3.f;
 	ShuttleBayOffset = FVector::ZeroVector;
+	// A two-seat boat: no crew to count, no sickbay, no magazine. Repairs, orders and the alert state still work.
+	if (Systems)
+	{
+		Systems->bCrewModel = false;
+		Systems->Crew.Complement = 2; Systems->Crew.Fit = 2.f; Systems->Crew.SickbayBeds = 0;
+		Systems->Stores.TorpedoCapacity = 0;
+	}
 }
 
 void AShuttlecraftPawn::BeginPlay()
