@@ -157,6 +157,12 @@ Phasers, photon torpedoes, shields with a visible bubble, hull damage, a tractor
 
 https://github.com/user-attachments/assets/77b4a194-d3a0-4cb2-a4f4-148228e0b8bb
 
+## Command
+
+The ship is a crewed machine. Seven systems carry their own integrity and power share: shields, phasers, torpedo launchers, warp drive, impulse engines, sensors and life support. A hit that gets through the shields breaks one of them, and a broken system shows: shield emitters at half mean a half-size grid that recharges slowly, phaser banks at a quarter fire a quarter of the beam, a warp drive below seventy per cent cannot hold its top factor, dead impulse engines crawl. The senior staff are named and report to the captain: Lt. Cmdr. Rhys Dahl in engineering calls out what broke and when the damage-control team has it back, Lt. Sorek at tactical calls alerts and locks. Rather than sliders the captain gives orders. `,` opens the engineering board with every system's integrity bar and power, a button to divert power to it (that system to 150 %, the rest sharing the remainder) and one to send the damage-control team there (or leave it to the chief, who takes the worst first and patches the hull when nothing else is broken), and the bridge log of everything the crew said. `.` opens tactical: alert state, shields, phasers, tubes, the locked target and the contacts in range with bearing, kind and hull, and the orders to lock, clear and fire. 5, 6 and 7 are condition green, yellow alert and red alert: yellow turns the HUD amber and warms the bridge lighting; red turns both red, pulses the bridge lights, stiffens the shields and gets the crew bracing, so a hit breaks less. Every order has a console form too: `ship order alert red`, `ship order power shields`, `ship order repair warp`, `ship order report`.
+
+![The engineering board clean and under repair, tactical at condition green and red alert](cap_sheet_placeholder)
+
 ## The bridge
 
 The Star Trek VI bridge is built from code in Blender (`blender/bridge-st6`) and imported as one mesh with its Okudagram screens bound to live readouts. From the captain's chair the viewscreen shows the real view ahead; the crew figures are placeholders for now.
@@ -189,6 +195,8 @@ Mouse or the left stick steers; H opens the controls panel with the full key lis
 | Escape | main computer: status, star chart, science log, controls, quit |
 | M | stellar cartography: the full star chart, course setting and autopilot (1, 2, 3 pick Sector, System or Local) |
 | / | science log: every scan on record, points, rating and the system survey |
+| , . | engineering board (power and repairs), tactical board (alert, weapons, contacts) |
+| 5 6 7 | condition green, yellow alert, red alert |
 | H | controls panel |
 | T, Y | lock / clear a weapons target; left mouse phasers, Space or G torpedo, B tractor beam |
 | V, R, right mouse | cycle camera (chase, bridge, cinematic, front, port, starboard, top, bottom), reset, free look |

@@ -14,6 +14,7 @@
 #include "StarshipWeaponsComponent.h"
 #include "SlonkUIRoot.h"
 #include "LcarsPanels.h"
+#include "ShipSystemsComponent.h"
 #include "StarChartPanel.h"
 #include "Blueprint/UserWidget.h"
 #include "WarpDriveComponent.h"
@@ -128,6 +129,11 @@ void AStarshipPlayerController::CreateDefaultInputAssets()
 	Ensure(IA_Shuttle, TEXT("IA_Shuttle"), EInputActionValueType::Boolean);
 	Ensure(IA_Scan, TEXT("IA_Scan"), EInputActionValueType::Boolean);
 	Ensure(IA_ScienceLog, TEXT("IA_ScienceLog"), EInputActionValueType::Boolean);
+	Ensure(IA_Engineering, TEXT("IA_Engineering"), EInputActionValueType::Boolean);
+	Ensure(IA_Tactical, TEXT("IA_Tactical"), EInputActionValueType::Boolean);
+	Ensure(IA_AlertGreen, TEXT("IA_AlertGreen"), EInputActionValueType::Boolean);
+	Ensure(IA_AlertYellow, TEXT("IA_AlertYellow"), EInputActionValueType::Boolean);
+	Ensure(IA_AlertRed, TEXT("IA_AlertRed"), EInputActionValueType::Boolean);
 	Ensure(IA_Menu, TEXT("IA_Menu"), EInputActionValueType::Boolean);
 	Ensure(IA_Away, TEXT("IA_Away"), EInputActionValueType::Boolean);
 	Ensure(IA_Sprint, TEXT("IA_Sprint"), EInputActionValueType::Boolean);
@@ -218,6 +224,11 @@ void AStarshipPlayerController::CreateDefaultInputAssets()
 	Map(Ctx, IA_Shuttle, EKeys::C);
 	Map(Ctx, IA_Scan, EKeys::Enter);
 	Map(Ctx, IA_ScienceLog, EKeys::Slash);
+	Map(Ctx, IA_Engineering, EKeys::Comma);
+	Map(Ctx, IA_Tactical, EKeys::Period);
+	Map(Ctx, IA_AlertGreen, EKeys::Five);
+	Map(Ctx, IA_AlertYellow, EKeys::Six);
+	Map(Ctx, IA_AlertRed, EKeys::Seven);
 	Map(Ctx, IA_JumpToNavTarget, EKeys::Home);
 	Map(Ctx, IA_ToggleWarpVisuals, EKeys::U);
 
@@ -328,6 +339,11 @@ void AStarshipPlayerController::SetupInputComponent()
 	EIC->BindAction(IA_Shuttle, ETriggerEvent::Started, this, &AStarshipPlayerController::OnShuttle);
 	EIC->BindAction(IA_Scan, ETriggerEvent::Started, this, &AStarshipPlayerController::OnScan);
 	EIC->BindAction(IA_ScienceLog, ETriggerEvent::Started, this, &AStarshipPlayerController::OnScienceLog);
+	EIC->BindAction(IA_Engineering, ETriggerEvent::Started, this, &AStarshipPlayerController::OnEngineering);
+	EIC->BindAction(IA_Tactical, ETriggerEvent::Started, this, &AStarshipPlayerController::OnTactical);
+	EIC->BindAction(IA_AlertGreen, ETriggerEvent::Started, this, &AStarshipPlayerController::OnAlertGreen);
+	EIC->BindAction(IA_AlertYellow, ETriggerEvent::Started, this, &AStarshipPlayerController::OnAlertYellow);
+	EIC->BindAction(IA_AlertRed, ETriggerEvent::Started, this, &AStarshipPlayerController::OnAlertRed);
 	EIC->BindAction(IA_Menu, ETriggerEvent::Started, this, &AStarshipPlayerController::OnMenu);
 }
 
@@ -780,6 +796,20 @@ void AStarshipPlayerController::OnScienceLog()
 {
 	if (UIRoot) { UIRoot->TogglePanel(UScienceLogPanel::StaticClass()); }
 }
+
+void AStarshipPlayerController::OnEngineering()
+{
+	if (UIRoot) { UIRoot->TogglePanel(UEngineeringPanel::StaticClass()); }
+}
+
+void AStarshipPlayerController::OnTactical()
+{
+	if (UIRoot) { UIRoot->TogglePanel(UTacticalPanel::StaticClass()); }
+}
+
+void AStarshipPlayerController::OnAlertGreen() { if (AStarshipPawn* S = Cast<AStarshipPawn>(GetPawn())) { if (S->Systems) { S->Systems->SetAlert(EAlertState::Green); } } }
+void AStarshipPlayerController::OnAlertYellow() { if (AStarshipPawn* S = Cast<AStarshipPawn>(GetPawn())) { if (S->Systems) { S->Systems->SetAlert(EAlertState::Yellow); } } }
+void AStarshipPlayerController::OnAlertRed() { if (AStarshipPawn* S = Cast<AStarshipPawn>(GetPawn())) { if (S->Systems) { S->Systems->SetAlert(EAlertState::Red); } } }
 
 void AStarshipPlayerController::OnMenu()
 {

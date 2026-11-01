@@ -39,6 +39,7 @@
 #include "Materials/MaterialInterface.h"
 #include "StarshipMovementComponent.h"
 #include "StarshipWeaponsComponent.h"
+#include "ShipSystemsComponent.h"
 #include "UObject/ConstructorHelpers.h"
 #include "WarpDriveComponent.h"
 #include "WarpStreaksComponent.h"
@@ -99,6 +100,7 @@ AStarshipPawn::AStarshipPawn()
 	WarpDrive = CreateDefaultSubobject<UWarpDriveComponent>(TEXT("WarpDrive"));
 	Weapons = CreateDefaultSubobject<UStarshipWeaponsComponent>(TEXT("Weapons"));
 	Scanner = CreateDefaultSubobject<UScienceScannerComponent>(TEXT("Scanner"));
+	Systems = CreateDefaultSubobject<UShipSystemsComponent>(TEXT("Systems"));
 
 	// Chase camera on a spring arm. Location lag is deliberately off: at impulse speeds the lag
 	// distance would already be kilometres; rotation lag gives the weighty feel instead.
@@ -1228,6 +1230,7 @@ float AStarshipPawn::TakeDamage(float DamageAmount, const FDamageEvent& DamageEv
 	const float Absorbed = FMath::Min(ShieldStrength, Applied);
 	ShieldStrength -= Absorbed;
 	HullIntegrity = FMath::Max(HullIntegrity - (Applied - Absorbed) * 0.5f, 1.f);
+	if (Systems) { Systems->OnHit(Applied, Applied - Absorbed); }
 	ShieldRechargeTimer = ShieldRechargeDelay;
 	AddCameraShake(FMath::Clamp(Applied / 40.f, 0.05f, 0.6f));
 	return Applied;
@@ -1387,7 +1390,9 @@ void AStarshipPawn::Tick(float DeltaTime)
 	if (BridgeInterior && CameraMode == EStarshipCameraMode::Bridge)
 	{
 		const float WarpFrac = WarpDrive ? FMath::Clamp(WarpDrive->WarpFactor / 9.f, 0.f, 1.f) * (WarpDrive->GetState() == EWarpState::AtWarp ? 1.f : 0.3f) : 0.f;
-		BridgeInterior->SetLiveReadouts(GetShieldFraction(), GetHullFraction(), Movement ? (float)Movement->Throttle : 0.f, WarpFrac, ShieldStrength < MaxShieldStrength * 0.25f);
+		const bool bRed = Systems && Systems->GetAlert() == EAlertState::Red;
+		BridgeInterior->SetLiveReadouts(GetShieldFraction(), GetHullFraction(), Movement ? (float)Movement->Throttle : 0.f, WarpFrac, bRed || ShieldStrength < MaxShieldStrength * 0.25f);
+		BridgeInterior->SetAlertLighting(Systems ? (int32)Systems->GetAlert() : 0, GetWorld()->GetTimeSeconds());
 	}
 	UpdateCameras(DeltaTime);
 
@@ -2093,6 +2098,8 @@ void AStarshipPawn::ProcessDebugCommand()
 		else if (What == TEXT("science")) { UI->TogglePanel(UScienceLogPanel::StaticClass()); }
 		else if (What == TEXT("controls") || What == TEXT("help")) { UI->TogglePanel(UControlsPanel::StaticClass()); }
 		else if (What == TEXT("settings")) { UI->TogglePanel(USettingsPanel::StaticClass()); }
+		else if (What == TEXT("engineering") || What == TEXT("eng")) { UI->TogglePanel(UEngineeringPanel::StaticClass()); }
+		else if (What == TEXT("tactical") || What == TEXT("tac")) { UI->TogglePanel(UTacticalPanel::StaticClass()); }
 		else if (What == TEXT("close")) { UI->CloseAll(); }
 		else if (What == TEXT("click"))
 		{
@@ -2104,7 +2111,15 @@ void AStarshipPawn::ProcessDebugCommand()
 			UE_LOG(LogTemp, Log, TEXT("ui click \"%s\": %s"), *Label, bHit ? TEXT("pressed") : TEXT("no such button"));
 			if (!bHit) { ScreenMessage(FString::Printf(TEXT("ui click: no button \"%s\""), *Label), FColor::Orange); }
 		}
-		else { ScreenMessage(TEXT("ui menu | chart | science | controls | settings | close | click <button>"), FColor::Orange); }
+		else { ScreenMessage(TEXT("ui menu | chart | science | engineering | tactical | controls | settings | close | click <button>"), FColor::Orange); }
+	}
+	else if (Op == TEXT("order") || Op == TEXT("alert"))
+	{
+		// order alert red | power shields | repair warp | balance | report: the captain's orders to the senior staff.
+		TArray<FString> OrderArgs = Args;
+		if (Op == TEXT("alert")) { OrderArgs.Insert(TEXT("order"), 0); }
+		FString Reply;
+		if (!Systems || !Systems->HandleOrder(OrderArgs, Reply)) { ScreenMessage(Reply.IsEmpty() ? TEXT("order: no ship systems") : Reply, FColor::Orange); }
 	}
 	else if (Op == TEXT("help"))
 	{
@@ -2118,7 +2133,8 @@ void AStarshipPawn::ProcessDebugCommand()
 			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km]"),
 			TEXT("ship shuttle  (launch the shuttlecraft; aboard it, dock when the bay is within 500 m) | ship takeoff"),
 			TEXT("ship scan [stop]  (sensors on the locked / nav target; landed: survey the ground) | ship science [reset]"),
-			TEXT("ship ui menu | chart | science | controls | settings | close | click <button>   (the LCARS panels)"),
+			TEXT("ship ui menu | chart | science | engineering | tactical | controls | settings | close | click <button>   (the LCARS panels)"),
+			TEXT("ship order alert red|yellow|green | power <system>|balance | repair <system>|auto | report   (orders to the senior staff)"),
 			TEXT("ship exec <console command>"),
 		};
 		// Reverse order: on-screen messages stack newest on top.

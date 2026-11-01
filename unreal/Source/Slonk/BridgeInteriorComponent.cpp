@@ -535,6 +535,27 @@ void UBridgeInteriorComponent::SetLiveReadouts(float ShieldFraction, float HullF
 	}
 }
 
+void UBridgeInteriorComponent::SetAlertLighting(int32 Level, float Time)
+{
+	// Gather the point lights once (or again after a rebuild).
+	int32 Count = 0;
+	for (USceneComponent* P : Pieces) { if (Cast<UPointLightComponent>(P)) { ++Count; } }
+	if (Count != AlertLights.Num())
+	{
+		AlertLights.Reset();
+		for (USceneComponent* P : Pieces) { if (UPointLightComponent* L = Cast<UPointLightComponent>(P)) { AlertLights.Add({ L, L->Intensity }); } }
+	}
+	if (Level == 0 && LastAlertLevel == 0) { return; }
+	LastAlertLevel = Level;
+	FLinearColor Col = LightColor; float Scale = 1.f;
+	if (Level == 1) { Col = FLinearColor::LerpUsingHSV(LightColor, FLinearColor(1.f, 0.72f, 0.35f), 0.6f); Scale = 0.85f; }
+	else if (Level == 2) { Col = FLinearColor(1.f, 0.22f, 0.16f); Scale = 0.55f + 0.3f * (0.5f + 0.5f * FMath::Sin(Time * 2.4f)); }
+	for (const FAlertLight& A : AlertLights)
+	{
+		if (UPointLightComponent* L = A.Light.Get()) { L->SetLightColor(Col); L->SetIntensity(A.BaseIntensity * Scale); }
+	}
+}
+
 UMaterialInstanceDynamic* UBridgeInteriorComponent::RefitScreen(const TCHAR* Name, float Seed, float Intensity, float CellScale, float Gap)
 {
 	UMaterialInstanceDynamic* M = MakeScreen(DisplayMaterial, Name, Seed, Intensity, CellScale);
