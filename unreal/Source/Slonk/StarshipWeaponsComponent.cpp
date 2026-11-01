@@ -264,7 +264,7 @@ bool UStarshipWeaponsComponent::FireTorpedo()
 			break;
 		}
 	}
-	if (TubeIndex == INDEX_NONE)
+	if (TubeIndex == INDEX_NONE || (!bUnlimitedTorpedoes && TorpedoesCarried <= 0))
 	{
 		return false;
 	}
@@ -299,6 +299,7 @@ bool UStarshipWeaponsComponent::FireTorpedo()
 	}
 	TubeTimers[TubeIndex] = TorpedoCooldown;
 	++TorpedoesFired;
+	if (!bUnlimitedTorpedoes) { TorpedoesCarried = FMath::Max(0, TorpedoesCarried - 1); }
 	return true;
 }
 

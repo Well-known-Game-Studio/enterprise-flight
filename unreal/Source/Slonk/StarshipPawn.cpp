@@ -2100,6 +2100,7 @@ void AStarshipPawn::ProcessDebugCommand()
 		else if (What == TEXT("settings")) { UI->TogglePanel(USettingsPanel::StaticClass()); }
 		else if (What == TEXT("engineering") || What == TEXT("eng")) { UI->TogglePanel(UEngineeringPanel::StaticClass()); }
 		else if (What == TEXT("tactical") || What == TEXT("tac")) { UI->TogglePanel(UTacticalPanel::StaticClass()); }
+		else if (What == TEXT("medical") || What == TEXT("sickbay")) { UI->TogglePanel(UMedicalPanel::StaticClass()); }
 		else if (What == TEXT("close")) { UI->CloseAll(); }
 		else if (What == TEXT("click"))
 		{
@@ -2111,7 +2112,14 @@ void AStarshipPawn::ProcessDebugCommand()
 			UE_LOG(LogTemp, Log, TEXT("ui click \"%s\": %s"), *Label, bHit ? TEXT("pressed") : TEXT("no such button"));
 			if (!bHit) { ScreenMessage(FString::Printf(TEXT("ui click: no button \"%s\""), *Label), FColor::Orange); }
 		}
-		else { ScreenMessage(TEXT("ui menu | chart | science | engineering | tactical | controls | settings | close | click <button>"), FColor::Orange); }
+		else { ScreenMessage(TEXT("ui menu | chart | science | engineering | tactical | medical | controls | settings | close | click <button>"), FColor::Orange); }
+	}
+	else if (Op == TEXT("sysdamage") && Systems)
+	{
+		// Dev: sysdamage <system> <integrity 0..1>
+		EShipSystem Sys;
+		if (UShipSystemsComponent::ParseSystem(ArgStr(1), Sys)) { Systems->DevSetIntegrity(Sys, Arg(2, 0.f)); }
+		else { ScreenMessage(TEXT("sysdamage shields|phasers|torpedoes|warp|impulse|sensors|life <0..1>"), FColor::Orange); }
 	}
 	else if (Op == TEXT("order") || Op == TEXT("alert"))
 	{
@@ -2133,8 +2141,8 @@ void AStarshipPawn::ProcessDebugCommand()
 			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km]"),
 			TEXT("ship shuttle  (launch the shuttlecraft; aboard it, dock when the bay is within 500 m) | ship takeoff"),
 			TEXT("ship scan [stop]  (sensors on the locked / nav target; landed: survey the ground) | ship science [reset]"),
-			TEXT("ship ui menu | chart | science | engineering | tactical | controls | settings | close | click <button>   (the LCARS panels)"),
-			TEXT("ship order alert red|yellow|green | power <system>|balance | repair <system>|auto | report   (orders to the senior staff)"),
+			TEXT("ship ui menu | chart | science | engineering | tactical | medical | controls | settings | close | click <button>   (the LCARS panels)"),
+			TEXT("ship order alert red|yellow|green | power <system>|balance | repair <system>|auto | triage critical|walking | resupply | report"),
 			TEXT("ship exec <console command>"),
 		};
 		// Reverse order: on-screen messages stack newest on top.

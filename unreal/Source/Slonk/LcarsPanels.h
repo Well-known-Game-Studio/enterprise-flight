@@ -1,4 +1,4 @@
-// Slonk - the LCARS panels: main menu, controls, science log, engineering, tactical.
+// Slonk - the LCARS panels: main menu, controls, science log, engineering, tactical, medical.
 
 #pragma once
 
@@ -91,7 +91,37 @@ private:
 	UPROPERTY() TObjectPtr<UScrollBox> LogBox;
 	int32 LastLogCount = -1;
 	UPROPERTY() TObjectPtr<UButton> AutoRepairButton;
+	UPROPERTY() TObjectPtr<UButton> ResupplyButton;
+	bool bLastCanResupply = false;
 	void FillLog();
+};
+
+/** ; : the chief medical officer's board. The crew by condition, sickbay and its supplies, life support and the air,
+ *  the senior staff and who is standing in for whom, triage, and the medical and operations reports. */
+UCLASS()
+class SLONK_API UMedicalPanel : public ULcarsPanel
+{
+	GENERATED_BODY()
+
+protected:
+	virtual void BuildContent() override;
+	virtual void Refresh() override;
+	virtual FString PanelTitle() const override { return TEXT("Sickbay and Life Support"); }
+	virtual FLinearColor FrameColor() const override { return Lcars::Sky; }
+
+private:
+	UPROPERTY() TObjectPtr<UProgressBar> FitBar;
+	UPROPERTY() TObjectPtr<UProgressBar> AirBar;
+	UPROPERTY() TObjectPtr<UProgressBar> SuppliesBar;
+	UPROPERTY() TObjectPtr<UButton> TriageButton;
+	UPROPERTY() TObjectPtr<UButton> ResupplyButton;
+	UPROPERTY() TObjectPtr<UScrollBox> LogBox;
+	UPROPERTY() TObjectPtr<UVerticalBox> StaffBox;
+	int32 LastLogRevision = -1;
+	int32 LastTriage = -1;
+	FString LastStaff;
+	bool bLastCanResupply = false;
+	void FillStaff();
 };
 
 /** . : the tactical officer's board. Alert state, shields and weapons, the locked target and the contacts in range. */
