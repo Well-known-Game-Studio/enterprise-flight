@@ -1,5 +1,7 @@
 #include "ShipSystemsComponent.h"
+#include "EngineUtils.h"
 #include "ScienceScannerComponent.h"
+#include "SpaceVessel.h"
 #include "StarshipMovementComponent.h"
 #include "StarshipPawn.h"
 #include "StarshipWeaponsComponent.h"
@@ -10,14 +12,19 @@ UShipSystemsComponent::UShipSystemsComponent()
 	PrimaryComponentTick.bCanEverTick = true;
 	Systems.SetNum((int32)EShipSystem::Count);
 	Officers = {
-		{ TEXT("Lt. Cmdr."), TEXT("Rhys Dahl"), EStation::Engineering },
-		{ TEXT("Lt."), TEXT("Sorek"), EStation::Tactical },
-		{ TEXT("Cmdr."), TEXT("T'Lara"), EStation::Science },
-		{ TEXT("Lt."), TEXT("Imani Okonkwo"), EStation::Helm },
-		{ TEXT("Lt."), TEXT("Pell Haskins"), EStation::Operations },
-		{ TEXT("Dr."), TEXT("Elena Vasquez"), EStation::Medical },
-		{ TEXT("Lt."), TEXT("Vreen"), EStation::Security },
+		{ TEXT("Lt. Cmdr."), TEXT("Rhys Dahl"), EStation::Engineering, TEXT("Ensign Mara Quill") },
+		{ TEXT("Lt."), TEXT("Sorek"), EStation::Tactical, TEXT("Ensign Dax Mbeki") },
+		{ TEXT("Cmdr."), TEXT("T'Lara"), EStation::Science, TEXT("Ensign Hollis Rane") },
+		{ TEXT("Lt."), TEXT("Imani Okonkwo"), EStation::Helm, TEXT("Ensign Petra Lind") },
+		{ TEXT("Lt."), TEXT("Pell Haskins"), EStation::Operations, TEXT("Ensign Tomas Reyes") },
+		{ TEXT("Dr."), TEXT("Elena Vasquez"), EStation::Medical, TEXT("Dr. Anand Kessler") },
+		{ TEXT("Lt."), TEXT("Vreen"), EStation::Security, TEXT("Ensign Kira Solvay") },
 	};
+}
+
+FString FOfficer::Speaker() const
+{
+	return OnDuty() ? FString::Printf(TEXT("%s %s"), *Rank, *Name) : FString::Printf(TEXT("%s (acting)"), *Acting);
 }
 
 AStarshipPawn* UShipSystemsComponent::Ship() const { return Cast<AStarshipPawn>(GetOwner()); }
@@ -79,10 +86,11 @@ const FOfficer* UShipSystemsComponent::OfficerAt(EStation Station) const
 void UShipSystemsComponent::Report(EStation From, const FString& Text, const FLinearColor& Color)
 {
 	const FOfficer* O = OfficerAt(From);
-	const FString Speaker = O ? FString::Printf(TEXT("%s %s"), *O->Rank, *O->Name) : StationName(From);
-	FBridgeLogEntry E; E.Time = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f; E.Speaker = Speaker; E.Text = Text; E.Color = Color;
+	const FString Speaker = O ? O->Speaker() : StationName(From);
+	FBridgeLogEntry E; E.Time = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f; E.Station = From; E.Speaker = Speaker; E.Text = Text; E.Color = Color;
 	Log.Add(E);
 	++LogRevision;
+	UE_LOG(LogTemp, Log, TEXT("Bridge log: %s: %s"), *Speaker, *Text);
 	if (Log.Num() > 200) { Log.RemoveAt(0, Log.Num() - 200); }
 	if (AStarshipPawn* S = Ship()) { S->ScreenMessage(FString::Printf(TEXT("%s: %s"), *Speaker, *Text), Color.ToFColor(true), 5.f); }
 }
@@ -91,6 +99,8 @@ void UShipSystemsComponent::BeginPlay()
 {
 	Super::BeginPlay();
 	CacheBase();
+	// The magazine is ours to keep.
+	if (AStarshipPawn* S = Ship()) { if (S->Weapons) { S->Weapons->bUnlimitedTorpedoes = false; S->Weapons->TorpedoesCarried = FMath::Min(S->Weapons->TorpedoesCarried, Stores.TorpedoCapacity); } }
 }
 
 void UShipSystemsComponent::CacheBase()
@@ -104,11 +114,16 @@ void UShipSystemsComponent::CacheBase()
 	bBaseCached = true;
 }
 
+float UShipSystemsComponent::CrewFactor() const
+{
+	return Crew.Complement > 0 ? FMath::Clamp(Crew.Fit / Crew.Complement, 0.3f, 1.f) : 1.f;
+}
+
 float UShipSystemsComponent::Effectiveness(EShipSystem System) const
 {
 	const FShipSystemState& St = Systems[(int32)System];
-	// Power helps a working system more than a broken one; nothing runs on no power.
-	float E = St.Integrity * FMath::Clamp(0.4f + 0.6f * St.Power, 0.f, 1.5f);
+	// Power helps a working system more than a broken one; nothing runs on no power. Short-handed crews run it worse.
+	float E = St.Integrity * FMath::Clamp(0.4f + 0.6f * St.Power, 0.f, 1.5f) * (0.7f + 0.3f * CrewFactor());
 	if (System == EShipSystem::Shields) { E *= Alert == EAlertState::Red ? 1.15f : Alert == EAlertState::Yellow ? 1.f : 0.85f; }
 	return E;
 }
@@ -145,8 +160,221 @@ void UShipSystemsComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 	TickRepairs(DeltaTime);
+	if (bCrewModel) { TickLifeSupport(DeltaTime); TickCrew(DeltaTime); }
+	TickResupply(DeltaTime);
 	ApplyEffects();
 	for (float& C : ReportCooldown) { C = FMath::Max(0.f, C - DeltaTime); }
+	MedicalReportCooldown = FMath::Max(0.f, MedicalReportCooldown - DeltaTime);
+	LifeSupportReportCooldown = FMath::Max(0.f, LifeSupportReportCooldown - DeltaTime);
+}
+
+void UShipSystemsComponent::TickLifeSupport(float DeltaTime)
+{
+	// Life support at half or better keeps the air; below that the decks slowly lose it, and people with it.
+	const float Target = AtmosphereTarget();
+	const float Rate = Target > Atmosphere ? 0.05f : 0.03f;
+	Atmosphere = FMath::Clamp(FMath::FInterpConstantTo(Atmosphere, Target, DeltaTime, Rate), 0.f, 1.f);
+	if (Atmosphere < 0.6f)
+	{
+		const float Hurt = FMath::Min(Crew.Fit, (0.6f - Atmosphere) * 2.f * DeltaTime);
+		Crew.Fit -= Hurt; Crew.Injured += Hurt;
+		if (Atmosphere < 0.3f)
+		{
+			const float Die = FMath::Min(Crew.Injured + Crew.Critical, (0.3f - Atmosphere) * 1.f * DeltaTime);
+			const float FromCrit = FMath::Min(Crew.Critical, Die);
+			Crew.Critical -= FromCrit; Crew.Injured -= (Die - FromCrit); Crew.Dead += Die;
+		}
+		if (LifeSupportReportCooldown <= 0.f)
+		{
+			LifeSupportReportCooldown = 15.f; bAirWarned = true;
+			Report(EStation::Operations, FString::Printf(TEXT("Life support failing. Atmosphere at %d percent, crew are going down."), FMath::RoundToInt(Atmosphere * 100.f)), FLinearColor(1.f, 0.5f, 0.4f));
+		}
+	}
+	else if (bAirWarned && Atmosphere > 0.9f)
+	{
+		bAirWarned = false; LifeSupportReportCooldown = 0.f;
+		Report(EStation::Operations, TEXT("Atmosphere restored on all decks."), FLinearColor(0.6f, 1.f, 0.6f));
+	}
+}
+
+float UShipSystemsComponent::AtmosphereTarget() const
+{
+	const float LS = Effectiveness(EShipSystem::LifeSupport);
+	return LS >= 0.5f ? 1.f : LS / 0.5f;
+}
+
+float UShipSystemsComponent::TreatRatePerSecond() const
+{
+	// No supplies, no treatment: sickbay keeps people alive and nothing more.
+	if (Stores.MedicalSupplies <= 0.f) { return 0.f; }
+	const FOfficer* CMO = OfficerAt(EStation::Medical);
+	float R = BaseTreatRate;
+	if (CMO && !CMO->OnDuty()) { R *= 0.6f; }
+	if (Atmosphere < 0.6f) { R *= 0.5f; }
+	return R;
+}
+
+void UShipSystemsComponent::TickCrew(float DeltaTime)
+{
+	// Sickbay: the critical are stabilised into the wounded, the wounded are returned to duty. Triage splits the staff.
+	const float R = TreatRatePerSecond() * DeltaTime;
+	const float CritShare = Triage == ETriage::CriticalFirst ? 0.7f : 0.3f;
+	float Stab = FMath::Min(Crew.Critical, R * CritShare);
+	float Heal = FMath::Min(Crew.Injured, R * (1.f - CritShare));
+	// Idle staff on one side help the other.
+	if (Stab < R * CritShare) { Heal = FMath::Min(Crew.Injured, Heal + (R * CritShare - Stab)); }
+	else if (Heal < R * (1.f - CritShare)) { Stab = FMath::Min(Crew.Critical, Stab + (R * (1.f - CritShare) - Heal)); }
+	Crew.Critical -= Stab; Crew.Injured += Stab - Heal; Crew.Fit += Heal;
+	Stores.MedicalSupplies = FMath::Max(0.f, Stores.MedicalSupplies - Stab * 0.008f - Heal * 0.003f);
+	if (Stores.MedicalSupplies <= 0.f && !bSuppliesOutReported) { bSuppliesOutReported = true; Report(EStation::Medical, TEXT("Sickbay is out of supplies. I can keep people alive, not much more."), FLinearColor(1.f, 0.6f, 0.4f)); }
+	// The critical beyond the beds, or without supplies, slip away.
+	const float Unbedded = FMath::Max(0.f, Crew.Critical - Crew.SickbayBeds) + (Stores.MedicalSupplies <= 0.f ? Crew.Critical * 0.5f : 0.f);
+	const float Lost = FMath::Min(Crew.Critical, Unbedded * 0.004f * DeltaTime);
+	Crew.Critical -= Lost; Crew.Dead += Lost; PendingDead += Lost;
+	// Officers heal in sickbay.
+	for (FOfficer& O : Officers)
+	{
+		if (O.bInjured && !O.bLost)
+		{
+			O.RecoverSeconds -= DeltaTime * (Stores.MedicalSupplies > 0.f ? 1.f : 0.5f);
+			if (O.RecoverSeconds <= 0.f) { O.bInjured = false; Report(O.Station, TEXT("Back on duty, Captain."), FLinearColor(0.6f, 1.f, 0.6f)); }
+		}
+	}
+	// The doctor's report, batched.
+	if (MedicalReportCooldown <= 0.f && (PendingWounded >= 3.f || PendingDead >= 1.f))
+	{
+		MedicalReportCooldown = 8.f;
+		FString T;
+		if (PendingWounded >= 3.f)
+		{
+			T = FString::Printf(TEXT("Casualties coming in: %d wounded, %d critical"), FMath::RoundToInt(Crew.Injured), FMath::RoundToInt(Crew.Critical));
+			if (Crew.Dead >= 1.f) { T += FString::Printf(TEXT(", %d dead"), FMath::RoundToInt(Crew.Dead)); }
+		}
+		else
+		{
+			// Nobody new came in: these are the critical we could not hold.
+			T = FString::Printf(TEXT("We've lost %d in sickbay. %d critical still waiting"), FMath::RoundToInt(PendingDead), FMath::RoundToInt(Crew.Critical));
+		}
+		if (Crew.Critical > Crew.SickbayBeds) { T += TEXT(". Sickbay is full"); }
+		Report(EStation::Medical, T + TEXT("."), FLinearColor(1.f, 0.6f, 0.5f));
+		PendingWounded = 0.f; PendingDead = 0.f;
+	}
+}
+
+void UShipSystemsComponent::ApplyCasualties(float ThroughShields)
+{
+	if (!bCrewModel || ThroughShields <= 0.f || Crew.Fit <= 0.f) { return; }
+	const float Brace = Alert == EAlertState::Red ? 0.6f : 1.f;
+	// The dead come off the fit pool first, so a harder hit never kills fewer; the wounded take what is left.
+	const float Dead = FMath::Min(Crew.Fit, FMath::Max(0.f, ThroughShields - 30.f) * 0.04f * Brace);
+	const float Wounded = FMath::Min(Crew.Fit - Dead, ThroughShields * WoundedPerHullPoint * Brace);
+	const float Crit = Wounded * 0.33f;
+	Crew.Fit -= Wounded + Dead; Crew.Injured += Wounded - Crit; Crew.Critical += Crit; Crew.Dead += Dead;
+	PendingWounded += Wounded; PendingDead += Dead;
+	// A heavy hit can put a senior officer in sickbay, or worse.
+	if (ThroughShields > 40.f && FMath::FRand() < ThroughShields / 400.f)
+	{
+		TArray<int32> Up; for (int32 i = 0; i < Officers.Num(); ++i) { if (Officers[i].OnDuty()) { Up.Add(i); } }
+		if (Up.Num())
+		{
+			FOfficer& O = Officers[Up[FMath::RandHelper(Up.Num())]];
+			const FString Who = FString::Printf(TEXT("%s %s"), *O.Rank, *O.Name);
+			if (ThroughShields > 100.f && FMath::FRand() < 0.15f)
+			{
+				O.bLost = true;
+				Report(EStation::Medical, FString::Printf(TEXT("%s is dead, Captain. %s has %s."), *Who, *O.Acting, *StationName(O.Station).ToLower()), FLinearColor(1.f, 0.4f, 0.4f));
+			}
+			else
+			{
+				O.bInjured = true; O.RecoverSeconds = 90.f + ThroughShields;
+				Report(EStation::Medical, FString::Printf(TEXT("%s is down, we have them in sickbay. %s has %s."), *Who, *O.Acting, *StationName(O.Station).ToLower()), FLinearColor(1.f, 0.6f, 0.5f));
+			}
+		}
+	}
+}
+
+bool UShipSystemsComponent::CanResupply(FString& OutWhy, AActor** OutStation) const
+{
+	AStarshipPawn* S = Ship();
+	if (!S) { OutWhy = TEXT("no ship"); return false; }
+	AActor* Best = nullptr; double BestD = ResupplyRangeKm * 1e5;
+	for (TActorIterator<ASpaceStation> It(S->GetWorld()); It; ++It)
+	{
+		const double D = FVector::Dist(It->GetActorLocation(), S->GetActorLocation());
+		if (D < BestD) { BestD = D; Best = *It; }
+	}
+	if (!Best) { OutWhy = FString::Printf(TEXT("no station within %.0f km"), ResupplyRangeKm); return false; }
+	if (!CanResupplyAt(Best, OutWhy)) { return false; }
+	if (OutStation) { *OutStation = Best; }
+	return true;
+}
+
+bool UShipSystemsComponent::CanResupplyAt(const AActor* Station, FString& OutWhy) const
+{
+	AStarshipPawn* S = Ship();
+	if (!S || !Station) { OutWhy = TEXT("no station"); return false; }
+	if (FVector::Dist(Station->GetActorLocation(), S->GetActorLocation()) > ResupplyRangeKm * 1e5) { OutWhy = FString::Printf(TEXT("we've pulled away from the station, more than %.0f km out"), ResupplyRangeKm); return false; }
+	if (S->Movement && S->Movement->GetSpeed() > 2e5) { OutWhy = TEXT("too fast to take on stores, come to all stop"); return false; }
+	return true;
+}
+
+bool UShipSystemsComponent::BeginResupply()
+{
+	if (IsResupplying()) { return true; }
+	FString Why; AActor* Station = nullptr;
+	if (!CanResupply(Why, &Station))
+	{
+		Report(EStation::Operations, FString::Printf(TEXT("Can't resupply: %s."), *Why), FLinearColor(1.f, 0.7f, 0.5f));
+		return false;
+	}
+	ResupplyLeft = ResupplySeconds; ResupplyStation = Station;
+	const ASpaceVessel* V = Cast<ASpaceVessel>(Station);
+	Report(EStation::Operations, FString::Printf(TEXT("%s has us. Taking on torpedoes, parts and supplies, their repair teams are coming aboard, wounded going across. About %.0f seconds."), V ? *V->GetDisplayName() : TEXT("The station"), ResupplySeconds));
+	return true;
+}
+
+void UShipSystemsComponent::TickResupply(float DeltaTime)
+{
+	if (ResupplyLeft <= 0.f) { return; }
+	AStarshipPawn* S = Ship();
+	FString Why;
+	// The same range and speed that let it start keep it going, against the station that has us.
+	if (!S || !CanResupplyAt(ResupplyStation.Get(), Why))
+	{
+		ResupplyLeft = 0.f;
+		Report(EStation::Operations, FString::Printf(TEXT("Resupply broken off: %s."), *Why), FLinearColor(1.f, 0.7f, 0.5f));
+		return;
+	}
+	// Station teams on top of our own: every system four times the team's pace, the hull 1.5 points a second.
+	for (FShipSystemState& St : Systems) { St.Integrity = FMath::Min(1.f, St.Integrity + RepairPerSecond * 4.f * DeltaTime); }
+	S->HullIntegrity = FMath::Min(100.f, S->HullIntegrity + 1.5f * DeltaTime);
+	ResupplyLeft -= DeltaTime;
+	if (ResupplyLeft <= 0.f) { FinishResupply(); }
+}
+
+void UShipSystemsComponent::FinishResupply()
+{
+	AStarshipPawn* S = Ship();
+	const int32 Replacements = FMath::RoundToInt(Crew.Dead);
+	const int32 Treated = FMath::RoundToInt(Crew.Injured + Crew.Critical);
+	Crew.Fit = Crew.Complement; Crew.Injured = 0.f; Crew.Critical = 0.f; Crew.Dead = 0.f;
+	Stores.SpareParts = 1.f; Stores.MedicalSupplies = 1.f; bPartsOutReported = false; bSuppliesOutReported = false;
+	for (FShipSystemState& St : Systems) { St.Integrity = 1.f; }
+	for (FOfficer& O : Officers) { O.bInjured = false; O.RecoverSeconds = 0.f; }
+	if (S)
+	{
+		S->HullIntegrity = 100.f;
+		if (S->Weapons) { S->Weapons->TorpedoesCarried = Stores.TorpedoCapacity; }
+	}
+	Report(EStation::Operations, FString::Printf(TEXT("Resupply complete. Full torpedo load, lockers full, all systems at nominal%s%s."),
+		Treated ? *FString::Printf(TEXT(", %d wounded transferred to the station's care"), Treated) : TEXT(""),
+		Replacements ? *FString::Printf(TEXT(", %d replacements aboard"), Replacements) : TEXT("")), FLinearColor(0.6f, 1.f, 0.6f));
+}
+
+void UShipSystemsComponent::SetTriage(ETriage NewTriage)
+{
+	Triage = NewTriage;
+	Report(EStation::Medical, NewTriage == ETriage::CriticalFirst ? TEXT("Critical cases first. The walking wounded will wait.") : TEXT("Patching up whoever can go back to their post. The critical will have to hold on."));
 }
 
 void UShipSystemsComponent::TickRepairs(float DeltaTime)
@@ -169,7 +397,11 @@ void UShipSystemsComponent::TickRepairs(float DeltaTime)
 		{
 			if (S->HullIntegrity < 100.f)
 			{
-				S->HullIntegrity = FMath::Min(100.f, S->HullIntegrity + RepairPerSecond * 25.f * DeltaTime);
+				const float PartsK = Stores.SpareParts > 0.f ? 1.f : 0.25f;
+				const float Before = S->HullIntegrity;
+				S->HullIntegrity = FMath::Min(100.f, S->HullIntegrity + RepairPerSecond * 25.f * CrewFactor() * PartsK * DeltaTime);
+				Stores.SpareParts = FMath::Max(0.f, Stores.SpareParts - (S->HullIntegrity - Before) / 100.f * 0.12f);
+				if (Stores.SpareParts <= 0.f && !bPartsOutReported) { bPartsOutReported = true; Report(EStation::Engineering, TEXT("We're out of spare parts. I'm stripping what I can from the shuttles and the lounge."), FLinearColor(1.f, 0.6f, 0.4f)); }
 				if (S->HullIntegrity >= 100.f) { Report(EStation::Engineering, TEXT("Hull patched. She's whole again."), FLinearColor(0.6f, 1.f, 0.6f)); }
 			}
 		}
@@ -182,7 +414,11 @@ void UShipSystemsComponent::TickRepairs(float DeltaTime)
 		if (St.Integrity < 1.f)
 		{
 			const float Before = St.Integrity;
-			St.Integrity = FMath::Min(1.f, St.Integrity + RepairPerSecond * (bTeam ? 1.f : 0.33f) * DeltaTime);
+			// Repairs use spare parts; with the lockers empty the team cannibalises, at a quarter of the pace.
+			const float PartsK = Stores.SpareParts > 0.f ? 1.f : 0.25f;
+			St.Integrity = FMath::Min(1.f, St.Integrity + RepairPerSecond * (bTeam ? 1.f : 0.33f) * CrewFactor() * PartsK * DeltaTime);
+			Stores.SpareParts = FMath::Max(0.f, Stores.SpareParts - (St.Integrity - Before) * 0.12f);
+			if (Stores.SpareParts <= 0.f && !bPartsOutReported) { bPartsOutReported = true; Report(EStation::Engineering, TEXT("We're out of spare parts. I'm stripping what I can from the shuttles and the lounge."), FLinearColor(1.f, 0.6f, 0.4f)); }
 			if (Before < 1.f && St.Integrity >= 1.f)
 			{
 				Report(EStation::Engineering, FString::Printf(TEXT("%s back to full."), *SystemName((EShipSystem)i)), FLinearColor(0.6f, 1.f, 0.6f));
@@ -194,6 +430,7 @@ void UShipSystemsComponent::TickRepairs(float DeltaTime)
 void UShipSystemsComponent::OnHit(float Applied, float ThroughShields)
 {
 	if (ThroughShields <= 0.f) { return; }
+	ApplyCasualties(ThroughShields);
 	// A hit through the shields breaks something: which, by weight; the big systems are big targets.
 	static const float Weights[(int32)EShipSystem::Count] = { 2.f, 2.f, 1.f, 1.5f, 1.5f, 1.f, 0.7f };
 	float Total = 0.f; for (float W : Weights) { Total += W; }
@@ -283,9 +520,24 @@ bool UShipSystemsComponent::HandleOrder(const TArray<FString>& Args, FString& Ou
 		{
 			R += FString::Printf(TEXT("%s %d%% (%d%% power)%s  "), *SystemName((EShipSystem)i), FMath::RoundToInt(Systems[i].Integrity * 100.f), FMath::RoundToInt(Systems[i].Power * 100.f), Systems[i].bRepairing ? TEXT(" repairing") : TEXT(""));
 		}
-		Report(EStation::Engineering, R);
+		Report(EStation::Engineering, R + FString::Printf(TEXT("Parts %d%%."), FMath::RoundToInt(Stores.SpareParts * 100.f)));
+		Report(EStation::Medical, FString::Printf(TEXT("%d fit for duty, %d wounded, %d critical, %d dead. Sickbay %d of %d beds, supplies %d%%. Atmosphere %d%%."),
+			FMath::RoundToInt(Crew.Fit), FMath::RoundToInt(Crew.Injured), FMath::RoundToInt(Crew.Critical), FMath::RoundToInt(Crew.Dead), SickbayInUse(), Crew.SickbayBeds, FMath::RoundToInt(Stores.MedicalSupplies * 100.f), FMath::RoundToInt(Atmosphere * 100.f)));
 		return true;
 	}
-	OutReply = TEXT("order alert|power|repair|report");
+	if (What == TEXT("triage"))
+	{
+		if (Arg.StartsWith(TEXT("crit"))) { SetTriage(ETriage::CriticalFirst); return true; }
+		if (Arg.StartsWith(TEXT("walk")) || Arg.StartsWith(TEXT("duty"))) { SetTriage(ETriage::WalkingWounded); return true; }
+		OutReply = TEXT("triage critical|walking"); return false;
+	}
+	if (What == TEXT("resupply"))
+	{
+		if (BeginResupply()) { return true; }
+		CanResupply(OutReply);
+		OutReply = TEXT("resupply: ") + OutReply;
+		return false;
+	}
+	OutReply = TEXT("order alert|power|repair|report|triage|resupply");
 	return false;
 }

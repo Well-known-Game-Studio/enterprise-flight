@@ -42,6 +42,7 @@ void UMainMenuPanel::BuildContent()
 	AddSidebarButton(TEXT("Science Log"), Lcars::Gold, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UScienceLogPanel>(); } });
 	AddSidebarButton(TEXT("Engineering"), Lcars::Tan, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UEngineeringPanel>(); } });
 	AddSidebarButton(TEXT("Tactical"), Lcars::Red, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UTacticalPanel>(); } });
+	AddSidebarButton(TEXT("Sickbay"), Lcars::Sky, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UMedicalPanel>(); } });
 	AddSidebarButton(TEXT("Controls"), Lcars::Lavender, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UControlsPanel>(); } });
 	AddSidebarButton(TEXT("Settings"), Lcars::Tan, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<USettingsPanel>(); } });
 	AddSidebarButton(TEXT("Quit"), Lcars::Salmon, [this]()
@@ -151,7 +152,7 @@ void UControlsPanel::BuildContent()
 		{ TEXT("N"), TEXT("nav markers") },
 		{ TEXT("M"), TEXT("star chart") },
 		{ TEXT("/"), TEXT("science log") },
-		{ TEXT(",  ."), TEXT("engineering, tactical boards") },
+		{ TEXT(",  .  ;"), TEXT("engineering, tactical, sickbay boards") },
 		{ TEXT("5  6  7"), TEXT("condition green, yellow alert, red alert") },
 		{ TEXT("H"), TEXT("this list") },
 		{ TEXT("Escape"), TEXT("main menu") },
@@ -387,15 +388,17 @@ namespace
 		Bar->SetPercent(1.f);
 		return Bar;
 	}
-	void FillBridgeLog(ULcarsPanel* Panel, UWidgetTree* Tree, UScrollBox* Box, const UShipSystemsComponent* Sys, int32 MaxLines)
+	void FillBridgeLog(ULcarsPanel* Panel, UWidgetTree* Tree, UScrollBox* Box, const UShipSystemsComponent* Sys, int32 MaxLines, const TArray<EStation>* OnlyStations = nullptr)
 	{
 		if (!Box || !Sys) { return; }
 		Box->ClearChildren();
 		const TArray<FBridgeLogEntry>& Log = Sys->GetLog();
-		const int32 First = FMath::Max(0, Log.Num() - MaxLines);
-		for (int32 i = Log.Num() - 1; i >= First; --i)
+		int32 Shown = 0;
+		for (int32 i = Log.Num() - 1; i >= 0 && Shown < MaxLines; --i)
 		{
 			const FBridgeLogEntry& E = Log[i];
+			if (OnlyStations && !OnlyStations->Contains(E.Station)) { continue; }
+			++Shown;
 			UHorizontalBox* Row = Tree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 			const int32 M = (int32)E.Time / 60, S = (int32)E.Time % 60;
 			USizeBox* TBox = Tree->ConstructWidget<USizeBox>(USizeBox::StaticClass()); TBox->SetWidthOverride(58.f);
@@ -421,13 +424,12 @@ void UEngineeringPanel::BuildContent()
 	AddSidebarButton(TEXT("Balance Power"), Lcars::Tan, [this]() { if (AStarshipPawn* S = GetShip()) { if (S->Systems) { S->Systems->BalancePower(); } } });
 	AutoRepairButton = AddSidebarButton(TEXT("Auto Repair"), Lcars::Peach, [this]() { if (AStarshipPawn* S = GetShip()) { if (S->Systems) { S->Systems->SetRepairPriority(EShipSystem::Count); } } });
 	AddSidebarButton(TEXT("Status Report"), Lcars::Lilac, [this]() { if (AStarshipPawn* S = GetShip()) { if (S->Systems) { FString R; S->Systems->HandleOrder({ TEXT("order"), TEXT("report") }, R); } } });
+	ResupplyButton = AddSidebarButton(TEXT("Resupply"), Lcars::Periwinkle, [this]() { if (AStarshipPawn* S = GetShip()) { if (S->Systems) { S->Systems->BeginResupply(); } } });
 	AddSidebarButton(TEXT("Tactical"), Lcars::Red, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UTacticalPanel>(); } });
+	AddSidebarButton(TEXT("Sickbay"), Lcars::Sky, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UMedicalPanel>(); } });
 	AddSidebarButton(TEXT("Main Menu"), Lcars::Lavender, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UMainMenuPanel>(); } });
 
-	AStarshipPawn* Ship = GetShip();
-	UShipSystemsComponent* Sys = Ship ? Ship->Systems.Get() : nullptr;
-	const FOfficer* Chief = Sys ? Sys->OfficerAt(EStation::Engineering) : nullptr;
-	AddRow(Content, TEXT("Chief Engineer"), Chief ? FString::Printf(TEXT("%s %s"), *Chief->Rank, *Chief->Name) : TEXT("post empty"), Lcars::Peach, 15.f);
+	AddLiveRow(Content, TEXT("Chief Engineer"), [this]() { AStarshipPawn* S = GetShip(); const FOfficer* O = S && S->Systems ? S->Systems->OfficerAt(EStation::Engineering) : nullptr; return O ? O->Speaker() : FString(TEXT("post empty")); }, Lcars::Peach, 15.f);
 	AddLiveRow(Content, TEXT("Condition"), [this]() { AStarshipPawn* S = GetShip(); return S && S->Systems ? UShipSystemsComponent::AlertName(S->Systems->GetAlert()) : FString(); }, Lcars::Gold, 15.f);
 	AddLiveRow(Content, TEXT("Hull"), [this]() { AStarshipPawn* S = GetShip(); return S ? FString::Printf(TEXT("%d%%"), FMath::RoundToInt(S->GetHullFraction() * 100.f)) : FString(); }, Lcars::Peach, 15.f);
 
@@ -479,7 +481,16 @@ void UEngineeringPanel::BuildContent()
 		if (UVerticalBoxSlot* S = Content->AddChildToVerticalBox(Row)) { S->SetPadding(FMargin(0.f, 3.f, 0.f, 3.f)); }
 	}
 
-	AddLine(Content, TEXT("Bridge log"), 14.f, Lcars::Peach, true, true, 14.f);
+	AddLiveRow(Content, TEXT("Stores"), [this]()
+	{
+		AStarshipPawn* S = GetShip(); if (!S || !S->Systems) { return FString(); }
+		const FShipStores& St = S->Systems->GetStores();
+		FString T = FString::Printf(TEXT("torpedoes %d of %d   spare parts %d%%   medical supplies %d%%   crew %d%% fit"), S->Weapons ? S->Weapons->TorpedoesCarried : 0, St.TorpedoCapacity, FMath::RoundToInt(St.SpareParts * 100.f), FMath::RoundToInt(St.MedicalSupplies * 100.f), S->Systems->GetCrew().Complement ? FMath::RoundToInt(100.f * S->Systems->GetCrew().Fit / S->Systems->GetCrew().Complement) : 0);
+		if (S->Systems->IsResupplying()) { T += FString::Printf(TEXT("   RESUPPLYING %.0f s"), S->Systems->ResupplySecondsLeft()); }
+		else { FString Why; if (!S->Systems->CanResupply(Why)) { T += TEXT("   (") + Why + TEXT(")"); } else { T += TEXT("   station alongside"); } }
+		return T;
+	}, Lcars::Peach, 14.f);
+	AddLine(Content, TEXT("Bridge log"), 14.f, Lcars::Peach, true, true, 10.f);
 	LogBox = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass());
 	if (UVerticalBoxSlot* S = Content->AddChildToVerticalBox(LogBox)) { S->SetSize(FSlateChildSize(ESlateSizeRule::Fill)); }
 }
@@ -501,6 +512,8 @@ void UEngineeringPanel::Refresh()
 		if (R.RepairButton && bRep != R.bLastRepair) { R.bLastRepair = bRep; Lcars::SetButtonColor(R.RepairButton, bRep ? Lcars::Orange : Lcars::Lilac, &Radii); }
 	}
 	if (AutoRepairButton) { Lcars::SetButtonColor(AutoRepairButton, Priority == EShipSystem::Count ? Lcars::Orange : Lcars::Peach, nullptr); }
+	FString Why; const bool bCan = Sys->IsResupplying() || Sys->CanResupply(Why);
+	if (ResupplyButton && bCan != bLastCanResupply) { bLastCanResupply = bCan; Lcars::SetButtonColor(ResupplyButton, bCan ? Lcars::Periwinkle : Lcars::Darker(Lcars::Periwinkle, 0.55f), nullptr); }
 	if (Sys->GetLogRevision() != LastLogCount) { LastLogCount = Sys->GetLogRevision(); FillBridgeLog(this, WidgetTree, LogBox, Sys, 12); }
 }
 
@@ -525,15 +538,13 @@ void UTacticalPanel::BuildContent()
 	{
 		AStarshipPawn* S = GetShip(); if (!S || !S->Weapons) { return; }
 		const bool bFired = S->Weapons->FireTorpedo();
-		if (S->Systems) { S->Systems->Report(EStation::Tactical, bFired ? TEXT("Torpedo away.") : TEXT("Tubes reloading.")); }
+		const bool bEmpty = !S->Weapons->bUnlimitedTorpedoes && S->Weapons->TorpedoesCarried <= 0;
+		if (S->Systems) { S->Systems->Report(EStation::Tactical, bFired ? TEXT("Torpedo away.") : bEmpty ? TEXT("Magazine's empty, Captain.") : TEXT("Tubes reloading.")); }
 	});
 	AddSidebarButton(TEXT("Engineering"), Lcars::Tan, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UEngineeringPanel>(); } });
 	AddSidebarButton(TEXT("Main Menu"), Lcars::Lavender, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UMainMenuPanel>(); } });
 
-	AStarshipPawn* Ship = GetShip();
-	UShipSystemsComponent* Sys = Ship ? Ship->Systems.Get() : nullptr;
-	const FOfficer* Tac = Sys ? Sys->OfficerAt(EStation::Tactical) : nullptr;
-	AddRow(Content, TEXT("Tactical Officer"), Tac ? FString::Printf(TEXT("%s %s"), *Tac->Rank, *Tac->Name) : TEXT("post empty"), Lcars::Peach, 15.f);
+	AddLiveRow(Content, TEXT("Tactical Officer"), [this]() { AStarshipPawn* S = GetShip(); const FOfficer* O = S && S->Systems ? S->Systems->OfficerAt(EStation::Tactical) : nullptr; return O ? O->Speaker() : FString(TEXT("post empty")); }, Lcars::Peach, 15.f);
 	AddLiveRow(Content, TEXT("Condition"), [this]() { AStarshipPawn* S = GetShip(); return S && S->Systems ? UShipSystemsComponent::AlertName(S->Systems->GetAlert()) : FString(); }, Lcars::Gold, 15.f);
 	AddLiveRow(Content, TEXT("Shields"), [this]()
 	{
@@ -553,7 +564,7 @@ void UTacticalPanel::BuildContent()
 		AStarshipPawn* S = GetShip(); if (!S || !S->Weapons) { return FString(); }
 		FString Tubes;
 		for (int32 t = 0; t < S->Weapons->GetNumTubes(); ++t) { const float R = S->Weapons->GetTubeReadiness(t); Tubes += FString::Printf(TEXT("%stube %d %s"), t ? TEXT("   ") : TEXT(""), t + 1, R >= 1.f ? TEXT("ready") : *FString::Printf(TEXT("%d%%"), FMath::RoundToInt(R * 100.f))); }
-		return FString::Printf(TEXT("%s   fired %d"), *Tubes, S->Weapons->GetTorpedoesFired());
+		return FString::Printf(TEXT("%s   %d in the magazine%s   fired %d"), *Tubes, S->Weapons->TorpedoesCarried, S->Weapons->TorpedoesCarried <= 0 && !S->Weapons->bUnlimitedTorpedoes ? TEXT(" EMPTY") : TEXT(""), S->Weapons->GetTorpedoesFired());
 	});
 	AddLiveRow(Content, TEXT("Target"), [this]()
 	{
@@ -630,4 +641,137 @@ void UTacticalPanel::Refresh()
 	}
 	ContactsTimer -= GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.016f;
 	if (ContactsTimer <= 0.f) { ContactsTimer = 0.5f; FillContacts(); }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Medical
+
+void UMedicalPanel::BuildContent()
+{
+	AddSidebarButton(TEXT("Close"), Lcars::Orange, [this]() { Close(); });
+	TriageButton = AddSidebarButton(TEXT("Triage: Critical First"), Lcars::Sky, [this]()
+	{
+		AStarshipPawn* S = GetShip(); if (!S || !S->Systems) { return; }
+		S->Systems->SetTriage(S->Systems->GetTriage() == ETriage::CriticalFirst ? ETriage::WalkingWounded : ETriage::CriticalFirst);
+	});
+	ResupplyButton = AddSidebarButton(TEXT("Resupply"), Lcars::Periwinkle, [this]() { if (AStarshipPawn* S = GetShip()) { if (S->Systems) { S->Systems->BeginResupply(); } } });
+	AddSidebarButton(TEXT("Power to Life Support"), Lcars::Lilac, [this]() { if (AStarshipPawn* S = GetShip()) { if (S->Systems) { S->Systems->DivertPower(EShipSystem::LifeSupport); } } });
+	AddSidebarButton(TEXT("Engineering"), Lcars::Tan, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UEngineeringPanel>(); } });
+	AddSidebarButton(TEXT("Tactical"), Lcars::Red, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UTacticalPanel>(); } });
+	AddSidebarButton(TEXT("Main Menu"), Lcars::Lavender, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UMainMenuPanel>(); } });
+
+	AddLiveRow(Content, TEXT("Chief Medical Officer"), [this]() { AStarshipPawn* S = GetShip(); const FOfficer* O = S && S->Systems ? S->Systems->OfficerAt(EStation::Medical) : nullptr; return O ? O->Speaker() : FString(TEXT("post empty")); }, Lcars::Peach, 15.f);
+
+	// Three bars: crew fit for duty, atmosphere, supplies.
+	auto BarRow = [&](const TCHAR* Label, TObjectPtr<UProgressBar>& Out, const FLinearColor& Col, TFunction<FString()> Fn)
+	{
+		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+		USizeBox* L = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass()); L->SetWidthOverride(190.f);
+		L->AddChild(Lcars::MakeText(WidgetTree, Label, 14.f, Lcars::Peach));
+		if (UHorizontalBoxSlot* Sl = Row->AddChildToHorizontalBox(L)) { Sl->SetVerticalAlignment(VAlign_Center); }
+		USizeBox* B = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass()); B->SetWidthOverride(260.f); B->SetHeightOverride(14.f);
+		Out = MakeBar(WidgetTree, Col); B->AddChild(Out);
+		if (UHorizontalBoxSlot* Sl = Row->AddChildToHorizontalBox(B)) { Sl->SetVerticalAlignment(VAlign_Center); Sl->SetPadding(FMargin(0.f, 0.f, 12.f, 0.f)); }
+		UTextBlock* T = Lcars::MakeText(WidgetTree, TEXT(""), 14.f, FLinearColor::White, true, false);
+		if (UHorizontalBoxSlot* Sl = Row->AddChildToHorizontalBox(T)) { Sl->SetVerticalAlignment(VAlign_Center); }
+		Live.Add({ T, MoveTemp(Fn), FString() });
+		if (UVerticalBoxSlot* Sl = Content->AddChildToVerticalBox(Row)) { Sl->SetPadding(FMargin(0.f, 4.f, 0.f, 4.f)); }
+	};
+	BarRow(TEXT("Crew"), FitBar, FLinearColor(0.45f, 0.85f, 0.5f), [this]()
+	{
+		AStarshipPawn* S = GetShip(); if (!S || !S->Systems) { return FString(); }
+		const FShipCrew& C = S->Systems->GetCrew();
+		return FString::Printf(TEXT("%d of %d fit for duty   %d wounded   %d critical   %d dead"), FMath::RoundToInt(C.Fit), C.Complement, FMath::RoundToInt(C.Injured), FMath::RoundToInt(C.Critical), FMath::RoundToInt(C.Dead));
+	});
+	BarRow(TEXT("Atmosphere"), AirBar, Lcars::Sky, [this]()
+	{
+		AStarshipPawn* S = GetShip(); if (!S || !S->Systems) { return FString(); }
+		const FShipSystemState& LS = S->Systems->GetSystem(EShipSystem::LifeSupport);
+		const float A = S->Systems->GetAtmosphere(), T = S->Systems->AtmosphereTarget();
+		const TCHAR* Trend = A >= 0.95f ? TEXT("") : T > A + 0.01f ? TEXT("   recovering") : T < A - 0.01f ? (A < 0.6f ? TEXT("   DECKS LOSING AIR") : TEXT("   falling")) : TEXT("   holding low");
+		return FString::Printf(TEXT("%d%%   life support %d%% at %d%% power%s"), FMath::RoundToInt(A * 100.f), FMath::RoundToInt(LS.Integrity * 100.f), FMath::RoundToInt(LS.Power * 100.f), Trend);
+	});
+	BarRow(TEXT("Medical supplies"), SuppliesBar, Lcars::Gold, [this]()
+	{
+		AStarshipPawn* S = GetShip(); if (!S || !S->Systems) { return FString(); }
+		return FString::Printf(TEXT("%d%%"), FMath::RoundToInt(S->Systems->GetStores().MedicalSupplies * 100.f));
+	});
+	AddLiveRow(Content, TEXT("Sickbay"), [this]()
+	{
+		AStarshipPawn* S = GetShip(); if (!S || !S->Systems) { return FString(); }
+		const FShipCrew& C = S->Systems->GetCrew();
+		const float R = S->Systems->TreatRatePerSecond() * 60.f;
+		FString T = FString::Printf(TEXT("%d of %d beds   treating %.0f a minute   %s"), S->Systems->SickbayInUse(), C.SickbayBeds, R, S->Systems->GetTriage() == ETriage::CriticalFirst ? TEXT("critical first") : TEXT("walking wounded first"));
+		if (C.Critical > C.SickbayBeds) { T += TEXT("   FULL, critical cases waiting"); }
+		return T;
+	});
+	AddLiveRow(Content, TEXT("Station"), [this]()
+	{
+		AStarshipPawn* S = GetShip(); if (!S || !S->Systems) { return FString(); }
+		if (S->Systems->IsResupplying()) { return FString::Printf(TEXT("resupplying, %.0f s: wounded going across, replacements coming aboard"), S->Systems->ResupplySecondsLeft()); }
+		FString Why; AActor* St = nullptr;
+		if (S->Systems->CanResupply(Why, &St)) { const ASpaceVessel* V = Cast<ASpaceVessel>(St); return FString::Printf(TEXT("%s alongside, resupply available"), V ? *V->GetDisplayName() : TEXT("station")); }
+		return Why;
+	}, Lcars::Dim, 13.f);
+
+	AddLine(Content, TEXT("Senior staff"), 14.f, Lcars::Peach, true, true, 12.f);
+	StaffBox = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+	Content->AddChildToVerticalBox(StaffBox);
+	FillStaff();
+
+	AddLine(Content, TEXT("Sickbay and operations log"), 14.f, Lcars::Peach, true, true, 12.f);
+	LogBox = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass());
+	if (UVerticalBoxSlot* S = Content->AddChildToVerticalBox(LogBox)) { S->SetSize(FSlateChildSize(ESlateSizeRule::Fill)); }
+}
+
+void UMedicalPanel::FillStaff()
+{
+	AStarshipPawn* S = GetShip();
+	if (!StaffBox || !S || !S->Systems) { return; }
+	StaffBox->ClearChildren();
+	UHorizontalBox* Row = nullptr; int32 n = 0;
+	for (const FOfficer& O : S->Systems->GetOfficers())
+	{
+		if (n % 2 == 0) { Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass()); StaffBox->AddChildToVerticalBox(Row); }
+		++n;
+		UHorizontalBox* Cell = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+		USizeBox* St = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass()); St->SetWidthOverride(110.f);
+		St->AddChild(Lcars::MakeText(WidgetTree, UShipSystemsComponent::StationName(O.Station), 12.f, Lcars::Dim));
+		Cell->AddChildToHorizontalBox(St);
+		const FString Status = O.bLost ? FString::Printf(TEXT("%s %s lost; %s acting"), *O.Rank, *O.Name, *O.Acting)
+			: O.bInjured ? FString::Printf(TEXT("%s %s in sickbay (%.0f s); %s acting"), *O.Rank, *O.Name, O.RecoverSeconds, *O.Acting)
+			: FString::Printf(TEXT("%s %s"), *O.Rank, *O.Name);
+		USizeBox* NB = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass()); NB->SetWidthOverride(420.f);
+		NB->AddChild(Lcars::MakeText(WidgetTree, Status, 12.f, O.bLost ? Lcars::Red : O.bInjured ? Lcars::Gold : FLinearColor::White, true, false));
+		Cell->AddChildToHorizontalBox(NB);
+		if (UHorizontalBoxSlot* Sl = Row->AddChildToHorizontalBox(Cell)) { Sl->SetPadding(FMargin(0.f, 1.f, 20.f, 1.f)); }
+	}
+}
+
+void UMedicalPanel::Refresh()
+{
+	AStarshipPawn* S = GetShip();
+	UShipSystemsComponent* Sys = S ? S->Systems.Get() : nullptr;
+	if (!Sys) { return; }
+	const FShipCrew& C = Sys->GetCrew();
+	if (FitBar) { const float F = C.Complement ? C.Fit / C.Complement : 0.f; FitBar->SetPercent(F); FitBar->SetFillColorAndOpacity(IntegrityColor(F)); }
+	if (AirBar) { AirBar->SetPercent(Sys->GetAtmosphere()); AirBar->SetFillColorAndOpacity(Sys->GetAtmosphere() < 0.6f ? Lcars::Red : Lcars::Sky); }
+	if (SuppliesBar) { SuppliesBar->SetPercent(Sys->GetStores().MedicalSupplies); SuppliesBar->SetFillColorAndOpacity(IntegrityColor(Sys->GetStores().MedicalSupplies)); }
+	if ((int32)Sys->GetTriage() != LastTriage)
+	{
+		LastTriage = (int32)Sys->GetTriage();
+		if (UTextBlock* T = TriageButton ? Cast<UTextBlock>(TriageButton->GetChildAt(0)) : nullptr) { T->SetText(FText::FromString(Sys->GetTriage() == ETriage::CriticalFirst ? TEXT("TRIAGE: CRITICAL FIRST") : TEXT("TRIAGE: WALKING WOUNDED"))); }
+	}
+	FString Why; const bool bCan = Sys->IsResupplying() || Sys->CanResupply(Why);
+	if (ResupplyButton && bCan != bLastCanResupply) { bLastCanResupply = bCan; Lcars::SetButtonColor(ResupplyButton, bCan ? Lcars::Periwinkle : Lcars::Darker(Lcars::Periwinkle, 0.55f), nullptr); }
+	// Staff list: rebuild when any status changes (the recovery countdown counts as a change every few seconds).
+	FString Key;
+	for (const FOfficer& O : Sys->GetOfficers()) { Key += FString::Printf(TEXT("%d%d%d|"), O.bInjured, O.bLost, (int32)(O.RecoverSeconds / 5.f)); }
+	if (Key != LastStaff) { LastStaff = Key; FillStaff(); }
+	if (Sys->GetLogRevision() != LastLogRevision)
+	{
+		LastLogRevision = Sys->GetLogRevision();
+		static const TArray<EStation> Who = { EStation::Medical, EStation::Operations };
+		FillBridgeLog(this, WidgetTree, LogBox, Sys, 10, &Who);
+	}
 }

@@ -112,6 +112,7 @@ public:
 	/** , and . : the Engineering and Tactical panels. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_Engineering;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_Tactical;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_Medical;
 	/** 5 6 7: condition green, yellow alert, red alert. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_AlertGreen;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_AlertYellow;
@@ -189,6 +190,7 @@ protected:
 	void OnMenu();
 	void OnEngineering();
 	void OnTactical();
+	void OnMedical();
 	void OnAlertGreen();
 	void OnAlertYellow();
 	void OnAlertRed();

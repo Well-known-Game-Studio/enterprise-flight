@@ -89,6 +89,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Torpedoes")
 	float TorpedoCooldown = 2.5f;
 
+	/** Casings in the magazine; the ship systems keep it and a starbase refills it. Ignored when unlimited. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Torpedoes")
+	int32 TorpedoesCarried = 96;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Torpedoes")
+	bool bUnlimitedTorpedoes = true;
+
 	// ---- Targeting ----
 
 	/** Targets are locked within this range (cm). 150 km. */

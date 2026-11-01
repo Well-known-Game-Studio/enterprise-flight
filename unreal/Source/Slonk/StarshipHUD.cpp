@@ -260,6 +260,18 @@ void AStarshipHUD::DrawHUD()
 					if (St.Integrity < 0.995f) { Hurt += FString::Printf(TEXT("%s%s %d%%%s"), Hurt.IsEmpty() ? TEXT("") : TEXT("   "), *UShipSystemsComponent::SystemName((EShipSystem)i).ToUpper(), FMath::RoundToInt(St.Integrity * 100.f), St.bRepairing ? TEXT("*") : TEXT("")); }
 				}
 				if (!Hurt.IsEmpty()) { DrawText(Hurt, Warning, X, Y, Font, UIScale); Y += Line; }
+				const FShipCrew& Crew = Ship->Systems->GetCrew();
+				const float Air = Ship->Systems->GetAtmosphere();
+				if (Crew.Casualties() > 0 || Air < 0.95f || Ship->Systems->IsResupplying())
+				{
+					FString T = FString::Printf(TEXT("CREW %d FIT"), FMath::RoundToInt(Crew.Fit));
+					if (Crew.Injured >= 0.5f) { T += FString::Printf(TEXT("   %d WOUNDED"), FMath::RoundToInt(Crew.Injured)); }
+					if (Crew.Critical >= 0.5f) { T += FString::Printf(TEXT("   %d CRITICAL"), FMath::RoundToInt(Crew.Critical)); }
+					if (Crew.Dead >= 0.5f) { T += FString::Printf(TEXT("   %d DEAD"), FMath::RoundToInt(Crew.Dead)); }
+					if (Air < 0.95f) { T += FString::Printf(TEXT("   ATMOSPHERE %d%%"), FMath::RoundToInt(Air * 100.f)); }
+					if (Ship->Systems->IsResupplying()) { T += FString::Printf(TEXT("   RESUPPLYING %.0f s"), Ship->Systems->ResupplySecondsLeft()); }
+					DrawText(T, Air < 0.6f ? FLinearColor(1.f, 0.3f, 0.25f) : Warning, X, Y, Font, UIScale); Y += Line;
+				}
 			}
 			if (Ship->TractorBeam && Ship->TractorBeam->IsBeamActive() && Ship->TractorBeam->Target)
 			{

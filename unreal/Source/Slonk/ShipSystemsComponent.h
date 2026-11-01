@@ -54,14 +54,49 @@ struct FOfficer
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) FString Rank;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) FString Name;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) EStation Station = EStation::Engineering;
+	/** The junior who takes the post when the officer is in sickbay or lost. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) FString Acting;
 	UPROPERTY(BlueprintReadOnly) bool bInjured = false;
+	UPROPERTY(BlueprintReadOnly) bool bLost = false;
+	float RecoverSeconds = 0.f;
+	/** Who answers for the station right now. */
+	FString Speaker() const;
+	bool OnDuty() const { return !bInjured && !bLost; }
 };
+
+USTRUCT(BlueprintType)
+struct FShipCrew
+{
+	GENERATED_BODY()
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 Complement = 502;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 SickbayBeds = 24;
+	/** Fractional so casualties can accrue slowly; shown rounded. */
+	UPROPERTY(BlueprintReadOnly) float Fit = 502.f;
+	UPROPERTY(BlueprintReadOnly) float Injured = 0.f;
+	UPROPERTY(BlueprintReadOnly) float Critical = 0.f;
+	UPROPERTY(BlueprintReadOnly) float Dead = 0.f;
+	int32 Casualties() const { return FMath::RoundToInt(Injured + Critical + Dead); }
+};
+
+USTRUCT(BlueprintType)
+struct FShipStores
+{
+	GENERATED_BODY()
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 TorpedoCapacity = 96;
+	/** 0..1 of the lockers: repairs use parts, treatment uses medical supplies. */
+	UPROPERTY(BlueprintReadOnly) float SpareParts = 1.f;
+	UPROPERTY(BlueprintReadOnly) float MedicalSupplies = 1.f;
+};
+
+UENUM(BlueprintType)
+enum class ETriage : uint8 { CriticalFirst, WalkingWounded };
 
 USTRUCT(BlueprintType)
 struct FBridgeLogEntry
 {
 	GENERATED_BODY()
 	UPROPERTY(BlueprintReadOnly) float Time = 0.f;
+	UPROPERTY(BlueprintReadOnly) EStation Station = EStation::Engineering;
 	UPROPERTY(BlueprintReadOnly) FString Speaker;
 	UPROPERTY(BlueprintReadOnly) FString Text;
 	UPROPERTY(BlueprintReadOnly) FLinearColor Color = FLinearColor::White;
@@ -85,8 +120,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Ship|Orders") void BalancePower();
 	/** Put the damage-control team on one system; "auto" (Count) lets the chief engineer pick the worst. */
 	UFUNCTION(BlueprintCallable, Category = "Ship|Orders") void SetRepairPriority(EShipSystem System);
-	/** An order typed at the console: "alert red", "power shields", "repair warp", "balance". */
+	/** Sickbay works the critical first (default) or returns the walking wounded to duty first. */
+	UFUNCTION(BlueprintCallable, Category = "Ship|Orders") void SetTriage(ETriage NewTriage);
+	/** Take on torpedoes, parts, supplies and replacements from a station within reach; a minute alongside. */
+	UFUNCTION(BlueprintCallable, Category = "Ship|Orders") bool BeginResupply();
+	/** Is a station within ResupplyRangeKm and the ship slow enough? OutWhy says what is missing. */
+	bool CanResupply(FString& OutWhy, AActor** OutStation = nullptr) const;
+	/** The range and speed conditions against one station in particular. */
+	bool CanResupplyAt(const AActor* Station, FString& OutWhy) const;
+	/** An order typed at the console: "alert red", "power shields", "repair warp", "balance", "triage", "resupply". */
 	bool HandleOrder(const TArray<FString>& Args, FString& OutReply);
+	/** Dev: set a system's integrity outright. */
+	void DevSetIntegrity(EShipSystem System, float Integrity) { Systems[(int32)System].Integrity = FMath::Clamp(Integrity, 0.f, 1.f); }
 
 	// ---- what happens to the ship ----
 	/** Called by the pawn when a hit lands: some of what got through the shields breaks something. */
@@ -97,6 +142,20 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Ship") const FShipSystemState& GetSystem(EShipSystem System) const { return Systems[(int32)System]; }
 	UFUNCTION(BlueprintPure, Category = "Ship") EShipSystem GetRepairPriority() const { return RepairPriority; }
 	const TArray<FOfficer>& GetOfficers() const { return Officers; }
+	const FShipCrew& GetCrew() const { return Crew; }
+	const FShipStores& GetStores() const { return Stores; }
+	/** Breathable air across the decks, 0..1; falls when life support cannot keep up. */
+	float GetAtmosphere() const { return Atmosphere; }
+	/** Where the air is heading given life support's effectiveness right now. */
+	float AtmosphereTarget() const;
+	ETriage GetTriage() const { return Triage; }
+	bool IsResupplying() const { return ResupplyLeft > 0.f; }
+	float ResupplySecondsLeft() const { return ResupplyLeft; }
+	/** Fit crew over complement, floored: fewer hands means slower repairs and sloppier systems. */
+	float CrewFactor() const;
+	/** Wounded treated per second right now, after supplies, staff and air. */
+	float TreatRatePerSecond() const;
+	int32 SickbayInUse() const { return FMath::Min(FMath::RoundToInt(Crew.Critical + Crew.Injured * 0.25f), Crew.SickbayBeds); }
 	const TArray<FBridgeLogEntry>& GetLog() const { return Log; }
 	/** Counts every report ever made; the log itself is capped, so watch this to know it changed. */
 	int32 GetLogRevision() const { return LogRevision; }
@@ -113,9 +172,19 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ship|Crew")
 	TArray<FOfficer> Officers;
 	/** Repair rate per second for the team's priority system; others heal at a third of it. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ship") float RepairPerSecond = 0.012f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ship") float RepairPerSecond = 0.008f;
 	/** How much integrity one point of hull damage takes from a system it hits. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ship") float DamagePerHullPoint = 0.004f;
+	/** Wounded per point of damage through the shields; a third of them critical. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ship|Crew") float WoundedPerHullPoint = 0.12f;
+	/** Treatment rate at full staff and supplies, people per second. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ship|Crew") float BaseTreatRate = 0.15f;
+	/** Off for small craft: no casualties, no sickbay, no air model; repairs and orders still work. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ship|Crew") bool bCrewModel = true;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ship|Crew") FShipCrew Crew;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ship|Stores") FShipStores Stores;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ship|Stores") float ResupplyRangeKm = 50.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ship|Stores") float ResupplySeconds = 45.f;
 
 private:
 	UPROPERTY() TArray<FShipSystemState> Systems;
@@ -124,6 +193,17 @@ private:
 	TArray<FBridgeLogEntry> Log;
 	int32 LogRevision = 0;
 	float ReportCooldown[(int32)EShipSystem::Count] = { 0 };
+	UPROPERTY(VisibleAnywhere, Category = "Ship|Crew") float Atmosphere = 1.f;
+	ETriage Triage = ETriage::CriticalFirst;
+	float ResupplyLeft = 0.f;
+	TWeakObjectPtr<AActor> ResupplyStation;
+	float MedicalReportCooldown = 0.f, LifeSupportReportCooldown = 0.f, PendingWounded = 0.f, PendingDead = 0.f;
+	bool bPartsOutReported = false, bSuppliesOutReported = false, bAirWarned = false;
+	void ApplyCasualties(float ThroughShields);
+	void TickCrew(float DeltaTime);
+	void TickLifeSupport(float DeltaTime);
+	void TickResupply(float DeltaTime);
+	void FinishResupply();
 	// the pawn's own numbers before any system scales them
 	float BaseMaxShield = 100.f, BaseShieldRecharge = 5.f, BasePhaserDps = 30.f, BasePhaserRecharge = 8.f, BaseTorpedoCooldown = 2.5f, BaseMaxWarp = 9.99f;
 	double BaseImpulse = 7.4948e9;
