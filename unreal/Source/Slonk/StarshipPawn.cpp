@@ -1245,14 +1245,25 @@ float AStarshipPawn::TakeDamage(float DamageAmount, const FDamageEvent& DamageEv
 		Point = DamageCauser->GetActorLocation();
 		Dir = (GetActorLocation() - Point).GetSafeNormal(); bLocated = true;
 	}
-	// The facing the hit lands on takes it; what it cannot hold goes through to the hull there.
-	const int32 Facing = ShieldFacingOf(Point);
-	if (Shield && ShieldFacing[Facing] > 0.f)
+	// The facing the hit lands on takes it; what it cannot hold goes through to the hull there. Damage with no place
+	// (the crush of an atmosphere, a scripted hit) is borne by the whole grid, each facing giving in proportion.
+	float Absorbed = 0.f;
+	if (bLocated)
 	{
-		Shield->RegisterImpact(Point, FMath::Clamp(Applied / 10.f, 0.3f, 3.f));
+		const int32 Facing = ShieldFacingOf(Point);
+		if (Shield && ShieldFacing[Facing] > 0.f)
+		{
+			Shield->RegisterImpact(Point, FMath::Clamp(Applied / 10.f, 0.3f, 3.f));
+		}
+		Absorbed = FMath::Min(ShieldFacing[Facing], Applied);
+		ShieldFacing[Facing] -= Absorbed;
 	}
-	const float Absorbed = FMath::Min(ShieldFacing[Facing], Applied);
-	ShieldFacing[Facing] -= Absorbed;
+	else
+	{
+		const float Total = ShieldFacing[0] + ShieldFacing[1] + ShieldFacing[2] + ShieldFacing[3];
+		Absorbed = FMath::Min(Total, Applied);
+		if (Total > 0.f) { for (int32 i = 0; i < 4; ++i) { ShieldFacing[i] -= Absorbed * ShieldFacing[i] / Total; } }
+	}
 	ShieldStrength = (ShieldFacing[0] + ShieldFacing[1] + ShieldFacing[2] + ShieldFacing[3]) * 0.25f;
 	HullIntegrity = FMath::Max(HullIntegrity - (Applied - Absorbed) * 0.5f, 1.f);
 	if (Systems)
@@ -2030,6 +2041,11 @@ void AStarshipPawn::ProcessDebugCommand()
 		FPointDamageEvent E(Arg(1, 15.f), FHitResult(), -GetActorRightVector(), nullptr);
 		E.HitInfo.ImpactPoint = GetActorLocation() + GetActorRightVector() * ShipWidthMeters * 60.f;
 		TakeDamage(Arg(1, 15.f), E, nullptr, nullptr);
+	}
+	else if (Op == TEXT("hitblind"))
+	{
+		// Test: damage with no place to it, as the crush of an atmosphere arrives; the whole grid bears it.
+		TakeDamage(Arg(1, 15.f), FDamageEvent(), nullptr, nullptr);
 	}
 	else if (Op == TEXT("jump")) { JumpToNavTarget(); }
 	else if (Op == TEXT("systems"))

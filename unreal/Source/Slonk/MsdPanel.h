@@ -60,6 +60,8 @@ public:
 
 protected:
 	virtual void BuildContent() override;
+	/** CommonUI pools and reuses the panel; point the display at whatever the player now commands. */
+	virtual void NativeOnActivated() override;
 	virtual FString PanelTitle() const override { return TEXT("Master Systems Display"); }
 	virtual FLinearColor FrameColor() const override { return Lcars::Lavender; }
 	virtual FVector2D PanelSize() const override { return FVector2D(1540.0, 880.0); }

@@ -37,7 +37,12 @@ bool UMsdWidget::Initialize()
 
 void UMsdWidget::SetShip(AStarshipPawn* InShip)
 {
+	// Rebinding to the same ship keeps the selection and the rasterised hull; a new ship starts clean.
+	if (Ship.Get() == InShip && (InShip == nullptr || Silhouette)) { return; }
 	Ship = InShip;
+	Selected = INDEX_NONE; Hovered = INDEX_NONE;
+	Rects.Reset();
+	Silhouette = nullptr;
 	if (InShip) { LengthCm = InShip->GetShipLengthCm(); }
 	BuildSilhouette();
 }
@@ -207,13 +212,34 @@ int32 UMsdWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geo, cons
 	TArray<FLabelSlot> Slots;
 	TArray<int32> Order; for (int32 i = 0; i < K.Num(); ++i) { Order.Add(i); }
 	Order.Sort([&](int32 a, int32 b) { return K[a].Extent.X * K[a].Extent.Z > K[b].Extent.X * K[b].Extent.Z; });
-	for (int32 i : Order)
+	for (int32 i = 0; i < K.Num(); ++i)
 	{
 		const FCompartment& C = K[i];
 		const FVector2D A = Project(FVector(C.Center.X - C.Extent.X, 0, C.Center.Z + C.Extent.Z));
 		const FVector2D B = Project(FVector(C.Center.X + C.Extent.X, 0, C.Center.Z - C.Extent.Z));
-		const FSlateRect R(A.X, A.Y, B.X, B.Y);
-		Rects[i] = R;
+		Rects[i] = FSlateRect(A.X, A.Y, B.X, B.Y);
+	}
+	// The elevation drops Y, so a port/starboard pair (the nacelles) lands on one rectangle. Give such a group stacked
+	// bands within it, the port-most on top as the far side of the ship would read, so each is drawn and clickable.
+	for (int32 i = 0; i < K.Num(); ++i)
+	{
+		TArray<int32> Same; Same.Add(i);
+		for (int32 j = 0; j < K.Num(); ++j)
+		{
+			if (j == i) { continue; }
+			if (Rects[j] == Rects[i] || (K[j].Center.X == K[i].Center.X && K[j].Center.Z == K[i].Center.Z && K[j].Extent.X == K[i].Extent.X && K[j].Extent.Z == K[i].Extent.Z)) { Same.Add(j); }
+		}
+		bool bFirst = Same.Num() >= 2; for (int32 j : Same) { if (j < i) { bFirst = false; } }
+		if (!bFirst) { continue; }	// each group is handled once, by its lowest index
+		Same.Sort([&](int32 a, int32 b) { return K[a].Center.Y < K[b].Center.Y; });
+		const FSlateRect Whole = Rects[i];
+		const double Band = Whole.GetSize().Y / Same.Num();
+		for (int32 n = 0; n < Same.Num(); ++n) { Rects[Same[n]] = FSlateRect(Whole.Left, Whole.Top + Band * n, Whole.Right, Whole.Top + Band * (n + 1)); }
+	}
+	for (int32 i : Order)
+	{
+		const FCompartment& C = K[i];
+		const FSlateRect R = Rects[i];
 		FLinearColor Col = Lcars::Lavender;
 		float Integrity = 1.f;
 		if (C.System != EShipSystem::Count)
@@ -298,6 +324,12 @@ const FCompartment* UMsdPanel::SelectedCompartment() const
 	if (!S || !S->Systems || !Display) { return nullptr; }
 	const int32 i = Display->GetSelected();
 	return S->Systems->GetCompartments().IsValidIndex(i) ? &S->Systems->GetCompartments()[i] : nullptr;
+}
+
+void UMsdPanel::NativeOnActivated()
+{
+	Super::NativeOnActivated();
+	if (Display) { Display->SetShip(GetShip()); }
 }
 
 void UMsdPanel::BuildContent()

@@ -471,7 +471,8 @@ void UShipSystemsComponent::OnHitAt(float Applied, float ThroughShields, const F
 void UShipSystemsComponent::InjureOfficer(float ThroughShields, const FCompartment* Where)
 {
 	// A heavy hit can put a senior officer in sickbay, or worse: only the ones whose post is where it landed.
-	if (ThroughShields <= 40.f || FMath::FRand() >= ThroughShields / 400.f) { return; }
+	// Craft without the crew model (the shuttle) keep their borrowed staff out of it.
+	if (!bCrewModel || ThroughShields <= 40.f || FMath::FRand() >= ThroughShields / 400.f) { return; }
 	TArray<int32> Up;
 	for (int32 i = 0; i < Officers.Num(); ++i)
 	{
@@ -513,7 +514,18 @@ FString UShipSystemsComponent::FacingName(int32 F)
 
 void UShipSystemsComponent::ReinforceShields(int32 Facing)
 {
+	const int32 Was = ReinforcedFacing;
 	ReinforcedFacing = FMath::Clamp(Facing, -1, 3);
+	// The grid moves its charge, it does not throw it away: the same total, shared out in the new facings' proportions
+	// (the four limits always sum to four times the ship's figure, so the share fits under each one).
+	if (AStarshipPawn* S = Ship(); S && ReinforcedFacing != Was)
+	{
+		const float Total = S->ShieldFacing[0] + S->ShieldFacing[1] + S->ShieldFacing[2] + S->ShieldFacing[3];
+		ApplyEffects();
+		const float SumMax = S->ShieldFacingMax[0] + S->ShieldFacingMax[1] + S->ShieldFacingMax[2] + S->ShieldFacingMax[3];
+		if (SumMax > 0.f) { for (int32 i = 0; i < 4; ++i) { S->ShieldFacing[i] = FMath::Min(S->ShieldFacingMax[i], Total * S->ShieldFacingMax[i] / SumMax); } }
+		S->ShieldStrength = (S->ShieldFacing[0] + S->ShieldFacing[1] + S->ShieldFacing[2] + S->ShieldFacing[3]) * 0.25f;
+	}
 	Report(EStation::Tactical, ReinforcedFacing < 0 ? TEXT("Shields balanced on all facings.") : FString::Printf(TEXT("Reinforcing the %s shield."), *FacingName(ReinforcedFacing)));
 }
 
