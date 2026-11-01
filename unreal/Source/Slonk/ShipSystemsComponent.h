@@ -143,6 +143,8 @@ public:
 	const FShipStores& GetStores() const { return Stores; }
 	/** Breathable air across the decks, 0..1; falls when life support cannot keep up. */
 	float GetAtmosphere() const { return Atmosphere; }
+	/** Where the air is heading given life support's effectiveness right now. */
+	float AtmosphereTarget() const;
 	ETriage GetTriage() const { return Triage; }
 	bool IsResupplying() const { return ResupplyLeft > 0.f; }
 	float ResupplySecondsLeft() const { return ResupplyLeft; }

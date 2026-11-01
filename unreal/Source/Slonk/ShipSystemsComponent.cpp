@@ -171,8 +171,7 @@ void UShipSystemsComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 void UShipSystemsComponent::TickLifeSupport(float DeltaTime)
 {
 	// Life support at half or better keeps the air; below that the decks slowly lose it, and people with it.
-	const float LS = Effectiveness(EShipSystem::LifeSupport);
-	const float Target = LS >= 0.5f ? 1.f : LS / 0.5f;
+	const float Target = AtmosphereTarget();
 	const float Rate = Target > Atmosphere ? 0.05f : 0.03f;
 	Atmosphere = FMath::Clamp(FMath::FInterpConstantTo(Atmosphere, Target, DeltaTime, Rate), 0.f, 1.f);
 	if (Atmosphere < 0.6f)
@@ -198,11 +197,18 @@ void UShipSystemsComponent::TickLifeSupport(float DeltaTime)
 	}
 }
 
+float UShipSystemsComponent::AtmosphereTarget() const
+{
+	const float LS = Effectiveness(EShipSystem::LifeSupport);
+	return LS >= 0.5f ? 1.f : LS / 0.5f;
+}
+
 float UShipSystemsComponent::TreatRatePerSecond() const
 {
+	// No supplies, no treatment: sickbay keeps people alive and nothing more.
+	if (Stores.MedicalSupplies <= 0.f) { return 0.f; }
 	const FOfficer* CMO = OfficerAt(EStation::Medical);
 	float R = BaseTreatRate;
-	if (Stores.MedicalSupplies <= 0.f) { R *= 0.4f; }
 	if (CMO && !CMO->OnDuty()) { R *= 0.6f; }
 	if (Atmosphere < 0.6f) { R *= 0.5f; }
 	return R;
@@ -218,7 +224,6 @@ void UShipSystemsComponent::TickCrew(float DeltaTime)
 	// Idle staff on one side help the other.
 	if (Stab < R * CritShare) { Heal = FMath::Min(Crew.Injured, Heal + (R * CritShare - Stab)); }
 	else if (Heal < R * (1.f - CritShare)) { Stab = FMath::Min(Crew.Critical, Stab + (R * (1.f - CritShare) - Heal)); }
-	if (Stores.MedicalSupplies <= 0.f) { Stab = 0.f; }		// nothing to stabilise them with
 	Crew.Critical -= Stab; Crew.Injured += Stab - Heal; Crew.Fit += Heal;
 	Stores.MedicalSupplies = FMath::Max(0.f, Stores.MedicalSupplies - Stab * 0.008f - Heal * 0.003f);
 	if (Stores.MedicalSupplies <= 0.f && !bSuppliesOutReported) { bSuppliesOutReported = true; Report(EStation::Medical, TEXT("Sickbay is out of supplies. I can keep people alive, not much more."), FLinearColor(1.f, 0.6f, 0.4f)); }
@@ -251,8 +256,9 @@ void UShipSystemsComponent::ApplyCasualties(float ThroughShields)
 {
 	if (ThroughShields <= 0.f || Crew.Fit <= 0.f) { return; }
 	const float Brace = Alert == EAlertState::Red ? 0.6f : 1.f;
-	float Wounded = FMath::Min(Crew.Fit, ThroughShields * WoundedPerHullPoint * Brace);
-	float Dead = FMath::Min(Crew.Fit - Wounded, FMath::Max(0.f, ThroughShields - 30.f) * 0.04f * Brace);
+	// The dead come off the fit pool first, so a harder hit never kills fewer; the wounded take what is left.
+	const float Dead = FMath::Min(Crew.Fit, FMath::Max(0.f, ThroughShields - 30.f) * 0.04f * Brace);
+	const float Wounded = FMath::Min(Crew.Fit - Dead, ThroughShields * WoundedPerHullPoint * Brace);
 	const float Crit = Wounded * 0.33f;
 	Crew.Fit -= Wounded + Dead; Crew.Injured += Wounded - Crit; Crew.Critical += Crit; Crew.Dead += Dead;
 	PendingWounded += Wounded; PendingDead += Dead;
@@ -313,10 +319,12 @@ void UShipSystemsComponent::TickResupply(float DeltaTime)
 {
 	if (ResupplyLeft <= 0.f) { return; }
 	AStarshipPawn* S = Ship();
-	if (!S || !ResupplyStation.IsValid() || FVector::Dist(ResupplyStation->GetActorLocation(), S->GetActorLocation()) > ResupplyRangeKm * 1e5 * 1.5)
+	FString Why; AActor* Station = nullptr;
+	// The same range and speed that let it start keep it going.
+	if (!S || !ResupplyStation.IsValid() || !CanResupply(Why, &Station) || Station != ResupplyStation.Get())
 	{
 		ResupplyLeft = 0.f;
-		Report(EStation::Operations, TEXT("We've pulled away from the station. Resupply broken off."), FLinearColor(1.f, 0.7f, 0.5f));
+		Report(EStation::Operations, FString::Printf(TEXT("Resupply broken off: %s."), Why.IsEmpty() ? TEXT("we've pulled away from the station") : *Why), FLinearColor(1.f, 0.7f, 0.5f));
 		return;
 	}
 	// Station teams: repairs five times as fast while alongside.
@@ -371,7 +379,11 @@ void UShipSystemsComponent::TickRepairs(float DeltaTime)
 		{
 			if (S->HullIntegrity < 100.f)
 			{
-				S->HullIntegrity = FMath::Min(100.f, S->HullIntegrity + RepairPerSecond * 25.f * CrewFactor() * DeltaTime);
+				const float PartsK = Stores.SpareParts > 0.f ? 1.f : 0.25f;
+				const float Before = S->HullIntegrity;
+				S->HullIntegrity = FMath::Min(100.f, S->HullIntegrity + RepairPerSecond * 25.f * CrewFactor() * PartsK * DeltaTime);
+				Stores.SpareParts = FMath::Max(0.f, Stores.SpareParts - (S->HullIntegrity - Before) / 100.f * 0.12f);
+				if (Stores.SpareParts <= 0.f && !bPartsOutReported) { bPartsOutReported = true; Report(EStation::Engineering, TEXT("We're out of spare parts. I'm stripping what I can from the shuttles and the lounge."), FLinearColor(1.f, 0.6f, 0.4f)); }
 				if (S->HullIntegrity >= 100.f) { Report(EStation::Engineering, TEXT("Hull patched. She's whole again."), FLinearColor(0.6f, 1.f, 0.6f)); }
 			}
 		}
@@ -501,7 +513,13 @@ bool UShipSystemsComponent::HandleOrder(const TArray<FString>& Args, FString& Ou
 		if (Arg.StartsWith(TEXT("walk")) || Arg.StartsWith(TEXT("duty"))) { SetTriage(ETriage::WalkingWounded); return true; }
 		OutReply = TEXT("triage critical|walking"); return false;
 	}
-	if (What == TEXT("resupply")) { return BeginResupply(); }
+	if (What == TEXT("resupply"))
+	{
+		if (BeginResupply()) { return true; }
+		CanResupply(OutReply);
+		OutReply = TEXT("resupply: ") + OutReply;
+		return false;
+	}
 	OutReply = TEXT("order alert|power|repair|report|triage|resupply");
 	return false;
 }

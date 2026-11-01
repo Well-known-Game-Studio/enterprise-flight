@@ -490,7 +490,7 @@ void UEngineeringPanel::BuildContent()
 	{
 		AStarshipPawn* S = GetShip(); if (!S || !S->Systems) { return FString(); }
 		const FShipStores& St = S->Systems->GetStores();
-		FString T = FString::Printf(TEXT("torpedoes %d of %d   spare parts %d%%   medical supplies %d%%   crew %d%% fit"), S->Weapons ? S->Weapons->TorpedoesCarried : 0, St.TorpedoCapacity, FMath::RoundToInt(St.SpareParts * 100.f), FMath::RoundToInt(St.MedicalSupplies * 100.f), FMath::RoundToInt(S->Systems->CrewFactor() * 100.f));
+		FString T = FString::Printf(TEXT("torpedoes %d of %d   spare parts %d%%   medical supplies %d%%   crew %d%% fit"), S->Weapons ? S->Weapons->TorpedoesCarried : 0, St.TorpedoCapacity, FMath::RoundToInt(St.SpareParts * 100.f), FMath::RoundToInt(St.MedicalSupplies * 100.f), S->Systems->GetCrew().Complement ? FMath::RoundToInt(100.f * S->Systems->GetCrew().Fit / S->Systems->GetCrew().Complement) : 0);
 		if (S->Systems->IsResupplying()) { T += FString::Printf(TEXT("   RESUPPLYING %.0f s"), S->Systems->ResupplySecondsLeft()); }
 		else { FString Why; if (!S->Systems->CanResupply(Why)) { T += TEXT("   (") + Why + TEXT(")"); } else { T += TEXT("   station alongside"); } }
 		return T;
@@ -691,8 +691,9 @@ void UMedicalPanel::BuildContent()
 	{
 		AStarshipPawn* S = GetShip(); if (!S || !S->Systems) { return FString(); }
 		const FShipSystemState& LS = S->Systems->GetSystem(EShipSystem::LifeSupport);
-		const float A = S->Systems->GetAtmosphere();
-		return FString::Printf(TEXT("%d%%   life support %d%% at %d%% power%s"), FMath::RoundToInt(A * 100.f), FMath::RoundToInt(LS.Integrity * 100.f), FMath::RoundToInt(LS.Power * 100.f), A < 0.6f ? TEXT("   DECKS LOSING AIR") : A < 0.95f ? TEXT("   recovering") : TEXT(""));
+		const float A = S->Systems->GetAtmosphere(), T = S->Systems->AtmosphereTarget();
+		const TCHAR* Trend = A >= 0.95f ? TEXT("") : T > A + 0.01f ? TEXT("   recovering") : T < A - 0.01f ? (A < 0.6f ? TEXT("   DECKS LOSING AIR") : TEXT("   falling")) : TEXT("   holding low");
+		return FString::Printf(TEXT("%d%%   life support %d%% at %d%% power%s"), FMath::RoundToInt(A * 100.f), FMath::RoundToInt(LS.Integrity * 100.f), FMath::RoundToInt(LS.Power * 100.f), Trend);
 	});
 	BarRow(TEXT("Medical supplies"), SuppliesBar, Lcars::Gold, [this]()
 	{
