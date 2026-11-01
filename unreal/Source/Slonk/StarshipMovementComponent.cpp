@@ -265,7 +265,7 @@ void UStarshipMovementComponent::ApplyTerrainFloor(float DeltaTime)
 		const double D = FVector::Dist(Here, P->GetActorLocation());
 		if (D < P->GetRadiusCm() * 1.5 && D < NearDist) { Near = P; NearDist = D; }
 	}
-	if (!Near) { return; }
+	if (!Near) { CarryBody = nullptr; return; }
 	const FVector Centre = Near->GetActorLocation();
 	const FVector Rv = Here - Centre;
 	const double Dist = Rv.Size();

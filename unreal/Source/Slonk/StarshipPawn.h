@@ -688,8 +688,13 @@ private:
 	void SetInteriorRoom(EShipRoom Room);
 	/** Hull, running lights, the bridge set and the rooms, for the camera mode and whoever is inside. */
 	void ApplyViewVisibility();
-	/** A room's lift and use spots in world space, and the word for the use; null when the room has none. */
-	const FShipRoom* RoomSpots(EShipRoom Room, FTransform& Lift, FTransform& Use, FString& Label) const;
+	/** A room's lift and use spots in the ship's own frame (feet transforms), and the word for the use; null when
+	 *  the room has none. Near, also in the ship's frame, picks the nearer of two lifts. */
+	const FShipRoom* RoomSpots(EShipRoom Room, FTransform& Lift, FTransform& Use, FString& Label, const FVector* Near = nullptr) const;
+	/** The ship's frame as the person keeps it: rotation and location, no scale. */
+	FTransform CraftFrame() const { return FTransform(GetActorQuat(), GetActorLocation()); }
+	/** The player's HUD: through our controller, or the player's while they are on foot or in the shuttle from here. */
+	class AStarshipHUD* PlayerHUD() const;
 	/** Black out, do the thing, fade back: the lift ride, the transporter. */
 	void FadeThen(TFunction<void()> Then);
 	bool bFreeLook = false;

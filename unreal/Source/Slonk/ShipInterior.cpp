@@ -302,6 +302,8 @@ void UShipInteriorComponent::BuildShuttleBay(FShipRoom& R)
 	for (double Side : { -1.0, 1.0 }) { Box(FVector(C.X - H.X + 30.0, C.Y + Side * (H.Y - 30.0), C.Z), FVector(60.0, 60.0, 2 * H.Z), PanelDark); }
 	Box(FVector(C.X - H.X + 30.0, C.Y, C.Z + H.Z - 40.0), FVector(60.0, 2 * H.Y, 80.0), PanelDark);
 	Box(FVector(C.X - H.X + 61.0, C.Y, C.Z + H.Z - 40.0), FVector(2.0, 2 * H.Y - 140.0, 10.0), StripWhite, 0.f, false);
+	// The atmosphere field across the opening: nothing to see, but the deck ends there for anyone on foot.
+	if (UStaticMeshComponent* Field = Box(FVector(C.X - H.X + 70.0, C.Y, C.Z), FVector(10.0, 2 * H.Y, 2 * H.Z), PanelDark)) { Field->SetHiddenInGame(true); }
 	// Guide lines down the deck to the door.
 	for (double Dy : { -220.0, 220.0 }) { Box(FVector(C.X - 200.0, C.Y + Dy, Floor + 1.0), FVector(2 * H.X - 500.0, 12.0, 2.0), MakeLit(TEXT("BayLine"), FLinearColor(0.8f, 0.7f, 0.1f), 0.8f, 0.f, FLinearColor(1.f, 0.85f, 0.2f), 1.2f), 0.f, false); }
 	// The parked shuttle: hull on its skids, nacelles, canopy. The real one is spawned when it leaves.

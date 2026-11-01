@@ -246,6 +246,9 @@ void APersonPawn::BeginEVA(AStarshipPawn* FromCraft, const FTransform& Airlock, 
 	LookPitch = 0.f;
 	PlanetScanTimer = 0.f;
 	FindWorld();
+	// The carry starts from the world's turn now, not from a tick later: a frame of its spin is metres of ground.
+	CarryPlanet = GroundPlanet;
+	if (APlanetBody* G = GroundPlanet.Get()) { CarryPlanetQuat = G->GetActorQuat(); }
 	if (HullOf)
 	{
 		HullCraft = HullOf;
@@ -397,10 +400,15 @@ void APersonPawn::TickDeck(float DeltaTime)
 	}
 	Velocity = Vt;
 	FVector NextFeet = Feet + Vt * DeltaTime;
-	// The floor under the next step: a kerb or a pad up to StepUpCm is taken, a drop found below; nothing found
-	// keeps the height (a doorway's sill, a gap in the set).
+	// The floor under the next step: a kerb or a pad up to StepUpCm is taken, a drop found below.
 	FHitResult Floor;
 	if (TraceSolid(NextFeet + Up * StepUpCm, NextFeet - Up * 120.0, Floor)) { NextFeet = Floor.ImpactPoint; }
+	else if (Vt.SizeSquared() > 1.0)
+	{
+		// No deck under the next step (an opening, a gap in the set): stop at the edge rather than walk out on air.
+		Velocity = FVector::ZeroVector;
+		NextFeet = Feet;
+	}
 	SetActorLocationAndRotation(NextFeet + Up * HalfHeightCm, StandingQuat(Up, Fwd), false, nullptr, ETeleportType::TeleportPhysics);
 	bGrounded = true;
 }

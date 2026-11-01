@@ -73,6 +73,10 @@ public:
 	EShipRoom GetRoom() const { return Room; }
 	/** Feet on the floor: the root is HalfHeightCm up the body's axis. */
 	FVector FeetLocation() const;
+	/** Our transform in the craft's frame while on its hull or its decks (kept between ticks, so it is a frame
+	 *  behind nothing: the ship at warp moves a planet's width between one tick and the next). */
+	const FTransform& GetHullLocal() const { return HullLocal; }
+	FVector FeetInCraft() const { return HullLocal.TransformPosition(FVector(0.0, 0.0, -HalfHeightCm)); }
 	UFUNCTION(BlueprintPure, Category = "Person") bool CanBoard() const;
 	UFUNCTION(BlueprintPure, Category = "Person") double DistanceToAirlock() const;
 
