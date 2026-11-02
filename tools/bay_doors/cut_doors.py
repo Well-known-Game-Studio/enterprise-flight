@@ -47,10 +47,12 @@ def clip(poly, f):
             out.append((p,uv))
     return out
 def edge_y(z): return 346.0 + (-1270.0 - z) * 0.754
+DOOR_TOP = -1243.0   # the door's top edge: above it the cone turns into the roof under the top cap, which stays hull
 centre=[]
 for tri in tris:
     p = clip(tri, lambda q: q[1] - edge_y(q[2]))
     if len(p) >= 3: p = clip(p, lambda q: -q[1] - edge_y(q[2]))
+    if len(p) >= 3: p = clip(p, lambda q: q[2] - DOOR_TOP)
     if len(p) >= 3: centre.append(p)
 print("centre polys", len(centre))
 NG=8; AMAX=62.0
