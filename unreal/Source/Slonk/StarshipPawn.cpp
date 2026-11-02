@@ -2631,51 +2631,42 @@ void AStarshipPawn::FadeThen(TFunction<void()> Then)
 
 void AStarshipPawn::Transport(APersonPawn* Person, TFunction<void()> Then)
 {
-	const FLinearColor Shimmer(0.62f, 0.8f, 1.f);
 	const float Half = FMath::Max(0.3f, TransporterSeconds);
 	TWeakObjectPtr<APersonPawn> P(Person);
 	TWeakObjectPtr<AStarshipPawn> Self(this);
 	TWeakObjectPtr<UShipInteriorComponent> Int(Interior);
-	// The column stands on the feet and rides what carries the person: the ship on the pad, the world on the ground.
-	// Aboard, the feet come through the ship's frame: the person's world position is a tick behind a moving ship,
-	// which put the column a stride behind the body.
-	auto FeetOf = [Self](APersonPawn* Who)
-	{
-		if (Who->IsAboard() && Self.IsValid())
-		{
-			const FTransform Craft = Self->CraftFrame();
-			return FTransform(Craft.GetRotation() * Who->GetHullLocal().GetRotation(), Craft.TransformPosition(Who->FeetInCraft()));
-		}
-		return FTransform(Who->GetActorQuat(), Who->GetActorLocation() - Who->GetActorUpVector() * APersonPawn::HalfHeightCm);
-	};
-	auto RideOf = [Self](APersonPawn* Who) -> USceneComponent*
-	{
-		if (Who->IsAboard()) { return Self.IsValid() ? Self->GetRootComponent() : nullptr; }
-		if (APlanetBody* G = Who->GroundPlanet.Get()) { return G->GetRootComponent(); }
-		return nullptr;
-	};
+	// The shimmer follows the body itself; on the pad it also pulses the pad's glow.
 	auto PadPulse = [Int](APersonPawn* Who) -> TFunction<void(float)>
 	{
 		if (!Who->IsAboard()) { return nullptr; }
 		return [Int](float E) { if (Int.IsValid()) { Int->SetPadGlow(E); } };
 	};
-	ATransporterEffect::Spawn(GetWorld(), FeetOf(Person), false, Half, RideOf(Person), PadPulse(Person));
-	// The shimmer has the view to itself for a moment, then the wash takes it to the cut.
-	GetWorldTimerManager().SetTimer(TransportFadeTimer, FTimerDelegate::CreateLambda([Self, Half, Shimmer]()
+	ATransporterEffect::Spawn(GetWorld(), Person, false, Half, PadPulse(Person));
+	// Seen from outside, nothing fades: the figure dissolves in the shimmer and forms again where it lands. Only the
+	// helmet view, inside the column, washes to the shimmer's blue over the cut.
+	const bool bHelmet = Person->GetCameraMode() == EPersonCamera::Helmet;
+	const FLinearColor Shimmer(0.45f, 0.68f, 1.f);
+	if (bHelmet)
 	{
-		APlayerController* PC = Self.IsValid() && Self->GetWorld() ? Self->GetWorld()->GetFirstPlayerController() : nullptr;
-		if (PC && PC->PlayerCameraManager) { PC->PlayerCameraManager->StartCameraFade(0.f, 1.f, Half * 0.55f, Shimmer, false, true); }
-	}), Half * 0.4f, false);
-	GetWorldTimerManager().SetTimer(TransportTimer, FTimerDelegate::CreateLambda([Self, P, Then, Half, Shimmer, FeetOf, RideOf, PadPulse]()
+		GetWorldTimerManager().SetTimer(TransportFadeTimer, FTimerDelegate::CreateLambda([Self, Half, Shimmer]()
+		{
+			APlayerController* PC = Self.IsValid() && Self->GetWorld() ? Self->GetWorld()->GetFirstPlayerController() : nullptr;
+			if (PC && PC->PlayerCameraManager) { PC->PlayerCameraManager->StartCameraFade(0.f, 1.f, Half * 0.45f, Shimmer, false, true); }
+		}), Half * 0.5f, false);
+	}
+	GetWorldTimerManager().SetTimer(TransportTimer, FTimerDelegate::CreateLambda([Self, P, Then, Half, Shimmer, PadPulse, bHelmet]()
 	{
 		if (!Self.IsValid()) { return; }
 		Then();
 		if (APersonPawn* Who = P.Get())
 		{
-			ATransporterEffect::Spawn(Self->GetWorld(), FeetOf(Who), true, Half, RideOf(Who), PadPulse(Who));
+			ATransporterEffect::Spawn(Self->GetWorld(), Who, true, Half, PadPulse(Who));
 		}
-		APlayerController* PC2 = Self->GetWorld() ? Self->GetWorld()->GetFirstPlayerController() : nullptr;
-		if (PC2 && PC2->PlayerCameraManager) { PC2->PlayerCameraManager->StartCameraFade(1.f, 0.f, Half * 0.7f, Shimmer, false, false); }
+		if (bHelmet)
+		{
+			APlayerController* PC2 = Self->GetWorld() ? Self->GetWorld()->GetFirstPlayerController() : nullptr;
+			if (PC2 && PC2->PlayerCameraManager) { PC2->PlayerCameraManager->StartCameraFade(1.f, 0.f, Half * 0.6f, Shimmer, false, false); }
+		}
 	}), Half, false);
 }
 

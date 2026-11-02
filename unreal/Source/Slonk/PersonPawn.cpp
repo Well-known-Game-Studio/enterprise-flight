@@ -219,6 +219,11 @@ void APersonPawn::BuildFigure()
 		BootLightMID->SetVectorParameterValue(TEXT("GlowColor"), FLinearColor(0.3f, 0.8f, 1.f));
 		BootLightMID->SetScalarParameterValue(TEXT("Intensity"), 0.f);
 	}
+	ApplySuitMaterials();
+}
+
+void APersonPawn::ApplySuitMaterials()
+{
 	if (SuitMID && TrimMID)
 	{
 		Torso->ConfigureMaterialSet({ SuitMID.Get(), TrimMID.Get() });
@@ -229,6 +234,52 @@ void APersonPawn::BuildFigure()
 		RightLeg->ConfigureMaterialSet({ SuitMID.Get(), TrimMID.Get(), BootLight });
 	}
 	if (VisorMID) { Visor->ConfigureMaterialSet({ VisorMID.Get() }); }
+}
+
+TArray<UDynamicMeshComponent*> APersonPawn::BodyParts() const
+{
+	TArray<UDynamicMeshComponent*> Parts;
+	for (UDynamicMeshComponent* P : { Torso.Get(), Visor.Get(), LeftArm.Get(), RightArm.Get(), LeftLeg.Get(), RightLeg.Get() })
+	{
+		if (P) { Parts.Add(P); }
+	}
+	return Parts;
+}
+
+void APersonPawn::ApplyFigureVisibility()
+{
+	// Dissolve order: the legs go first, then the arms, the torso, and the visor last.
+	const TPair<UDynamicMeshComponent*, float> Order[] = {
+		{ LeftLeg.Get(), 0.15f }, { RightLeg.Get(), 0.2f }, { LeftArm.Get(), 0.35f }, { RightArm.Get(), 0.4f }, { Torso.Get(), 0.6f }, { Visor.Get(), 0.8f } };
+	for (const auto& [P, Threshold] : Order)
+	{
+		if (P) { P->SetVisibility(bFigureShown && TransportDissolve <= Threshold); }
+	}
+}
+
+void APersonPawn::SetTransportState(float Glow, float Dissolve)
+{
+	const bool bWantGlow = Glow > 0.f;
+	if (bWantGlow && !TransportMID)
+	{
+		if (UMaterialInterface* GlowMat = SlonkMaterials::LoadOrFallback(TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(SlonkMaterials::GlowPath)), TEXT("Glow"), false))
+		{
+			TransportMID = UMaterialInstanceDynamic::Create(GlowMat, this);
+			TransportMID->SetVectorParameterValue(TEXT("GlowColor"), FLinearColor(0.35f, 0.62f, 1.f));
+		}
+	}
+	if (bWantGlow != bTransportGlow)
+	{
+		bTransportGlow = bWantGlow;
+		if (bWantGlow && TransportMID)
+		{
+			for (UDynamicMeshComponent* P : BodyParts()) { P->ConfigureMaterialSet({ TransportMID.Get(), TransportMID.Get(), TransportMID.Get() }); }
+		}
+		else { ApplySuitMaterials(); }
+	}
+	if (bTransportGlow && TransportMID) { TransportMID->SetScalarParameterValue(TEXT("Intensity"), 1.5f + 9.f * FMath::Clamp(Glow, 0.f, 1.f)); }
+	TransportDissolve = FMath::Clamp(Dissolve, 0.f, 1.f);
+	ApplyFigureVisibility();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -480,10 +531,7 @@ void APersonPawn::SetCameraMode(EPersonCamera Mode)
 	if (HelmetCamera) { HelmetCamera->SetActive(!bThird); }
 	// From inside the helmet the figure is in the way of the view.
 	bFigureShown = bThird;
-	for (UDynamicMeshComponent* P : { Torso.Get(), Visor.Get(), LeftArm.Get(), RightArm.Get(), LeftLeg.Get(), RightLeg.Get() })
-	{
-		if (P) { P->SetVisibility(bThird); }
-	}
+	ApplyFigureVisibility();
 }
 
 void APersonPawn::CycleCamera() { SetCameraMode(CameraMode == EPersonCamera::Third ? EPersonCamera::Helmet : EPersonCamera::Third); }
@@ -1093,10 +1141,7 @@ void APersonPawn::UpdateCamera(float DeltaTime)
 		if (bShowFigure != bFigureShown)
 		{
 			bFigureShown = bShowFigure;
-			for (UDynamicMeshComponent* P : { Torso.Get(), Visor.Get(), LeftArm.Get(), RightArm.Get(), LeftLeg.Get(), RightLeg.Get() })
-			{
-				if (P) { P->SetVisibility(bShowFigure); }
-			}
+			ApplyFigureVisibility();
 		}
 	}
 	if (HelmetCamera)

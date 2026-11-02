@@ -105,6 +105,13 @@ public:
 	void SetCameraMode(EPersonCamera Mode);
 	void AdjustZoom(float Steps);
 	EPersonCamera GetCameraMode() const { return CameraMode; }
+	/** The figure's parts (torso, visor, arms, legs), for anything that samples or dresses the body. */
+	TArray<UDynamicMeshComponent*> BodyParts() const;
+	/**
+	 * The transporter's hold on the body: Glow 0..1 swaps the suit for the blue shimmer glow (0 restores the suit),
+	 * Dissolve 0..1 hides the figure part by part, legs first and the visor last (0 shows it all again).
+	 */
+	void SetTransportState(float Glow, float Dissolve);
 	bool IsFreeLooking() const { return bFreeLook; }
 
 	// ---- State (for the HUD) ----
@@ -241,4 +248,9 @@ private:
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> TrimMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> VisorMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> BootLightMID;
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> TransportMID;
+	bool bTransportGlow = false;
+	float TransportDissolve = 0.f;
+	void ApplySuitMaterials();
+	void ApplyFigureVisibility();
 };
