@@ -9,6 +9,14 @@
 #include "GameFramework/SpringArmComponent.h"
 #include "GeometryScript/MeshNormalsFunctions.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Components/StaticMeshComponent.h"
+#include "DynamicMesh/DynamicMesh3.h"
+#include "DynamicMeshEditor.h"
+#include "DynamicMeshToMeshDescription.h"
+#include "Engine/StaticMesh.h"
+#include "MeshDescription.h"
+#include "StaticMeshAttributes.h"
+#include "UDynamicMesh.h"
 #include "MeshPrims.h"
 #include "PlanetBody.h"
 #include "RcsThrusterComponent.h"
@@ -219,6 +227,11 @@ void APersonPawn::BuildFigure()
 		BootLightMID->SetVectorParameterValue(TEXT("GlowColor"), FLinearColor(0.3f, 0.8f, 1.f));
 		BootLightMID->SetScalarParameterValue(TEXT("Intensity"), 0.f);
 	}
+	ApplySuitMaterials();
+}
+
+void APersonPawn::ApplySuitMaterials()
+{
 	if (SuitMID && TrimMID)
 	{
 		Torso->ConfigureMaterialSet({ SuitMID.Get(), TrimMID.Get() });
@@ -229,6 +242,106 @@ void APersonPawn::BuildFigure()
 		RightLeg->ConfigureMaterialSet({ SuitMID.Get(), TrimMID.Get(), BootLight });
 	}
 	if (VisorMID) { Visor->ConfigureMaterialSet({ VisorMID.Get() }); }
+}
+
+UStaticMeshComponent* APersonPawn::GetSampleMesh()
+{
+	if (SampleMesh) { return SampleMesh; }
+	// Every part's triangles into one mesh in the capsule's frame.
+	UE::Geometry::FDynamicMesh3 Combined;
+	Combined.EnableTriangleGroups();
+	Combined.EnableAttributes();
+	UE::Geometry::FDynamicMeshEditor Editor(&Combined);
+	for (UDynamicMeshComponent* P : BodyParts())
+	{
+		UDynamicMesh* DM = P->GetDynamicMesh();
+		if (!DM) { continue; }
+		const FTransform Xf = P->GetComponentTransform().GetRelativeTransform(Body->GetComponentTransform());
+		DM->ProcessMesh([&](const UE::Geometry::FDynamicMesh3& Part)
+		{
+			UE::Geometry::FDynamicMesh3 Copy(Part);
+			if (!Copy.HasAttributes()) { Copy.EnableAttributes(); }
+			UE::Geometry::FMeshIndexMappings Map;
+			Editor.AppendMesh(&Copy, Map, [&Xf](int32, const FVector3d& Pos) { return (FVector3d)Xf.TransformPosition((FVector)Pos); });
+		});
+	}
+	if (Combined.TriangleCount() == 0) { return nullptr; }
+	FMeshDescription MD;
+	FStaticMeshAttributes(MD).Register();
+	FDynamicMeshToMeshDescription Converter;
+	Converter.Convert(&Combined, MD, false);
+	UStaticMesh* Mesh = NewObject<UStaticMesh>(this, NAME_None, RF_Transient);
+	Mesh->bAllowCPUAccess = true;
+	FStaticMaterial Mat(nullptr, TEXT("Suit"));
+#if WITH_EDITORONLY_DATA
+	Mat.ImportedMaterialSlotName = TEXT("Suit");
+#endif
+	Mesh->GetStaticMaterials().Add(Mat);
+	UStaticMesh::FBuildMeshDescriptionsParams Params;
+	Params.bFastBuild = true;
+	Params.bAllowCpuAccess = true;
+	Params.bMarkPackageDirty = false;
+	Params.bCommitMeshDescription = false;
+	Params.bBuildSimpleCollision = false;
+	Mesh->BuildFromMeshDescriptions({ &MD }, Params);
+	SampleMeshAsset = Mesh;
+	SampleMesh = NewObject<UStaticMeshComponent>(this, TEXT("SampleMesh"));
+	SampleMesh->SetupAttachment(Body);
+	SampleMesh->SetStaticMesh(Mesh);
+	SampleMesh->SetMobility(EComponentMobility::Movable);
+	SampleMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	SampleMesh->SetGenerateOverlapEvents(false);
+	SampleMesh->SetVisibility(false);
+	SampleMesh->SetHiddenInGame(true);
+	SampleMesh->CastShadow = false;
+	SampleMesh->RegisterComponent();
+	return SampleMesh;
+}
+
+TArray<UDynamicMeshComponent*> APersonPawn::BodyParts() const
+{
+	TArray<UDynamicMeshComponent*> Parts;
+	for (UDynamicMeshComponent* P : { Torso.Get(), Visor.Get(), LeftArm.Get(), RightArm.Get(), LeftLeg.Get(), RightLeg.Get() })
+	{
+		if (P) { Parts.Add(P); }
+	}
+	return Parts;
+}
+
+void APersonPawn::ApplyFigureVisibility()
+{
+	// Dissolve order: the legs go first, then the arms, the torso, and the visor last.
+	const TPair<UDynamicMeshComponent*, float> Order[] = {
+		{ LeftLeg.Get(), 0.15f }, { RightLeg.Get(), 0.2f }, { LeftArm.Get(), 0.35f }, { RightArm.Get(), 0.4f }, { Torso.Get(), 0.6f }, { Visor.Get(), 0.8f } };
+	for (const auto& [P, Threshold] : Order)
+	{
+		if (P) { P->SetVisibility(bFigureShown && TransportDissolve <= Threshold); }
+	}
+}
+
+void APersonPawn::SetTransportState(float Glow, float Dissolve)
+{
+	const bool bWantGlow = Glow > 0.f;
+	if (bWantGlow && !TransportMID)
+	{
+		if (UMaterialInterface* GlowMat = SlonkMaterials::LoadOrFallback(TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(SlonkMaterials::GlowPath)), TEXT("Glow"), false))
+		{
+			TransportMID = UMaterialInstanceDynamic::Create(GlowMat, this);
+			TransportMID->SetVectorParameterValue(TEXT("GlowColor"), FLinearColor(0.35f, 0.62f, 1.f));
+		}
+	}
+	if (bWantGlow != bTransportGlow)
+	{
+		bTransportGlow = bWantGlow;
+		if (bWantGlow && TransportMID)
+		{
+			for (UDynamicMeshComponent* P : BodyParts()) { P->ConfigureMaterialSet({ TransportMID.Get(), TransportMID.Get(), TransportMID.Get() }); }
+		}
+		else { ApplySuitMaterials(); }
+	}
+	if (bTransportGlow && TransportMID) { TransportMID->SetScalarParameterValue(TEXT("Intensity"), 1.5f + 9.f * FMath::Clamp(Glow, 0.f, 1.f)); }
+	TransportDissolve = FMath::Clamp(Dissolve, 0.f, 1.f);
+	ApplyFigureVisibility();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -480,10 +593,7 @@ void APersonPawn::SetCameraMode(EPersonCamera Mode)
 	if (HelmetCamera) { HelmetCamera->SetActive(!bThird); }
 	// From inside the helmet the figure is in the way of the view.
 	bFigureShown = bThird;
-	for (UDynamicMeshComponent* P : { Torso.Get(), Visor.Get(), LeftArm.Get(), RightArm.Get(), LeftLeg.Get(), RightLeg.Get() })
-	{
-		if (P) { P->SetVisibility(bThird); }
-	}
+	ApplyFigureVisibility();
 }
 
 void APersonPawn::CycleCamera() { SetCameraMode(CameraMode == EPersonCamera::Third ? EPersonCamera::Helmet : EPersonCamera::Third); }
@@ -1093,10 +1203,7 @@ void APersonPawn::UpdateCamera(float DeltaTime)
 		if (bShowFigure != bFigureShown)
 		{
 			bFigureShown = bShowFigure;
-			for (UDynamicMeshComponent* P : { Torso.Get(), Visor.Get(), LeftArm.Get(), RightArm.Get(), LeftLeg.Get(), RightLeg.Get() })
-			{
-				if (P) { P->SetVisibility(bShowFigure); }
-			}
+			ApplyFigureVisibility();
 		}
 	}
 	if (HelmetCamera)

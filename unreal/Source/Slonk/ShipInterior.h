@@ -14,7 +14,7 @@ class UPrimitiveComponent;
 class UMaterialInterface;
 class UMaterialInstanceDynamic;
 
-/** The places the turbolift goes. Airlock is the saucer hatch: the lift puts you out on the hull. */
+/** The places the turbolift goes. Airlock is the staging area under the saucer hatch; its hatch puts you out on the hull. */
 UENUM(BlueprintType)
 enum class EShipRoom : uint8
 {
@@ -75,6 +75,8 @@ public:
 	void SetRoomSpots(EShipRoom Which, const FTransform& Lift, const FTransform& Use, const FString& UseLabel);
 	/** The parked shuttle in the bay is its own mesh: hidden while the real one is out. */
 	void SetBayShuttleShown(bool bShown);
+	/** The transporter pad's glow follows the shimmer while someone beams (0 = idle). */
+	void SetPadGlow(float Pulse);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Materials") TSoftObjectPtr<UMaterialInterface> LitMaterial;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Materials") TSoftObjectPtr<UMaterialInterface> ButtonsMaterial;
@@ -89,6 +91,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Meshes") TSoftObjectPtr<UStaticMesh> ShuttleBayMesh;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Meshes") TSoftObjectPtr<UStaticMesh> BayShuttleMesh;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Meshes") TSoftObjectPtr<UStaticMesh> TransporterMesh;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Meshes") TSoftObjectPtr<UStaticMesh> AirlockMesh;
 
 private:
 	TArray<FShipRoom> Rooms;
@@ -124,6 +127,7 @@ private:
 	void BuildSickbay(FShipRoom& R);
 	void BuildShuttleBay(FShipRoom& R);
 	void BuildTransporter(FShipRoom& R);
+	void BuildAirlock(FShipRoom& R);
 
 	UPROPERTY() TObjectPtr<UStaticMesh> CubeMesh;
 	UPROPERTY() TObjectPtr<UStaticMesh> CylinderMesh;

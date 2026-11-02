@@ -3,7 +3,7 @@ rooms' GlassPanel slot binds to. Run in the editor headless while the GUI editor
 
     UnrealEditor-Cmd Slonk.uproject -ExecutePythonScript=tools/rooms/import_rooms.py -unattended -nosplash
 
-Meshes land in /Game/Slonk/Rooms as SM_RoomEngineering, SM_RoomSickbay, SM_RoomShuttleBay, SM_RoomBayShuttle and
+Meshes land in /Game/Slonk/Rooms as SM_RoomEngineering, SM_RoomSickbay, SM_RoomShuttleBay, SM_RoomBayShuttle, SM_RoomAirlock and
 SM_RoomTransporter; the person's Boots traces hit their triangles, so each room's floors, consoles and walls are
 walkable and solid without separate collision boxes."""
 import os
@@ -12,7 +12,7 @@ import unreal
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SRC = os.path.join(ROOT, "blender", "rooms")
 DEST = "/Game/Slonk/Rooms"
-NAMES = ["SM_RoomEngineering", "SM_RoomSickbay", "SM_RoomShuttleBay", "SM_RoomBayShuttle", "SM_RoomTransporter"]
+NAMES = ["SM_RoomEngineering", "SM_RoomSickbay", "SM_RoomShuttleBay", "SM_RoomBayShuttle", "SM_RoomTransporter", "SM_RoomAirlock"]
 
 def import_mesh(name):
     opts = unreal.FbxImportUI()

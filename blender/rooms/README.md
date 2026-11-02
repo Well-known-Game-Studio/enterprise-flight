@@ -1,6 +1,6 @@
 # The ship's rooms
 
-`build_rooms.py` builds main engineering, sickbay, the shuttle bay and the transporter room of the Enterprise-A in
+`build_rooms.py` builds main engineering, sickbay, the shuttle bay, the transporter room and the airlock staging area of the Enterprise-A in
 Blender from code and exports one static mesh per room (plus the parked shuttle on its own) for Unreal. The layouts
 follow the film sets, used as reference only: The Motion Picture's intermix shaft and horizontal chamber with The
 Wrath of Khan's console room; the Motion Picture ward beds in The Undiscovered Country's palette; The Final

@@ -116,6 +116,8 @@ void UPlanetTerrainComponent::ReleaseMesh(FNode& N)
 	}
 	N.bReady = false;
 	N.Result.Reset();
+	N.Heights.Empty();
+	N.HeightSteps = 0;
 }
 
 /** Hides the subtree under N. The chunks stay built and parked: flying back over them costs nothing, and
@@ -409,6 +411,8 @@ void UPlanetTerrainComponent::ApplyResult(FNode& N)
 	C->SetCustomPrimitiveDataFloat(5, (float)OR.Y);
 	C->SetCustomPrimitiveDataFloat(6, (float)OR.Z);
 	if (MID && C->GetMaterial(0) != MID) { C->SetMaterial(0, MID); }
+	N.Heights = MoveTemp(N.Result->Heights);
+	N.HeightSteps = N.Result->Steps;
 	N.Result.Reset();
 	N.bReady = true;
 }
@@ -438,8 +442,65 @@ void UPlanetTerrainComponent::UpdateView(const FVector& ViewLocationWorld)
 double UPlanetTerrainComponent::SurfaceHeightAtWorld(const FVector& WorldPos) const
 {
 	if (!bConfigured) { return 0.0; }
-	const FVector Local = GetComponentTransform().InverseTransformPositionNoScale(WorldPos);
-	return SlonkTerrain::SurfaceHeightCm(Params, Local.GetSafeNormal());
+	const FVector Dir = GetComponentTransform().InverseTransformPositionNoScale(WorldPos).GetSafeNormal();
+	double Drawn;
+	if (DrawnHeightAtLocalDir(Dir, Drawn)) { return Drawn; }
+	return SlonkTerrain::SurfaceHeightCm(Params, Dir);
+}
+
+bool UPlanetTerrainComponent::FaceUV(const FVector& Dir, int32& OutFace, double& OutU, double& OutV) const
+{
+	const FVector A = Dir.GetAbs();
+	double S, T;
+	if (A.X >= A.Y && A.X >= A.Z)
+	{
+		if (A.X <= 0.0) { return false; }
+		OutFace = Dir.X > 0.0 ? 0 : 1;
+		S = Dir.Y / Dir.X; T = Dir.X > 0.0 ? Dir.Z / Dir.X : -Dir.Z / Dir.X;
+	}
+	else if (A.Y >= A.Z)
+	{
+		OutFace = Dir.Y > 0.0 ? 2 : 3;
+		S = -Dir.X / Dir.Y; T = Dir.Y > 0.0 ? Dir.Z / Dir.Y : -Dir.Z / Dir.Y;
+	}
+	else
+	{
+		OutFace = Dir.Z > 0.0 ? 4 : 5;
+		T = -Dir.X / Dir.Z; S = Dir.Z > 0.0 ? Dir.Y / Dir.Z : -Dir.Y / Dir.Z;
+	}
+	OutU = FMath::Atan(S) * 4.0 / UE_DOUBLE_PI;
+	OutV = FMath::Atan(T) * 4.0 / UE_DOUBLE_PI;
+	// The mapping is checked rather than trusted: a sign slip here would put feet on the wrong chunk.
+	return FVector::DotProduct(CubeDir(OutFace, OutU, OutV), Dir.GetSafeNormal()) > 0.999999;
+}
+
+bool UPlanetTerrainComponent::DrawnHeightAtLocalDir(const FVector& DirLocal, double& OutHeightCm) const
+{
+	int32 Face; double U, V;
+	if (!bConfigured || !bTerrainVisible || !FaceUV(DirLocal, Face, U, V) || !Roots[Face]) { return false; }
+	// Down the quadtree under (U, V) to the deepest chunk on screen there.
+	const FNode* Best = nullptr;
+	for (const FNode* N = Roots[Face].Get(); N;)
+	{
+		if (N->Mesh && N->bReady && N->Mesh->IsVisible() && N->Heights.Num() == (N->HeightSteps + 1) * (N->HeightSteps + 1) && N->HeightSteps > 0) { Best = N; }
+		const double Cells = (double)((int64)1 << (N->Depth + 1));
+		const int64 CX = FMath::Clamp((int64)FMath::FloorToDouble((U + 1.0) * 0.5 * Cells), (int64)0, (int64)Cells - 1);
+		const int64 CY = FMath::Clamp((int64)FMath::FloorToDouble((V + 1.0) * 0.5 * Cells), (int64)0, (int64)Cells - 1);
+		const int64 k = (CX - N->X * 2) + 2 * (CY - N->Y * 2);
+		N = (k >= 0 && k < 4) ? N->Children[k].Get() : nullptr;
+	}
+	if (!Best) { return false; }
+	// The chunk's grid is uniform in (U, V); the cell's two triangles split along the (i+1, j)-(i, j+1) diagonal.
+	const int32 Steps = Best->HeightSteps, GW = Steps + 1;
+	const double Cells = (double)((int64)1 << Best->Depth);
+	const double Wd = 2.0 / Cells, U0 = -1.0 + Wd * Best->X, V0 = -1.0 + Wd * Best->Y;
+	const double Fu = FMath::Clamp((U - U0) / Wd, 0.0, 1.0) * Steps, Fv = FMath::Clamp((V - V0) / Wd, 0.0, 1.0) * Steps;
+	const int32 i = FMath::Min((int32)Fu, Steps - 1), j = FMath::Min((int32)Fv, Steps - 1);
+	const double fx = Fu - i, fy = Fv - j;
+	const float* H = Best->Heights.GetData();
+	const double hA = H[j * GW + i], hB = H[j * GW + i + 1], hC = H[(j + 1) * GW + i], hD = H[(j + 1) * GW + i + 1];
+	OutHeightCm = (fx + fy <= 1.0) ? hA + fx * (hB - hA) + fy * (hC - hA) : hD + (1.0 - fx) * (hC - hD) + (1.0 - fy) * (hB - hD);
+	return true;
 }
 
 FPlanetTerrainSample UPlanetTerrainComponent::SampleAtWorld(const FVector& WorldPos, double MinWavelengthCm) const
@@ -666,6 +727,17 @@ void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, int32 Fa
 	{
 		const double H = Smp[k].bWater ? Smp[k].WaterCm : Smp[k].HeightCm;
 		Pos[k] = Dirs[k] * (R + H) - Origin;
+	}
+	// The grid's heights go back with the mesh: ground queries read the drawn surface from them.
+	Out.Steps = Steps;
+	Out.Heights.SetNumUninitialized((Steps + 1) * (Steps + 1));
+	for (int32 j = 0; j <= Steps; ++j)
+	{
+		for (int32 i = 0; i <= Steps; ++i)
+		{
+			const FPlanetTerrainSample& S = Smp[(j + Margin) * W + (i + Margin)];
+			Out.Heights[j * (Steps + 1) + i] = (float)(S.bWater ? S.WaterCm : S.HeightCm);
+		}
 	}
 
 	TUniquePtr<FDynamicMesh3> M = MakeUnique<FDynamicMesh3>();
