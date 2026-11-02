@@ -60,7 +60,9 @@ void UBayDoorsComponent::Apply()
 		const float Swing = (N * 0.5f - 1.f - Rank) * Width * Fraction;
 		// Azimuth grows toward starboard; a positive yaw about the ship's up takes a point astern toward port.
 		const float Yaw = Idx < 0.f ? Swing : -Swing;
-		const float S = 1.f - 0.012f * (N * 0.5f - 1.f - Rank) * Fraction;
+		// Closed, the gores stand 2.5 % proud of the hull's own cone, so they cover the hole's margin round it and
+		// nothing shows between them and the recess wall; open, the stack nests inward from there.
+		const float S = 1.025f - 0.012f * (N * 0.5f - 1.f - Rank) * Fraction;
 		G->SetRelativeRotation(FRotator(0.f, Yaw, 0.f));
 		G->SetRelativeScale3D(FVector(S, S, 1.f));
 	}

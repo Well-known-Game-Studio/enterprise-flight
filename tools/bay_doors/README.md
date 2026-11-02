@@ -8,7 +8,7 @@ surface and the open gores carry its texture.
    in the stern recess, material Constitution_3: 828 cm radius at its base ring under the deck fan, 280 cm at its
    top, about a vertical axis at pawn (-6330, 0), the deck at -1948), trims them at the door's top edge, splits them
    into eight gores of 22.5° by azimuth and writes `gores_B.obj` (plus `gores_H.obj` in the model's own frame for
-   checks). Each gore has an inner skin 6 cm inside the cone so the closed door reads as a wall from inside the bay.
+   checks). Each gore has an inner skin (the same triangles wound inward, on the DoorInner slot) so the closed door reads as a wall from inside the bay; an offset skin left a slit open at the silhouette. The outermost gores run on to the cone's tail behind the axis plane, up to the bay's junction wall.
 2. `blender --background --python tools/bay_doors/export_doors.py` → `blender/ship/bay_doors.fbx`, each gore's
    origin on the axis so a yaw about it is the swing.
 3. Headless, with the editor closed: `UnrealEditor-Cmd unreal/Slonk.uproject -ExecutePythonScript=tools/bay_doors/import_doors.py -unattended -nosplash`
@@ -16,8 +16,8 @@ surface and the open gores carry its texture.
 
 The hull keeps a hole where the door was: `/Game/Enterprise/M_HullMasked` is a copy of the Interchange phong master
 with a masked blend and a Custom node that drops every pixel inside the inner cone's radius (mesh space = pawn
-space: x < -6100, -1945 < z < -1242, r about the axis < 828 - (z + 1974) * 0.705 + 3 cm, 40 cm behind the axis
-plane), which takes the cone itself and the model's filler behind it and leaves the recess walls, the flanking
+space: x < -6100, -1945 < z < -1242, r about the axis < 828 - (z + 1974) * 0.705 + 1 cm, 40 cm only forward of the
+bay's junction wall where the cone's tail and the filler ribs sit), which takes the cone itself and the model's filler behind it and leaves the recess walls, the flanking
 panels and the deck fan; `Constitution_3_Hull` is the stern instance re-parented to it (`scratch-backup/hullmask.py`
 builds the node). `AStarshipPawn::SetupBayDoors` swaps it into the Constitution_3 slot and hangs a
 `UBayDoorsComponent` on the hull at the axis: opening swings each pair of gores toward its side by the width of

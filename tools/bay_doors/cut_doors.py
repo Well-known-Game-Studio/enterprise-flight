@@ -38,9 +38,11 @@ def clip(poly, f):
             p = tuple(a[0][i] + t*(b[0][i]-a[0][i]) for i in range(3)); uv = tuple(a[1][i] + t*(b[1][i]-a[1][i]) for i in range(2))
             out.append((p,uv))
     return out
+TAIL_X = -6230.0   # the cone's tail behind the axis plane ends at the bay's junction wall
 centre=[]
 for tri in tris:
     p = clip(tri, lambda q: q[2] - DOOR_TOP)
+    if len(p) >= 3: p = clip(p, lambda q: q[0] - TAIL_X)
     if len(p) >= 3: centre.append(p)
 NG=8; AMAX=90.0
 edges=[-AMAX + 2*AMAX*k/NG for k in range(NG+1)]
@@ -55,13 +57,15 @@ gores=[]
 for k in range(NG):
     polys=[]
     for p in centre:
-        q = clip(p, az_plane(edges[k], True))
-        if len(q) >= 3: q = clip(q, az_plane(edges[k+1], False))
+        # The outermost gores take everything beyond their inner plane, including the cone's tail behind the axis
+        # plane (az past 90 deg), so the door meets the recess with no slit at its sides.
+        q = clip(p, az_plane(edges[k], True)) if k > 0 else p
+        if len(q) >= 3 and k < NG - 1: q = clip(q, az_plane(edges[k+1], False))
         if len(q) >= 3: polys.append(q)
     gores.append(polys)
     xs=[pt[0][0] for p in polys for pt in p]; ys=[pt[0][1] for p in polys for pt in p]; zs=[pt[0][2] for p in polys for pt in p]
     print(f"gore {k+1}: {len(polys)} polys, az {edges[k]:.1f}..{edges[k+1]:.1f}, x {min(xs):.0f}..{max(xs):.0f} y {min(ys):.0f}..{max(ys):.0f} z {min(zs):.0f}..{max(zs):.0f}")
-INNER_CM = 6.0
+INNER_CM = 0.0   # the inner skin is the same surface wound the other way: an offset skin left a slit open at the silhouette
 def inward(pos):
     r = math.hypot(pos[0]-CX, pos[1]); f = max(r - INNER_CM, 0.0) / max(r, 1e-6)
     return (CX + (pos[0]-CX) * f, pos[1] * f, pos[2])
