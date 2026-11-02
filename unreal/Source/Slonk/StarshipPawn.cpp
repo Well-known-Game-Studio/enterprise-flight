@@ -1736,8 +1736,15 @@ void AStarshipPawn::UpdateCameras(float DeltaTime)
 		case EStarshipCameraMode::Starboard: Off = FVector(0.0, D, D * 0.08); Rot = FRotator(0.f, -90.f, 0.f); break;
 		case EStarshipCameraMode::Top: Off = FVector(0.0, 0.0, D); Rot = FRotator(-90.f, 0.f, 0.f); break;
 		case EStarshipCameraMode::Stern:
-			// Behind the shuttlebay door (0.223 L aft, 0.052 L down on the 1701-A), a little above its height.
-			Off = FVector(-0.223 * LengthCm - 0.28 * D, 0.0, -0.052 * LengthCm + 0.03 * D); Rot = FRotator(-3.f, 0.f, 0.f); break;
+		{
+			// Behind the shuttlebay door (0.223 L aft, 0.052 L down on the 1701-A), a little above its height; the
+			// free look (mouse, `look`) orbits the view round the door instead of turning the camera.
+			const FVector Door(-0.223 * LengthCm, 0.0, -0.052 * LengthCm);
+			const FRotator Orbit(FreeLookAngles.Y, FreeLookAngles.X, 0.f);
+			Off = Door + Orbit.RotateVector(FVector(-0.28 * D, 0.0, 0.03 * D));
+			Rot = FRotator(-3.f + FreeLookAngles.Y, FreeLookAngles.X, 0.f);
+			break;
+		}
 		default: Off = FVector(0.0, 0.0, -D); Rot = FRotator(90.f, 0.f, 0.f); break;
 		}
 		CinematicCamera->SetRelativeLocation(Off + ShakeOffset * Amp * LengthCm * 0.005f);

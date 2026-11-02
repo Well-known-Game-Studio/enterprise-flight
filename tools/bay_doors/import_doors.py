@@ -47,4 +47,20 @@ for k in range(1, 9):
     b = mesh.get_bounds()
     unreal.log(f"DOORS DONE SM_BayDoor{k} origin {b.origin} extent {b.box_extent} slots {[str(m.material_slot_name) for m in mesh.static_materials]}")
     unreal.EditorAssetLibrary.save_loaded_asset(mesh, only_if_is_dirty=False)
+wall = unreal.load_asset(f"{DEST}/SM_SternWall")
+hull = unreal.load_asset("/Game/Enterprise/Constitution_3_Hull")
+if wall and hull:
+    mats = list(wall.static_materials)
+    for i in range(len(mats)):
+        m = mats[i]
+        if str(m.material_slot_name) == "SternWall": m.set_editor_property("material_interface", hull)
+        mats[i] = m
+    wall.set_editor_property("static_materials", mats)
+    unreal.EditorAssetLibrary.save_loaded_asset(wall, only_if_is_dirty=False)
+    stray = f"{DEST}/SternWall"
+    if unreal.EditorAssetLibrary.does_asset_exist(stray): unreal.EditorAssetLibrary.delete_asset(stray)
+    b = wall.get_bounds()
+    unreal.log(f"DOORS DONE SM_SternWall origin {b.origin} extent {b.box_extent} slots {[str(m.material_slot_name) for m in wall.static_materials]}")
+else:
+    unreal.log_warning(f"DOORS: stern wall {'missing' if not wall else 'has no hull material'}")
 unreal.log("DOORS ALL DONE")

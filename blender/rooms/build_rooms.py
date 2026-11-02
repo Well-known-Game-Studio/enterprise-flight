@@ -318,20 +318,23 @@ class Room:
     def light(self, pos, energy, color=(0.95, 0.97, 1.0), size=0.8, kind='AREA'):
         self.lights.append((kind, pos, energy, color, size))
 
-def shell(R, wall_mat, floor_mat, ceil_mat, open_aft=False, floor=True):
+def shell(R, wall_mat, floor_mat, ceil_mat, open_aft=False, floor=True, aft_trim=0.0):
+    """`aft_trim` shortens the floor, ceiling and side walls at the aft end (the bay stops at the hull's stern wall)."""
     L, W, H = R.L, R.W, R.H
     T = 0.12
+    xa = -L / 2 + aft_trim if aft_trim > 0 else -L / 2 - T   # the aft end of the floor, ceiling and side walls
+    cx, Lt = (xa + L / 2 + T) / 2, L / 2 + T - xa
     if floor:
-        box("Floor", (0, 0, -T / 2), (L + 2 * T, W + 2 * T, T), floor_mat, "Floors")
-    box("Ceiling", (0, 0, H + T / 2), (L + 2 * T, W + 2 * T, T), ceil_mat, "Ceiling")
+        box("Floor", (cx, 0, -T / 2), (Lt, W + 2 * T, T), floor_mat, "Floors")
+    box("Ceiling", (cx, 0, H + T / 2), (Lt, W + 2 * T, T), ceil_mat, "Ceiling")
     box("WallFwd", (L / 2 + T / 2, 0, H / 2), (T, W + 2 * T, H), wall_mat, "Walls")
     if not open_aft:
         box("WallAft", (-L / 2 - T / 2, 0, H / 2), (T, W + 2 * T, H), wall_mat, "Walls")
     for sgn in (-1, 1):
-        box("WallSide", (0, sgn * (W / 2 + T / 2), H / 2), (L + 2 * T, T, H), wall_mat, "Walls")
+        box("WallSide", (cx, sgn * (W / 2 + T / 2), H / 2), (Lt, T, H), wall_mat, "Walls")
     # A dark skirting all round.
     for sgn in (-1, 1):
-        box("Skirt", (0, sgn * (W / 2 - 0.02), 0.18), (L, 0.04, 0.36), M_PanelDark(), "Walls")
+        box("Skirt", ((xa + L / 2) / 2 if aft_trim > 0 else 0, sgn * (W / 2 - 0.02), 0.18), (L / 2 - xa if aft_trim > 0 else L, 0.04, 0.36), M_PanelDark(), "Walls")
     box("Skirt", (L / 2 - 0.02, 0, 0.18), (0.04, W, 0.36), M_PanelDark(), "Walls")
     if not open_aft:
         box("Skirt", (-L / 2 + 0.02, 0, 0.18), (0.04, W, 0.36), M_PanelDark(), "Walls")
@@ -701,17 +704,19 @@ def cap_radius(z):
         if z <= z1: return r0 + (r1 - r0) * (z - z0) / (z1 - z0)
     return CAP_PROFILE[-1][1]
 def door_edge_y(z): return 3.46 + (6.76 - z) * 0.754
+JUNCTION = 1.55   # metres from the door's axis plane forward to the hull's stern wall (pawn x -6175): the bay's aft end
 
 def bay_throat(R):
-    """The throat between the straight bay and the clamshell door: the hull's own recess walls, flanking panels,
-    roof and deck fan are the sides of it (the game keeps the hull drawn in this room), so this adds only a deck
-    over the painted fan inside the door's base ring and the junction closing the bay's corners against the
-    recess, set a metre inside the junction plane so the hull's panels stand in front of it from outside. The
-    door itself is the hull's own gores, placed by the game."""
+    """The throat between the straight bay and the clamshell door: the hull's own stern (its hood, bulkhead and
+    side skin, with the game's stern wall closing the slot under the bulkhead) is the sides of it, since the game
+    keeps the hull drawn in this room; this adds only a deck over the painted fan inside the door's base ring, the
+    door posts and the lintel over the bay's own ceiling, all just forward of the stern wall so nothing of the set
+    stands in the hull's recess where the quarter view would catch it. The door itself is the hull's own gores,
+    placed by the game."""
     L, W, H = R.L, R.W, R.H
     HT = 7.0                                            # the throat's height: the door's top, over the bay's own ceiling
     A = (-L / 2, 0.0)                                   # the door's axis on the deck
-    J = A[0] + 1.0                                      # the junction wall, behind the hull's flanking panels
+    J = A[0] + JUNCTION                                 # the stern wall's plane: the bay's aft end
     seg = 40
     def arc(r, z, a0=90.0, a1=270.0, n=seg):
         return [(A[0] + r * math.cos(math.radians(a0 + (a1 - a0) * k / n)), A[1] + r * math.sin(math.radians(a0 + (a1 - a0) * k / n)), z) for k in range(n + 1)]
@@ -720,22 +725,15 @@ def bay_throat(R):
     RD = 8.2
     deck = [(x, y) for x, y, _ in arc(RD, 0.0)] + [(J, -RD), (J, RD)]
     prism("ThroatDeck", deck, -0.12, 0.0, M_BayDeck(), "Floors")
-    zs = [HT * k / 14 for k in range(15)]
     for side in (-1, 1):
-        # The junction ribbon: between the bay's wall end (|y| = W/2) and the recess's inside, up to the bay's ceiling.
-        zb = [z for z in zs if z <= H + 1e-6] + [H]
-        rib = [[(J, side * (W / 2), z), (J, side * (cap_radius(z) - 0.10), z)] for z in zb]
-        grid_surface(f"Junction{'P' if side < 0 else 'S'}", rib, M_PanelGrey(), "Walls", toward=(J + 3.0, 0.0, H / 2))
-        # The bay's side wall carries on to the junction.
-        box("WallStub", (A[0] + 0.5, side * (W / 2 + 0.06), H / 2), (1.0, 0.12, H), M_PanelGrey(), "Walls")
-        box("DoorPost", (J + 0.25, side * (W / 2 - 0.3), H / 2), (0.5, 0.6, H), M_PanelDark(), "Walls")
+        box("DoorPost", (J + 0.45, side * (W / 2 - 0.3), H / 2), (0.5, 0.6, H), M_PanelDark(), "Walls")
         for z in (2.0, 4.0):
-            box("WarnLamp", (J + 0.51, side * (W / 2 - 0.3), z), (0.03, 0.12, 0.3), M_Warn(), "Lights")
+            box("WarnLamp", (J + 0.71, side * (W / 2 - 0.3), z), (0.03, 0.12, 0.3), M_Warn(), "Lights")
     # The lintel closes the throat's extra height across its whole width above the bay's ceiling.
     zl = [H + (HT - H) * k / 4 for k in range(5)]
-    lintel = [[(J, -(cap_radius(z) - 0.10) + (2 * (cap_radius(z) - 0.10)) * k / 16, z) for k in range(17)] for z in zl]
+    lintel = [[(J + 0.2, -(cap_radius(z) - 0.10) + (2 * (cap_radius(z) - 0.10)) * k / 16, z) for k in range(17)] for z in zl]
     grid_surface("JunctionLintel", lintel, M_PanelGrey(), "Walls", toward=(J + 3.0, 0.0, H / 2))
-    box("LintelStrip", (J + 0.03, 0, H - 0.3), (0.03, 2 * (cap_radius(H) - 0.4), 0.12), M_Strip(), "Lights")
+    box("LintelStrip", (J + 0.23, 0, H - 0.3), (0.03, 2 * (cap_radius(H) - 0.4), 0.12), M_Strip(), "Lights")
     # Deck lights round the fan, and the approach line carried out to the door.
     for k in range(1, 8):
         a = 90.0 + 180.0 * k / 8
@@ -749,14 +747,14 @@ def build_shuttle_bay():
     landing box, blue strip lights along the grey walls, the control gallery's windows high on the forward
     bulkhead, the open door frame astern, the shuttle on its skids on the box and cargo stacked to starboard.
     Lift door forward, starboard; a side door to port."""
-    R = Room("bay", 26.0, 16.0, 6.2)   # the hull's shoulder at the junction is 13.1 m over the deck at the bay's width
+    R = Room("bay", 26.0, 16.0, 5.4)   # the hull's side skin at the stern wall is 5.8 m over the deck at the bay's width (|y| 8.1 m), 6.3 m at 7.7 m
     L, W, H = R.L, R.W, R.H
-    shell(R, M_PanelGrey(), M_BayDeck(), M_PanelDark(), open_aft=True)
+    shell(R, M_PanelGrey(), M_BayDeck(), M_PanelDark(), open_aft=True, aft_trim=JUNCTION)
     bay_throat(R)
     # Wall bands: the blue strip at 4 m, a dark rail at 1.2 m, pilasters every 4 m.
     for s in (-1, 1):
-        box("BlueStrip", (0.3, s * (W / 2 - 0.02), 4.0), (L - 0.6, 0.04, 0.10), M_StripBlue(), "Lights")
-        box("RailBand", (0.3, s * (W / 2 - 0.03), 1.2), (L - 0.6, 0.06, 0.10), M_PanelDark(), "Walls")
+        box("BlueStrip", (0.3 + JUNCTION / 2, s * (W / 2 - 0.02), 4.0), (L - 0.6 - JUNCTION, 0.04, 0.10), M_StripBlue(), "Lights")
+        box("RailBand", (0.3 + JUNCTION / 2, s * (W / 2 - 0.03), 1.2), (L - 0.6 - JUNCTION, 0.06, 0.10), M_PanelDark(), "Walls")
         for x in (-10, -6, -2, 2, 6, 10):
             box("BayPilaster", (x, s * (W / 2 - 0.13), H / 2), (0.5, 0.26, H), M_PanelGrey(), "Walls")
     box("BlueStripFwd", (L / 2 - 0.02, 0, 4.0), (0.04, W - 0.6, 0.10), M_StripBlue(), "Lights")
@@ -772,7 +770,7 @@ def build_shuttle_bay():
     for s in (-1, 1):
         box("BoxLine", (BX, BY + s * BW / 2, 0.004), (BL, 0.14, 0.008), M_PaintYellow(), "Floors")
         box("BoxLine", (BX + s * BL / 2, BY, 0.004), (0.14, BW, 0.008), M_PaintYellow(), "Floors")
-    for x in range(-12, 8, 2):
+    for x in range(-10, 8, 2):
         for s in (-1, 1):
             box("DeckLamp", (x, s * 3.6, 0.01), (0.25, 0.25, 0.02), M_StripBlue(), "Lights")
             box("EdgeLamp", (x, s * 6.8, 0.01), (0.2, 0.2, 0.02), M_Strip(), "Lights")

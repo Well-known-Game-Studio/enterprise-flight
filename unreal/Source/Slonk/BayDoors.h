@@ -25,6 +25,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bay Doors") FString MeshFolder = TEXT("/Game/Slonk/Ship");
 	/** The hull's painted stern material for the gores' outer skin (the unmasked one), used where a gore mesh has none. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bay Doors") TSoftObjectPtr<UMaterialInterface> OuterMaterial;
+	/** The hull's two-sided stern material for the stern wall SM_SternWall (closes the slot under the stern bulkhead beside the door), used where the mesh has none. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bay Doors") TSoftObjectPtr<UMaterialInterface> WallMaterial;
 
 	/** Loads the gores and hangs them on this component (whose origin is the door's axis on the deck). False without the meshes. */
 	bool Build();
@@ -40,6 +42,7 @@ public:
 
 private:
 	UPROPERTY() TArray<TObjectPtr<UStaticMeshComponent>> Gores;
+	UPROPERTY() TObjectPtr<UStaticMeshComponent> Wall;
 	float Fraction = 0.f;
 	float Target = 0.f;
 	void Apply();

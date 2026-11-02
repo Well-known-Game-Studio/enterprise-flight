@@ -8,6 +8,7 @@ UBayDoorsComponent::UBayDoorsComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
 	OuterMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Enterprise/Constitution_3.Constitution_3")));
+	WallMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Enterprise/Constitution_3_Hull.Constitution_3_Hull")));
 }
 
 bool UBayDoorsComponent::Build()
@@ -33,6 +34,21 @@ bool UBayDoorsComponent::Build()
 		G->RegisterComponent();
 		Gores.Add(G);
 	}
+	// The stern wall: fixed, on the same pivot, closing the slot under the stern bulkhead beside the door.
+	const FString WallPath = FString::Printf(TEXT("%s/SM_SternWall.SM_SternWall"), *MeshFolder);
+	if (UStaticMesh* WM = LoadObject<UStaticMesh>(nullptr, *WallPath))
+	{
+		Wall = NewObject<UStaticMeshComponent>(GetOwner(), TEXT("BayDoorWall"));
+		Wall->SetStaticMesh(WM);
+		const int32 Slot = Wall->GetMaterialIndex(TEXT("SternWall"));
+		if (Slot != INDEX_NONE && !Wall->GetMaterial(Slot)) { if (UMaterialInterface* M = WallMaterial.LoadSynchronous()) { Wall->SetMaterial(Slot, M); } }
+		Wall->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		Wall->SetMobility(EComponentMobility::Movable);
+		Wall->CastShadow = true;
+		Wall->AttachToComponent(this, FAttachmentTransformRules::KeepRelativeTransform);
+		Wall->RegisterComponent();
+	}
+	else { UE_LOG(LogTemp, Warning, TEXT("BayDoors: %s missing, the slot beside the door stays open"), *WallPath); }
 	Apply();
 	return true;
 }
@@ -40,6 +56,7 @@ bool UBayDoorsComponent::Build()
 void UBayDoorsComponent::SetShown(bool bShown)
 {
 	for (UStaticMeshComponent* G : Gores) { if (G) { G->SetVisibility(bShown); } }
+	if (Wall) { Wall->SetVisibility(bShown); }
 }
 
 void UBayDoorsComponent::Apply()

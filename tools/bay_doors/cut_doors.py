@@ -38,7 +38,7 @@ def clip(poly, f):
             p = tuple(a[0][i] + t*(b[0][i]-a[0][i]) for i in range(3)); uv = tuple(a[1][i] + t*(b[1][i]-a[1][i]) for i in range(2))
             out.append((p,uv))
     return out
-TAIL_X = -6230.0   # the cone's tail behind the axis plane ends at the bay's junction wall
+TAIL_X = -6175.0   # the cone's tail behind the axis plane ends at the stern wall (WALL_X)
 centre=[]
 for tri in tris:
     p = clip(tri, lambda q: q[2] - DOOR_TOP)
@@ -69,6 +69,24 @@ INNER_CM = 0.0   # the inner skin is the same surface wound the other way: an of
 def inward(pos):
     r = math.hypot(pos[0]-CX, pos[1]); f = max(r - INNER_CM, 0.0) / max(r, 1e-6)
     return (CX + (pos[0]-CX) * f, pos[1] * f, pos[2])
+# The stern wall: the model's sloped stern bulkhead beside the door stops 2.6 m above the fantail deck, and the
+# hull's side skin ends in a diagonal cut just aft of x -6185, so from the quarter you look under the bulkhead into
+# the hollow where the bay set stands. A wall on each side, just inside that cut, closes the slot from the deck
+# up behind the bulkhead's bottom edge, from the bay wall out to the skin (4 cm inside it, measured per height).
+WALL_X = -6175.0
+WALL_OUTER = [(-1946.0, 992.0), (-1900.0, 990.0), (-1800.0, 981.0), (-1700.0, 961.0), (-1650.0, 946.0), (-1600.0, 930.0), (-1560.0, 913.0), (-1540.0, 905.0)]
+WALL_INNER_Y = 760.0
+WALL_UV = (0.6962, 0.4912)   # a plain white texel of the stern texture; the wall maps to a tiny square round it
+def stern_wall():
+    polys = []
+    for side in (-1.0, 1.0):
+        pts = [(WALL_X, side * WALL_INNER_Y, WALL_OUTER[0][0])] + [(WALL_X, side * y, z) for z, y in WALL_OUTER] + [(WALL_X, side * WALL_INNER_Y, WALL_OUTER[-1][0])]
+        # wound to face astern (-x) in pawn space; the writer mirrors for the B frame
+        a, b, c = pts[0], pts[1], pts[2]
+        nx = (b[1]-a[1])*(c[2]-a[2]) - (b[2]-a[2])*(c[1]-a[1])
+        if nx > 0: pts = pts[::-1]
+        polys.append([(pt, (WALL_UV[0] + (abs(pt[1]) - WALL_INNER_Y) / 232.0 * 0.002, WALL_UV[1] + (pt[2] + 1946.0) / 406.0 * 0.002)) for pt in pts])
+    return polys
 def write(path, conv, flip):
     with open(path,"w") as f:
         f.write("mtllib Enterprise-A.mtl\n"); vi=1; ti=1
@@ -83,6 +101,14 @@ def write(path, conv, flip):
                     order = idx[::-1] if (flip != rev) else idx
                     for j in range(1,len(order)-1):
                         f.write("f %d/%d %d/%d %d/%d\n"%(order[0][0],order[0][1],order[j][0],order[j][1],order[j+1][0],order[j+1][1]))
+        f.write("o SM_SternWall\nusemtl SternWall\n")
+        for p in stern_wall():
+            idx=[]
+            for pos,uv in p:
+                c=conv(pos); f.write("v %.4f %.4f %.4f\n"%c); f.write("vt %.5f %.5f\n"%uv); idx.append((vi,ti)); vi+=1; ti+=1
+            order = idx[::-1] if flip else idx
+            for j in range(1,len(order)-1):
+                f.write("f %d/%d %d/%d %d/%d\n"%(order[0][0],order[0][1],order[j][0],order[j][1],order[j+1][0],order[j+1][1]))
 write(os.path.join(OUT, "gores_H.obj"), lambda p: (p[1]/100.0, -p[0]/100.0, p[2]/100.0), False)
 write(os.path.join(OUT, "gores_B.obj"), lambda p: (p[0]/100.0, -p[1]/100.0, p[2]/100.0), True)
 json.dump({"pivot_pawn": [CX, 0.0, CZ], "edges_deg": edges, "door_faces": door}, open(os.path.join(OUT, "gores_meta.json"),"w"))

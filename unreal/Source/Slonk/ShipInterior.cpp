@@ -386,11 +386,11 @@ void UShipInteriorComponent::Build()
 	Add(EShipRoom::Bridge, FVector(8000.0, 0.0, 3230.0) * X, FVector::ZeroVector); // the set's own box; spots set by the pawn
 	const int32 Eng = Add(EShipRoom::Engineering, FVector(-900.0, 0.0, -1900.0) * X, FVector(800.0, 500.0, 225.0));
 	const int32 Sick = Add(EShipRoom::Sickbay, FVector(6600.0, 0.0, 1900.0) * X, FVector(600.0, 450.0, 150.0));
-	// The straight bay begins where the stern cap does (the clamshell door's axis, 9.2 m forward of the door point)
-	// and runs 26 m forward, 6.2 m tall (the hull's shoulder at the junction is 13.1 m over the deck at the bay's
-	// width); its deck is 2 cm above the hull's own fan at the fantail. The throat behind it keeps the door's 7 m. The Blender set
-	// carries the throat into the cap behind it, up to the door.
-	const int32 BayRoom = Add(EShipRoom::ShuttleBay, FVector(Bay.X + 2220.0 * X, 0.0, Bay.Z - 36.0), FVector(1300.0, 800.0, 310.0));
+	// The straight bay's box begins at the clamshell door's axis (9.2 m forward of the door point) and runs 26 m
+	// forward, 5.4 m tall: the hull's side skin at the stern wall (1.55 m forward of the axis, where the Blender
+	// set's shell ends) is only 5.8 m over the deck at the bay's width. Its deck is 2 cm above the hull's own fan at
+	// the fantail; the throat behind it, over the fan inside the door's base ring, keeps the door's 7 m.
+	const int32 BayRoom = Add(EShipRoom::ShuttleBay, FVector(Bay.X + 2220.0 * X, 0.0, Bay.Z - 76.0), FVector(1300.0, 800.0, 270.0));
 	const int32 Tr = Add(EShipRoom::Transporter, FVector(7200.0, -1500.0, 1900.0) * X, FVector(400.0, 350.0, 150.0));
 	// The airlock's staging area sits two metres under the saucer hatch (the hull trace at a quarter length forward
 	// lands on the bridge module's roof at z ~3374): deck B, with the lift aft and the hatch forward.
