@@ -703,44 +703,39 @@ def cap_radius(z):
 def door_edge_y(z): return 3.46 + (6.76 - z) * 0.754
 
 def bay_throat(R):
-    """The throat between the straight bay and the clamshell door: the deck and ceiling half-discs inside the cap,
-    liners up the cap's inside beside the door (where the hull's flanking panels are, seen from within), and the
-    bulkhead ribbons that close the bay's corners against the cap at the junction. The door itself is the hull's
-    own gores, placed by the game."""
+    """The throat between the straight bay and the clamshell door: the hull's own recess walls, flanking panels
+    and deck fan are the sides of it, so this adds only what the hull lacks: a deck over the painted fan, a
+    ceiling under the recess roof at the door's height, and the junction closing the bay's corners against the
+    recess, set a metre inside the junction plane so the hull's panels stand in front of it from outside. The
+    door itself is the hull's own gores, placed by the game."""
     L, W, H = R.L, R.W, R.H
     HT = 7.0                                            # the throat's height: the door's top, over the bay's own ceiling
     A = (-L / 2, 0.0)                                   # the door's axis on the deck
+    J = A[0] + 1.0                                      # the junction wall, behind the hull's flanking panels
     seg = 40
     def arc(r, z, a0=90.0, a1=270.0, n=seg):
         return [(A[0] + r * math.cos(math.radians(a0 + (a1 - a0) * k / n)), A[1] + r * math.sin(math.radians(a0 + (a1 - a0) * k / n)), z) for k in range(n + 1)]
     # Deck and ceiling: half-discs astern of the junction, the deck 2 cm proud of the hull's own fan.
-    deck = [(x, y) for x, y, _ in arc(cap_radius(0.0) - 0.06, 0.0)]
+    deck = [(x, y) for x, y, _ in arc(cap_radius(0.0) - 0.06, 0.0)] + [(J, -(cap_radius(0.0) - 0.06)), (J, cap_radius(0.0) - 0.06)]
     prism("ThroatDeck", deck, -0.12, 0.0, M_BayDeck(), "Floors")
-    ceil = [(x, y) for x, y, _ in arc(cap_radius(HT) - 0.1, HT)]
+    ceil = [(x, y) for x, y, _ in arc(cap_radius(HT) - 0.1, HT)] + [(J, -(cap_radius(HT) - 0.1)), (J, cap_radius(HT) - 0.1)]
     prism("ThroatCeiling", ceil, HT, HT + 0.12, M_PanelDark(), "Ceiling")
-    # Liners: the cap's inside from the door's edge round to the junction plane, 10 cm inside the hull.
     zs = [HT * k / 14 for k in range(15)]
     for side in (-1, 1):
-        rows = []
-        for z in zs:
-            r = cap_radius(z) - 0.10
-            a_edge = math.degrees(math.asin(min(door_edge_y(z) / r, 0.999))) + 0.6
-            rows.append([(A[0] - r * math.cos(math.radians(a)), A[1] + side * r * math.sin(math.radians(a)), z) for a in [a_edge + (90.0 - a_edge) * k / 10 for k in range(11)]])
-        grid_surface(f"CapLiner{'P' if side < 0 else 'S'}", rows, M_PanelDark(), "Walls", toward=(A[0], A[1], HT / 2))
-        # The bulkhead ribbon at the junction: between the bay's wall end (|y| = W/2) and the cap's inside, up to
-        # the bay's ceiling; above it the lintel closes the throat's extra height across its whole width.
+        # The junction ribbon: between the bay's wall end (|y| = W/2) and the recess's inside, up to the bay's ceiling.
         zb = [z for z in zs if z <= H + 1e-6] + [H]
-        rib = [[(A[0], side * (W / 2), z), (A[0], side * (cap_radius(z) - 0.10), z)] for z in zb]
-        grid_surface(f"Junction{'P' if side < 0 else 'S'}", rib, M_PanelGrey(), "Walls", toward=(A[0] + 3.0, 0.0, H / 2))
-    zl = [H + (HT - H) * k / 4 for k in range(5)]
-    lintel = [[(A[0], -(cap_radius(z) - 0.10) + (2 * (cap_radius(z) - 0.10)) * k / 16, z) for k in range(17)] for z in zl]
-    grid_surface("JunctionLintel", lintel, M_PanelGrey(), "Walls", toward=(A[0] + 3.0, 0.0, H / 2))
-    box("LintelStrip", (A[0] + 0.03, 0, H - 0.3), (0.03, 2 * (cap_radius(H) - 0.4), 0.12), M_Strip(), "Lights")
-    for side in (-1, 1):
-        # A dark post where the wall meets the cap, and the warning lamps that were on the old frame.
-        box("DoorPost", (A[0] + 0.25, side * (W / 2 - 0.3), H / 2), (0.5, 0.6, H), M_PanelDark(), "Walls")
+        rib = [[(J, side * (W / 2), z), (J, side * (cap_radius(z) - 0.10), z)] for z in zb]
+        grid_surface(f"Junction{'P' if side < 0 else 'S'}", rib, M_PanelGrey(), "Walls", toward=(J + 3.0, 0.0, H / 2))
+        # The bay's side wall carries on to the junction.
+        box("WallStub", (A[0] + 0.5, side * (W / 2 + 0.06), H / 2), (1.0, 0.12, H), M_PanelGrey(), "Walls")
+        box("DoorPost", (J + 0.25, side * (W / 2 - 0.3), H / 2), (0.5, 0.6, H), M_PanelDark(), "Walls")
         for z in (2.0, 4.0):
-            box("WarnLamp", (A[0] + 0.51, side * (W / 2 - 0.3), z), (0.03, 0.12, 0.3), M_Warn(), "Lights")
+            box("WarnLamp", (J + 0.51, side * (W / 2 - 0.3), z), (0.03, 0.12, 0.3), M_Warn(), "Lights")
+    # The lintel closes the throat's extra height across its whole width above the bay's ceiling.
+    zl = [H + (HT - H) * k / 4 for k in range(5)]
+    lintel = [[(J, -(cap_radius(z) - 0.10) + (2 * (cap_radius(z) - 0.10)) * k / 16, z) for k in range(17)] for z in zl]
+    grid_surface("JunctionLintel", lintel, M_PanelGrey(), "Walls", toward=(J + 3.0, 0.0, H / 2))
+    box("LintelStrip", (J + 0.03, 0, H - 0.3), (0.03, 2 * (cap_radius(H) - 0.4), 0.12), M_Strip(), "Lights")
     # Deck lights round the fan, and the approach line carried out to the door.
     for k in range(1, 8):
         a = 90.0 + 180.0 * k / 8
