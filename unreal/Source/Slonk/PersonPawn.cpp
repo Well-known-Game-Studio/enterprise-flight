@@ -9,6 +9,14 @@
 #include "GameFramework/SpringArmComponent.h"
 #include "GeometryScript/MeshNormalsFunctions.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Components/StaticMeshComponent.h"
+#include "DynamicMesh/DynamicMesh3.h"
+#include "DynamicMeshEditor.h"
+#include "DynamicMeshToMeshDescription.h"
+#include "Engine/StaticMesh.h"
+#include "MeshDescription.h"
+#include "StaticMeshAttributes.h"
+#include "UDynamicMesh.h"
 #include "MeshPrims.h"
 #include "PlanetBody.h"
 #include "RcsThrusterComponent.h"
@@ -234,6 +242,60 @@ void APersonPawn::ApplySuitMaterials()
 		RightLeg->ConfigureMaterialSet({ SuitMID.Get(), TrimMID.Get(), BootLight });
 	}
 	if (VisorMID) { Visor->ConfigureMaterialSet({ VisorMID.Get() }); }
+}
+
+UStaticMeshComponent* APersonPawn::GetSampleMesh()
+{
+	if (SampleMesh) { return SampleMesh; }
+	// Every part's triangles into one mesh in the capsule's frame.
+	UE::Geometry::FDynamicMesh3 Combined;
+	Combined.EnableTriangleGroups();
+	Combined.EnableAttributes();
+	UE::Geometry::FDynamicMeshEditor Editor(&Combined);
+	for (UDynamicMeshComponent* P : BodyParts())
+	{
+		UDynamicMesh* DM = P->GetDynamicMesh();
+		if (!DM) { continue; }
+		const FTransform Xf = P->GetComponentTransform().GetRelativeTransform(Body->GetComponentTransform());
+		DM->ProcessMesh([&](const UE::Geometry::FDynamicMesh3& Part)
+		{
+			UE::Geometry::FDynamicMesh3 Copy(Part);
+			if (!Copy.HasAttributes()) { Copy.EnableAttributes(); }
+			UE::Geometry::FMeshIndexMappings Map;
+			Editor.AppendMesh(&Copy, Map, [&Xf](int32, const FVector3d& Pos) { return (FVector3d)Xf.TransformPosition((FVector)Pos); });
+		});
+	}
+	if (Combined.TriangleCount() == 0) { return nullptr; }
+	FMeshDescription MD;
+	FStaticMeshAttributes(MD).Register();
+	FDynamicMeshToMeshDescription Converter;
+	Converter.Convert(&Combined, MD, false);
+	UStaticMesh* Mesh = NewObject<UStaticMesh>(this, NAME_None, RF_Transient);
+	Mesh->bAllowCPUAccess = true;
+	FStaticMaterial Mat(nullptr, TEXT("Suit"));
+#if WITH_EDITORONLY_DATA
+	Mat.ImportedMaterialSlotName = TEXT("Suit");
+#endif
+	Mesh->GetStaticMaterials().Add(Mat);
+	UStaticMesh::FBuildMeshDescriptionsParams Params;
+	Params.bFastBuild = true;
+	Params.bAllowCpuAccess = true;
+	Params.bMarkPackageDirty = false;
+	Params.bCommitMeshDescription = false;
+	Params.bBuildSimpleCollision = false;
+	Mesh->BuildFromMeshDescriptions({ &MD }, Params);
+	SampleMeshAsset = Mesh;
+	SampleMesh = NewObject<UStaticMeshComponent>(this, TEXT("SampleMesh"));
+	SampleMesh->SetupAttachment(Body);
+	SampleMesh->SetStaticMesh(Mesh);
+	SampleMesh->SetMobility(EComponentMobility::Movable);
+	SampleMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	SampleMesh->SetGenerateOverlapEvents(false);
+	SampleMesh->SetVisibility(false);
+	SampleMesh->SetHiddenInGame(true);
+	SampleMesh->CastShadow = false;
+	SampleMesh->RegisterComponent();
+	return SampleMesh;
 }
 
 TArray<UDynamicMeshComponent*> APersonPawn::BodyParts() const

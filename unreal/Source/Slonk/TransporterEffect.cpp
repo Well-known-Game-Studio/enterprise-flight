@@ -12,6 +12,9 @@
 #include "Camera/PlayerCameraManager.h"
 #include "GameFramework/PlayerController.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "NiagaraComponent.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
 #include "UDynamicMesh.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -40,6 +43,7 @@ ATransporterEffect::ATransporterEffect()
 	// does not, and an ISM falls back to the default grey without it) and glows without lighting.
 	SparkleMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(SlonkMaterials::RunningLightPath));
 	Sparkles->NumCustomDataFloats = 6; // phase, period, mode, r, g, b, as the running lights lay them out
+	System = TSoftObjectPtr<UNiagaraSystem>(FSoftObjectPath(TEXT("/Game/Slonk/FX/NS_Transporter.NS_Transporter")));
 
 	Light = CreateDefaultSubobject<UPointLightComponent>(TEXT("Light"));
 	Light->SetupAttachment(Root);
@@ -133,8 +137,29 @@ void ATransporterEffect::BeginPlay()
 		Sparkles->SetMaterial(0, MID);
 	}
 	Light->SetLightColor(Color);
+	// The Niagara system on the figure's sample mesh, if both exist; its static-mesh emitter reads the mesh it is
+	// attached to.
+	if (UNiagaraSystem* Sys = System.LoadSynchronous())
+	{
+		if (APersonPawn* P = Body.Get())
+		{
+			if (UStaticMeshComponent* Sample = P->GetSampleMesh())
+			{
+				Niagara = UNiagaraFunctionLibrary::SpawnSystemAttached(Sys, Sample, NAME_None, FVector::ZeroVector, FRotator::ZeroRotator, EAttachLocation::SnapToTarget, false, true);
+				if (Niagara)
+				{
+					Niagara->SetVariableFloat(TEXT("Direction"), bMaterialise ? -1.f : 1.f);
+					Niagara->SetVariableLinearColor(TEXT("Color"), Color * NiagaraBrightness);
+					UE_LOG(LogTemp, Log, TEXT("Transporter: Niagara on %s (attached to %s)"), *P->GetName(), *GetNameSafe(Niagara->GetAttachParent()));
+					Niagara->SetVariableFloat(TEXT("Envelope"), 0.f);
+				}
+			}
+		}
+	}
+	if (!Niagara) { UE_LOG(LogTemp, Log, TEXT("Transporter: %s not usable, sparkles stand in."), *System.ToString()); }
 	FRandomStream R((int32)GetUniqueID());
 	Seeds.Reset(BodySparkles + Streaks);
+	if (Niagara) { Layout(); return; }
 	SampleBody(R);
 	for (int32 i = 0; i < Streaks; ++i)
 	{
@@ -222,7 +247,8 @@ void ATransporterEffect::Layout()
 		const float K = Near * Near / 100.f;
 		Transforms.Add(FTransform(Base.GetRotation(), Pos, FVector(FMath::Max(Across * K, 0.0005f), FMath::Max(Across * K, 0.0005f), FMath::Max(Along * K, 0.0005f))));
 	}
-	Sparkles->BatchUpdateInstancesTransforms(0, Transforms, true, true, true);
+	if (Seeds.Num() > 0) { Sparkles->BatchUpdateInstancesTransforms(0, Transforms, true, true, true); }
+	if (Niagara) { Niagara->SetVariableFloat(TEXT("Envelope"), E); }
 	if (MID) { MID->SetScalarParameterValue(TEXT("Intensity"), Emissive * E); }
 	Light->SetIntensity(LightCandela * E);
 	if (APersonPawn* P = Body.Get()) { P->SetTransportState(E, D); }
@@ -238,6 +264,13 @@ void ATransporterEffect::Tick(float DeltaTime)
 		if (OnEnvelope) { OnEnvelope(0.f); }
 		// Dematerialised: the body stays gone (the cut and the far shimmer take over). Materialised: the suit is back.
 		if (APersonPawn* P = Body.Get()) { P->SetTransportState(0.f, bMaterialise ? 0.f : 1.f); }
+		if (Niagara)
+		{
+			// Stop spawning; the last particles live out their lifetime, then the component goes.
+			Niagara->SetVariableFloat(TEXT("Envelope"), 0.f);
+			Niagara->SetAutoDestroy(true);
+			Niagara->Deactivate();
+		}
 		Destroy();
 		return;
 	}

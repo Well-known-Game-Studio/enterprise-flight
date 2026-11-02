@@ -108,6 +108,12 @@ public:
 	/** The figure's parts (torso, visor, arms, legs), for anything that samples or dresses the body. */
 	TArray<UDynamicMeshComponent*> BodyParts() const;
 	/**
+	 * The whole figure as one hidden static mesh with CPU data, built on first use from the parts in the body's
+	 * frame: what a Niagara static-mesh emitter attaches to and samples (the parts themselves are dynamic meshes,
+	 * which Niagara cannot read).
+	 */
+	UStaticMeshComponent* GetSampleMesh();
+	/**
 	 * The transporter's hold on the body: Glow 0..1 swaps the suit for the blue shimmer glow (0 restores the suit),
 	 * Dissolve 0..1 hides the figure part by part, legs first and the visor last (0 shows it all again).
 	 */
@@ -249,6 +255,8 @@ private:
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> VisorMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> BootLightMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> TransportMID;
+	UPROPERTY() TObjectPtr<UStaticMeshComponent> SampleMesh;
+	UPROPERTY() TObjectPtr<UStaticMesh> SampleMeshAsset;
 	bool bTransportGlow = false;
 	float TransportDissolve = 0.f;
 	void ApplySuitMaterials();

@@ -1,9 +1,10 @@
 // Slonk - the transporter's shimmer, after the Enterprise-A's in The Undiscovered Country: the figure itself fills
-// with blue sparkle, sampled from the body's own triangles, inside a column of rising streaks, and dissolves part by
-// part; at the far end it forms again out of the same shimmer. Asset-free: engine spheres on the running lights'
-// additive bulb material (round dots on the body, stretched streaks in the column), a blue light, the suit swapped
-// for a blue glow while the shimmer holds it. The person is not a skeletal mesh but six dynamic-mesh parts, so the
-// sampling here does what a Niagara mesh emitter would, reading the parts' triangles every tick.
+// with blue sparkle inside a column of rising streaks and dissolves part by part; at the far end it forms again out
+// of the same shimmer. The sparkle is a Niagara system (NS_Transporter, authored through the editor's Niagara
+// toolset) riding a hidden static-mesh copy of the person's six dynamic-mesh parts, so its mesh emitter spawns on
+// the body's own triangles; both emitters run in local space because the ship and the ground move metres a frame.
+// Without the asset the engine-sphere sparkles below stand in, sampled from the same triangles on the CPU. A blue
+// light and the suit swapped for a blue glow go with either.
 #pragma once
 
 #include "CoreMinimal.h"
@@ -12,6 +13,8 @@
 
 class APersonPawn;
 class UDynamicMeshComponent;
+class UNiagaraSystem;
+class UNiagaraComponent;
 class UInstancedStaticMeshComponent;
 class UPointLightComponent;
 class UMaterialInstanceDynamic;
@@ -48,6 +51,15 @@ public:
 	/** Sparkles reach full size this far from the viewer's eye and shrink with the square of anything closer. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Transporter") float EyeClearanceCm = 130.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Transporter") TSoftObjectPtr<UMaterialInterface> SparkleMaterial;
+	/**
+	 * The Niagara system (authored through the editor's Niagara toolset): a static-mesh emitter on the figure's own
+	 * mesh and a cylinder of streaks, driven by User.Envelope, User.Direction and User.Color. When it is missing the
+	 * sparkles below stand in, sampled from the same triangles.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Transporter") TSoftObjectPtr<UNiagaraSystem> System;
+	/** The Niagara sprites are additive: under the locked exposure (sunlit white is ~40) the colour goes in this many times over. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Transporter") float NiagaraBrightness = 80.f;
+	UPROPERTY() TObjectPtr<UNiagaraComponent> Niagara;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UInstancedStaticMeshComponent> Sparkles;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UPointLightComponent> Light;
