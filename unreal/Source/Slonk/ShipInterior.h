@@ -73,9 +73,22 @@ public:
 	EShipRoom RoomAt(const FVector& PawnLocal) const;
 	/** The bridge's spots come from the modelled set: the pawn sets them once it knows where the set stands. */
 	void SetRoomSpots(EShipRoom Which, const FTransform& Lift, const FTransform& Use, const FString& UseLabel);
+	/** The parked shuttle in the bay is its own mesh: hidden while the real one is out. */
+	void SetBayShuttleShown(bool bShown);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Materials") TSoftObjectPtr<UMaterialInterface> LitMaterial;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Materials") TSoftObjectPtr<UMaterialInterface> ButtonsMaterial;
+	/** The rooms' screens: the Okudagram material with /Game/Slonk/Bridge/T_Okuda_<slot> for every Screen_<slot>. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Materials") TSoftObjectPtr<UMaterialInterface> OkudagramMaterial;
+	/** Bound to the meshes' GlassPanel slot (partitions, cabinet fronts, the bay gallery). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Materials") TSoftObjectPtr<UMaterialInterface> GlassMaterial;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Materials") float ScreenIntensity = 2.2f;
+	/** The modelled rooms (soft references, so the cooker carries them); a missing mesh falls back to the primitive room. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Meshes") TSoftObjectPtr<UStaticMesh> EngineeringMesh;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Meshes") TSoftObjectPtr<UStaticMesh> SickbayMesh;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Meshes") TSoftObjectPtr<UStaticMesh> ShuttleBayMesh;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Meshes") TSoftObjectPtr<UStaticMesh> BayShuttleMesh;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Meshes") TSoftObjectPtr<UStaticMesh> TransporterMesh;
 
 private:
 	TArray<FShipRoom> Rooms;
@@ -85,6 +98,20 @@ private:
 
 	UMaterialInstanceDynamic* MakeLit(const TCHAR* Name, FLinearColor Base, float Roughness, float Metallic = 0.f, FLinearColor Emissive = FLinearColor::Black, float EmissiveStrength = 0.f);
 	UMaterialInstanceDynamic* MakeScreen(const TCHAR* Name, float Seed, float Intensity);
+	/** An Okudagram screen instance showing /Game/Slonk/Bridge/T_Okuda_<Name>; null when the texture or material is missing. */
+	UMaterialInstanceDynamic* MakeOkuda(const TCHAR* TextureName, float Intensity);
+	/**
+	 * The modelled room from the Blender build, its origin on the floor at the room's
+	 * centre, solid to the Boots channel through its own triangles while shown; slots bound by name. Null when
+	 * the asset is missing, and the caller builds the primitive room instead.
+	 */
+	UStaticMeshComponent* RoomMesh(const TSoftObjectPtr<UStaticMesh>& Asset, const FVector& FloorCenter);
+	void BindSlots(UStaticMeshComponent* C);
+	/** The parked shuttle built from primitives at S (the bay's placeholder when its mesh is missing). */
+	void PrimitiveShuttle(const FVector& S);
+	TWeakObjectPtr<UStaticMeshComponent> BayShuttle;
+	TArray<TWeakObjectPtr<UPrimitiveComponent>> BayShuttlePieces;
+	bool bBayShuttleShown = true;
 	UStaticMeshComponent* Piece(UStaticMesh* Mesh, const FVector& Center, const FVector& Size, const FRotator& Rot, UMaterialInterface* Mat, bool bSolid = true);
 	UStaticMeshComponent* Box(const FVector& Center, const FVector& Size, UMaterialInterface* Mat, float YawDeg = 0.f, bool bSolid = true) { return Piece(CubeMesh, Center, Size, FRotator(0.f, YawDeg, 0.f), Mat, bSolid); }
 	UStaticMeshComponent* Cyl(const FVector& Center, float Radius, float Height, UMaterialInterface* Mat, bool bSolid = true) { return Piece(CylinderMesh, Center, FVector(Radius * 2.f, Radius * 2.f, Height), FRotator::ZeroRotator, Mat, bSolid); }

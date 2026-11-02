@@ -2858,6 +2858,7 @@ bool AStarshipPawn::LaunchShuttle()
 		return false;
 	}
 	ActiveShuttle = Shuttle;
+	if (Interior) { Interior->SetBayShuttleShown(false); }
 	// The two craft pass through each other's collision proxies: the ship's box is the whole hull's extent and the
 	// shuttle starts inside it.
 	CollisionBox->IgnoreActorWhenMoving(Shuttle, true);
@@ -2895,6 +2896,7 @@ void AStarshipPawn::OnShuttleDocked(AShuttlecraftPawn* Shuttle)
 		Shuttle->Destroy();
 	}
 	ActiveShuttle = nullptr;
+	if (Interior) { Interior->SetBayShuttleShown(true); }
 	ScreenMessage(TEXT("Shuttle docked"), FColor::Cyan);
 }
 
