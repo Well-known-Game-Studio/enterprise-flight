@@ -6,6 +6,7 @@
 #include "Components/PointLightComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Engine/Texture.h"
 #include "UObject/ConstructorHelpers.h"
 
 UShipInteriorComponent::UShipInteriorComponent()
@@ -17,6 +18,8 @@ UShipInteriorComponent::UShipInteriorComponent()
 	if (CylFinder.Succeeded()) { CylinderMesh = CylFinder.Object; }
 	LitMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_BridgeLit.M_BridgeLit")));
 	ButtonsMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_BridgeButtons.M_BridgeButtons")));
+	OkudagramMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_Okudagram.M_Okudagram")));
+	GlassMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_Glass.M_Glass")));
 }
 
 void UShipInteriorComponent::BeginPlay()
@@ -101,6 +104,90 @@ UMaterialInstanceDynamic* UShipInteriorComponent::MakeScreen(const TCHAR* Name, 
 	Mid->SetScalarParameterValue(TEXT("CellScale"), 0.7f);
 	Materials.Add(Mid);
 	return Mid;
+}
+
+UMaterialInstanceDynamic* UShipInteriorComponent::MakeOkuda(const TCHAR* TextureName, float Intensity)
+{
+	UMaterialInterface* Parent = OkudagramMaterial.LoadSynchronous();
+	UTexture* Tex = LoadObject<UTexture>(nullptr, *FString::Printf(TEXT("/Game/Slonk/Bridge/T_Okuda_%s.T_Okuda_%s"), TextureName, TextureName));
+	if (!Parent || !Tex) { return nullptr; }
+	UMaterialInstanceDynamic* M = UMaterialInstanceDynamic::Create(Parent, this, *FString::Printf(TEXT("Interior_Okuda_%s_%d"), TextureName, PieceCount++));
+	M->SetTextureParameterValue(TEXT("Screen"), Tex);
+	M->SetScalarParameterValue(TEXT("Intensity"), Intensity);
+	M->SetScalarParameterValue(TEXT("UVMode"), 0.f);
+	Materials.Add(M);
+	return M;
+}
+
+UStaticMeshComponent* UShipInteriorComponent::RoomMesh(const TCHAR* AssetName, const FVector& FloorCenter)
+{
+	if (!GetOwner()) { return nullptr; }
+	UStaticMesh* Mesh = LoadObject<UStaticMesh>(nullptr, *FString::Printf(TEXT("%s/%s.%s"), *RoomMeshPath, AssetName, AssetName));
+	if (!Mesh)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Interior: %s missing under %s, building the primitive room instead."), AssetName, *RoomMeshPath);
+		return nullptr;
+	}
+	UStaticMeshComponent* C = NewObject<UStaticMeshComponent>(GetOwner(), *FString::Printf(TEXT("Interior_%s"), AssetName));
+	C->SetupAttachment(this);
+	C->SetStaticMesh(Mesh);
+	C->SetMobility(EComponentMobility::Movable);
+	C->SetRelativeLocation(FloorCenter);
+	C->SetGenerateOverlapEvents(false);
+	C->bAffectDistanceFieldLighting = false;
+	C->SetReceivesDecals(false);
+	// The mesh's own triangles (imported as complex-as-simple) are the walls, floors and furniture the walker meets.
+	C->SetCollisionObjectType(ECC_WorldDynamic);
+	C->SetCollisionResponseToAllChannels(ECR_Ignore);
+	C->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Block);
+	C->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	C->SetVisibility(false);
+	C->RegisterComponent();
+	BindSlots(C);
+	AllPieces.Add(C);
+	if (Building)
+	{
+		Building->Pieces.Add(C);
+		Building->Solids.Add(C);
+	}
+	return C;
+}
+
+void UShipInteriorComponent::BindSlots(UStaticMeshComponent* C)
+{
+	// Slot names are the Blender material names: screens take the Okudagram named after them, the lit slots get
+	// emissive instances, the glass its translucent material; everything else keeps the imported colour.
+	UMaterialInterface* Glass = GlassMaterial.LoadSynchronous();
+	UMaterialInterface* Touch = MakeScreen(TEXT("MeshTouch"), 7.f, 1.2f);
+	const TArray<FName> Slots = C->GetMaterialSlotNames();
+	for (int32 i = 0; i < Slots.Num(); ++i)
+	{
+		const FString Name = Slots[i].ToString();
+		UMaterialInterface* M = nullptr;
+		if (Name.StartsWith(TEXT("Screen_"))) { M = MakeOkuda(*Name.RightChop(7), ScreenIntensity); }
+		else if (Name == TEXT("LightStrip")) { M = StripWhite; }
+		else if (Name == TEXT("LightSoft")) { M = MakeLit(TEXT("MeshSoft"), FLinearColor(0.9f, 0.92f, 0.95f), 0.8f, 0.f, FLinearColor(0.95f, 0.97f, 1.0f), 2.4f); }
+		else if (Name == TEXT("CoreGlow")) { M = CoreBlue; }
+		else if (Name == TEXT("PadGlow")) { M = PadGlow; }
+		else if (Name == TEXT("LatticeLit")) { M = MakeLit(TEXT("MeshLattice"), FLinearColor(0.9f, 0.8f, 0.6f), 0.6f, 0.f, FLinearColor(1.0f, 0.85f, 0.6f), 2.2f); }
+		else if (Name == TEXT("StripBlue")) { M = MakeLit(TEXT("MeshStripBlue"), FLinearColor(0.2f, 0.4f, 0.9f), 0.6f, 0.f, FLinearColor(0.2f, 0.5f, 1.0f), 5.f); }
+		else if (Name == TEXT("VentGlow")) { M = MakeLit(TEXT("MeshVent"), FLinearColor(0.5f, 0.2f, 0.05f), 0.5f, 0.f, FLinearColor(1.0f, 0.45f, 0.15f), 4.f); }
+		else if (Name == TEXT("WarnRed")) { M = MakeLit(TEXT("MeshWarn"), FLinearColor(0.5f, 0.05f, 0.03f), 0.5f, 0.f, FLinearColor(1.0f, 0.1f, 0.05f), 4.f); }
+		else if (Name == TEXT("TouchPanel")) { M = Touch; }
+		else if (Name == TEXT("GlassPanel")) { M = Glass; }
+		if (M) { C->SetMaterial(i, M); }
+	}
+}
+
+void UShipInteriorComponent::SetBayShuttleShown(bool bShown)
+{
+	bBayShuttleShown = bShown;
+	if (UStaticMeshComponent* S = BayShuttle.Get())
+	{
+		const bool bOn = bShown && ShownRoom == EShipRoom::ShuttleBay;
+		S->SetVisibility(bOn);
+		S->SetCollisionEnabled(bOn ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
+	}
 }
 
 UStaticMeshComponent* UShipInteriorComponent::Piece(UStaticMesh* Mesh, const FVector& Center, const FVector& Size, const FRotator& Rot, UMaterialInterface* Mat, bool bSolid)
@@ -244,8 +331,18 @@ void UShipInteriorComponent::BuildEngineering(FShipRoom& R)
 	const FVector C = R.Center, H = R.Half;
 	const double Floor = C.Z - H.Z;
 	const FVector Door(C.X + H.X, C.Y + 300.0, Floor);
-	Shell(R, Door, FVector(-1, 0, 0), false);
 	R.Lift = InteriorSpot(Door + FVector(-90.0, 0, 0), FVector(-1, 0, 0));
+	R.Use = InteriorSpot(FVector(C.X + 220.0, C.Y, Floor), FVector(-1, 0, 0));
+	R.UseLabel = TEXT("open the engineering board");
+	if (RoomMesh(TEXT("SM_RoomEngineering"), FVector(C.X, C.Y, Floor)))
+	{
+		// The vault's panels and the core light the room; the well glows from below.
+		for (double Dx : { -500.0, -200.0, 100.0, 400.0, 700.0 }) { for (double Dy : { -170.0, 170.0 }) { Light(FVector(C.X + Dx, C.Y + Dy, C.Z + H.Z - 45.0), 70.f, 1100.f, FLinearColor(0.95f, 0.97f, 1.f)); } }
+		Light(FVector(C.X - 300.0, C.Y, Floor + 200.0), 90.f, 900.f, FLinearColor(0.4f, 0.7f, 1.f));
+		Light(FVector(C.X - 300.0, C.Y, Floor - 150.0), 40.f, 500.f, FLinearColor(0.4f, 0.7f, 1.f));
+		return;
+	}
+	Shell(R, Door, FVector(-1, 0, 0), false);
 	// The warp core: a lit column from deck to ceiling, ringed, on a dark base.
 	const FVector Core(C.X - 250.0, C.Y, 0.0);
 	Cyl(FVector(Core.X, Core.Y, C.Z), 90.f, (float)(2 * H.Z), CoreBlue);
@@ -254,8 +351,6 @@ void UShipInteriorComponent::BuildEngineering(FShipRoom& R)
 	// The master console faces the core; the chief's board opens from it.
 	Box(FVector(C.X + 120.0, C.Y, Floor + 45.0), FVector(200.0, 110.0, 90.0), ConsoleBlack);
 	Box(FVector(C.X + 120.0, C.Y, Floor + 91.0), FVector(184.0, 94.0, 2.0), Teal, 0.f, false);
-	R.Use = InteriorSpot(FVector(C.X + 120.0 + 55.0 + 45.0, C.Y, Floor), FVector(-1, 0, 0));
-	R.UseLabel = TEXT("open the engineering board");
 	// Stations along the side walls.
 	Console(FVector(C.X - 100.0, C.Y - H.Y + 34.0, Floor), 90.f, 260.f, 3.f);
 	Console(FVector(C.X + 300.0, C.Y - H.Y + 34.0, Floor), 90.f, 200.f, 4.f);
@@ -270,8 +365,15 @@ void UShipInteriorComponent::BuildSickbay(FShipRoom& R)
 	const FVector C = R.Center, H = R.Half;
 	const double Floor = C.Z - H.Z;
 	const FVector Door(C.X - H.X, C.Y - 250.0, Floor);
-	Shell(R, Door, FVector(1, 0, 0), false);
 	R.Lift = InteriorSpot(Door + FVector(90.0, 0, 0), FVector(1, 0, 0));
+	R.Use = InteriorSpot(FVector(C.X + 320.0 - 85.0, C.Y + 200.0, Floor), FVector(1, 0, 0));
+	R.UseLabel = TEXT("open the sickbay board");
+	if (RoomMesh(TEXT("SM_RoomSickbay"), FVector(C.X, C.Y, Floor)))
+	{
+		for (double Dx : { -250.0, 250.0 }) { for (double Dy : { -160.0, 160.0 }) { Light(FVector(C.X + Dx, C.Y + Dy, C.Z + H.Z - 20.0), 45.f, 900.f, FLinearColor(0.97f, 0.98f, 1.f)); } }
+		return;
+	}
+	Shell(R, Door, FVector(1, 0, 0), false);
 	// Biobeds along the port wall, heads to the wall, each with its monitor.
 	for (int32 i = 0; i < 4; ++i)
 	{
@@ -283,8 +385,6 @@ void UShipInteriorComponent::BuildSickbay(FShipRoom& R)
 	}
 	// The doctor's desk, facing the beds; the sickbay board opens from it.
 	Console(FVector(C.X + 320.0, C.Y + 200.0, Floor), 180.f, 220.f, 8.f);
-	R.Use = InteriorSpot(FVector(C.X + 320.0 - 85.0, C.Y + 200.0, Floor), FVector(1, 0, 0));
-	R.UseLabel = TEXT("open the sickbay board");
 	// A supplies cabinet on the starboard wall.
 	Box(FVector(C.X - 200.0, C.Y + H.Y - 30.0, Floor + 110.0), FVector(300.0, 60.0, 220.0), PanelGrey);
 	Box(FVector(C.X - 200.0, C.Y + H.Y - 61.0, Floor + 110.0), FVector(290.0, 2.0, 200.0), PanelDark, 0.f, false);
@@ -296,8 +396,19 @@ void UShipInteriorComponent::BuildShuttleBay(FShipRoom& R)
 	const FVector C = R.Center, H = R.Half;
 	const double Floor = C.Z - H.Z;
 	const FVector Door(C.X + H.X, C.Y + 500.0, Floor);
-	Shell(R, Door, FVector(-1, 0, 0), true);
 	R.Lift = InteriorSpot(Door + FVector(-90.0, 0, 0), FVector(-1, 0, 0));
+	const FVector S(C.X + 150.0, C.Y, Floor);
+	R.Use = InteriorSpot(S + FVector(-20.0, -150.0 - 170.0, 0.0), FVector(0, 1, 0));
+	R.UseLabel = TEXT("board the shuttle");
+	if (RoomMesh(TEXT("SM_RoomShuttleBay"), FVector(C.X, C.Y, Floor)))
+	{
+		BayShuttle = RoomMesh(TEXT("SM_RoomBayShuttle"), S);
+		// The atmosphere field across the opening: nothing to see, but the deck ends there for anyone on foot.
+		if (UStaticMeshComponent* Field = Box(FVector(C.X - H.X + 70.0, C.Y, C.Z), FVector(10.0, 2 * H.Y, 2 * H.Z), PanelDark)) { Field->SetHiddenInGame(true); }
+		for (double Dx : { -800.0, -400.0, 0.0, 400.0, 800.0 }) { for (double Dy : { -350.0, 350.0 }) { Light(FVector(C.X + Dx, C.Y + Dy, C.Z + H.Z - 140.0), 170.f, 1800.f, FLinearColor(0.95f, 0.97f, 1.f)); } }
+		return;
+	}
+	Shell(R, Door, FVector(-1, 0, 0), true);
 	// The bay door frame, open to space astern.
 	for (double Side : { -1.0, 1.0 }) { Box(FVector(C.X - H.X + 30.0, C.Y + Side * (H.Y - 30.0), C.Z), FVector(60.0, 60.0, 2 * H.Z), PanelDark); }
 	Box(FVector(C.X - H.X + 30.0, C.Y, C.Z + H.Z - 40.0), FVector(60.0, 2 * H.Y, 80.0), PanelDark);
@@ -307,7 +418,6 @@ void UShipInteriorComponent::BuildShuttleBay(FShipRoom& R)
 	// Guide lines down the deck to the door.
 	for (double Dy : { -220.0, 220.0 }) { Box(FVector(C.X - 200.0, C.Y + Dy, Floor + 1.0), FVector(2 * H.X - 500.0, 12.0, 2.0), MakeLit(TEXT("BayLine"), FLinearColor(0.8f, 0.7f, 0.1f), 0.8f, 0.f, FLinearColor(1.f, 0.85f, 0.2f), 1.2f), 0.f, false); }
 	// The parked shuttle: hull on its skids, nacelles, canopy. The real one is spawned when it leaves.
-	const FVector S(C.X + 150.0, C.Y, Floor);
 	for (double Side : { -1.0, 1.0 }) { Box(S + FVector(0, Side * 140.0, 20.0), FVector(520.0, 30.0, 40.0), PanelDark); }
 	Box(S + FVector(0, 0, 40.0 + 95.0), FVector(900.0, 300.0, 190.0), HullGrey);
 	Box(S + FVector(370.0, 0, 40.0 + 150.0), FVector(170.0, 240.0, 70.0), PanelDark, 0.f, false);
@@ -317,8 +427,6 @@ void UShipInteriorComponent::BuildShuttleBay(FShipRoom& R)
 		Box(S + FVector(-60.0, Side * 200.0, 60.0 + 20.0), FVector(300.0, 74.0, 14.0), MakeLit(TEXT("NacelleGlow"), FLinearColor(0.2f, 0.3f, 0.6f), 0.5f, 0.f, FLinearColor(0.3f, 0.5f, 1.f), 1.5f), 0.f, false);
 	}
 	Box(S + FVector(-20.0, -151.0, 40.0 + 100.0), FVector(90.0, 2.0, 150.0), PanelDark, 0.f, false); // the port door
-	R.Use = InteriorSpot(S + FVector(-20.0, -150.0 - 170.0, 0.0), FVector(0, 1, 0));
-	R.UseLabel = TEXT("board the shuttle");
 	for (double Dx : { -800.0, 0.0, 800.0 }) { for (double Dy : { -400.0, 400.0 }) { Light(FVector(C.X + Dx, C.Y + Dy, C.Z + H.Z - 40.0), 160.f, 1800.f, FLinearColor(0.95f, 0.97f, 1.f)); } }
 }
 
@@ -327,10 +435,20 @@ void UShipInteriorComponent::BuildTransporter(FShipRoom& R)
 	const FVector C = R.Center, H = R.Half;
 	const double Floor = C.Z - H.Z;
 	const FVector Door(C.X + 150.0, C.Y + H.Y, Floor);
-	Shell(R, Door, FVector(0, -1, 0), false);
 	R.Lift = InteriorSpot(Door + FVector(0, -90.0, 0), FVector(0, -1, 0));
-	// The pad: a low round platform with six lit discs, a glowing wall behind it.
 	const FVector Pad(C.X - 150.0, C.Y, Floor);
+	R.UseLabel = TEXT("energise");
+	if (RoomMesh(TEXT("SM_RoomTransporter"), FVector(C.X, C.Y, Floor)))
+	{
+		R.Use = InteriorSpot(Pad + FVector(0, 0, 24.5), FVector(1, 0, 0));
+		Light(FVector(Pad.X, Pad.Y, C.Z + H.Z - 30.0), 70.f, 900.f, FLinearColor(0.8f, 0.88f, 1.f));
+		Light(FVector(Pad.X - 150.0, Pad.Y, Floor + 150.0), 40.f, 600.f, FLinearColor(1.f, 0.9f, 0.75f));
+		Light(FVector(C.X + 230.0, C.Y, C.Z + H.Z - 25.0), 50.f, 800.f, FLinearColor(0.97f, 0.98f, 1.f));
+		return;
+	}
+	R.Use = InteriorSpot(Pad + FVector(0, 0, 18.0), FVector(1, 0, 0));
+	Shell(R, Door, FVector(0, -1, 0), false);
+	// The pad: a low round platform with six lit discs, a glowing wall behind it.
 	Cyl(Pad + FVector(0, 0, 9.0), 170.f, 18.f, PanelGrey);
 	for (int32 i = 0; i < 6; ++i)
 	{
@@ -340,8 +458,6 @@ void UShipInteriorComponent::BuildTransporter(FShipRoom& R)
 	Cyl(Pad + FVector(0, 0, 19.0), 30.f, 3.f, PadGlow, false);
 	Box(Pad + FVector(-172.0, 0, 130.0), FVector(8.0, 320.0, 240.0), PanelDark);
 	Box(Pad + FVector(-167.0, 0, 130.0), FVector(2.0, 300.0, 220.0), MakeLit(TEXT("PadWall"), FLinearColor(0.3f, 0.4f, 0.55f), 0.5f, 0.f, FLinearColor(0.55f, 0.7f, 1.f), 1.6f), 0.f, false);
-	R.Use = InteriorSpot(Pad + FVector(0, 0, 18.0), FVector(1, 0, 0));
-	R.UseLabel = TEXT("energise");
 	// The operator's console faces the pad.
 	Console(FVector(C.X + 250.0, C.Y, Floor), 180.f, 220.f, 12.f);
 	Light(FVector(Pad.X, Pad.Y, C.Z + H.Z - 25.0), 80.f, 900.f, FLinearColor(0.75f, 0.85f, 1.f));
@@ -357,4 +473,5 @@ void UShipInteriorComponent::ShowRoom(EShipRoom Which)
 		for (const TWeakObjectPtr<USceneComponent>& P : R.Pieces) { if (USceneComponent* S = P.Get()) { S->SetVisibility(bOn); } }
 		for (const TWeakObjectPtr<UPrimitiveComponent>& P : R.Solids) { if (UPrimitiveComponent* S = P.Get()) { S->SetCollisionEnabled(bOn ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision); } }
 	}
+	if (!bBayShuttleShown) { SetBayShuttleShown(false); }
 }

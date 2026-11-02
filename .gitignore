@@ -85,3 +85,8 @@ blender/bridge-st6/*.fbx
 blender/bridge-st6/*.fbm/
 blender/bridge-st6/okuda_png/
 blender/bridge-st6/previews/
+blender/rooms/*.blend
+blender/rooms/*.blend1
+blender/rooms/*.fbx
+blender/rooms/*.fbm/
+blender/rooms/previews/

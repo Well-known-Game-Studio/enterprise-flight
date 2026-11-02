@@ -1132,6 +1132,13 @@ void APersonPawn::ProcessDebugCommand()
 		if (S > 0.f) { DebugLook = FVector2D(Arg(1, 0.f), Arg(2, 0.f)) / S; DebugLookTime = S; }
 		else { LookDelta += FVector2D(Arg(1, 0.f), Arg(2, 0.f)); }
 	}
+	else if (Op == TEXT("face"))
+	{
+		// face <yaw>: turn at once to a bearing in the craft's frame while aboard (0 = the ship's bow), the world's otherwise.
+		const FQuat Q = Craft.IsValid() && (Frame == EPersonFrame::Hull || Frame == EPersonFrame::Deck) ? Craft->GetActorQuat() : FQuat::Identity;
+		const FVector F = Q.UnrotateVector(GetActorForwardVector());
+		LookDelta.X += FMath::FindDeltaAngleDegrees(FMath::RadiansToDegrees(FMath::Atan2(F.Y, F.X)), Arg(1, 0.f));
+	}
 	else if (Op == TEXT("jump")) { Jump(); }
 	else if (Op == TEXT("boots")) { if ((ArgStr(1) == TEXT("on")) != bBootsArmed) { ToggleBoots(); } }
 	else if (Op == TEXT("brake")) { Brake(); }
@@ -1143,6 +1150,6 @@ void APersonPawn::ProcessDebugCommand()
 	else if (Op == TEXT("use")) { Use(); }
 	else if (Op == TEXT("status"))
 	{
-		UE_LOG(LogTemp, Log, TEXT("Person: %s  speed %.2f m/s  alt %.2f m  g %.2f m/s2  boots %s  jump peak %.2f m  pos %s"), *FrameDescription(), Velocity.Size() / 100.0, AltitudeCm / 100.0, GravityCmS2 / 100.0, bBootsArmed ? TEXT("armed") : TEXT("off"), LastJumpHeightCm / 100.0, *GetActorLocation().ToString());
+		UE_LOG(LogTemp, Log, TEXT("Person: %s  speed %.2f m/s  alt %.2f m  g %.2f m/s2  boots %s  jump peak %.2f m  pos %s  feet in craft %s"), *FrameDescription(), Velocity.Size() / 100.0, AltitudeCm / 100.0, GravityCmS2 / 100.0, bBootsArmed ? TEXT("armed") : TEXT("off"), LastJumpHeightCm / 100.0, *GetActorLocation().ToString(), Craft.IsValid() ? *FeetInCraft().ToString() : TEXT("-"));
 	}
 }
