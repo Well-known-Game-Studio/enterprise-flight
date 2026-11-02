@@ -1,11 +1,12 @@
 """Run: python3 tools/bay_doors/cut_doors.py <path to Enterprise-A.obj>  (the model unpacked from
-blender/uss-enterprise-ncc-1701-a/source). Cut the clamshell door (the conical centre of the 1701-A's stern cap) into gores: the hull's own triangles with
-their UVs, clipped along the painted seam lines and by azimuth about the door's vertical axis. Writes two OBJs:
-gores_H.obj in the model's raw space (for a Blender check against the hull) and gores_B.obj in the FBX route's
-Blender convention (x, -y, z) m with winding flipped for the mirror. Pawn space: cm, x forward, y starboard, z up."""
+blender/uss-enterprise-ncc-1701-a/source). The 1701-A's fantail door is an inner cone standing in a recess at the
+stern: radius 828 cm at its base ring (z -1974, under the deck fan) to 280 cm at its top ring (z -1197), about a
+vertical axis at pawn (-6330, 0). This cuts that cone (the hull's own triangles, UVs kept) into eight gores by
+azimuth, each with an inner skin, and writes gores_B.obj in the FBX route's Blender frame (x, -y, z) m with the
+winding flipped for the mirror (and gores_H.obj in the model's raw frame for checks). Pawn space: cm, x forward."""
 import math, json, os, sys
-OBJ = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "Enterprise-A.obj")
-OUT = os.path.dirname(os.path.abspath(__file__))
+OBJ = sys.argv[1] if len(sys.argv) > 1 else "obj/Enterprise-A.obj"
+OUT = os.path.dirname(os.path.abspath(__file__)) if "tools" in os.path.abspath(__file__) else "cap"
 V=[]; VT=[]; faces=[]; mtl=None; fmtl=[]
 for line in open(OBJ):
     if line.startswith("v "):
@@ -15,29 +16,20 @@ for line in open(OBJ):
     elif line.startswith("usemtl"): mtl=line.split()[1]
     elif line.startswith("f "): faces.append([(int(t.split("/")[0])-1,int(t.split("/")[1])-1) for t in line.split()[1:]]); fmtl.append(mtl)
 CX, CZ = -6330.0, -1948.0
-# The door faces: the stern cap's recessed surface (inside a sphere fitted to the cap), above the deck fan and
-# below the top cap, on the surface of revolution (not the model's inner filler fans).
-def nrm(idx):
-    a,b,c=[V[i] for i,_ in idx[:3]]
-    u=[b[k]-a[k] for k in range(3)]; w=[c[k]-a[k] for k in range(3)]
-    n=[u[1]*w[2]-u[2]*w[1],u[2]*w[0]-u[0]*w[2],u[0]*w[1]-u[1]*w[0]]; L=math.sqrt(sum(t*t for t in n)) or 1
-    return [t/L for t in n]
+def r_cone(z): return 828.0 - (z + 1974.0) * 0.705
+DOOR_TOP = -1243.0
+# The door faces: Constitution_3 triangles at the stern whose centroid sits on the inner cone.
 door=[]
 for fi,idx in enumerate(faces):
     if fmtl[fi] != "Constitution_3": continue
     c=[sum(V[i][k] for i,_ in idx)/3 for k in range(3)]
-    if not (c[0] < -6100 and abs(c[1]) < 1100 and -1945 < c[2] < -1235): continue
-    if math.sqrt((c[0]+6200)**2 + c[1]**2 + (c[2]+2025)**2) >= 1041 - 60: continue   # the rim and overhang
-    n=nrm(idx); r=math.hypot(c[0]-CX, c[1]); rad=((c[0]-CX)/r, c[1]/r) if r > 1 else (0, 0)
-    dot=n[0]*rad[0]+n[1]*rad[1]
-    if abs(dot) > 0.3 or (c[2] > -1320 and abs(n[2]) > 0.5 and r > 250 and min(math.hypot(V[i][0]-CX, V[i][1]) for i,_ in idx) > 200):
-        door.append(fi)
+    if not (c[0] < -6100 and abs(c[1]) < 1000 and -1990 < c[2] < -1190): continue
+    r=math.hypot(c[0]-CX, c[1]); rc=r_cone(c[2])
+    if 0.9 < r / rc < 1.1: door.append(fi)
 print("door faces", len(door))
 tris=[[(V[i], VT[t]) for i,t in faces[fi]] for fi in door]
 def clip(poly, f):
-    """Keep the part of poly (list of (pos, uv)) where f(pos) <= 0 (Sutherland-Hodgman)."""
-    out=[]
-    n=len(poly)
+    out=[]; n=len(poly)
     for k in range(n):
         a,b = poly[k], poly[(k+1)%n]; fa, fb = f(a[0]), f(b[0])
         if fa <= 0: out.append(a)
@@ -46,23 +38,17 @@ def clip(poly, f):
             p = tuple(a[0][i] + t*(b[0][i]-a[0][i]) for i in range(3)); uv = tuple(a[1][i] + t*(b[1][i]-a[1][i]) for i in range(2))
             out.append((p,uv))
     return out
-def edge_y(z): return 346.0 + (-1270.0 - z) * 0.754
-DOOR_TOP = -1243.0   # the door's top edge: above it the cone turns into the roof under the top cap, which stays hull
 centre=[]
 for tri in tris:
-    p = clip(tri, lambda q: q[1] - edge_y(q[2]))
-    if len(p) >= 3: p = clip(p, lambda q: -q[1] - edge_y(q[2]))
-    if len(p) >= 3: p = clip(p, lambda q: q[2] - DOOR_TOP)
+    p = clip(tri, lambda q: q[2] - DOOR_TOP)
     if len(p) >= 3: centre.append(p)
-print("centre polys", len(centre))
-NG=8; AMAX=62.0
+NG=8; AMAX=90.0
 edges=[-AMAX + 2*AMAX*k/NG for k in range(NG+1)]
 def az_plane(a_deg, keep_greater):
     r=math.radians(a_deg)
-    # azimuth about (CX,0): az = atan2(y, -(x-CX)); the plane through the axis at azimuth a has normal n = (sin a, cos a) in (-(x-CX), y)... derive: point at azimuth a: (-(x-CX), y) = (cos a, sin a); the left normal = (-sin a, cos a)
     def f(q):
         u = -(q[0]-CX); v = q[1]
-        s = -math.sin(r)*u + math.cos(r)*v     # >0 on the side of greater azimuth
+        s = -math.sin(r)*u + math.cos(r)*v
         return -s if keep_greater else s
     return f
 gores=[]
@@ -74,8 +60,8 @@ for k in range(NG):
         if len(q) >= 3: polys.append(q)
     gores.append(polys)
     xs=[pt[0][0] for p in polys for pt in p]; ys=[pt[0][1] for p in polys for pt in p]; zs=[pt[0][2] for p in polys for pt in p]
-    print(f"gore {k+1}: {len(polys)} polys, x {min(xs):.0f}..{max(xs):.0f} y {min(ys):.0f}..{max(ys):.0f} z {min(zs):.0f}..{max(zs):.0f}")
-INNER_CM = 6.0   # the inner skin sits this far inside the hull surface (toward the door's axis)
+    print(f"gore {k+1}: {len(polys)} polys, az {edges[k]:.1f}..{edges[k+1]:.1f}, x {min(xs):.0f}..{max(xs):.0f} y {min(ys):.0f}..{max(ys):.0f} z {min(zs):.0f}..{max(zs):.0f}")
+INNER_CM = 6.0
 def inward(pos):
     r = math.hypot(pos[0]-CX, pos[1]); f = max(r - INNER_CM, 0.0) / max(r, 1e-6)
     return (CX + (pos[0]-CX) * f, pos[1] * f, pos[2])
@@ -84,8 +70,8 @@ def write(path, conv, flip):
         f.write("mtllib Enterprise-A.mtl\n"); vi=1; ti=1
         for k,polys in enumerate(gores):
             f.write(f"o SM_BayDoor{k+1}\n")
-            for skin, mtl, rev in (("outer", "Constitution_3", False), ("inner", "DoorInner", True)):
-                f.write(f"usemtl {mtl}\n")
+            for skin, m, rev in (("outer", "Constitution_3", False), ("inner", "DoorInner", True)):
+                f.write(f"usemtl {m}\n")
                 for p in polys:
                     idx=[]
                     for pos,uv in p:
@@ -93,7 +79,8 @@ def write(path, conv, flip):
                     order = idx[::-1] if (flip != rev) else idx
                     for j in range(1,len(order)-1):
                         f.write("f %d/%d %d/%d %d/%d\n"%(order[0][0],order[0][1],order[j][0],order[j][1],order[j+1][0],order[j+1][1]))
-write(os.path.join(OUT, "gores_H.obj"), lambda p: (p[1]/100.0, -p[0]/100.0, p[2]/100.0), False)   # raw model space
-write(os.path.join(OUT, "gores_B.obj"), lambda p: (p[0]/100.0, -p[1]/100.0, p[2]/100.0), True)    # FBX route convention (mirror -> flip)
-json.dump({"pivot_pawn": [CX, 0.0, CZ], "edges_deg": edges}, open(os.path.join(OUT, "gores_meta.json"),"w"))
+write(os.path.join(OUT, "gores_H.obj"), lambda p: (p[1]/100.0, -p[0]/100.0, p[2]/100.0), False)
+write(os.path.join(OUT, "gores_B.obj"), lambda p: (p[0]/100.0, -p[1]/100.0, p[2]/100.0), True)
+json.dump({"pivot_pawn": [CX, 0.0, CZ], "edges_deg": edges, "door_faces": door}, open(os.path.join(OUT, "gores_meta.json"),"w"))
+open(os.path.join(OUT, "grp_door.txt"), "w").write(" ".join(map(str, door)))
 print("written")

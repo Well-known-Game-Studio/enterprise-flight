@@ -44,20 +44,23 @@ void UBayDoorsComponent::SetShown(bool bShown)
 
 void UBayDoorsComponent::Apply()
 {
-	// Gore k of 8 sits at azimuth (k - 4 + 0.5) * 15.5 deg from the centre line, port negative. Opening swings
-	// the innermost pair SwingDeg and each pair outward one gore's width less, so all eight end stacked beyond the
-	// door's edge; a growing radial scale keeps the stack from fighting the panels it slides over.
+	// The door is a half cone about its vertical axis, cut into N gores of 180/N degrees from port to starboard.
+	// Opening swings each pair toward its own side: the innermost pair by the width of the three gores outside it,
+	// the next by two, then one, the outermost not at all, so all N end stacked in the outermost gore's place and
+	// the arch between them is clear. The stack nests inward (a shrinking radial scale), away from the hull.
 	const int32 N = Gores.Num();
+	if (N == 0) { return; }
+	const float Width = 180.f / N;
 	for (int32 k = 0; k < N; ++k)
 	{
 		UStaticMeshComponent* G = Gores[k];
 		if (!G) { continue; }
-		const float Idx = k - N * 0.5f + 0.5f;
-		const float Rank = FMath::Abs(Idx) - 0.5f;
-		const float Swing = (SwingDeg - Rank * (2.f * SwingDeg / N)) * Fraction;
+		const float Idx = k - N * 0.5f + 0.5f;        // -3.5 .. 3.5 for eight gores
+		const float Rank = FMath::Abs(Idx) - 0.5f;     // 0 innermost .. N/2 - 1 outermost
+		const float Swing = (N * 0.5f - 1.f - Rank) * Width * Fraction;
 		// Azimuth grows toward starboard; a positive yaw about the ship's up takes a point astern toward port.
 		const float Yaw = Idx < 0.f ? Swing : -Swing;
-		const float S = 1.f + (0.01f + 0.012f * Rank) * Fraction;
+		const float S = 1.f - 0.012f * (N * 0.5f - 1.f - Rank) * Fraction;
 		G->SetRelativeRotation(FRotator(0.f, Yaw, 0.f));
 		G->SetRelativeScale3D(FVector(S, S, 1.f));
 	}
