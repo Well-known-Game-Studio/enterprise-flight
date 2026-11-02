@@ -1,6 +1,8 @@
-// Slonk - the transporter's shimmer: a column of swirling sparkles over the feet of whoever is beaming, gathering
-// and brightening as they dematerialise, thinning as they stand again at the other end. Asset-free: engine spheres
-// on the lit material, a point light, and the player's camera fading to the same pale blue-white.
+// Slonk - the transporter's shimmer, after the Enterprise-A's in The Undiscovered Country: a column of blue-white
+// sparkles and vertical streaks over the feet of whoever is beaming, gathering and brightening as they dematerialise,
+// thinning as they stand again at the other end. Asset-free: engine spheres on the running lights' additive bulb
+// material (the dots round, the streaks stretched along the column), a blue light, and the player's camera fading
+// to the same blue-white.
 #pragma once
 
 #include "CoreMinimal.h"
@@ -31,13 +33,15 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Transporter") float Duration = 1.7f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Transporter") bool bMaterialise = false;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Transporter") FLinearColor Color = FLinearColor(0.75f, 0.88f, 1.0f);
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Transporter") int32 SparkleCount = 170;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Transporter") FLinearColor Color = FLinearColor(0.42f, 0.7f, 1.0f);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Transporter") int32 SparkleCount = 260;
+	/** The share of the column that is streaks (tall, fast) rather than dots. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Transporter") float StreakFraction = 0.45f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Transporter") float RadiusCm = 46.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Transporter") float HeightCm = 205.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Transporter") float LightCandela = 180.f;
 	/** The running-light material's Intensity at full shimmer (an additive bulb; the ship's bulbs run at 120). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Transporter") float Emissive = 260.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Transporter") float Emissive = 340.f;
 	/** Sparkles reach full size this far from the viewer's eye and shrink with the square of anything closer, so the
 	 *  person inside the column sees drifting points rather than the nearest few bulbs filling the helmet. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Transporter") float EyeClearanceCm = 130.f;
@@ -49,7 +53,7 @@ public:
 	TFunction<void(float)> OnEnvelope;
 
 private:
-	struct FSparkle { float Angle, Radius, Height, Rise, Phase, Size; };
+	struct FSparkle { float Angle, Radius, Height, Rise, Phase, Size, Length; };
 	TArray<FSparkle> Seeds;
 	float Age = 0.f;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> MID;

@@ -2631,13 +2631,23 @@ void AStarshipPawn::FadeThen(TFunction<void()> Then)
 
 void AStarshipPawn::Transport(APersonPawn* Person, TFunction<void()> Then)
 {
-	const FLinearColor Shimmer(0.78f, 0.88f, 1.f);
+	const FLinearColor Shimmer(0.62f, 0.8f, 1.f);
 	const float Half = FMath::Max(0.3f, TransporterSeconds);
 	TWeakObjectPtr<APersonPawn> P(Person);
 	TWeakObjectPtr<AStarshipPawn> Self(this);
 	TWeakObjectPtr<UShipInteriorComponent> Int(Interior);
 	// The column stands on the feet and rides what carries the person: the ship on the pad, the world on the ground.
-	auto FeetOf = [](APersonPawn* Who) { return FTransform(Who->GetActorQuat(), Who->GetActorLocation() - Who->GetActorUpVector() * APersonPawn::HalfHeightCm); };
+	// Aboard, the feet come through the ship's frame: the person's world position is a tick behind a moving ship,
+	// which put the column a stride behind the body.
+	auto FeetOf = [Self](APersonPawn* Who)
+	{
+		if (Who->IsAboard() && Self.IsValid())
+		{
+			const FTransform Craft = Self->CraftFrame();
+			return FTransform(Craft.GetRotation() * Who->GetHullLocal().GetRotation(), Craft.TransformPosition(Who->FeetInCraft()));
+		}
+		return FTransform(Who->GetActorQuat(), Who->GetActorLocation() - Who->GetActorUpVector() * APersonPawn::HalfHeightCm);
+	};
 	auto RideOf = [Self](APersonPawn* Who) -> USceneComponent*
 	{
 		if (Who->IsAboard()) { return Self.IsValid() ? Self->GetRootComponent() : nullptr; }

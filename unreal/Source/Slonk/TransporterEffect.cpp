@@ -78,14 +78,15 @@ void ATransporterEffect::BeginPlay()
 		S.Angle = R.FRand() * 2.f * PI;
 		S.Radius = RadiusCm * FMath::Sqrt(FMath::Lerp(0.04f, 1.f, R.FRand()));
 		S.Height = R.FRand() * HeightCm;
-		S.Rise = FMath::Lerp(35.f, 95.f, R.FRand());
+		const bool bStreak = R.FRand() < StreakFraction;
+		S.Rise = bStreak ? FMath::Lerp(130.f, 240.f, R.FRand()) : FMath::Lerp(35.f, 95.f, R.FRand());
 		S.Phase = R.FRand() * 2.f * PI;
-		S.Size = FMath::Lerp(2.4f, 4.6f, R.FRand());
+		S.Size = bStreak ? FMath::Lerp(0.7f, 1.3f, R.FRand()) : FMath::Lerp(2.2f, 4.2f, R.FRand());
+		S.Length = bStreak ? FMath::Lerp(12.f, 30.f, R.FRand()) : S.Size;
 		Seeds.Add(S);
 		const int32 Index = Sparkles->AddInstance(FTransform(FQuat::Identity, FVector(S.Radius * FMath::Cos(S.Angle), S.Radius * FMath::Sin(S.Angle), S.Height), FVector(0.001f)), false);
-		// Steady bulbs in the shimmer's colour, a little warmer or cooler each.
-		const float Warm = R.FRand();
-		const FLinearColor C = FMath::Lerp(Color, FLinearColor(1.f, 0.95f, 0.8f), Warm * 0.5f);
+		// Steady bulbs from the shimmer's blue to near white, each its own shade.
+		const FLinearColor C = FMath::Lerp(Color, FLinearColor(0.9f, 0.96f, 1.f), R.FRand() * 0.7f);
 		Sparkles->SetCustomDataValue(Index, 0, S.Phase, false);
 		Sparkles->SetCustomDataValue(Index, 1, 1.f, false);
 		Sparkles->SetCustomDataValue(Index, 2, (float)(uint8)ERunningLightMode::Steady, false);
@@ -123,8 +124,9 @@ void ATransporterEffect::Layout()
 		const float Twinkle = 0.5f + 0.5f * FMath::Sin(S.Phase + Age * 15.f);
 		const FVector Pos(S.Radius * Taper * FMath::Cos(A), S.Radius * Taper * FMath::Sin(A), H);
 		const float Near = FMath::Clamp((float)FVector::Dist(Pos, Eye) / EyeClearanceCm, 0.f, 1.f);
-		const float Scale = S.Size * (0.45f + 0.55f * Twinkle) * E * Near * Near / 100.f;
-		Transforms.Add(FTransform(FQuat::Identity, Pos, FVector(FMath::Max(Scale, 0.0005f))));
+		const float K = (0.45f + 0.55f * Twinkle) * E * Near * Near / 100.f;
+		const float Across = FMath::Max(S.Size * K, 0.0005f);
+		Transforms.Add(FTransform(FQuat::Identity, Pos, FVector(Across, Across, FMath::Max(S.Length * K, 0.0005f))));
 	}
 	Sparkles->BatchUpdateInstancesTransforms(0, Transforms, false, true, true);
 	if (MID) { MID->SetScalarParameterValue(TEXT("Intensity"), Emissive * E); }
