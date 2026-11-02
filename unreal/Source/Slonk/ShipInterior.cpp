@@ -20,6 +20,11 @@ UShipInteriorComponent::UShipInteriorComponent()
 	ButtonsMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_BridgeButtons.M_BridgeButtons")));
 	OkudagramMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_Okudagram.M_Okudagram")));
 	GlassMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_Glass.M_Glass")));
+	EngineeringMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/Slonk/Rooms/SM_RoomEngineering.SM_RoomEngineering")));
+	SickbayMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/Slonk/Rooms/SM_RoomSickbay.SM_RoomSickbay")));
+	ShuttleBayMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/Slonk/Rooms/SM_RoomShuttleBay.SM_RoomShuttleBay")));
+	BayShuttleMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/Slonk/Rooms/SM_RoomBayShuttle.SM_RoomBayShuttle")));
+	TransporterMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/Slonk/Rooms/SM_RoomTransporter.SM_RoomTransporter")));
 }
 
 void UShipInteriorComponent::BeginPlay()
@@ -119,16 +124,16 @@ UMaterialInstanceDynamic* UShipInteriorComponent::MakeOkuda(const TCHAR* Texture
 	return M;
 }
 
-UStaticMeshComponent* UShipInteriorComponent::RoomMesh(const TCHAR* AssetName, const FVector& FloorCenter)
+UStaticMeshComponent* UShipInteriorComponent::RoomMesh(const TSoftObjectPtr<UStaticMesh>& Asset, const FVector& FloorCenter)
 {
 	if (!GetOwner()) { return nullptr; }
-	UStaticMesh* Mesh = LoadObject<UStaticMesh>(nullptr, *FString::Printf(TEXT("%s/%s.%s"), *RoomMeshPath, AssetName, AssetName));
+	UStaticMesh* Mesh = Asset.LoadSynchronous();
 	if (!Mesh)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Interior: %s missing under %s, building the primitive room instead."), AssetName, *RoomMeshPath);
+		UE_LOG(LogTemp, Warning, TEXT("Interior: %s missing, building the primitive room instead."), *Asset.ToString());
 		return nullptr;
 	}
-	UStaticMeshComponent* C = NewObject<UStaticMeshComponent>(GetOwner(), *FString::Printf(TEXT("Interior_%s"), AssetName));
+	UStaticMeshComponent* C = NewObject<UStaticMeshComponent>(GetOwner(), *FString::Printf(TEXT("Interior_%s"), *Mesh->GetName()));
 	C->SetupAttachment(this);
 	C->SetStaticMesh(Mesh);
 	C->SetMobility(EComponentMobility::Movable);
@@ -182,11 +187,33 @@ void UShipInteriorComponent::BindSlots(UStaticMeshComponent* C)
 void UShipInteriorComponent::SetBayShuttleShown(bool bShown)
 {
 	bBayShuttleShown = bShown;
-	if (UStaticMeshComponent* S = BayShuttle.Get())
+	const bool bOn = bShown && ShownRoom == EShipRoom::ShuttleBay;
+	auto Apply = [bOn](UPrimitiveComponent* S)
 	{
-		const bool bOn = bShown && ShownRoom == EShipRoom::ShuttleBay;
 		S->SetVisibility(bOn);
-		S->SetCollisionEnabled(bOn ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
+		// Pieces that never block keep NoCollision either way.
+		if (S->GetCollisionResponseToChannel(ECC_GameTraceChannel1) == ECR_Block) { S->SetCollisionEnabled(bOn ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision); }
+	};
+	if (UStaticMeshComponent* S = BayShuttle.Get()) { Apply(S); }
+	for (const TWeakObjectPtr<UPrimitiveComponent>& P : BayShuttlePieces) { if (UPrimitiveComponent* S = P.Get()) { Apply(S); } }
+}
+
+void UShipInteriorComponent::PrimitiveShuttle(const FVector& S)
+{
+	// Hull on its skids, nacelles, canopy, the port door: the pieces are remembered so the launch can hide them.
+	const int32 First = AllPieces.Num();
+	for (double Side : { -1.0, 1.0 }) { Box(S + FVector(0, Side * 140.0, 20.0), FVector(520.0, 30.0, 40.0), PanelDark); }
+	Box(S + FVector(0, 0, 40.0 + 95.0), FVector(900.0, 300.0, 190.0), HullGrey);
+	Box(S + FVector(370.0, 0, 40.0 + 150.0), FVector(170.0, 240.0, 70.0), PanelDark, 0.f, false);
+	for (double Side : { -1.0, 1.0 })
+	{
+		Box(S + FVector(-60.0, Side * 200.0, 60.0), FVector(640.0, 72.0, 72.0), HullGrey);
+		Box(S + FVector(-60.0, Side * 200.0, 60.0 + 20.0), FVector(300.0, 74.0, 14.0), MakeLit(TEXT("NacelleGlow"), FLinearColor(0.2f, 0.3f, 0.6f), 0.5f, 0.f, FLinearColor(0.3f, 0.5f, 1.f), 1.5f), 0.f, false);
+	}
+	Box(S + FVector(-20.0, -151.0, 40.0 + 100.0), FVector(90.0, 2.0, 150.0), PanelDark, 0.f, false); // the port door
+	for (int32 i = First; i < AllPieces.Num(); ++i)
+	{
+		if (UPrimitiveComponent* P = Cast<UPrimitiveComponent>(AllPieces[i])) { BayShuttlePieces.Add(P); }
 	}
 }
 
@@ -281,7 +308,7 @@ void UShipInteriorComponent::Build()
 	AStarshipPawn* Ship = Cast<AStarshipPawn>(GetOwner());
 	if (!Ship || !GetWorld() || !GetWorld()->IsGameWorld()) { return; }
 	for (USceneComponent* P : AllPieces) { if (P) { P->DestroyComponent(); } }
-	AllPieces.Reset(); Materials.Reset(); Rooms.Reset(); PieceCount = 0;
+	AllPieces.Reset(); Materials.Reset(); Rooms.Reset(); PieceCount = 0; BayShuttlePieces.Reset(); BayShuttle = nullptr;
 
 	PanelGrey = MakeLit(TEXT("PanelGrey"), FLinearColor(0.62f, 0.63f, 0.66f), 0.75f);
 	PanelDark = MakeLit(TEXT("PanelDark"), FLinearColor(0.16f, 0.17f, 0.19f), 0.6f);
@@ -334,7 +361,7 @@ void UShipInteriorComponent::BuildEngineering(FShipRoom& R)
 	R.Lift = InteriorSpot(Door + FVector(-90.0, 0, 0), FVector(-1, 0, 0));
 	R.Use = InteriorSpot(FVector(C.X + 220.0, C.Y, Floor), FVector(-1, 0, 0));
 	R.UseLabel = TEXT("open the engineering board");
-	if (RoomMesh(TEXT("SM_RoomEngineering"), FVector(C.X, C.Y, Floor)))
+	if (RoomMesh(EngineeringMesh, FVector(C.X, C.Y, Floor)))
 	{
 		// The vault's panels and the core light the room; the well glows from below.
 		for (double Dx : { -500.0, -200.0, 100.0, 400.0, 700.0 }) { for (double Dy : { -170.0, 170.0 }) { Light(FVector(C.X + Dx, C.Y + Dy, C.Z + H.Z - 45.0), 70.f, 1100.f, FLinearColor(0.95f, 0.97f, 1.f)); } }
@@ -368,7 +395,7 @@ void UShipInteriorComponent::BuildSickbay(FShipRoom& R)
 	R.Lift = InteriorSpot(Door + FVector(90.0, 0, 0), FVector(1, 0, 0));
 	R.Use = InteriorSpot(FVector(C.X + 320.0 - 85.0, C.Y + 200.0, Floor), FVector(1, 0, 0));
 	R.UseLabel = TEXT("open the sickbay board");
-	if (RoomMesh(TEXT("SM_RoomSickbay"), FVector(C.X, C.Y, Floor)))
+	if (RoomMesh(SickbayMesh, FVector(C.X, C.Y, Floor)))
 	{
 		for (double Dx : { -250.0, 250.0 }) { for (double Dy : { -160.0, 160.0 }) { Light(FVector(C.X + Dx, C.Y + Dy, C.Z + H.Z - 20.0), 45.f, 900.f, FLinearColor(0.97f, 0.98f, 1.f)); } }
 		return;
@@ -400,9 +427,11 @@ void UShipInteriorComponent::BuildShuttleBay(FShipRoom& R)
 	const FVector S(C.X + 150.0, C.Y, Floor);
 	R.Use = InteriorSpot(S + FVector(-20.0, -150.0 - 170.0, 0.0), FVector(0, 1, 0));
 	R.UseLabel = TEXT("board the shuttle");
-	if (RoomMesh(TEXT("SM_RoomShuttleBay"), FVector(C.X, C.Y, Floor)))
+	if (RoomMesh(ShuttleBayMesh, FVector(C.X, C.Y, Floor)))
 	{
-		BayShuttle = RoomMesh(TEXT("SM_RoomBayShuttle"), S);
+		// The shuttle mesh is authored in the bay's frame (already on the landing box), so it shares the bay's origin.
+		BayShuttle = RoomMesh(BayShuttleMesh, FVector(C.X, C.Y, Floor));
+		if (!BayShuttle.IsValid()) { PrimitiveShuttle(S); }
 		// The atmosphere field across the opening: nothing to see, but the deck ends there for anyone on foot.
 		if (UStaticMeshComponent* Field = Box(FVector(C.X - H.X + 70.0, C.Y, C.Z), FVector(10.0, 2 * H.Y, 2 * H.Z), PanelDark)) { Field->SetHiddenInGame(true); }
 		for (double Dx : { -800.0, -400.0, 0.0, 400.0, 800.0 }) { for (double Dy : { -350.0, 350.0 }) { Light(FVector(C.X + Dx, C.Y + Dy, C.Z + H.Z - 140.0), 170.f, 1800.f, FLinearColor(0.95f, 0.97f, 1.f)); } }
@@ -417,16 +446,8 @@ void UShipInteriorComponent::BuildShuttleBay(FShipRoom& R)
 	if (UStaticMeshComponent* Field = Box(FVector(C.X - H.X + 70.0, C.Y, C.Z), FVector(10.0, 2 * H.Y, 2 * H.Z), PanelDark)) { Field->SetHiddenInGame(true); }
 	// Guide lines down the deck to the door.
 	for (double Dy : { -220.0, 220.0 }) { Box(FVector(C.X - 200.0, C.Y + Dy, Floor + 1.0), FVector(2 * H.X - 500.0, 12.0, 2.0), MakeLit(TEXT("BayLine"), FLinearColor(0.8f, 0.7f, 0.1f), 0.8f, 0.f, FLinearColor(1.f, 0.85f, 0.2f), 1.2f), 0.f, false); }
-	// The parked shuttle: hull on its skids, nacelles, canopy. The real one is spawned when it leaves.
-	for (double Side : { -1.0, 1.0 }) { Box(S + FVector(0, Side * 140.0, 20.0), FVector(520.0, 30.0, 40.0), PanelDark); }
-	Box(S + FVector(0, 0, 40.0 + 95.0), FVector(900.0, 300.0, 190.0), HullGrey);
-	Box(S + FVector(370.0, 0, 40.0 + 150.0), FVector(170.0, 240.0, 70.0), PanelDark, 0.f, false);
-	for (double Side : { -1.0, 1.0 })
-	{
-		Box(S + FVector(-60.0, Side * 200.0, 60.0), FVector(640.0, 72.0, 72.0), HullGrey);
-		Box(S + FVector(-60.0, Side * 200.0, 60.0 + 20.0), FVector(300.0, 74.0, 14.0), MakeLit(TEXT("NacelleGlow"), FLinearColor(0.2f, 0.3f, 0.6f), 0.5f, 0.f, FLinearColor(0.3f, 0.5f, 1.f), 1.5f), 0.f, false);
-	}
-	Box(S + FVector(-20.0, -151.0, 40.0 + 100.0), FVector(90.0, 2.0, 150.0), PanelDark, 0.f, false); // the port door
+	// The parked shuttle: the real one is spawned when it leaves.
+	PrimitiveShuttle(S);
 	for (double Dx : { -800.0, 0.0, 800.0 }) { for (double Dy : { -400.0, 400.0 }) { Light(FVector(C.X + Dx, C.Y + Dy, C.Z + H.Z - 40.0), 160.f, 1800.f, FLinearColor(0.95f, 0.97f, 1.f)); } }
 }
 
@@ -438,7 +459,7 @@ void UShipInteriorComponent::BuildTransporter(FShipRoom& R)
 	R.Lift = InteriorSpot(Door + FVector(0, -90.0, 0), FVector(0, -1, 0));
 	const FVector Pad(C.X - 150.0, C.Y, Floor);
 	R.UseLabel = TEXT("energise");
-	if (RoomMesh(TEXT("SM_RoomTransporter"), FVector(C.X, C.Y, Floor)))
+	if (RoomMesh(TransporterMesh, FVector(C.X, C.Y, Floor)))
 	{
 		R.Use = InteriorSpot(Pad + FVector(0, 0, 24.5), FVector(1, 0, 0));
 		Light(FVector(Pad.X, Pad.Y, C.Z + H.Z - 30.0), 70.f, 900.f, FLinearColor(0.8f, 0.88f, 1.f));

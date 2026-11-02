@@ -83,8 +83,12 @@ public:
 	/** Bound to the meshes' GlassPanel slot (partitions, cabinet fronts, the bay gallery). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Materials") TSoftObjectPtr<UMaterialInterface> GlassMaterial;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Materials") float ScreenIntensity = 2.2f;
-	/** Where the modelled rooms live; a missing mesh falls back to the primitive room. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Materials") FString RoomMeshPath = TEXT("/Game/Slonk/Rooms");
+	/** The modelled rooms (soft references, so the cooker carries them); a missing mesh falls back to the primitive room. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Meshes") TSoftObjectPtr<UStaticMesh> EngineeringMesh;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Meshes") TSoftObjectPtr<UStaticMesh> SickbayMesh;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Meshes") TSoftObjectPtr<UStaticMesh> ShuttleBayMesh;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Meshes") TSoftObjectPtr<UStaticMesh> BayShuttleMesh;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Meshes") TSoftObjectPtr<UStaticMesh> TransporterMesh;
 
 private:
 	TArray<FShipRoom> Rooms;
@@ -97,13 +101,16 @@ private:
 	/** An Okudagram screen instance showing /Game/Slonk/Bridge/T_Okuda_<Name>; null when the texture or material is missing. */
 	UMaterialInstanceDynamic* MakeOkuda(const TCHAR* TextureName, float Intensity);
 	/**
-	 * The modelled room from the Blender build (RoomMeshPath/<AssetName>), its origin on the floor at the room's
+	 * The modelled room from the Blender build, its origin on the floor at the room's
 	 * centre, solid to the Boots channel through its own triangles while shown; slots bound by name. Null when
 	 * the asset is missing, and the caller builds the primitive room instead.
 	 */
-	UStaticMeshComponent* RoomMesh(const TCHAR* AssetName, const FVector& FloorCenter);
+	UStaticMeshComponent* RoomMesh(const TSoftObjectPtr<UStaticMesh>& Asset, const FVector& FloorCenter);
 	void BindSlots(UStaticMeshComponent* C);
+	/** The parked shuttle built from primitives at S (the bay's placeholder when its mesh is missing). */
+	void PrimitiveShuttle(const FVector& S);
 	TWeakObjectPtr<UStaticMeshComponent> BayShuttle;
+	TArray<TWeakObjectPtr<UPrimitiveComponent>> BayShuttlePieces;
 	bool bBayShuttleShown = true;
 	UStaticMeshComponent* Piece(UStaticMesh* Mesh, const FVector& Center, const FVector& Size, const FRotator& Rot, UMaterialInterface* Mat, bool bSolid = true);
 	UStaticMeshComponent* Box(const FVector& Center, const FVector& Size, UMaterialInterface* Mat, float YawDeg = 0.f, bool bSolid = true) { return Piece(CubeMesh, Center, Size, FRotator(0.f, YawDeg, 0.f), Mat, bSolid); }

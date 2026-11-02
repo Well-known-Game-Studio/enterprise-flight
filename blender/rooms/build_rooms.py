@@ -519,8 +519,11 @@ def build_engineering():
     for k in range(12):
         c, s = ang(30 * k)
         box("RailPost", (SX + 2.4 * c, 2.4 * s, 0.52), (0.06, 0.06, 1.04), M_Rail(), "Rails", yaw=30 * k)
+    # Three rails: the top one at hand height, a mid rail, and a low one across the walker's knee probe (45 cm) so the
+    # railing stops anyone between the posts.
     ring("RailTop", (SX, 0, 0), 2.37, 2.44, 1.0, 1.06, M_Rail(), "Rails")
-    ring("RailMid", (SX, 0, 0), 2.38, 2.42, 0.52, 0.56, M_Rail(), "Rails")
+    ring("RailMid", (SX, 0, 0), 2.38, 2.42, 0.70, 0.74, M_Rail(), "Rails")
+    ring("RailLow", (SX, 0, 0), 2.38, 2.42, 0.42, 0.48, M_Rail(), "Rails")
     # Glass partitions either side of the well, leaving the middle open.
     for sgn in (-1, 1):
         box("Glass", (-0.9, sgn * 3.1, 1.25), (0.03, 3.1, 2.3), M_Glass(), "Glass")
@@ -617,11 +620,18 @@ def build_sickbay():
             box("DrawerPull", (-L / 2 + 0.39, 0.3 + col * 0.72, 0.5 + row * 0.42), (0.02, 0.3, 0.03), M_Buttons(), "Lights")
     box("DrawerTop", (-L / 2 + 0.2, 1.38, 2.2), (0.4, 3.1, 0.06), M_Black(), "Furniture")
     # Supplies cabinet on the starboard wall, lit behind glass.
-    box("Cabinet", (-2.25, W / 2 - 0.26, 1.1), (3.5, 0.5, 2.2), M_PanelGrey(), "Furniture")
-    box("CabinetBack", (-2.25, W / 2 - 0.3, 1.5), (3.3, 0.02, 1.2), M_Soft(), "Lights")
+    # A case open at the front: back, sides, top and the lower cupboard, lit shelves inside, glass across the opening.
+    CY = W / 2 - 0.26
+    box("CabinetBack", (-2.25, W / 2 - 0.03, 1.1), (3.5, 0.06, 2.2), M_PanelGrey(), "Furniture")
+    box("CabinetBackLit", (-2.25, W / 2 - 0.07, 1.5), (3.3, 0.02, 1.2), M_Soft(), "Lights")
+    for s_ in (-1, 1):
+        box("CabinetSide", (-2.25 + s_ * 1.72, CY, 1.1), (0.06, 0.5, 2.2), M_PanelGrey(), "Furniture")
+    box("CabinetTop", (-2.25, CY, 2.17), (3.5, 0.5, 0.06), M_PanelGrey(), "Furniture")
+    box("CabinetHead", (-2.25, W / 2 - 0.28, 2.0), (3.5, 0.46, 0.3), M_PanelGrey(), "Furniture")
+    box("CabinetLower", (-2.25, CY, 0.44), (3.5, 0.5, 0.88), M_PanelGrey(), "Furniture")
     for z in (1.15, 1.55):
-        box("Shelf", (-2.25, W / 2 - 0.38, z), (3.3, 0.3, 0.03), M_PanelLight(), "Furniture")
-    box("CabinetGlass", (-2.25, W / 2 - 0.53, 1.5), (3.3, 0.02, 1.2), M_Glass(), "Glass")
+        box("Shelf", (-2.25, W / 2 - 0.28, z), (3.38, 0.4, 0.03), M_PanelLight(), "Furniture")
+    box("CabinetGlass", (-2.25, W / 2 - 0.5, 1.37), (3.38, 0.02, 0.96), M_Glass(), "Glass")
     box("Counter", (-2.25, W / 2 - 0.4, 0.86), (3.6, 0.8, 0.06), M_Black(), "Furniture", bevel=0.01)
     # The forward bulkhead's canted panels with lit louvres (The Motion Picture).
     for y in (-2.8, -0.95, 0.95, 2.8):

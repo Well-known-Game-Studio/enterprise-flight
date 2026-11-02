@@ -29,9 +29,14 @@ def import_mesh(name):
     t.filename = os.path.join(SRC, name + ".fbx"); t.destination_path = DEST; t.destination_name = name
     t.replace_existing = True; t.automated = True; t.save = True; t.options = opts
     unreal.AssetToolsHelpers.get_asset_tools().import_asset_tasks([t])
+    # An asset already at the path would still load after a failed import: trust only what this task brought in.
+    imported = [str(p) for p in t.get_editor_property("imported_object_paths")]
+    if not any(p.startswith(f"{DEST}/{name}") for p in imported):
+        unreal.log_warning(f"ROOM IMPORT FAILED {name}: task imported {imported}")
+        return
     mesh = unreal.load_asset(f"{DEST}/{name}")
     if not mesh:
-        unreal.log_warning(f"ROOM IMPORT FAILED {name}")
+        unreal.log_warning(f"ROOM IMPORT FAILED {name}: not loadable after import")
         return
     body = mesh.get_editor_property("body_setup")
     if body:
