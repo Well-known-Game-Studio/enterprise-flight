@@ -15,11 +15,15 @@ surface and the open gores carry its texture.
    → `/Game/Slonk/Ship/SM_BayDoor1..8`, outer skin on `Constitution_3`, inner on `DoorInner`.
 
 The hull keeps a hole where the door was: `/Game/Enterprise/M_HullMasked` is a copy of the Interchange phong master
-with a masked blend and a Custom node that drops every pixel inside the inner cone's radius (mesh space = pawn
-space: x < -6100, -1945 < z < -1242, r about the axis < 828 - (z + 1974) * 0.705 + 1 cm, 40 cm only forward of the
-bay's junction wall where the cone's tail and the filler ribs sit), which takes the cone itself and the model's filler behind it and leaves the recess walls, the flanking
+with a masked blend and a Custom node that drops every pixel inside the door cone's radius (mesh space = pawn
+space: x < -6100, -1945 < z < -1243, aft of x -6530, r about the axis < cone + 6 cm, where cone blends the rings
+measured off the mesh, 828 - 0.24 deg at the base and 280 - 0.27 deg at the top for deg the azimuth from astern,
+fitted within -2..+5 cm; the margin must exceed that worst error or slivers of the hull's cone survive along its
+triangle edges. Forward of the bay's junction wall at x -6230 the margin is -30 cm, so the cone's tail and the
+filler ribs there go but the stern's own skin stays), which takes the cone itself and the model's filler behind it and leaves the recess walls, the flanking
 panels and the deck fan; `Constitution_3_Hull` is the stern instance re-parented to it (`scratch-backup/hullmask.py`
 builds the node). `AStarshipPawn::SetupBayDoors` swaps it into the Constitution_3 slot and hangs a
 `UBayDoorsComponent` on the hull at the axis: opening swings each pair of gores toward its side by the width of
-the gores outside it, so all eight nest in the outermost pair's place with a shrinking radial scale. The bay set's
+the gores outside it, so all eight nest in the outermost pair's place with a shrinking radial scale; closed, the gores stand 2.5 % proud
+of the hull cone so they cover the hole's margin band. The bay set's
 throat (`blender/rooms/build_rooms.py`, `bay_throat`) lines the inside of the recess up to the door.
