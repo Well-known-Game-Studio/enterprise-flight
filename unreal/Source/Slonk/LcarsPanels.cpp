@@ -812,7 +812,7 @@ void UTurboliftPanel::BuildContent()
 	AddRow(Content, TEXT("You are on"), Here != EShipRoom::Count ? FString::Printf(TEXT("deck %s, %s"), *UShipInteriorComponent::DeckOf(Here), *UShipInteriorComponent::RoomName(Here)) : FString(TEXT("-")), Lcars::Peach, 16.f);
 	for (const FStop& S : Stops)
 	{
-		AddRow(Content, FString::Printf(TEXT("Deck %s"), *UShipInteriorComponent::DeckOf(S.Room)), S.Room == EShipRoom::Airlock ? FString(TEXT("Airlock: out onto the saucer, boots on the hull")) : UShipInteriorComponent::RoomName(S.Room), S.Room == Here ? Lcars::Tan : FLinearColor::White, 14.f);
+		AddRow(Content, FString::Printf(TEXT("Deck %s"), *UShipInteriorComponent::DeckOf(S.Room)), S.Room == EShipRoom::Airlock ? FString(TEXT("Airlock: the staging area under the saucer hatch")) : UShipInteriorComponent::RoomName(S.Room), S.Room == Here ? Lcars::Tan : FLinearColor::White, 14.f);
 	}
 	AddRow(Content, TEXT(""), TEXT("Choose a deck on the left. F at any lift door brings you back here."), FLinearColor(1, 1, 1, 0.6f), 12.f);
 }

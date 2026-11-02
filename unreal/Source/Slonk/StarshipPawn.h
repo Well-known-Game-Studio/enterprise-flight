@@ -163,6 +163,10 @@ public:
 	bool LaunchShuttleFromBay(APersonPawn* Person);
 	/** What the person standing in one of our rooms can do where they stand, and the HUD's word for it. */
 	bool PersonUse(APersonPawn* Person);
+	/** From the airlock's staging area out onto the hull (the same refusals as the hatch from the chair). */
+	bool GoOutside(APersonPawn* Person);
+	/** How long each half of a beam takes: the shimmer gathers, the cut, the shimmer thins. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Person") float TransporterSeconds = 1.7f;
 	FString PersonUseHint(const APersonPawn* Person) const;
 	EShipRoom GetShownRoom() const { return ShownRoom; }
 
@@ -682,6 +686,8 @@ private:
 	/** The room someone is walking (Count: nobody is inside). */
 	EShipRoom ShownRoom;
 	FTimerHandle LiftTimer;
+	FTimerHandle TransportTimer;
+	FTimerHandle TransportFadeTimer;
 	APersonPawn* SpawnPerson(const FTransform& Where);
 	/** Spawn the person standing in a room, at its lift door or its thing to use, possessed. */
 	APersonPawn* PutAboard(EShipRoom Room, bool bAtUse);
@@ -697,6 +703,8 @@ private:
 	class AStarshipHUD* PlayerHUD() const;
 	/** Black out, do the thing, fade back: the lift ride, the transporter. */
 	void FadeThen(TFunction<void()> Then);
+	/** The transporter's shimmer round the person, the camera washing to blue-white, `Then` at the cut, the shimmer again where they stand. */
+	void Transport(APersonPawn* Person, TFunction<void()> Then);
 	bool bFreeLook = false;
 	FVector2D FreeLookAngles = FVector2D::ZeroVector; // (Yaw, Pitch)
 	float ShakeAmplitude = 0.f;

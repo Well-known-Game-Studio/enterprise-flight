@@ -807,8 +807,68 @@ def build_transporter():
     radial_ceiling(R, (PX, PY), 1.9, ribs=8, energy=14.0, panels=[(2.5, -1.8), (2.5, 1.8), (0.6, -2.6), (0.6, 2.6)])
     return R
 
-ROOMS = {"eng": build_engineering, "sick": build_sickbay, "bay": build_shuttle_bay, "trans": build_transporter}
-MESH_NAMES = {"eng": "SM_RoomEngineering", "sick": "SM_RoomSickbay", "bay": "SM_RoomShuttleBay", "trans": "SM_RoomTransporter"}
+# ---- airlock staging area --------------------------------------------------------------------------------------
+def build_airlock():
+    """The airlock's staging area under the saucer hatch (The Motion Picture): four suit lockers down the port wall
+    with the suits standing in them behind glass, a bench and the arms cabinet to starboard, thruster packs racked
+    by the lift, and the round inner hatch in the forward bulkhead with its lit ring and control panel. Lift door
+    aft, in the middle."""
+    R = Room("lock", 6.0, 5.0, 3.0)
+    L, W, H = R.L, R.W, R.H
+    shell(R, M_PanelGrey(), M_DeckPlate(), M_PanelGrey())
+    # The hatch: a dark ring set into the bulkhead, the grey door disc inside it, a lit ring round the door, the
+    # cross-brace on its face, a red lamp above and the panel beside it.
+    HX, HZ = L / 2 - 0.02, 1.25
+    ring("HatchRing", (HX, 0.0, HZ), 0.86, 1.02, -0.18, 0.0, M_Metal(), "Walls", axis='x', segments=48)
+    ring("HatchGlow", (HX - 0.17, 0.0, HZ), 0.80, 0.86, -0.02, 0.02, M_Strip(), "Lights", axis='x', segments=48)
+    lathe("HatchDoor", [(0.0, -0.14), (0.80, -0.14), (0.80, -0.06), (0.0, -0.06)], (HX, 0.0, HZ), M_HullGrey(), "Walls", axis='x', closed=True, segments=48)
+    box("HatchBrace", (HX - 0.16, 0.0, HZ), (0.04, 0.34, 0.08), M_PanelDark(), "Walls")
+    box("HatchBrace", (HX - 0.16, 0.0, HZ), (0.04, 0.08, 0.34), M_PanelDark(), "Walls")
+    box("HatchLamp", (HX - 0.03, 0.0, HZ + 1.15), (0.05, 0.24, 0.08), M_Warn(), "Lights")
+    box("HatchPanel", (HX - 0.03, 1.45, 1.35), (0.06, 0.4, 0.32), M_Black(), "Consoles", bevel=0.01)
+    box("HatchKeys", (HX - 0.065, 1.45, 1.35), (0.01, 0.32, 0.24), M_Buttons(), "Lights")
+    R.light((HX - 0.6, 0.0, HZ), 10.0, size=0.4, kind='POINT')
+    # Suit lockers: an open case each with the suit inside, glass across the front.
+    for k, x in enumerate((-1.8, -0.9, 0.0, 0.9)):
+        y = -W / 2 + 0.32
+        box("LockerBack", (x, -W / 2 + 0.03, 1.15), (0.84, 0.06, 2.3), M_PanelLight(), "Furniture")
+        for s_ in (-1, 1):
+            box("LockerSide", (x + s_ * 0.4, y, 1.15), (0.04, 0.6, 2.3), M_PanelLight(), "Furniture")
+        box("LockerTop", (x, y, 2.28), (0.84, 0.6, 0.04), M_PanelLight(), "Furniture")
+        box("LockerFoot", (x, y, 0.09), (0.84, 0.6, 0.18), M_PanelLight(), "Furniture")
+        box("LockerLamp", (x, -W / 2 + 0.07, 2.2), (0.6, 0.02, 0.06), M_Soft(), "Lights")
+        # The suit: boots, legs, torso, the pack behind, the helmet on top.
+        for s_ in (-1, 1):
+            box("SuitLeg", (x + s_ * 0.12, y + 0.02, 0.62), (0.17, 0.24, 0.86), M_HullWhite(), "Furniture", bevel=0.04)
+            box("SuitBoot", (x + s_ * 0.12, y + 0.06, 0.26), (0.19, 0.32, 0.16), M_PanelDark(), "Furniture", bevel=0.03)
+            box("SuitArm", (x + s_ * 0.31, y + 0.02, 1.3), (0.13, 0.2, 0.72), M_HullWhite(), "Furniture", bevel=0.04)
+        box("SuitTorso", (x, y + 0.02, 1.38), (0.46, 0.3, 0.72), M_HullWhite(), "Furniture", bevel=0.06)
+        box("SuitChest", (x, y + 0.18, 1.45), (0.3, 0.03, 0.2), M_Buttons(), "Lights")
+        box("SuitPack", (x, y - 0.18, 1.35), (0.4, 0.14, 0.6), M_PanelDark(), "Furniture", bevel=0.03)
+        lathe("Helmet", [(0.0, -0.18), (0.17, -0.1), (0.2, 0.05), (0.14, 0.17), (0.0, 0.2)], (x, y + 0.02, 1.9), M_HullWhite(), "Furniture", segments=20)
+        box("Visor", (x, y + 0.14, 1.9), (0.2, 0.12, 0.14), M_Black(), "Furniture", bevel=0.04)
+        box("LockerGlass", (x, -W / 2 + 0.6, 1.2), (0.76, 0.02, 2.0), M_Glass(), "Glass")
+        R.light((x, -W / 2 + 0.3, 2.1), 5.0, size=0.3)
+    # The bench, the arms cabinet with its keypad, and two thruster packs racked by the lift.
+    box("Bench", (-0.9, W / 2 - 0.27, 0.45), (2.2, 0.46, 0.06), M_PanelDark(), "Furniture", bevel=0.01)
+    for x in (-1.9, 0.1):
+        box("BenchLeg", (x, W / 2 - 0.27, 0.21), (0.08, 0.4, 0.42), M_Metal(), "Furniture")
+    box("ArmsCabinet", (1.6, W / 2 - 0.22, 1.2), (1.2, 0.44, 1.7), M_PanelDark(), "Furniture", bevel=0.01)
+    box("ArmsSeam", (1.6, W / 2 - 0.45, 1.2), (0.02, 0.01, 1.5), M_PanelGrey(), "Furniture")
+    box("ArmsKeys", (1.6, W / 2 - 0.455, 1.5), (0.3, 0.01, 0.12), M_Buttons(), "Lights")
+    box("ArmsLabel", (1.6, W / 2 - 0.455, 1.95), (0.6, 0.01, 0.08), M_Strip(), "Lights")
+    for y in (-1.5, 1.5):
+        box("PackRack", (-L / 2 + 0.2, y, 1.3), (0.3, 0.7, 0.9), M_PanelDark(), "Furniture", bevel=0.02)
+        box("Pack", (-L / 2 + 0.38, y, 1.3), (0.2, 0.5, 0.7), M_HullGrey(), "Furniture", bevel=0.04)
+        for s_ in (-1, 1):
+            box("PackNozzle", (-L / 2 + 0.5, y + s_ * 0.18, 1.0), (0.08, 0.08, 0.1), M_Core(), "Lights")
+    pilasters(R, 2.0, walls=("-x", "+x"), skip=(("-x", 0.0), ("+x", 0.0)))
+    lift_door(R, "-x", 0.0)
+    cove_ceiling(R, drop=0.28, width=0.7, panels=[(-1.0, 0.0), (1.0, 0.0)], energy=12.0)
+    return R
+
+ROOMS = {"eng": build_engineering, "sick": build_sickbay, "bay": build_shuttle_bay, "trans": build_transporter, "lock": build_airlock}
+MESH_NAMES = {"eng": "SM_RoomEngineering", "sick": "SM_RoomSickbay", "bay": "SM_RoomShuttleBay", "trans": "SM_RoomTransporter", "lock": "SM_RoomAirlock"}
 
 # Preview cameras per room: (eye, target, lens mm), in the game frame.
 VIEWS = {
@@ -831,6 +891,12 @@ VIEWS = {
         "shuttle": ((0.6, -6.5, 1.7), (1.5, 0.0, 1.3), 18),
         "gallery": ((-3.0, 5.0, 1.7), (13.0, 0.0, 4.4), 24),
         "high": ((-16.0, -12.0, 10.0), (2.0, 0.0, 1.5), 22),
+    },
+    "lock": {
+        "lift": ((-2.1, 0.0, 1.65), (3.0, 0.0, 1.2), 20),
+        "hatch": ((1.4, 0.3, 1.65), (3.0, 0.0, 1.25), 26),
+        "lockers": ((1.6, 1.6, 1.6), (-0.6, -2.5, 1.2), 22),
+        "high": ((5.2, -4.6, 4.6), (0.0, 0.0, 0.8), 24),
     },
     "trans": {
         "door": ((1.5, 2.6, 1.65), (-1.5, 0.0, 1.0), 20),
@@ -889,7 +955,7 @@ def export(path, only=None, exclude=()):
     bpy.ops.export_scene.fbx(filepath=path, use_selection=True, apply_unit_scale=True, global_scale=1.0, axis_forward='-Y', axis_up='Z', object_types={'MESH'}, use_mesh_modifiers=True, mesh_smooth_type='FACE', add_leaf_bones=False, bake_anim=False, path_mode='COPY', embed_textures=False)
 
 if __name__ == "__main__":
-    rooms = (arg("--room") or "eng,sick,bay,trans").split(",")
+    rooms = (arg("--room") or "eng,sick,bay,trans,lock").split(",")
     only = arg("--views"); only = set(only.split(",")) if only else None
     for code in rooms:
         new_scene()
