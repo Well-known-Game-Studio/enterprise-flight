@@ -703,9 +703,9 @@ def cap_radius(z):
 def door_edge_y(z): return 3.46 + (6.76 - z) * 0.754
 
 def bay_throat(R):
-    """The throat between the straight bay and the clamshell door: the hull's own recess walls, flanking panels
-    and deck fan are the sides of it, so this adds only what the hull lacks: a deck over the painted fan, a
-    ceiling under the recess roof at the door's height, and the junction closing the bay's corners against the
+    """The throat between the straight bay and the clamshell door: the hull's own recess walls, flanking panels,
+    roof and deck fan are the sides of it (the game keeps the hull drawn in this room), so this adds only a deck
+    over the painted fan inside the door's base ring and the junction closing the bay's corners against the
     recess, set a metre inside the junction plane so the hull's panels stand in front of it from outside. The
     door itself is the hull's own gores, placed by the game."""
     L, W, H = R.L, R.W, R.H
@@ -715,11 +715,11 @@ def bay_throat(R):
     seg = 40
     def arc(r, z, a0=90.0, a1=270.0, n=seg):
         return [(A[0] + r * math.cos(math.radians(a0 + (a1 - a0) * k / n)), A[1] + r * math.sin(math.radians(a0 + (a1 - a0) * k / n)), z) for k in range(n + 1)]
-    # Deck and ceiling: half-discs astern of the junction, the deck 2 cm proud of the hull's own fan.
-    deck = [(x, y) for x, y, _ in arc(cap_radius(0.0) - 0.06, 0.0)] + [(J, -(cap_radius(0.0) - 0.06)), (J, cap_radius(0.0) - 0.06)]
+    # The deck: a half-disc inside the door's base ring (8.28 m), 2 cm proud of the hull's own fan, which carries on
+    # outside it to the rim; the recess's roof above is the hull's.
+    RD = 8.2
+    deck = [(x, y) for x, y, _ in arc(RD, 0.0)] + [(J, -RD), (J, RD)]
     prism("ThroatDeck", deck, -0.12, 0.0, M_BayDeck(), "Floors")
-    ceil = [(x, y) for x, y, _ in arc(cap_radius(HT) - 0.1, HT)] + [(J, -(cap_radius(HT) - 0.1)), (J, cap_radius(HT) - 0.1)]
-    prism("ThroatCeiling", ceil, HT, HT + 0.12, M_PanelDark(), "Ceiling")
     zs = [HT * k / 14 for k in range(15)]
     for side in (-1, 1):
         # The junction ribbon: between the bay's wall end (|y| = W/2) and the recess's inside, up to the bay's ceiling.
@@ -739,7 +739,7 @@ def bay_throat(R):
     # Deck lights round the fan, and the approach line carried out to the door.
     for k in range(1, 8):
         a = 90.0 + 180.0 * k / 8
-        r = cap_radius(0.0) - 0.9
+        r = RD - 0.6
         box("EdgeLamp", (A[0] + r * math.cos(math.radians(a)), A[1] + r * math.sin(math.radians(a)), 0.01), (0.2, 0.2, 0.02), M_Strip(), "Lights")
     box("RedLineAft", (A[0] - 4.5, 0, 0.004), (9.0, 0.5, 0.008), M_PaintRed(), "Floors")
     R.light((A[0] - 4.0, 0.0, HT - 0.5), 150.0, size=3.0)

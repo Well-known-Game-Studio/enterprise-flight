@@ -1369,14 +1369,15 @@ void AStarshipPawn::ApplyViewVisibility()
 	// camera mode is left at Bridge, but they must see the ship.
 	const bool bInside = ShownRoom != EShipRoom::Count;
 	const bool bBridge = (CameraMode == EStarshipCameraMode::Bridge && !ActivePerson.IsValid()) || ShownRoom == EShipRoom::Bridge;
+	// The shuttle bay keeps the hull: its throat is the stern recess itself (two-sided, so its walls read from
+	// within), the clamshell door is the hull's own, and the rest of the ship shows through the open door.
+	const bool bHullShown = (!bBridge && !bInside) || ShownRoom == EShipRoom::ShuttleBay;
 	ShipMesh->SetOwnerNoSee(false);
-	ShipMesh->SetVisibility(!bBridge && !bInside);
+	ShipMesh->SetVisibility(bHullShown);
 	if (RunningLights) { RunningLights->SetVisibility(!bBridge && !bInside); }
 	if (BridgeInterior) { BridgeInterior->SetVisibility(bBridge, true); }
-	// The clamshell door shows with the hull, and from inside the bay (the closed gores are its aft wall).
-	const bool bHullShown = !bBridge && !bInside;
-	if (BayDoors) { BayDoors->SetShown(bHullShown || ShownRoom == EShipRoom::ShuttleBay); }
-	if (Interior) { Interior->SetBayShownFromOutside(bHullShown && BayDoors && !BayDoors->IsClosed()); }
+	if (BayDoors) { BayDoors->SetShown(bHullShown); }
+	if (Interior) { Interior->SetBayShownFromOutside(bHullShown && !bInside && BayDoors && !BayDoors->IsClosed()); }
 }
 
 void AStarshipPawn::SetInteriorRoom(EShipRoom Room)
