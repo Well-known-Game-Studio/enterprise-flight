@@ -65,8 +65,15 @@ public:
 	void SetTerrainVisible(bool bShow);
 	bool IsTerrainVisible() const { return bTerrainVisible; }
 
-	/** Ground height (cm above the sea-level sphere; the sea is 0) under a world position, at full detail. */
+	/**
+	 * Ground height (cm above the sea-level sphere; the sea is 0) under a world position: the drawn mesh where a
+	 * chunk is on screen there (the deepest one showing, its triangles interpolated), else the field at full detail.
+	 * The two differ by metres on rough ground (a chunk refines from the slope of its own cells, the field from a
+	 * metre's), and feet, skids and hover heights have to agree with what is drawn.
+	 */
 	double SurfaceHeightAtWorld(const FVector& WorldPos) const;
+	/** The drawn mesh's height above sea level in a planet-local direction; false where no chunk is showing. */
+	bool DrawnHeightAtLocalDir(const FVector& DirLocal, double& OutHeightCm) const;
 	/** The full field sample under a world position. */
 	FPlanetTerrainSample SampleAtWorld(const FVector& WorldPos, double MinWavelengthCm = 0.0) const;
 
@@ -96,6 +103,9 @@ private:
 		TUniquePtr<UE::Geometry::FDynamicMesh3> Mesh;
 		FVector Origin = FVector::ZeroVector;   // planet-local cm
 		FBox LocalBounds = FBox(ForceInit);
+		/** Height above sea level (water surface over water) at each grid vertex, row-major (Steps + 1)^2. */
+		TArray<float> Heights;
+		int32 Steps = 0;
 	};
 	struct FNode
 	{
@@ -116,6 +126,9 @@ private:
 		TSharedPtr<FBuildResult, ESPMode::ThreadSafe> Result;
 		UE::Tasks::TTask<void> Task;
 		uint32 LastWanted = 0;
+		/** The grid heights of the mesh this node shows (see FBuildResult), for ground queries. */
+		TArray<float> Heights;
+		int32 HeightSteps = 0;
 	};
 
 	void ResetTree();
@@ -134,6 +147,8 @@ private:
 	UDynamicMeshComponent* AcquireMesh();
 	void ChunkFrame(int32 Face, int32 Depth, int64 X, int64 Y, FVector& OutCentre, double& OutEdge) const;
 	FVector CubeDir(int32 Face, double U, double V) const;
+	/** The inverse of CubeDir: which face a direction falls on and its (U, V) there. */
+	bool FaceUV(const FVector& Dir, int32& OutFace, double& OutU, double& OutV) const;
 	static void BuildChunk(const FPlanetTerrainParams& P, int32 Face, int32 Depth, int64 X, int64 Y, int32 Steps, FBuildResult& Out);
 
 	FPlanetTerrainParams Params;
