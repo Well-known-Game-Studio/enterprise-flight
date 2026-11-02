@@ -47,6 +47,7 @@
 #include "WarpStreaksComponent.h"
 #include "BridgeInteriorComponent.h"
 #include "ShipInterior.h"
+#include "TransporterEffect.h"
 #include "PhotonTorpedo.h"
 #include "Camera/PlayerCameraManager.h"
 #include "TimerManager.h"
@@ -2494,6 +2495,7 @@ bool AStarshipPawn::StepOutside()
 	ActivePerson = Person;
 	Person->BeginEVA(this, Airlock, PersonStartsOnHull() ? this : nullptr);
 	PC->Possess(Person);
+	if (Systems && !IsShuttle()) { Systems->HandOverConn(); }
 	if (AStarshipHUD* H = Cast<AStarshipHUD>(PC->GetHUD()))
 	{
 		H->SetNavTargetActor(this);
@@ -2508,6 +2510,25 @@ bool AStarshipPawn::StepOutside()
 void AStarshipPawn::OnPersonBoarded(APersonPawn* Person)
 {
 	APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+	// The starship is entered through its airlock: you arrive in the staging area on foot and walk to the bridge.
+	// A shuttle has no decks, so boarding one is sitting down at its controls.
+	if (!IsShuttle() && Person && Person == ActivePerson.Get())
+	{
+		FTransform L, U; FString Lb;
+		if (RoomSpots(EShipRoom::Airlock, L, U, Lb))
+		{
+			TWeakObjectPtr<APersonPawn> P(Person);
+			FadeThen([this, P]()
+			{
+				if (!P.IsValid()) { return; }
+				if (!PutAboard(EShipRoom::Airlock, true)) { return; }
+				if (AStarshipHUD* H = PlayerHUD()) { if (H->NavTarget == this) { H->ClearNavTarget(); } }
+				ScreenMessage(TEXT("Through the airlock. Deck B: the turbolift takes you to the bridge; F at the hatch goes out again."), FColor::Cyan, 8.f);
+				UE_LOG(LogTemp, Log, TEXT("Person aboard %s through the airlock"), *GetCraftName());
+			});
+			return;
+		}
+	}
 	if (PC && PC->GetPawn() == Person)
 	{
 		PC->Possess(this);
@@ -2608,6 +2629,56 @@ void AStarshipPawn::FadeThen(TFunction<void()> Then)
 	}), 0.6f, false);
 }
 
+void AStarshipPawn::Transport(APersonPawn* Person, TFunction<void()> Then)
+{
+	const FLinearColor Shimmer(0.62f, 0.8f, 1.f);
+	const float Half = FMath::Max(0.3f, TransporterSeconds);
+	TWeakObjectPtr<APersonPawn> P(Person);
+	TWeakObjectPtr<AStarshipPawn> Self(this);
+	TWeakObjectPtr<UShipInteriorComponent> Int(Interior);
+	// The column stands on the feet and rides what carries the person: the ship on the pad, the world on the ground.
+	// Aboard, the feet come through the ship's frame: the person's world position is a tick behind a moving ship,
+	// which put the column a stride behind the body.
+	auto FeetOf = [Self](APersonPawn* Who)
+	{
+		if (Who->IsAboard() && Self.IsValid())
+		{
+			const FTransform Craft = Self->CraftFrame();
+			return FTransform(Craft.GetRotation() * Who->GetHullLocal().GetRotation(), Craft.TransformPosition(Who->FeetInCraft()));
+		}
+		return FTransform(Who->GetActorQuat(), Who->GetActorLocation() - Who->GetActorUpVector() * APersonPawn::HalfHeightCm);
+	};
+	auto RideOf = [Self](APersonPawn* Who) -> USceneComponent*
+	{
+		if (Who->IsAboard()) { return Self.IsValid() ? Self->GetRootComponent() : nullptr; }
+		if (APlanetBody* G = Who->GroundPlanet.Get()) { return G->GetRootComponent(); }
+		return nullptr;
+	};
+	auto PadPulse = [Int](APersonPawn* Who) -> TFunction<void(float)>
+	{
+		if (!Who->IsAboard()) { return nullptr; }
+		return [Int](float E) { if (Int.IsValid()) { Int->SetPadGlow(E); } };
+	};
+	ATransporterEffect::Spawn(GetWorld(), FeetOf(Person), false, Half, RideOf(Person), PadPulse(Person));
+	// The shimmer has the view to itself for a moment, then the wash takes it to the cut.
+	GetWorldTimerManager().SetTimer(TransportFadeTimer, FTimerDelegate::CreateLambda([Self, Half, Shimmer]()
+	{
+		APlayerController* PC = Self.IsValid() && Self->GetWorld() ? Self->GetWorld()->GetFirstPlayerController() : nullptr;
+		if (PC && PC->PlayerCameraManager) { PC->PlayerCameraManager->StartCameraFade(0.f, 1.f, Half * 0.55f, Shimmer, false, true); }
+	}), Half * 0.4f, false);
+	GetWorldTimerManager().SetTimer(TransportTimer, FTimerDelegate::CreateLambda([Self, P, Then, Half, Shimmer, FeetOf, RideOf, PadPulse]()
+	{
+		if (!Self.IsValid()) { return; }
+		Then();
+		if (APersonPawn* Who = P.Get())
+		{
+			ATransporterEffect::Spawn(Self->GetWorld(), FeetOf(Who), true, Half, RideOf(Who), PadPulse(Who));
+		}
+		APlayerController* PC2 = Self->GetWorld() ? Self->GetWorld()->GetFirstPlayerController() : nullptr;
+		if (PC2 && PC2->PlayerCameraManager) { PC2->PlayerCameraManager->StartCameraFade(1.f, 0.f, Half * 0.7f, Shimmer, false, false); }
+	}), Half, false);
+}
+
 bool AStarshipPawn::StandUp()
 {
 	APlayerController* PC = Cast<APlayerController>(GetController());
@@ -2637,33 +2708,36 @@ void AStarshipPawn::SitDown(APersonPawn* Person)
 	UE_LOG(LogTemp, Log, TEXT("Captain in the chair"));
 }
 
+bool AStarshipPawn::GoOutside(APersonPawn* Person)
+{
+	if (!Person || Person != ActivePerson.Get() || !Person->IsAboard()) { return false; }
+	// The same refusals as the hatch from the chair: not at warp, not too fast, not over a giant.
+	FString Reason;
+	if (!CanStepOutside(Reason))
+	{
+		ScreenMessage(FString::Printf(TEXT("Airlock: %s"), *Reason), FColor::Orange);
+		return false;
+	}
+	TWeakObjectPtr<APersonPawn> P(Person);
+	FadeThen([this, P]()
+	{
+		APersonPawn* Who = P.Get();
+		if (!Who) { return; }
+		FString Why;
+		if (!CanStepOutside(Why)) { ScreenMessage(FString::Printf(TEXT("Airlock: %s"), *Why), FColor::Orange); return; }
+		SetInteriorRoom(EShipRoom::Count); // the hatch trace must not meet a wall
+		const FTransform Airlock = GetAirlockTransform();
+		Who->BeginEVA(this, Airlock, PersonStartsOnHull() ? this : nullptr);
+		if (AStarshipHUD* H = PlayerHUD()) { H->SetNavTargetActor(this); }
+		ScreenMessage(TEXT("Airlock open. Boots on the hull: W A S D walk, Space pushes off, the pack flies, F boards from anywhere on the hull."), FColor::Cyan, 10.f);
+		UE_LOG(LogTemp, Log, TEXT("Person out of %s at %s"), *GetCraftName(), *Airlock.GetLocation().ToString());
+	});
+	return true;
+}
+
 bool AStarshipPawn::MoveToRoom(APersonPawn* Person, EShipRoom Room)
 {
 	if (!Person || Person != ActivePerson.Get() || !Person->IsAboard()) { return false; }
-	if (Room == EShipRoom::Airlock)
-	{
-		// The same refusals as the hatch from the chair: not at warp, not too fast, not over a giant.
-		FString Reason;
-		if (!CanStepOutside(Reason))
-		{
-			ScreenMessage(FString::Printf(TEXT("Airlock: %s"), *Reason), FColor::Orange);
-			return false;
-		}
-		TWeakObjectPtr<APersonPawn> P(Person);
-		FadeThen([this, P]()
-		{
-			APersonPawn* Who = P.Get();
-			if (!Who) { return; }
-			FString Why;
-			if (!CanStepOutside(Why)) { ScreenMessage(FString::Printf(TEXT("Airlock: %s"), *Why), FColor::Orange); return; }
-			SetInteriorRoom(EShipRoom::Count); // the hatch trace must not meet a wall
-			const FTransform Airlock = GetAirlockTransform();
-			Who->BeginEVA(this, Airlock, PersonStartsOnHull() ? this : nullptr);
-			ScreenMessage(TEXT("Airlock open. Boots on the hull: W A S D walk, Space pushes off, the pack flies, F boards from anywhere on the hull."), FColor::Cyan, 10.f);
-			UE_LOG(LogTemp, Log, TEXT("Person out of %s at %s"), *GetCraftName(), *Airlock.GetLocation().ToString());
-		});
-		return true;
-	}
 	FTransform Lift, Use; FString Label;
 	if (!RoomSpots(Room, Lift, Use, Label)) { return false; }
 	if (Room == Person->GetRoom())
@@ -2701,7 +2775,7 @@ bool AStarshipPawn::BeamDown(APersonPawn* Person)
 	}
 	TWeakObjectPtr<APersonPawn> P(Person);
 	TWeakObjectPtr<APlanetBody> W(World);
-	FadeThen([this, P, W]()
+	Transport(Person, [this, P, W]()
 	{
 		APersonPawn* Who = P.Get();
 		APlanetBody* Body = W.Get();
@@ -2733,7 +2807,7 @@ bool AStarshipPawn::BeamUp(APersonPawn* Person)
 		return false;
 	}
 	TWeakObjectPtr<APersonPawn> P(Person);
-	FadeThen([this, P]()
+	Transport(Person, [this, P]()
 	{
 		APersonPawn* Who = P.Get();
 		if (!Who) { return; }
@@ -2785,6 +2859,7 @@ bool AStarshipPawn::PersonUse(APersonPawn* Person)
 		case EShipRoom::Sickbay: if (UI) { UI->TogglePanel(UMedicalPanel::StaticClass()); } return true;
 		case EShipRoom::ShuttleBay: return LaunchShuttleFromBay(Person);
 		case EShipRoom::Transporter: return BeamDown(Person);
+		case EShipRoom::Airlock: return GoOutside(Person);
 		default: break;
 		}
 	}
@@ -2868,6 +2943,7 @@ bool AStarshipPawn::LaunchShuttle()
 	if (DistantStars) { DistantStars->SetVisibility(false, true); }
 	Shuttle->BeginLaunch(this);
 	PC->Possess(Shuttle);
+	if (Systems) { Systems->HandOverConn(); }
 	if (AStarshipHUD* H = Cast<AStarshipHUD>(PC->GetHUD()))
 	{
 		H->SetNavTargetActor(this);
@@ -2879,7 +2955,8 @@ bool AStarshipPawn::LaunchShuttle()
 void AStarshipPawn::OnShuttleDocked(AShuttlecraftPawn* Shuttle)
 {
 	APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
-	if (PC && PC->GetPawn() == Shuttle)
+	const bool bPlayerAboard = PC && PC->GetPawn() == Shuttle;
+	if (bPlayerAboard)
 	{
 		PC->Possess(this);
 		if (AStarshipHUD* H = Cast<AStarshipHUD>(PC->GetHUD()))
@@ -2889,7 +2966,6 @@ void AStarshipPawn::OnShuttleDocked(AShuttlecraftPawn* Shuttle)
 	}
 	if (StarSphere) { StarSphere->SetVisibility(!bStarFieldHidden); }
 	if (DistantStars) { DistantStars->SetVisibility(true, true); }
-	if (Systems) { Systems->TakeConn(); }
 	if (Shuttle)
 	{
 		CollisionBox->IgnoreActorWhenMoving(Shuttle, false);
@@ -2897,6 +2973,15 @@ void AStarshipPawn::OnShuttleDocked(AShuttlecraftPawn* Shuttle)
 	}
 	ActiveShuttle = nullptr;
 	if (Interior) { Interior->SetBayShuttleShown(true); }
+	// Home through the bay: out of the shuttle on foot beside her, the officer keeping the conn until the captain
+	// reaches the chair.
+	if (bPlayerAboard && Interior && !ActivePerson.IsValid() && PutAboard(EShipRoom::ShuttleBay, true))
+	{
+		ScreenMessage(TEXT("Shuttle docked. On your feet in the bay: the turbolift takes you to the bridge."), FColor::Cyan, 8.f);
+		UE_LOG(LogTemp, Log, TEXT("Shuttle docked; captain on foot in the bay"));
+		return;
+	}
+	if (Systems) { Systems->TakeConn(); }
 	ScreenMessage(TEXT("Shuttle docked"), FColor::Cyan);
 }
 

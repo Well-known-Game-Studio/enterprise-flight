@@ -9,6 +9,15 @@
 #include "Engine/Texture.h"
 #include "UObject/ConstructorHelpers.h"
 
+namespace
+{
+	FTransform InteriorSpot(const FVector& Feet, const FVector& Facing)
+	{
+		return FTransform(FRotationMatrix::MakeFromXZ(Facing.GetSafeNormal(), FVector::UpVector).ToQuat(), Feet);
+	}
+}
+
+
 UShipInteriorComponent::UShipInteriorComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
@@ -25,6 +34,7 @@ UShipInteriorComponent::UShipInteriorComponent()
 	ShuttleBayMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/Slonk/Rooms/SM_RoomShuttleBay.SM_RoomShuttleBay")));
 	BayShuttleMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/Slonk/Rooms/SM_RoomBayShuttle.SM_RoomBayShuttle")));
 	TransporterMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/Slonk/Rooms/SM_RoomTransporter.SM_RoomTransporter")));
+	AirlockMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/Slonk/Rooms/SM_RoomAirlock.SM_RoomAirlock")));
 }
 
 void UShipInteriorComponent::BeginPlay()
@@ -184,6 +194,48 @@ void UShipInteriorComponent::BindSlots(UStaticMeshComponent* C)
 	}
 }
 
+void UShipInteriorComponent::SetPadGlow(float Pulse)
+{
+	if (UMaterialInstanceDynamic* M = Cast<UMaterialInstanceDynamic>(PadGlow)) { M->SetScalarParameterValue(TEXT("EmissiveStrength"), 3.f + 10.f * FMath::Clamp(Pulse, 0.f, 1.f)); }
+}
+
+void UShipInteriorComponent::BuildAirlock(FShipRoom& R)
+{
+	const FVector C = R.Center, H = R.Half;
+	const double Floor = C.Z - H.Z;
+	const FVector Door(C.X - H.X, C.Y, Floor);
+	R.Lift = InteriorSpot(Door + FVector(90.0, 0, 0), FVector(1, 0, 0));
+	R.Use = InteriorSpot(FVector(C.X + H.X - 110.0, C.Y, Floor), FVector(1, 0, 0));
+	R.UseLabel = TEXT("open the airlock");
+	if (RoomMesh(AirlockMesh, FVector(C.X, C.Y, Floor)))
+	{
+		for (double Dx : { -120.0, 120.0 }) { Light(FVector(C.X + Dx, C.Y, C.Z + H.Z - 20.0), 40.f, 700.f, FLinearColor(0.97f, 0.98f, 1.f)); }
+		return;
+	}
+	Shell(R, Door, FVector(1, 0, 0), false);
+	// The inner hatch: a round door in the forward bulkhead with its lit ring and a lamp over it.
+	const FVector Hatch(C.X + H.X - 10.0, C.Y, Floor + 125.0);
+	Piece(CylinderMesh, Hatch, FVector(200.0, 200.0, 16.0), FRotator(90.f, 0.f, 0.f), PanelDark, false);
+	Piece(CylinderMesh, Hatch + FVector(-6.0, 0, 0), FVector(176.0, 176.0, 6.0), FRotator(90.f, 0.f, 0.f), StripWhite, false);
+	Piece(CylinderMesh, Hatch + FVector(-9.0, 0, 0), FVector(160.0, 160.0, 6.0), FRotator(90.f, 0.f, 0.f), HullGrey, false);
+	Box(Hatch + FVector(-14.0, 0, 0), FVector(4.0, 30.0, 8.0), PanelDark, 0.f, false);
+	Box(Hatch + FVector(-14.0, 0, 0), FVector(4.0, 8.0, 30.0), PanelDark, 0.f, false);
+	Box(FVector(C.X + H.X - 8.0, C.Y + 140.0, Floor + 130.0), FVector(6.0, 36.0, 30.0), ConsoleBlack, 0.f, false);
+	Box(FVector(C.X + H.X - 11.5, C.Y + 140.0, Floor + 130.0), FVector(2.0, 30.0, 24.0), Teal, 0.f, false);
+	// Suit lockers along the port wall, a bench and the arms cabinet to starboard.
+	for (int32 i = 0; i < 4; ++i)
+	{
+		const double Lx = C.X - 180.0 + i * 90.0;
+		Box(FVector(Lx, C.Y - H.Y + 30.0, Floor + 112.0), FVector(80.0, 60.0, 224.0), PanelGrey);
+		Box(FVector(Lx, C.Y - H.Y + 61.0, Floor + 118.0), FVector(70.0, 2.0, 190.0), PanelDark, 0.f, false);
+		Box(FVector(Lx, C.Y - H.Y + 62.0, Floor + 140.0), FVector(40.0, 2.0, 70.0), HullGrey, 0.f, false);
+	}
+	Box(FVector(C.X - 80.0, C.Y + H.Y - 25.0, Floor + 22.0), FVector(220.0, 46.0, 44.0), PanelDark);
+	Box(FVector(C.X + 160.0, C.Y + H.Y - 22.0, Floor + 120.0), FVector(120.0, 44.0, 170.0), PanelDark);
+	Box(FVector(C.X + 160.0, C.Y + H.Y - 45.0, Floor + 150.0), FVector(40.0, 2.0, 30.0), Teal, 0.f, false);
+	for (double Dx : { -120.0, 120.0 }) { Light(FVector(C.X + Dx, C.Y, C.Z + H.Z - 20.0), 40.f, 700.f, FLinearColor(0.97f, 0.98f, 1.f)); }
+}
+
 void UShipInteriorComponent::SetBayShuttleShown(bool bShown)
 {
 	bBayShuttleShown = bShown;
@@ -335,22 +387,17 @@ void UShipInteriorComponent::Build()
 	const int32 Sick = Add(EShipRoom::Sickbay, FVector(6600.0, 0.0, 1900.0) * X, FVector(600.0, 450.0, 150.0));
 	const int32 BayRoom = Add(EShipRoom::ShuttleBay, FVector(Bay.X + 1300.0 * X, 0.0, Bay.Z), FVector(1300.0, 800.0, 325.0));
 	const int32 Tr = Add(EShipRoom::Transporter, FVector(7200.0, -1500.0, 1900.0) * X, FVector(400.0, 350.0, 150.0));
-	Add(EShipRoom::Airlock, FVector::ZeroVector, FVector::ZeroVector);
+	// The airlock's staging area sits two metres under the saucer hatch (the hull trace at a quarter length forward
+	// lands on the bridge module's roof at z ~3374): deck B, with the lift aft and the hatch forward.
+	const int32 Lock = Add(EShipRoom::Airlock, FVector(7625.0, 0.0, 3023.0) * X, FVector(300.0, 250.0, 150.0));
 
 	Building = &Rooms[Eng]; BuildEngineering(Rooms[Eng]);
 	Building = &Rooms[Sick]; BuildSickbay(Rooms[Sick]);
 	Building = &Rooms[BayRoom]; BuildShuttleBay(Rooms[BayRoom]);
 	Building = &Rooms[Tr]; BuildTransporter(Rooms[Tr]);
+	Building = &Rooms[Lock]; BuildAirlock(Rooms[Lock]);
 	Building = nullptr;
 	ShownRoom = EShipRoom::Count;
-}
-
-namespace
-{
-	FTransform InteriorSpot(const FVector& Feet, const FVector& Facing)
-	{
-		return FTransform(FRotationMatrix::MakeFromXZ(Facing.GetSafeNormal(), FVector::UpVector).ToQuat(), Feet);
-	}
 }
 
 void UShipInteriorComponent::BuildEngineering(FShipRoom& R)
