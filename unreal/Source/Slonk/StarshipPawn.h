@@ -703,8 +703,14 @@ private:
 	class AStarshipHUD* PlayerHUD() const;
 	/** Black out, do the thing, fade back: the lift ride, the transporter. */
 	void FadeThen(TFunction<void()> Then);
-	/** The transporter's shimmer round the person, the camera washing to blue-white, `Then` at the cut, the shimmer again where they stand. */
-	void Transport(APersonPawn* Person, TFunction<void()> Then);
+	/**
+	 * The transporter's shimmer round the person, `Then` at the cut, the shimmer again where they stand (the helmet
+	 * view alone washes to blue over the cut). False, with a message, while a transport or a lift ride is already
+	 * under way: the two halves and their timers, effects and fades never overlap.
+	 */
+	bool Transport(APersonPawn* Person, TFunction<void()> Then);
+	/** Between a transport's first shimmer and the end of its second. */
+	bool bTransporting = false;
 	bool bFreeLook = false;
 	FVector2D FreeLookAngles = FVector2D::ZeroVector; // (Yaw, Pitch)
 	float ShakeAmplitude = 0.f;

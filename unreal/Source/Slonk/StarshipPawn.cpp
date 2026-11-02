@@ -2629,8 +2629,22 @@ void AStarshipPawn::FadeThen(TFunction<void()> Then)
 	}), 0.6f, false);
 }
 
-void AStarshipPawn::Transport(APersonPawn* Person, TFunction<void()> Then)
+bool AStarshipPawn::Transport(APersonPawn* Person, TFunction<void()> Then)
 {
+	// One sequence at a time: a second F would start another shimmer on the same body and move the cut, and a lift
+	// ride finishing under a pending cut would beam the person out of the wrong room.
+	if (bTransporting)
+	{
+		ScreenMessage(TEXT("Transporter: already energising"), FColor::Orange);
+		UE_LOG(LogTemp, Log, TEXT("Transporter: refused, already energising"));
+		return false;
+	}
+	if (GetWorldTimerManager().IsTimerActive(LiftTimer))
+	{
+		ScreenMessage(TEXT("Transporter: wait for the lift"), FColor::Orange);
+		return false;
+	}
+	bTransporting = true;
 	const float Half = FMath::Max(0.3f, TransporterSeconds);
 	TWeakObjectPtr<APersonPawn> P(Person);
 	TWeakObjectPtr<AStarshipPawn> Self(this);
@@ -2658,16 +2672,25 @@ void AStarshipPawn::Transport(APersonPawn* Person, TFunction<void()> Then)
 	{
 		if (!Self.IsValid()) { return; }
 		Then();
-		if (APersonPawn* Who = P.Get())
+		APersonPawn* Who = P.Get();
+		if (Who)
 		{
 			ATransporterEffect::Spawn(Self->GetWorld(), Who, true, Half, PadPulse(Who));
 		}
-		if (bHelmet)
+		// The arrival's view decides the arrival's fade: the pad puts the helmet on (PlaceAboard), the ground gives
+		// back the view from before the deck (BeginEVA), so a departure held in the helmet's wash is simply let go
+		// when the figure lands in the third-person view.
+		const bool bHelmetNow = Who && Who->GetCameraMode() == EPersonCamera::Helmet;
+		APlayerController* PC2 = Self->GetWorld() ? Self->GetWorld()->GetFirstPlayerController() : nullptr;
+		if (PC2 && PC2->PlayerCameraManager)
 		{
-			APlayerController* PC2 = Self->GetWorld() ? Self->GetWorld()->GetFirstPlayerController() : nullptr;
-			if (PC2 && PC2->PlayerCameraManager) { PC2->PlayerCameraManager->StartCameraFade(1.f, 0.f, Half * 0.6f, Shimmer, false, false); }
+			if (bHelmetNow) { PC2->PlayerCameraManager->StartCameraFade(1.f, 0.f, Half * 0.6f, Shimmer, false, false); }
+			else if (bHelmet) { PC2->PlayerCameraManager->StopCameraFade(); }
 		}
+		// Free again once the second shimmer has finished forming the body.
+		Self->GetWorldTimerManager().SetTimer(Self->TransportTimer, FTimerDelegate::CreateLambda([Self]() { if (Self.IsValid()) { Self->bTransporting = false; } }), Half, false);
 	}), Half, false);
+	return true;
 }
 
 bool AStarshipPawn::StandUp()
@@ -2729,6 +2752,11 @@ bool AStarshipPawn::GoOutside(APersonPawn* Person)
 bool AStarshipPawn::MoveToRoom(APersonPawn* Person, EShipRoom Room)
 {
 	if (!Person || Person != ActivePerson.Get() || !Person->IsAboard()) { return false; }
+	if (bTransporting)
+	{
+		ScreenMessage(TEXT("Turbolift: the transporter has you, hold still"), FColor::Orange);
+		return false;
+	}
 	FTransform Lift, Use; FString Label;
 	if (!RoomSpots(Room, Lift, Use, Label)) { return false; }
 	if (Room == Person->GetRoom())
@@ -2766,7 +2794,7 @@ bool AStarshipPawn::BeamDown(APersonPawn* Person)
 	}
 	TWeakObjectPtr<APersonPawn> P(Person);
 	TWeakObjectPtr<APlanetBody> W(World);
-	Transport(Person, [this, P, W]()
+	return Transport(Person, [this, P, W]()
 	{
 		APersonPawn* Who = P.Get();
 		APlanetBody* Body = W.Get();
@@ -2786,7 +2814,6 @@ bool AStarshipPawn::BeamDown(APersonPawn* Person)
 		ScreenMessage(FString::Printf(TEXT("Energising. On the surface of %s; F beams you back up while the ship is in range."), *Body->GetDisplayName()), FColor::Cyan, 10.f);
 		UE_LOG(LogTemp, Log, TEXT("Beamed down to %s at %s"), *Body->GetDisplayName(), *Feet.ToString());
 	});
-	return true;
 }
 
 bool AStarshipPawn::BeamUp(APersonPawn* Person)
@@ -2798,7 +2825,7 @@ bool AStarshipPawn::BeamUp(APersonPawn* Person)
 		return false;
 	}
 	TWeakObjectPtr<APersonPawn> P(Person);
-	Transport(Person, [this, P]()
+	return Transport(Person, [this, P]()
 	{
 		APersonPawn* Who = P.Get();
 		if (!Who) { return; }
@@ -2809,7 +2836,6 @@ bool AStarshipPawn::BeamUp(APersonPawn* Person)
 		ScreenMessage(TEXT("Aboard. Transporter room, deck G."), FColor::Cyan, 5.f);
 		UE_LOG(LogTemp, Log, TEXT("Beamed up"));
 	});
-	return true;
 }
 
 bool AStarshipPawn::LaunchShuttleFromBay(APersonPawn* Person)
@@ -2830,6 +2856,11 @@ bool AStarshipPawn::LaunchShuttleFromBay(APersonPawn* Person)
 bool AStarshipPawn::PersonUse(APersonPawn* Person)
 {
 	if (!Person || !Person->IsAboard()) { return false; }
+	if (bTransporting)
+	{
+		ScreenMessage(TEXT("Transporter: energising, hold still"), FColor::Orange);
+		return false;
+	}
 	// Everything in the ship's frame: the person's world position is a tick behind the ship's, and under way that
 	// is kilometres.
 	FTransform Lift, Use; FString Label;
