@@ -176,7 +176,7 @@ Hits land somewhere in particular. The ship carries a compartment map in her own
 
 The Star Trek VI bridge is built from code in Blender (`blender/bridge-st6`) and imported as one mesh with its Okudagram screens bound to live readouts. From the captain's chair the viewscreen shows the real view ahead; the crew figures are placeholders for now. Main engineering, sickbay, the shuttle bay and the transporter room are built the same way (`blender/rooms/build_rooms.py`, one mesh per room plus the parked shuttle), laid out after the sets of the first six films and walked on their own triangles; their slots bind to the Okudagram screens, the lit strips and panels, the glowing core and pad, and a glass material.
 
-![Main engineering from the lift and from the well, the sickbay ward, the landing bay from the lift, the transporter room and its pad](ROOMS_SHEET_URL)
+![Main engineering from the lift and from the well, the sickbay ward, the landing bay from the lift, the transporter room and its pad](https://github.com/user-attachments/assets/61fdb61c-d8b7-4784-ac0b-04d0603995d4)
 
 https://github.com/user-attachments/assets/28b77f79-c31d-487a-ac32-dce1ff09c396
 
