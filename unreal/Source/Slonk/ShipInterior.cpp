@@ -387,9 +387,10 @@ void UShipInteriorComponent::Build()
 	const int32 Eng = Add(EShipRoom::Engineering, FVector(-900.0, 0.0, -1900.0) * X, FVector(800.0, 500.0, 225.0));
 	const int32 Sick = Add(EShipRoom::Sickbay, FVector(6600.0, 0.0, 1900.0) * X, FVector(600.0, 450.0, 150.0));
 	// The straight bay begins where the stern cap does (the clamshell door's axis, 9.2 m forward of the door point)
-	// and runs 26 m forward, 7 m tall; its deck is 2 cm above the hull's own fan at the fantail. The Blender set
+	// and runs 26 m forward, 6.2 m tall (the hull's shoulder at the junction is 13.1 m over the deck at the bay's
+	// width); its deck is 2 cm above the hull's own fan at the fantail. The throat behind it keeps the door's 7 m. The Blender set
 	// carries the throat into the cap behind it, up to the door.
-	const int32 BayRoom = Add(EShipRoom::ShuttleBay, FVector(Bay.X + 2220.0 * X, 0.0, Bay.Z + 4.0), FVector(1300.0, 800.0, 350.0));
+	const int32 BayRoom = Add(EShipRoom::ShuttleBay, FVector(Bay.X + 2220.0 * X, 0.0, Bay.Z - 36.0), FVector(1300.0, 800.0, 310.0));
 	const int32 Tr = Add(EShipRoom::Transporter, FVector(7200.0, -1500.0, 1900.0) * X, FVector(400.0, 350.0, 150.0));
 	// The airlock's staging area sits two metres under the saucer hatch (the hull trace at a quarter length forward
 	// lands on the bridge module's roof at z ~3374): deck B, with the lift aft and the hatch forward.
@@ -487,7 +488,7 @@ void UShipInteriorComponent::BuildShuttleBay(FShipRoom& R)
 		if (UStaticMeshComponent* Field = Box(FVector(C.X - H.X + 70.0, C.Y, C.Z), FVector(10.0, 2 * H.Y, 2 * H.Z), PanelDark)) { Field->SetHiddenInGame(true); }
 		for (double Dx : { -800.0, -400.0, 0.0, 400.0, 800.0 }) { for (double Dy : { -350.0, 350.0 }) { Light(FVector(C.X + Dx, C.Y + Dy, C.Z + H.Z - 140.0), 170.f, 1800.f, FLinearColor(0.95f, 0.97f, 1.f)); } }
 		// The throat under the stern cap, up to the clamshell door.
-		Light(FVector(C.X - H.X - 420.0, C.Y, C.Z + H.Z - 120.0), 220.f, 2200.f, FLinearColor(0.95f, 0.97f, 1.f));
+		Light(FVector(C.X - H.X - 420.0, C.Y, C.Z + H.Z - 40.0), 220.f, 2200.f, FLinearColor(0.95f, 0.97f, 1.f));
 		return;
 	}
 	Shell(R, Door, FVector(-1, 0, 0), true);

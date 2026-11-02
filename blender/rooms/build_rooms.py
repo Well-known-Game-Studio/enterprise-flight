@@ -708,6 +708,7 @@ def bay_throat(R):
     bulkhead ribbons that close the bay's corners against the cap at the junction. The door itself is the hull's
     own gores, placed by the game."""
     L, W, H = R.L, R.W, R.H
+    HT = 7.0                                            # the throat's height: the door's top, over the bay's own ceiling
     A = (-L / 2, 0.0)                                   # the door's axis on the deck
     seg = 40
     def arc(r, z, a0=90.0, a1=270.0, n=seg):
@@ -715,20 +716,27 @@ def bay_throat(R):
     # Deck and ceiling: half-discs astern of the junction, the deck 2 cm proud of the hull's own fan.
     deck = [(x, y) for x, y, _ in arc(cap_radius(0.0) - 0.06, 0.0)]
     prism("ThroatDeck", deck, -0.12, 0.0, M_BayDeck(), "Floors")
-    ceil = [(x, y) for x, y, _ in arc(cap_radius(H) - 0.1, H)]
-    prism("ThroatCeiling", ceil, H, H + 0.12, M_PanelDark(), "Ceiling")
+    ceil = [(x, y) for x, y, _ in arc(cap_radius(HT) - 0.1, HT)]
+    prism("ThroatCeiling", ceil, HT, HT + 0.12, M_PanelDark(), "Ceiling")
     # Liners: the cap's inside from the door's edge round to the junction plane, 10 cm inside the hull.
-    zs = [H * k / 14 for k in range(15)]
+    zs = [HT * k / 14 for k in range(15)]
     for side in (-1, 1):
         rows = []
         for z in zs:
             r = cap_radius(z) - 0.10
             a_edge = math.degrees(math.asin(min(door_edge_y(z) / r, 0.999))) + 0.6
             rows.append([(A[0] - r * math.cos(math.radians(a)), A[1] + side * r * math.sin(math.radians(a)), z) for a in [a_edge + (90.0 - a_edge) * k / 10 for k in range(11)]])
-        grid_surface(f"CapLiner{'P' if side < 0 else 'S'}", rows, M_PanelDark(), "Walls", toward=(A[0], A[1], H / 2))
-        # The bulkhead ribbon at the junction: between the bay's wall end (|y| = W/2) and the cap's inside.
-        rib = [[(A[0], side * (W / 2), z), (A[0], side * (cap_radius(z) - 0.10), z)] for z in zs]
+        grid_surface(f"CapLiner{'P' if side < 0 else 'S'}", rows, M_PanelDark(), "Walls", toward=(A[0], A[1], HT / 2))
+        # The bulkhead ribbon at the junction: between the bay's wall end (|y| = W/2) and the cap's inside, up to
+        # the bay's ceiling; above it the lintel closes the throat's extra height across its whole width.
+        zb = [z for z in zs if z <= H + 1e-6] + [H]
+        rib = [[(A[0], side * (W / 2), z), (A[0], side * (cap_radius(z) - 0.10), z)] for z in zb]
         grid_surface(f"Junction{'P' if side < 0 else 'S'}", rib, M_PanelGrey(), "Walls", toward=(A[0] + 3.0, 0.0, H / 2))
+    zl = [H + (HT - H) * k / 4 for k in range(5)]
+    lintel = [[(A[0], -(cap_radius(z) - 0.10) + (2 * (cap_radius(z) - 0.10)) * k / 16, z) for k in range(17)] for z in zl]
+    grid_surface("JunctionLintel", lintel, M_PanelGrey(), "Walls", toward=(A[0] + 3.0, 0.0, H / 2))
+    box("LintelStrip", (A[0] + 0.03, 0, H - 0.3), (0.03, 2 * (cap_radius(H) - 0.4), 0.12), M_Strip(), "Lights")
+    for side in (-1, 1):
         # A dark post where the wall meets the cap, and the warning lamps that were on the old frame.
         box("DoorPost", (A[0] + 0.25, side * (W / 2 - 0.3), H / 2), (0.5, 0.6, H), M_PanelDark(), "Walls")
         for z in (2.0, 4.0):
@@ -739,14 +747,14 @@ def bay_throat(R):
         r = cap_radius(0.0) - 0.9
         box("EdgeLamp", (A[0] + r * math.cos(math.radians(a)), A[1] + r * math.sin(math.radians(a)), 0.01), (0.2, 0.2, 0.02), M_Strip(), "Lights")
     box("RedLineAft", (A[0] - 4.5, 0, 0.004), (9.0, 0.5, 0.008), M_PaintRed(), "Floors")
-    R.light((A[0] - 4.0, 0.0, H - 0.5), 150.0, size=3.0)
+    R.light((A[0] - 4.0, 0.0, HT - 0.5), 150.0, size=3.0)
 
 def build_shuttle_bay():
     """The landing bay (The Final Frontier): a pale deck with the red approach line down the middle and the painted
     landing box, blue strip lights along the grey walls, the control gallery's windows high on the forward
     bulkhead, the open door frame astern, the shuttle on its skids on the box and cargo stacked to starboard.
     Lift door forward, starboard; a side door to port."""
-    R = Room("bay", 26.0, 16.0, 7.0)
+    R = Room("bay", 26.0, 16.0, 6.2)   # the hull's shoulder at the junction is 13.1 m over the deck at the bay's width
     L, W, H = R.L, R.W, R.H
     shell(R, M_PanelGrey(), M_BayDeck(), M_PanelDark(), open_aft=True)
     bay_throat(R)
