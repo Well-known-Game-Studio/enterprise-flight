@@ -75,6 +75,10 @@ public:
 	void SetRoomSpots(EShipRoom Which, const FTransform& Lift, const FTransform& Use, const FString& UseLabel);
 	/** The parked shuttle in the bay is its own mesh: hidden while the real one is out. */
 	void SetBayShuttleShown(bool bShown);
+	/** The bay is drawn while the clamshell door is anything but shut, whoever is inside: it shows through the opening. */
+	void SetBayShownFromOutside(bool bShown);
+	/** A room's box in pawn space (centre, half extents); false for a room without one. */
+	bool GetRoomBox(EShipRoom Room, FVector& OutCenter, FVector& OutHalf) const;
 	/** The transporter pad's glow follows the shimmer while someone beams (0 = idle). */
 	void SetPadGlow(float Pulse);
 
@@ -115,6 +119,7 @@ private:
 	TWeakObjectPtr<UStaticMeshComponent> BayShuttle;
 	TArray<TWeakObjectPtr<UPrimitiveComponent>> BayShuttlePieces;
 	bool bBayShuttleShown = true;
+	bool bBayFromOutside = false;
 	UStaticMeshComponent* Piece(UStaticMesh* Mesh, const FVector& Center, const FVector& Size, const FRotator& Rot, UMaterialInterface* Mat, bool bSolid = true);
 	UStaticMeshComponent* Box(const FVector& Center, const FVector& Size, UMaterialInterface* Mat, float YawDeg = 0.f, bool bSolid = true) { return Piece(CubeMesh, Center, Size, FRotator(0.f, YawDeg, 0.f), Mat, bSolid); }
 	UStaticMeshComponent* Cyl(const FVector& Center, float Radius, float Height, UMaterialInterface* Mat, bool bSolid = true) { return Piece(CylinderMesh, Center, FVector(Radius * 2.f, Radius * 2.f, Height), FRotator::ZeroRotator, Mat, bSolid); }

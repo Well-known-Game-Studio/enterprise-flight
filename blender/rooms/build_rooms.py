@@ -248,6 +248,16 @@ def prism(name, outline, z0, z1, material, group):
         faces.append((i, n + i, n + j, j))
     return recalc_outward(mesh_from(name, verts, faces, material, group))
 
+def grid_surface(name, rows, material, group, toward=None, smooth=True):
+    """A quad mesh from rows of points (every row the same length), e.g. a liner swept along a profile. Faced
+    toward `toward` when given."""
+    n = len(rows[0]); verts = [p for row in rows for p in row]; faces = []
+    for j in range(len(rows) - 1):
+        for i in range(n - 1):
+            a = j * n + i; faces.append((a, a + 1, a + n + 1, a + n))
+    obj = mesh_from(name, verts, faces, material, group, smooth=smooth)
+    return orient_toward(obj, toward) if toward else obj
+
 def screen(name, center, w, h, material, group, yaw=0.0, pitch=0.0):
     """A one-sided quad showing an image to a viewer who looks along bearing `yaw` (0 = +x): the quad stands across
     that line of sight at `center`; positive pitch leans its top away from the viewer, so a desk screen faces up.
@@ -680,21 +690,66 @@ def shuttle(center, yaw=0.0, name="Galileo"):
     box("DoorStep", P((-0.3, -1.6, 1.0)), (0.9, 0.5, 0.06), M_PanelDark(), "Shuttle", yaw=yaw)
     box("NoseLamp", P((3.46, 0.0, 0.9)), (0.04, 0.6, 0.08), M_Strip(), "Shuttle", yaw=yaw)
 
+
+# The stern cap behind the straight bay: the hull's clamshell door is a surface of revolution about a vertical axis
+# at the bay's aft end (pawn x -6330, the floor at -1948), with this radius profile (metres above the bay floor ->
+# metres), measured off the 1701-A mesh; the painted door spans |y| < 3.46 + (6.76 - z) * 0.754 of it, the
+# flanking panels the rest.
+CAP_PROFILE = [(-0.02, 10.00), (1.46, 9.90), (2.46, 9.63), (2.96, 9.28), (3.96, 8.92), (4.46, 8.49), (5.46, 8.02), (5.96, 7.51), (6.46, 6.96), (7.03, 6.50), (7.49, 2.80)]
+def cap_radius(z):
+    for (z0, r0), (z1, r1) in zip(CAP_PROFILE, CAP_PROFILE[1:]):
+        if z <= z1: return r0 + (r1 - r0) * (z - z0) / (z1 - z0)
+    return CAP_PROFILE[-1][1]
+def door_edge_y(z): return 3.46 + (6.76 - z) * 0.754
+
+def bay_throat(R):
+    """The throat between the straight bay and the clamshell door: the deck and ceiling half-discs inside the cap,
+    liners up the cap's inside beside the door (where the hull's flanking panels are, seen from within), and the
+    bulkhead ribbons that close the bay's corners against the cap at the junction. The door itself is the hull's
+    own gores, placed by the game."""
+    L, W, H = R.L, R.W, R.H
+    A = (-L / 2, 0.0)                                   # the door's axis on the deck
+    seg = 40
+    def arc(r, z, a0=90.0, a1=270.0, n=seg):
+        return [(A[0] + r * math.cos(math.radians(a0 + (a1 - a0) * k / n)), A[1] + r * math.sin(math.radians(a0 + (a1 - a0) * k / n)), z) for k in range(n + 1)]
+    # Deck and ceiling: half-discs astern of the junction, the deck 2 cm proud of the hull's own fan.
+    deck = [(x, y) for x, y, _ in arc(cap_radius(0.0) - 0.06, 0.0)]
+    prism("ThroatDeck", deck, -0.12, 0.0, M_BayDeck(), "Floors")
+    ceil = [(x, y) for x, y, _ in arc(cap_radius(H) - 0.1, H)]
+    prism("ThroatCeiling", ceil, H, H + 0.12, M_PanelDark(), "Ceiling")
+    # Liners: the cap's inside from the door's edge round to the junction plane, 10 cm inside the hull.
+    zs = [H * k / 14 for k in range(15)]
+    for side in (-1, 1):
+        rows = []
+        for z in zs:
+            r = cap_radius(z) - 0.10
+            a_edge = math.degrees(math.asin(min(door_edge_y(z) / r, 0.999))) + 0.6
+            rows.append([(A[0] - r * math.cos(math.radians(a)), A[1] + side * r * math.sin(math.radians(a)), z) for a in [a_edge + (90.0 - a_edge) * k / 10 for k in range(11)]])
+        grid_surface(f"CapLiner{'P' if side < 0 else 'S'}", rows, M_PanelDark(), "Walls", toward=(A[0], A[1], H / 2))
+        # The bulkhead ribbon at the junction: between the bay's wall end (|y| = W/2) and the cap's inside.
+        rib = [[(A[0], side * (W / 2), z), (A[0], side * (cap_radius(z) - 0.10), z)] for z in zs]
+        grid_surface(f"Junction{'P' if side < 0 else 'S'}", rib, M_PanelGrey(), "Walls", toward=(A[0] + 3.0, 0.0, H / 2))
+        # A dark post where the wall meets the cap, and the warning lamps that were on the old frame.
+        box("DoorPost", (A[0] + 0.25, side * (W / 2 - 0.3), H / 2), (0.5, 0.6, H), M_PanelDark(), "Walls")
+        for z in (2.0, 4.0):
+            box("WarnLamp", (A[0] + 0.51, side * (W / 2 - 0.3), z), (0.03, 0.12, 0.3), M_Warn(), "Lights")
+    # Deck lights round the fan, and the approach line carried out to the door.
+    for k in range(1, 8):
+        a = 90.0 + 180.0 * k / 8
+        r = cap_radius(0.0) - 0.9
+        box("EdgeLamp", (A[0] + r * math.cos(math.radians(a)), A[1] + r * math.sin(math.radians(a)), 0.01), (0.2, 0.2, 0.02), M_Strip(), "Lights")
+    box("RedLineAft", (A[0] - 4.5, 0, 0.004), (9.0, 0.5, 0.008), M_PaintRed(), "Floors")
+    R.light((A[0] - 4.0, 0.0, H - 0.5), 150.0, size=3.0)
+
 def build_shuttle_bay():
     """The landing bay (The Final Frontier): a pale deck with the red approach line down the middle and the painted
     landing box, blue strip lights along the grey walls, the control gallery's windows high on the forward
     bulkhead, the open door frame astern, the shuttle on its skids on the box and cargo stacked to starboard.
     Lift door forward, starboard; a side door to port."""
-    R = Room("bay", 26.0, 16.0, 6.5)
+    R = Room("bay", 26.0, 16.0, 7.0)
     L, W, H = R.L, R.W, R.H
     shell(R, M_PanelGrey(), M_BayDeck(), M_PanelDark(), open_aft=True)
-    # The door frame astern.
-    for s in (-1, 1):
-        box("DoorPost", (-L / 2 + 0.3, s * (W / 2 - 0.3), H / 2), (0.6, 0.6, H), M_PanelDark(), "Walls")
-        for z in (2.0, 4.0):
-            box("WarnLamp", (-L / 2 + 0.61, s * (W / 2 - 0.3), z), (0.03, 0.12, 0.3), M_Warn(), "Lights")
-    box("Lintel", (-L / 2 + 0.3, 0, H - 0.45), (0.6, W, 0.9), M_PanelDark(), "Walls")
-    box("LintelStrip", (-L / 2 + 0.61, 0, H - 0.95), (0.03, W - 1.4, 0.12), M_Strip(), "Lights")
+    bay_throat(R)
     # Wall bands: the blue strip at 4 m, a dark rail at 1.2 m, pilasters every 4 m.
     for s in (-1, 1):
         box("BlueStrip", (0.3, s * (W / 2 - 0.02), 4.0), (L - 0.6, 0.04, 0.10), M_StripBlue(), "Lights")
@@ -891,6 +946,8 @@ VIEWS = {
         "shuttle": ((0.6, -6.5, 1.7), (1.5, 0.0, 1.3), 18),
         "gallery": ((-3.0, 5.0, 1.7), (13.0, 0.0, 4.4), 24),
         "high": ((-16.0, -12.0, 10.0), (2.0, 0.0, 1.5), 22),
+        "throat": ((-6.0, 4.0, 1.7), (-17.0, 0.0, 3.0), 24),
+        "door": ((-24.0, 2.0, 2.0), (-8.0, 0.0, 2.5), 26),
     },
     "lock": {
         "lift": ((-2.1, 0.0, 1.65), (3.0, 0.0, 1.2), 20),

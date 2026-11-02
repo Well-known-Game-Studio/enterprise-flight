@@ -56,6 +56,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shuttle") float BayRunCm = 5000.f;
 	/** Speed through the bay door (cm/s). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shuttle") float BaySpeedCm = 700.f;
+	/** Speed through the bay itself, between the landing box and the door (cm/s). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shuttle") float TaxiSpeedCm = 320.f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UDynamicMeshComponent> HullPart;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UDynamicMeshComponent> GlowPart;

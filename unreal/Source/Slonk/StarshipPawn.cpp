@@ -21,6 +21,7 @@
 #include "RunningLightsComponent.h"
 #include "RcsThrusterComponent.h"
 #include "ShuttlecraftPawn.h"
+#include "BayDoors.h"
 #include "PersonPawn.h"
 #include "ScienceScannerComponent.h"
 #include "ScienceLog.h"
@@ -88,6 +89,7 @@ AStarshipPawn::AStarshipPawn()
 	ShipMesh->SetGenerateOverlapEvents(false);
 	ShipMesh->SetMobility(EComponentMobility::Movable);
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> HullFinder(TEXT("/Game/Enterprise/1701-a.1701-a"));
+	SternHullMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Enterprise/Constitution_3_Hull.Constitution_3_Hull")));
 	if (HullFinder.Succeeded())
 	{
 		ShipMesh->SetStaticMesh(HullFinder.Object);
@@ -822,6 +824,7 @@ void AStarshipPawn::BeginPlay()
 	{
 		UE_LOG(LogTemp, Warning, TEXT("Starship: warp post-process material %s not found; warp visuals limited to streaks."), *WarpPostProcessMaterial.ToString());
 	}
+	SetupBayDoors();
 }
 
 FVector AStarshipPawn::GetUniversePosition() const
@@ -1370,6 +1373,10 @@ void AStarshipPawn::ApplyViewVisibility()
 	ShipMesh->SetVisibility(!bBridge && !bInside);
 	if (RunningLights) { RunningLights->SetVisibility(!bBridge && !bInside); }
 	if (BridgeInterior) { BridgeInterior->SetVisibility(bBridge, true); }
+	// The clamshell door shows with the hull, and from inside the bay (the closed gores are its aft wall).
+	const bool bHullShown = !bBridge && !bInside;
+	if (BayDoors) { BayDoors->SetShown(bHullShown || ShownRoom == EShipRoom::ShuttleBay); }
+	if (Interior) { Interior->SetBayShownFromOutside(bHullShown && BayDoors && !BayDoors->IsClosed()); }
 }
 
 void AStarshipPawn::SetInteriorRoom(EShipRoom Room)
@@ -1391,6 +1398,7 @@ void AStarshipPawn::CycleCameraMode()
 	case EStarshipCameraMode::Port: SetCameraMode(EStarshipCameraMode::Starboard); break;
 	case EStarshipCameraMode::Starboard: SetCameraMode(EStarshipCameraMode::Top); break;
 	case EStarshipCameraMode::Top: SetCameraMode(EStarshipCameraMode::Bottom); break;
+	case EStarshipCameraMode::Bottom: SetCameraMode(EStarshipCameraMode::Stern); break;
 	default: SetCameraMode(EStarshipCameraMode::Chase); break;
 	}
 }
@@ -1425,6 +1433,12 @@ void AStarshipPawn::ResetCamera()
 
 void AStarshipPawn::Tick(float DeltaTime)
 {
+	if (BayDoors)
+	{
+		// The bay shows from outside while the doors are anything but shut.
+		const bool bClosed = BayDoors->IsClosed();
+		if (bClosed != bBayDoorsWereClosed) { bBayDoorsWereClosed = bClosed; ApplyViewVisibility(); }
+	}
 	FSlonkScopeTimer SlonkTimer_(TEXT("Tick StarshipPawn"));
 	Super::Tick(DeltaTime);
 	ProcessDebugCommand();
@@ -1720,6 +1734,9 @@ void AStarshipPawn::UpdateCameras(float DeltaTime)
 		case EStarshipCameraMode::Port: Off = FVector(0.0, -D, D * 0.08); Rot = FRotator(0.f, 90.f, 0.f); break;
 		case EStarshipCameraMode::Starboard: Off = FVector(0.0, D, D * 0.08); Rot = FRotator(0.f, -90.f, 0.f); break;
 		case EStarshipCameraMode::Top: Off = FVector(0.0, 0.0, D); Rot = FRotator(-90.f, 0.f, 0.f); break;
+		case EStarshipCameraMode::Stern:
+			// Behind the shuttlebay door (0.223 L aft, 0.052 L down on the 1701-A), a little above its height.
+			Off = FVector(-0.223 * LengthCm - 0.28 * D, 0.0, -0.052 * LengthCm + 0.03 * D); Rot = FRotator(-3.f, 0.f, 0.f); break;
 		default: Off = FVector(0.0, 0.0, -D); Rot = FRotator(90.f, 0.f, 0.f); break;
 		}
 		CinematicCamera->SetRelativeLocation(Off + ShakeOffset * Amp * LengthCm * 0.005f);
@@ -1834,6 +1851,7 @@ void AStarshipPawn::ProcessDebugCommand()
 		else if (Mode == TEXT("starboard")) { SetCameraMode(EStarshipCameraMode::Starboard); }
 		else if (Mode == TEXT("top")) { SetCameraMode(EStarshipCameraMode::Top); }
 		else if (Mode == TEXT("bottom")) { SetCameraMode(EStarshipCameraMode::Bottom); }
+		else if (Mode == TEXT("stern")) { SetCameraMode(EStarshipCameraMode::Stern); }
 		else { CycleCameraMode(); }
 	}
 	else if (Op == TEXT("steer"))
@@ -2367,6 +2385,14 @@ void AStarshipPawn::ToggleScan()
 
 bool AStarshipPawn::HandleCraftCommand(const FString& Op, const TArray<FString>& Args)
 {
+	if (Op == TEXT("bay"))
+	{
+		FString Want = TEXT("toggle");
+		for (const FString& A : Args) { const FString L = A.ToLower(); if (L == TEXT("open") || L == TEXT("close") || L == TEXT("toggle")) { Want = L; } }
+		const bool bOpen = Want == TEXT("open") || (Want == TEXT("toggle") && !(BayDoors && BayDoors->WantsOpen()));
+		OpenBayDoors(bOpen);
+		return true;
+	}
 	if (Op == TEXT("shuttle"))
 	{
 		ToggleShuttle();
@@ -2920,6 +2946,63 @@ FTransform AStarshipPawn::GetShuttleBayTransform() const
 	return FTransform(Facing, GetActorTransform().TransformPosition(ShuttleBayOffset));
 }
 
+void AStarshipPawn::SetupBayDoors()
+{
+	if (!IsEnterpriseAMesh(ShipMesh)) { return; }
+	// The painted door's slot takes the masked copy of its material: the hull keeps a hole where the gores sit.
+	if (UMaterialInterface* Stern = SternHullMaterial.LoadSynchronous())
+	{
+		const int32 Slot = ShipMesh->GetMaterialIndex(TEXT("Constitution_3"));
+		if (Slot != INDEX_NONE) { ShipMesh->SetMaterial(Slot, Stern); }
+		else { UE_LOG(LogTemp, Warning, TEXT("BayDoors: no Constitution_3 slot on the hull; the painted door stays")); return; }
+	}
+	BayDoors = NewObject<UBayDoorsComponent>(this, TEXT("BayDoors"));
+	BayDoors->AttachToComponent(ShipMesh, FAttachmentTransformRules::KeepRelativeTransform);
+	BayDoors->SetRelativeLocation(BayDoorPivot);
+	BayDoors->RegisterComponent();
+	if (!BayDoors->Build())
+	{
+		BayDoors->DestroyComponent();
+		BayDoors = nullptr;
+		return;
+	}
+	bBayDoorsWereClosed = true;
+	ApplyViewVisibility();
+	UE_LOG(LogTemp, Log, TEXT("BayDoors: eight gores on the fantail"));
+}
+
+FTransform AStarshipPawn::GetShuttleParkTransform() const
+{
+	FVector C, H;
+	if (Interior && Interior->GetRoomBox(EShipRoom::ShuttleBay, C, H))
+	{
+		// On the landing box, a little up on its skids, nose forward: the launch backs her out.
+		const FVector Park(C.X + 150.0, C.Y, C.Z - H.Z + 150.0);
+		const FQuat Facing = GetActorQuat() * FQuat(FVector::UpVector, PI);
+		return FTransform(Facing, GetActorTransform().TransformPosition(Park));
+	}
+	return GetShuttleBayTransform();
+}
+
+bool AStarshipPawn::OpenBayDoors(bool bOpen)
+{
+	if (!BayDoors)
+	{
+		ScreenMessage(TEXT("Bay doors: none on this hull"), FColor::Orange);
+		return false;
+	}
+	if (BayDoors->WantsOpen() != bOpen)
+	{
+		BayDoors->SetOpen(bOpen);
+		ScreenMessage(bOpen ? TEXT("Bay doors opening") : TEXT("Bay doors closing"), FColor::Cyan, 4.f);
+		UE_LOG(LogTemp, Log, TEXT("Bay doors %s"), bOpen ? TEXT("opening") : TEXT("closing"));
+	}
+	return true;
+}
+
+bool AStarshipPawn::AreBayDoorsOpen() const { return !BayDoors || BayDoors->IsOpen(); }
+bool AStarshipPawn::AreBayDoorsClosed() const { return !BayDoors || BayDoors->IsClosed(); }
+
 bool AStarshipPawn::LaunchShuttle()
 {
 	APlayerController* PC = Cast<APlayerController>(GetController());
@@ -2949,7 +3032,9 @@ bool AStarshipPawn::LaunchShuttle()
 	Params.Owner = this;
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 	UClass* Cls = ShuttleClass ? *ShuttleClass : AShuttlecraftPawn::StaticClass();
-	AShuttlecraftPawn* Shuttle = GetWorld()->SpawnActor<AShuttlecraftPawn>(Cls, GetShuttleBayTransform(), Params);
+	OpenBayDoors(true);
+	GetWorldTimerManager().ClearTimer(BayDoorTimer);
+	AShuttlecraftPawn* Shuttle = GetWorld()->SpawnActor<AShuttlecraftPawn>(Cls, GetShuttleParkTransform(), Params);
 	if (!Shuttle)
 	{
 		return false;
@@ -2995,6 +3080,11 @@ void AStarshipPawn::OnShuttleDocked(AShuttlecraftPawn* Shuttle)
 	}
 	ActiveShuttle = nullptr;
 	if (Interior) { Interior->SetBayShuttleShown(true); }
+	if (BayDoors)
+	{
+		TWeakObjectPtr<AStarshipPawn> Self(this);
+		GetWorldTimerManager().SetTimer(BayDoorTimer, FTimerDelegate::CreateLambda([Self]() { if (Self.IsValid()) { Self->OpenBayDoors(false); } }), 1.5f, false);
+	}
 	// Home through the bay: out of the shuttle on foot beside her, the officer keeping the conn until the captain
 	// reaches the chair.
 	if (bPlayerAboard && Interior && !ActivePerson.IsValid() && PutAboard(EShipRoom::ShuttleBay, true))

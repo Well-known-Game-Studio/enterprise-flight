@@ -239,12 +239,13 @@ void UShipInteriorComponent::BuildAirlock(FShipRoom& R)
 void UShipInteriorComponent::SetBayShuttleShown(bool bShown)
 {
 	bBayShuttleShown = bShown;
-	const bool bOn = bShown && ShownRoom == EShipRoom::ShuttleBay;
-	auto Apply = [bOn](UPrimitiveComponent* S)
+	const bool bIn = ShownRoom == EShipRoom::ShuttleBay;
+	const bool bOn = bShown && (bIn || bBayFromOutside);
+	auto Apply = [bOn, bIn, bShown](UPrimitiveComponent* S)
 	{
 		S->SetVisibility(bOn);
-		// Pieces that never block keep NoCollision either way.
-		if (S->GetCollisionResponseToChannel(ECC_GameTraceChannel1) == ECR_Block) { S->SetCollisionEnabled(bOn ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision); }
+		// Pieces that never block keep NoCollision either way; solid ones block only for someone in the bay.
+		if (S->GetCollisionResponseToChannel(ECC_GameTraceChannel1) == ECR_Block) { S->SetCollisionEnabled(bShown && bIn ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision); }
 	};
 	if (UStaticMeshComponent* S = BayShuttle.Get()) { Apply(S); }
 	for (const TWeakObjectPtr<UPrimitiveComponent>& P : BayShuttlePieces) { if (UPrimitiveComponent* S = P.Get()) { Apply(S); } }
@@ -385,7 +386,10 @@ void UShipInteriorComponent::Build()
 	Add(EShipRoom::Bridge, FVector(8000.0, 0.0, 3230.0) * X, FVector::ZeroVector); // the set's own box; spots set by the pawn
 	const int32 Eng = Add(EShipRoom::Engineering, FVector(-900.0, 0.0, -1900.0) * X, FVector(800.0, 500.0, 225.0));
 	const int32 Sick = Add(EShipRoom::Sickbay, FVector(6600.0, 0.0, 1900.0) * X, FVector(600.0, 450.0, 150.0));
-	const int32 BayRoom = Add(EShipRoom::ShuttleBay, FVector(Bay.X + 1300.0 * X, 0.0, Bay.Z), FVector(1300.0, 800.0, 325.0));
+	// The straight bay begins where the stern cap does (the clamshell door's axis, 9.2 m forward of the door point)
+	// and runs 26 m forward, 7 m tall; its deck is 2 cm above the hull's own fan at the fantail. The Blender set
+	// carries the throat into the cap behind it, up to the door.
+	const int32 BayRoom = Add(EShipRoom::ShuttleBay, FVector(Bay.X + 2220.0 * X, 0.0, Bay.Z + 4.0), FVector(1300.0, 800.0, 350.0));
 	const int32 Tr = Add(EShipRoom::Transporter, FVector(7200.0, -1500.0, 1900.0) * X, FVector(400.0, 350.0, 150.0));
 	// The airlock's staging area sits two metres under the saucer hatch (the hull trace at a quarter length forward
 	// lands on the bridge module's roof at z ~3374): deck B, with the lift aft and the hatch forward.
@@ -482,6 +486,8 @@ void UShipInteriorComponent::BuildShuttleBay(FShipRoom& R)
 		// The atmosphere field across the opening: nothing to see, but the deck ends there for anyone on foot.
 		if (UStaticMeshComponent* Field = Box(FVector(C.X - H.X + 70.0, C.Y, C.Z), FVector(10.0, 2 * H.Y, 2 * H.Z), PanelDark)) { Field->SetHiddenInGame(true); }
 		for (double Dx : { -800.0, -400.0, 0.0, 400.0, 800.0 }) { for (double Dy : { -350.0, 350.0 }) { Light(FVector(C.X + Dx, C.Y + Dy, C.Z + H.Z - 140.0), 170.f, 1800.f, FLinearColor(0.95f, 0.97f, 1.f)); } }
+		// The throat under the stern cap, up to the clamshell door.
+		Light(FVector(C.X - H.X - 420.0, C.Y, C.Z + H.Z - 120.0), 220.f, 2200.f, FLinearColor(0.95f, 0.97f, 1.f));
 		return;
 	}
 	Shell(R, Door, FVector(-1, 0, 0), true);
@@ -537,9 +543,26 @@ void UShipInteriorComponent::ShowRoom(EShipRoom Which)
 	ShownRoom = Which;
 	for (FShipRoom& R : Rooms)
 	{
-		const bool bOn = R.Id == Which;
+		const bool bIn = R.Id == Which;
+		const bool bOn = bIn || (R.Id == EShipRoom::ShuttleBay && bBayFromOutside);
 		for (const TWeakObjectPtr<USceneComponent>& P : R.Pieces) { if (USceneComponent* S = P.Get()) { S->SetVisibility(bOn); } }
-		for (const TWeakObjectPtr<UPrimitiveComponent>& P : R.Solids) { if (UPrimitiveComponent* S = P.Get()) { S->SetCollisionEnabled(bOn ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision); } }
+		for (const TWeakObjectPtr<UPrimitiveComponent>& P : R.Solids) { if (UPrimitiveComponent* S = P.Get()) { S->SetCollisionEnabled(bIn ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision); } }
 	}
-	if (!bBayShuttleShown) { SetBayShuttleShown(false); }
+	SetBayShuttleShown(bBayShuttleShown);
+}
+
+void UShipInteriorComponent::SetBayShownFromOutside(bool bShown)
+{
+	if (bBayFromOutside == bShown) { return; }
+	bBayFromOutside = bShown;
+	ShowRoom(ShownRoom);
+}
+
+bool UShipInteriorComponent::GetRoomBox(EShipRoom Room, FVector& OutCenter, FVector& OutHalf) const
+{
+	for (const FShipRoom& R : Rooms)
+	{
+		if (R.Id == Room && !R.Half.IsNearlyZero()) { OutCenter = R.Center; OutHalf = R.Half; return true; }
+	}
+	return false;
 }

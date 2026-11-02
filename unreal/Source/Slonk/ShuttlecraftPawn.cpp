@@ -337,6 +337,7 @@ bool AShuttlecraftPawn::RequestDock()
 		return false;
 	}
 	if (Movement && Movement->bLanded) { Movement->TakeOff(); }
+	Ship->OpenBayDoors(true);
 	SetPhase(EShuttlePhase::Docking);
 	ScreenMessage(TEXT("Docking: approach under the bay's control"), FColor::Cyan);
 	return true;
@@ -390,9 +391,31 @@ void AShuttlecraftPawn::TickLaunch(float DeltaTime)
 		return;
 	}
 	PhaseTime += DeltaTime;
+	const FTransform Bay = Ship->GetShuttleBayTransform();
+	const FTransform Park = Ship->GetShuttleParkTransform();
+	// The lift: from the landing box up to the door's height, straight above the park spot.
+	const FVector Up = Bay.GetRotation().GetUpVector();
+	const FVector Lifted = Park.GetLocation() + Up * FVector::DotProduct(Bay.GetLocation() - Park.GetLocation(), Up);
+	if (DockStep == 0)
+	{
+		// Off the deck while the clamshell opens; hold at the door's height until it has.
+		const float T = FMath::Clamp(PhaseTime / 2.5f, 0.f, 1.f);
+		const float Ease = T * T * (3.f - 2.f * T);
+		SetActorLocationAndRotation(FMath::Lerp(Park.GetLocation(), Lifted, Ease), Bay.GetRotation(), false, nullptr, ETeleportType::TeleportPhysics);
+		if (T >= 1.f && Ship->AreBayDoorsOpen()) { DockStep = 1; PhaseTime = 0.f; }
+		return;
+	}
+	if (DockStep == 1)
+	{
+		// Backing out: aft through the throat to the door at a crawl.
+		const double Dist = FVector::Dist(Lifted, Bay.GetLocation());
+		const double Along = FMath::Min((double)PhaseTime * TaxiSpeedCm, Dist);
+		SetActorLocationAndRotation(FMath::Lerp(Lifted, Bay.GetLocation(), Dist > 1.0 ? Along / Dist : 1.0), Bay.GetRotation(), false, nullptr, ETeleportType::TeleportPhysics);
+		if (Along >= Dist - 1.0) { DockStep = 2; PhaseTime = 0.f; }
+		return;
+	}
 	// Out through the door and straight astern, picking up to bay speed over the first second.
 	const float Run = BaySpeedCm * FMath::Max(PhaseTime - 0.5f * FMath::Min(PhaseTime, 1.f), 0.f);
-	const FTransform Bay = Ship->GetShuttleBayTransform();
 	SetActorLocationAndRotation(Bay.TransformPosition(FVector(Run, 0.f, 0.f)), Bay.GetRotation(), false, nullptr, ETeleportType::TeleportPhysics);
 	if (Run >= BayRunCm)
 	{
@@ -402,6 +425,7 @@ void AShuttlecraftPawn::TickLaunch(float DeltaTime)
 			Movement->Velocity = Bay.GetUnitAxis(EAxis::X) * BaySpeedCm + (Ship->Movement ? Ship->Movement->Velocity : FVector::ZeroVector);
 		}
 		ScreenMessage(TEXT("Shuttle clear of the bay. C docks again within 500 m of it; set down on a planet by easing onto the ground."), FColor::Cyan, 10.f);
+		Ship->OpenBayDoors(false);
 	}
 }
 
@@ -428,19 +452,38 @@ void AShuttlecraftPawn::TickDock(float DeltaTime)
 		const double Speed = FMath::Clamp(Dist / 1.5, 300.0, 4000.0);
 		const double Step = FMath::Min(Dist, Speed * DeltaTime);
 		SetActorLocationAndRotation(Here + To.GetSafeNormal() * Step, Rot, false, nullptr, ETeleportType::TeleportPhysics);
-		if (Dist - Step < 50.0 && FMath::RadiansToDegrees(Rot.AngularDistance(Facing)) < 3.f)
+		if (Dist - Step < 50.0 && FMath::RadiansToDegrees(Rot.AngularDistance(Facing)) < 3.f && Ship->AreBayDoorsOpen())
 		{
 			DockStep = 1;
 		}
 		return;
 	}
-	// Straight in along the bay axis at bay speed.
 	const FVector Door = Bay.GetLocation();
-	const FVector To = Door - Here;
-	const double Dist = To.Size();
-	const double Step = FMath::Min(Dist, (double)BaySpeedCm * DeltaTime);
-	SetActorLocationAndRotation(Here + To.GetSafeNormal() * Step, Facing, false, nullptr, ETeleportType::TeleportPhysics);
-	if (Dist - Step < 20.0)
+	if (DockStep == 1)
+	{
+		// Straight in along the bay axis at bay speed, to the door.
+		const FVector To = Door - Here;
+		const double Dist = To.Size();
+		const double Step = FMath::Min(Dist, (double)BaySpeedCm * DeltaTime);
+		SetActorLocationAndRotation(Here + To.GetSafeNormal() * Step, Facing, false, nullptr, ETeleportType::TeleportPhysics);
+		if (Dist - Step < 20.0) { DockStep = 2; PhaseTime = 0.f; }
+		return;
+	}
+	// Through the throat at a crawl to above the landing box, then down onto it.
+	const FTransform Park = Ship->GetShuttleParkTransform();
+	const FVector Up = Bay.GetRotation().GetUpVector();
+	const FVector Lifted = Park.GetLocation() + Up * FVector::DotProduct(Door - Park.GetLocation(), Up);
+	const double Taxi = FVector::Dist(Door, Lifted);
+	const double Along = (double)PhaseTime * TaxiSpeedCm;
+	if (Along < Taxi)
+	{
+		SetActorLocationAndRotation(FMath::Lerp(Door, Lifted, Taxi > 1.0 ? Along / Taxi : 1.0), Facing, false, nullptr, ETeleportType::TeleportPhysics);
+		return;
+	}
+	const float T = FMath::Clamp((float)((Along - Taxi) / TaxiSpeedCm) / 2.0f, 0.f, 1.f);
+	const float Ease = T * T * (3.f - 2.f * T);
+	SetActorLocationAndRotation(FMath::Lerp(Lifted, Park.GetLocation(), Ease), Facing, false, nullptr, ETeleportType::TeleportPhysics);
+	if (T >= 1.f)
 	{
 		Ship->OnShuttleDocked(this);
 	}

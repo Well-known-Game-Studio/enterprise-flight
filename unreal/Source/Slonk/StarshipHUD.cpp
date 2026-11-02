@@ -384,6 +384,7 @@ void AStarshipHUD::DrawHUD()
 	case EStarshipCameraMode::Starboard: CamName = TEXT("STARBOARD"); break;
 	case EStarshipCameraMode::Top: CamName = TEXT("TOP"); break;
 	case EStarshipCameraMode::Bottom: CamName = TEXT("BOTTOM"); break;
+	case EStarshipCameraMode::Stern: CamName = TEXT("STERN"); break;
 	}
 	DrawText(FString::Printf(TEXT("CAMERA %s%s"), *CamName, Ship->IsFreeLooking() ? TEXT("  (free look)") : TEXT("")), Accent, RX, RY, Font, UIScale); RY += Line * 1.4f;
 

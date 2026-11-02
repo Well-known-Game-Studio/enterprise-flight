@@ -19,6 +19,7 @@ class UStarshipWeaponsComponent;
 class UWarpStreaksComponent;
 class UBridgeInteriorComponent;
 class UShipInteriorComponent;
+class UBayDoorsComponent;
 struct FShipRoom;
 enum class EShipRoom : uint8;
 class APersonPawn;
@@ -49,7 +50,9 @@ enum class EStarshipCameraMode : uint8
 	Port,
 	Starboard,
 	Top,
-	Bottom
+	Bottom,
+	/** Astern of the fantail at the shuttlebay door's height, looking forward: the clamshell doors and the bay inside. */
+	Stern
 };
 
 /** A running / engine light on the hull, positioned relative to the ship root (cm). */
@@ -128,6 +131,18 @@ public:
 	void OnShuttleDocked(AShuttlecraftPawn* Shuttle);
 	/** The bay door in world space, X pointing the way a shuttle leaves (astern). */
 	FTransform GetShuttleBayTransform() const;
+	/** Where the shuttle parks inside the bay, in world space, facing astern; the door transform when there is no bay room. */
+	FTransform GetShuttleParkTransform() const;
+	/** The clamshell door at the fantail (the Enterprise-A hull only; null on other hulls). */
+	UBayDoorsComponent* GetBayDoors() const { return BayDoors; }
+	/** Start the bay doors opening or closing. False, with a message, on a hull without them. */
+	bool OpenBayDoors(bool bOpen);
+	bool AreBayDoorsOpen() const;
+	bool AreBayDoorsClosed() const;
+	/** The hull's stern material with the door hole masked out of it, swapped in for the painted-door slot. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shuttle") TSoftObjectPtr<UMaterialInterface> SternHullMaterial;
+	/** The door's vertical axis on the bay deck, pawn space. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shuttle") FVector BayDoorPivot = FVector(-6330.0, 0.0, -1948.0);
 	virtual FString GetCraftName() const { return TEXT("U.S.S. Enterprise"); }
 	virtual bool IsShuttle() const { return false; }
 
@@ -273,6 +288,10 @@ public:
 	/** The rooms you can walk to by turbolift (the bridge is BridgeInterior's set). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|Cameras")
 	TObjectPtr<UShipInteriorComponent> Interior;
+	UPROPERTY() TObjectPtr<UBayDoorsComponent> BayDoors;
+	FTimerHandle BayDoorTimer;
+	bool bBayDoorsWereClosed = true;
+	void SetupBayDoors();
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|FX")
 	TArray<TObjectPtr<UPointLightComponent>> HullLights;
