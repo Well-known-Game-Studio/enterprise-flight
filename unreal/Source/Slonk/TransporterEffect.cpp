@@ -3,7 +3,7 @@
 #include "PersonPawn.h"
 #include "SlonkMaterials.h"
 #include "RunningLightsComponent.h"
-#include "Components/DynamicMeshComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Components/PointLightComponent.h"
 #include "DynamicMesh/DynamicMesh3.h"
@@ -78,45 +78,41 @@ FTransform ATransporterEffect::Feet() const
 
 void ATransporterEffect::SampleBody(FRandomStream& R)
 {
-	// Points on the parts' surfaces, spread by triangle area, each with a direction to drift out along.
+	// Points round the figure's bones, spread by the flesh on each, each with a direction to drift out along.
 	APersonPawn* P = Body.Get();
-	if (!P) { return; }
-	Parts.Reset();
-	struct FTri { int32 Part; FVector A, B, C; double Cum; };
-	TArray<FTri> Tris;
+	USkeletalMeshComponent* Figure = P ? P->GetFigure() : nullptr;
+	if (!Figure) { return; }
+	Bones.Reset();
+	struct FBone { FName Name; float Radius; float Length; double Cum; };
+	struct FSpec { const TCHAR* Name; float Radius; float Length; };
+	static const FSpec Spec[] = {
+		{ TEXT("pelvis"), 15.f, 18.f }, { TEXT("spine_01"), 14.f, 14.f }, { TEXT("spine_02"), 14.f, 14.f }, { TEXT("spine_03"), 15.f, 16.f },
+		{ TEXT("neck_01"), 7.f, 10.f }, { TEXT("head"), 11.f, 18.f },
+		{ TEXT("clavicle_l"), 7.f, 14.f }, { TEXT("clavicle_r"), 7.f, 14.f }, { TEXT("upperarm_l"), 7.f, 28.f }, { TEXT("upperarm_r"), 7.f, 28.f },
+		{ TEXT("lowerarm_l"), 6.f, 26.f }, { TEXT("lowerarm_r"), 6.f, 26.f }, { TEXT("hand_l"), 5.f, 14.f }, { TEXT("hand_r"), 5.f, 14.f },
+		{ TEXT("thigh_l"), 9.f, 42.f }, { TEXT("thigh_r"), 9.f, 42.f }, { TEXT("calf_l"), 7.f, 40.f }, { TEXT("calf_r"), 7.f, 40.f },
+		{ TEXT("foot_l"), 6.f, 16.f }, { TEXT("foot_r"), 6.f, 16.f } };
+	TArray<FBone> Found;
 	double Total = 0.0;
-	for (UDynamicMeshComponent* Part : P->BodyParts())
+	for (const FSpec& Sp : Spec)
 	{
-		const int32 Index = Parts.Add(Part);
-		if (UDynamicMesh* DM = Part->GetDynamicMesh())
-		{
-			DM->ProcessMesh([&](const UE::Geometry::FDynamicMesh3& Mesh)
-			{
-				for (int32 Tid : Mesh.TriangleIndicesItr())
-				{
-					FVector3d A, B, C;
-					Mesh.GetTriVertices(Tid, A, B, C);
-					const double Area = Mesh.GetTriArea(Tid);
-					if (Area <= 0.0) { continue; }
-					Total += Area;
-					Tris.Add({ Index, FVector(A), FVector(B), FVector(C), Total });
-				}
-			});
-		}
+		if (!Figure->DoesSocketExist(Sp.Name)) { continue; }
+		Total += Sp.Radius * Sp.Length;
+		Found.Add({ FName(Sp.Name), Sp.Radius, Sp.Length, Total });
 	}
-	if (Tris.Num() == 0 || Total <= 0.0) { return; }
+	if (Found.Num() == 0 || Total <= 0.0) { return; }
+	for (const FBone& B : Found) { Bones.Add(B.Name); }
 	for (int32 i = 0; i < BodySparkles; ++i)
 	{
-		// Pick a triangle by area, then a uniform point on it.
+		// Pick a bone by its flesh, then a point on a capsule round it: along the bone (its +X), out to its radius.
 		const double Pick = R.FRand() * Total;
-		int32 Lo = 0, Hi = Tris.Num() - 1;
-		while (Lo < Hi) { const int32 Mid = (Lo + Hi) / 2; if (Tris[Mid].Cum < Pick) { Lo = Mid + 1; } else { Hi = Mid; } }
-		const FTri& T = Tris[Lo];
-		float U = R.FRand(), V = R.FRand();
-		if (U + V > 1.f) { U = 1.f - U; V = 1.f - V; }
+		int32 Lo = 0, Hi = Found.Num() - 1;
+		while (Lo < Hi) { const int32 Mid = (Lo + Hi) / 2; if (Found[Mid].Cum < Pick) { Lo = Mid + 1; } else { Hi = Mid; } }
+		const FBone& B = Found[Lo];
+		const float A = R.FRand() * 2.f * PI;
 		FSparkle S;
-		S.Part = T.Part;
-		S.Local = T.A + (T.B - T.A) * U + (T.C - T.A) * V;
+		S.Part = Lo;
+		S.Local = FVector(R.FRand() * B.Length, FMath::Cos(A) * B.Radius, FMath::Sin(A) * B.Radius);
 		S.Drift = R.GetUnitVector();
 		S.Angle = 0.f; S.Radius = 0.f; S.Height = 0.f;
 		S.Rise = FMath::Lerp(4.f, 14.f, R.FRand());
@@ -137,15 +133,14 @@ void ATransporterEffect::BeginPlay()
 		Sparkles->SetMaterial(0, MID);
 	}
 	Light->SetLightColor(Color);
-	// The Niagara system on the figure's sample mesh, if both exist; its static-mesh emitter reads the mesh it is
-	// attached to.
+	// The Niagara system on the figure, if both exist; its body emitter samples the skeletal mesh it is attached to.
 	if (UNiagaraSystem* Sys = System.LoadSynchronous())
 	{
 		if (APersonPawn* P = Body.Get())
 		{
-			if (UStaticMeshComponent* Sample = P->GetSampleMesh())
+			if (USkeletalMeshComponent* Figure = P->GetFigure())
 			{
-				Niagara = UNiagaraFunctionLibrary::SpawnSystemAttached(Sys, Sample, NAME_None, FVector::ZeroVector, FRotator::ZeroRotator, EAttachLocation::SnapToTarget, false, true);
+				Niagara = UNiagaraFunctionLibrary::SpawnSystemAttached(Sys, Figure, NAME_None, FVector::ZeroVector, FRotator::ZeroRotator, EAttachLocation::SnapToTarget, false, true);
 				if (Niagara)
 				{
 					Niagara->SetVariableFloat(TEXT("Direction"), bMaterialise ? -1.f : 1.f);
@@ -226,10 +221,11 @@ void ATransporterEffect::Layout()
 		if (S.Part >= 0)
 		{
 			// On the body, drifting out as the figure lets go of it (and in again as it forms).
-			UDynamicMeshComponent* Part = Parts.IsValidIndex(S.Part) ? Parts[S.Part].Get() : nullptr;
-			if (!Part) { Transforms.Add(FTransform(FQuat::Identity, Base.GetLocation(), FVector(0.0005f))); continue; }
+			const APersonPawn* P = Body.Get();
+			USkeletalMeshComponent* Figure = P ? P->GetFigure() : nullptr;
+			if (!Figure || !Bones.IsValidIndex(S.Part)) { Transforms.Add(FTransform(FQuat::Identity, Base.GetLocation(), FVector(0.0005f))); continue; }
 			const float Out = 2.f + 22.f * D;
-			Pos = Part->GetComponentTransform().TransformPosition(S.Local) + S.Drift * Out + Up * (Dir * S.Rise * Age);
+			Pos = Figure->GetSocketTransform(Bones[S.Part]).TransformPosition(S.Local) + S.Drift * Out + Up * (Dir * S.Rise * Age);
 			Across = S.Size * (0.5f + 0.5f * Twinkle) * E;
 			Along = Across;
 		}

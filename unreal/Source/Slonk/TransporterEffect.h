@@ -67,11 +67,12 @@ public:
 	TFunction<void(float)> OnEnvelope;
 
 private:
-	/** A body sparkle: a point on one part's surface, drifting out along a direction, or a streak in the column. */
+	/** A body sparkle: a point in one bone's frame near the body's surface, drifting out along a direction, or a streak in the column. */
 	struct FSparkle { int32 Part; FVector Local; FVector Drift; float Angle, Radius, Height, Rise, Phase, Size, Length; };
 	TArray<FSparkle> Seeds;
 	TWeakObjectPtr<APersonPawn> Body;
-	TArray<TWeakObjectPtr<UDynamicMeshComponent>> Parts;
+	/** The figure's bones the body sparkles ride, with the radius of the flesh round each. */
+	TArray<FName> Bones;
 	float Age = 0.f;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> MID;
 	float Envelope() const;
