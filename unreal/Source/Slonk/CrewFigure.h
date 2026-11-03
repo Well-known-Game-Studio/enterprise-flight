@@ -17,6 +17,8 @@ struct FCrewDress
 {
 	FLinearColor Torso, Legs, Head, Hands, Boots;
 	float ClothWeight = 0.7f;
+	/** How much of the mannequin's own map shows through the colour (the suit keeps it light). */
+	float Detail = 0.6f;
 	/** The Wrath of Khan's jacket over black trousers, head and hands bare. */
 	static FCrewDress Uniform(const FLinearColor& Jacket, const FLinearColor& Skin);
 	/** The suit: one colour from the boots up, dark gloves and boots, the helmet over the head. */

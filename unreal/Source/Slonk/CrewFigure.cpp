@@ -19,6 +19,7 @@ FCrewDress FCrewDress::Suit(const FLinearColor& Cloth, const FLinearColor& Trim)
 	FCrewDress D;
 	D.Torso = Cloth; D.Legs = Cloth; D.Head = Cloth; D.Hands = Trim; D.Boots = Trim;
 	D.ClothWeight = 0.4f;
+	D.Detail = 0.3f;
 	return D;
 }
 
@@ -61,6 +62,7 @@ void SlonkCrew::SetDress(const TArray<TObjectPtr<UMaterialInstanceDynamic>>& Mid
 		Mid->SetVectorParameterValue(TEXT("Hands"), D.Hands);
 		Mid->SetVectorParameterValue(TEXT("Boots"), D.Boots);
 		Mid->SetScalarParameterValue(TEXT("ClothWeight"), D.ClothWeight);
+		Mid->SetScalarParameterValue(TEXT("Detail"), D.Detail);
 	}
 }
 
