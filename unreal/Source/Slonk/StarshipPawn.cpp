@@ -795,6 +795,7 @@ void AStarshipPawn::BeginPlay()
 	SetupThrusters();
 	SetupWeaponBanks();
 	SetCameraMode(CameraMode);
+	MarkFarShadowCasters();
 
 	if (Movement)
 	{
@@ -2865,7 +2866,16 @@ bool AStarshipPawn::BeamDown(APersonPawn* Person)
 		// The ground straight below the ship.
 		const FVector Centre = Body->GetActorLocation();
 		const FVector Radial = (GetActorLocation() - Centre).GetSafeNormal();
-		const FVector Feet = Centre + Radial * (Body->GetSurfaceRadiusCm(GetActorLocation()) + 2.0);
+		FVector Feet = Centre + Radial * (Body->GetSurfaceRadiusCm(GetActorLocation()) + 2.0);
+		// Anything standing on the ground there (a landing pad, a building: the terrain itself has no collision)
+		// takes the feet onto its top rather than inside it.
+		FHitResult Hit;
+		FCollisionQueryParams Query(SCENE_QUERY_STAT(BeamDown), false, this);
+		Query.AddIgnoredActor(Who);
+		if (GetWorld()->LineTraceSingleByChannel(Hit, Feet + Radial * 30000.0, Feet - Radial * 50.0, ECC_Visibility, Query) && Hit.bBlockingHit)
+		{
+			Feet = Hit.ImpactPoint + Radial * 2.0;
+		}
 		FVector Fwd = GetActorForwardVector() - Radial * FVector::DotProduct(GetActorForwardVector(), Radial);
 		if (Fwd.IsNearlyZero()) { Fwd = FVector::CrossProduct(Radial, FVector::RightVector); }
 		const FQuat Rot = FRotationMatrix::MakeFromZX(Radial, Fwd.GetSafeNormal()).ToQuat();
@@ -3027,6 +3037,7 @@ void AStarshipPawn::SetupBayDoors()
 	bBayDoorsWereClosed = true;
 	ApplyViewVisibility();
 	UE_LOG(LogTemp, Log, TEXT("BayDoors: eight gores on the fantail"));
+	MarkFarShadowCasters();
 }
 
 FTransform AStarshipPawn::GetShuttleParkTransform() const
@@ -3116,6 +3127,23 @@ bool AStarshipPawn::LaunchShuttle()
 	}
 	UE_LOG(LogTemp, Log, TEXT("Shuttle launched from %s at %s"), *GetCraftName(), *GetShuttleBayTransform().GetLocation().ToString());
 	return true;
+}
+
+void AStarshipPawn::MarkFarShadowCasters()
+{
+	// While the player is on foot the sun's near cascades cover 400 m and far cascades the rest, and only parts
+	// flagged for them cast there: every shadowing part of the craft, so she still shadows the ground beside a
+	// person on the surface.
+	TInlineComponentArray<UPrimitiveComponent*> Parts;
+	GetComponents<UPrimitiveComponent>(Parts);
+	for (UPrimitiveComponent* P : Parts)
+	{
+		if (P && P->CastShadow && !P->bCastFarShadow)
+		{
+			P->bCastFarShadow = true;
+			P->MarkRenderStateDirty();
+		}
+	}
 }
 
 void AStarshipPawn::OnShuttleDocked(AShuttlecraftPawn* Shuttle)
