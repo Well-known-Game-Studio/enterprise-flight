@@ -985,6 +985,11 @@ void APlanetBody::UpdateNearCollision(const FVector& ViewLocal, bool bForce)
 	if (Near.Num() > 0) { BuildingsNear->AddInstances(Near, false, false); }
 }
 
+void APlanetBody::PrepareGroundCollisionAt(const FVector& WorldPos)
+{
+	UpdateNearCollision(Body ? Body->GetComponentTransform().InverseTransformPosition(WorldPos) * Body->GetComponentScale() : WorldPos - GetActorLocation(), true);
+}
+
 void APlanetBody::ClearCities()
 {
 	for (UHierarchicalInstancedStaticMeshComponent* H : BuildingSets) { if (H && H->GetInstanceCount() > 0) { H->ClearInstances(); } }

@@ -500,6 +500,11 @@ private:
 	TArray<FTransform> CityInstances;
 	FVector CityNearCentre = FVector(1.0e30, 0.0, 0.0);
 	void UpdateNearCollision(const FVector& ViewLocal, bool bForce);
+public:
+	/** Give the buildings around a world position their collision now (they normally carry it only within 500 m of
+	 *  the view): for a trace at a transporter's destination far below the ship. */
+	void PrepareGroundCollisionAt(const FVector& WorldPos);
+private:
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> BuildingMID;
 	struct FCityBuild { TSet<uint32> Towns; TArray<FTransform> Instances[3]; int32 TownCount = 0; };
 	TSharedPtr<FCityBuild, ESPMode::ThreadSafe> CityPending;

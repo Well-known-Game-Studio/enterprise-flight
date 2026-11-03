@@ -2858,6 +2858,13 @@ bool AStarshipPawn::BeamDown(APersonPawn* Person)
 	}
 	TWeakObjectPtr<APersonPawn> P(Person);
 	TWeakObjectPtr<APlanetBody> W(World);
+	// The buildings at the destination get their collision now, the shimmer's length before the arrival trace
+	// below: bodies made in the same frame as a trace are not yet in the physics scene's query structure.
+	{
+		const FVector Centre = World->GetActorLocation();
+		const FVector Radial = (GetActorLocation() - Centre).GetSafeNormal();
+		World->PrepareGroundCollisionAt(Centre + Radial * World->GetSurfaceRadiusCm(GetActorLocation()));
+	}
 	return Transport(Person, [this, P, W]()
 	{
 		APersonPawn* Who = P.Get();
@@ -2867,12 +2874,15 @@ bool AStarshipPawn::BeamDown(APersonPawn* Person)
 		const FVector Centre = Body->GetActorLocation();
 		const FVector Radial = (GetActorLocation() - Centre).GetSafeNormal();
 		FVector Feet = Centre + Radial * (Body->GetSurfaceRadiusCm(GetActorLocation()) + 2.0);
-		// Anything standing on the ground there (a landing pad, a building: the terrain itself has no collision)
-		// takes the feet onto its top rather than inside it.
+		// Anything standing on the ground there (a landing pad, a building, a landed shuttle: the terrain itself
+		// has no collision) takes the feet onto its top rather than inside it. The buildings carry collision only
+		// round the view, so the destination was given its own when the transport began; the trace is the boots'
+		// (hulls block only that channel, the planet's coarse sphere ignores it), against complex collision like
+		// the person's own.
 		FHitResult Hit;
-		FCollisionQueryParams Query(SCENE_QUERY_STAT(BeamDown), false, this);
+		FCollisionQueryParams Query(SCENE_QUERY_STAT(BeamDown), true, this);
 		Query.AddIgnoredActor(Who);
-		if (GetWorld()->LineTraceSingleByChannel(Hit, Feet + Radial * 30000.0, Feet - Radial * 50.0, ECC_Visibility, Query) && Hit.bBlockingHit)
+		if (GetWorld()->LineTraceSingleByChannel(Hit, Feet + Radial * 30000.0, Feet - Radial * 50.0, APersonPawn::BootsChannel, Query) && Hit.bBlockingHit)
 		{
 			Feet = Hit.ImpactPoint + Radial * 2.0;
 		}

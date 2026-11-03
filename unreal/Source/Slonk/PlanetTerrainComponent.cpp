@@ -669,7 +669,7 @@ void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, int32 Fa
 	const double Cells = (double)((int64)1 << Depth);
 	const double U0 = -1.0 + 2.0 * X / Cells, U1 = -1.0 + 2.0 * (X + 1) / Cells;
 	const double V0 = -1.0 + 2.0 * Y / Cells, V1 = -1.0 + 2.0 * (Y + 1) / Cells;
-	auto Dir = [&](int32 i, int32 j)
+	auto Dir = [&](double i, double j)
 	{
 		const double U = U0 + (U1 - U0) * i / Steps;
 		const double V = V0 + (V1 - V0) * j / Steps;
@@ -717,29 +717,39 @@ void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, int32 Fa
 		// The slope is measured over the same distance at every level. Taken over the chunk's own cell it changed
 		// with the level (a 5 m cell and a 50 m cell read different slopes off the same ground), and since it
 		// scales the whole of the refinement, neighbouring chunks at different levels stood metres apart along
-		// their shared edge: walls and trenches round every level change. So the slope comes from a lattice of
-		// every Lm-th grid point, Lm doubling as the cells halve so the lattice spacing stays near SlopeStepCm,
-		// and is interpolated between lattice points; child chunks' lattices fall on their parents'.
-		int32 Lm = 1;
-		while (Lm < Steps && (double)Lm * CellCm * 2.0 <= SlonkTerrain::SlopeStepCm) { Lm *= 2; }
+		// their shared edge: walls and trenches round every level change. The step is the chunk's cell halved
+		// or doubled into (SlopeStepCm / 4, SlopeStepCm / 2]: one value for every level of a planet, since the
+		// cells halve level by level. Finer chunks take it as every Lm-th grid point (child lattices fall on their
+		// parents'); the few coarser ones, whose cells are wider than the step, sample the structure that far to
+		// each side of every grid point. Between lattice points the slope is interpolated.
+		double StepCm = CellCm;
+		while (StepCm > SlonkTerrain::SlopeStepCm * 0.5) { StepCm *= 0.5; }
+		while (StepCm * 2.0 <= SlonkTerrain::SlopeStepCm * 0.5) { StepCm *= 2.0; }
+		const int32 Lm = FMath::Max(FMath::RoundToInt32(StepCm / CellCm), 1);
+		const double SubStep = StepCm / CellCm;          // in grid cells; under 1 only on the coarse levels
 		const int32 LA = Steps / Lm;                     // lattice cells across the chunk
 		const int32 LMargin = 3, LW = LA + 1 + 2 * LMargin;   // the slope one past the vertex ring one past the chunk
-		TArray<double> LH; LH.SetNumUninitialized(LW * LW);
+		TArray<double> GxL, GyL; GxL.SetNumUninitialized(LW * LW); GyL.SetNumUninitialized(LW * LW);
+		auto StructureAt = [&](double i, double j) -> double
+		{
+			const int32 ii = FMath::RoundToInt32(i), jj = FMath::RoundToInt32(j);
+			const bool bOnGrid = FMath::IsNearlyEqual(i, (double)ii) && FMath::IsNearlyEqual(j, (double)jj) && ii >= -Margin && ii <= Steps + Margin && jj >= -Margin && jj <= Steps + Margin;
+			return bOnGrid ? Smp[(jj + Margin) * W + (ii + Margin)].HeightCm : SlonkTerrain::SampleStructure(P, Dir(i, j), MinWavelength).HeightCm;
+		};
 		for (int32 b = -LMargin; b <= LA + LMargin; ++b)
 		{
 			for (int32 a = -LMargin; a <= LA + LMargin; ++a)
 			{
-				const int32 i = a * Lm, j = b * Lm;
-				const bool bOnGrid = i >= -Margin && i <= Steps + Margin && j >= -Margin && j <= Steps + Margin;
-				LH[(b + LMargin) * LW + (a + LMargin)] = bOnGrid ? Smp[(j + Margin) * W + (i + Margin)].HeightCm : SlonkTerrain::SampleStructure(P, Dir(i, j), MinWavelength).HeightCm;
+				const double i = (double)a * Lm, j = (double)b * Lm;
+				const int32 k = (b + LMargin) * LW + (a + LMargin);
+				GxL[k] = (StructureAt(i + SubStep, j) - StructureAt(i - SubStep, j)) / (2.0 * StepCm);
+				GyL[k] = (StructureAt(i, j + SubStep) - StructureAt(i, j - SubStep)) / (2.0 * StepCm);
 			}
 		}
-		const double LStep = 2.0 * Lm * CellCm;
 		auto LatticeSlope = [&](int32 a, int32 b, double& Gx, double& Gy)
 		{
 			const int32 k = (b + LMargin) * LW + (a + LMargin);
-			Gx = (LH[k + 1] - LH[k - 1]) / LStep;
-			Gy = (LH[k + LW] - LH[k - LW]) / LStep;
+			Gx = GxL[k]; Gy = GyL[k];
 		};
 		for (int32 j = -1; j <= Steps + 1; ++j)
 		{
