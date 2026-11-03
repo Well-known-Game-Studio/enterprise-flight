@@ -52,7 +52,9 @@ enum class EStarshipCameraMode : uint8
 	Top,
 	Bottom,
 	/** Astern of the fantail at the shuttlebay door's height, looking forward: the clamshell doors and the bay inside. */
-	Stern
+	Stern,
+	/** The shuttle's launch and dock, filmed: fixed shots in the mothership's bay and astern of its door, cut as she passes the door. Only a shuttle can hold it; the ship falls back to Chase. */
+	Bay
 };
 
 /** A running / engine light on the hull, positioned relative to the ship root (cm). */
@@ -577,6 +579,8 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Starship|Camera")
 	EStarshipCameraMode GetCameraMode() const { return CameraMode; }
+	/** Places the cinematic camera for the Bay mode this frame; false when the craft has no such shots (the mode then drops to Chase). */
+	virtual bool UpdateBayCamera(float DeltaTime) { return false; }
 
 	UFUNCTION(BlueprintCallable, Category = "Starship|Camera")
 	void SetFreeLook(bool bEnabled) { bFreeLook = bEnabled; }

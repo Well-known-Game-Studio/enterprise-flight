@@ -1722,6 +1722,11 @@ void AStarshipPawn::UpdateCameras(float DeltaTime)
 		CinematicCamera->SetFieldOfView(CinematicFOV + 6.f * Flash);
 		break;
 	}
+	case EStarshipCameraMode::Bay:
+	{
+		if (!UpdateBayCamera(DeltaTime)) { SetCameraMode(EStarshipCameraMode::Chase); }
+		break;
+	}
 	default:
 	{
 		// Fixed views in the ship's frame: off the nose looking aft, off each beam, above and below. The chase
@@ -1860,6 +1865,7 @@ void AStarshipPawn::ProcessDebugCommand()
 		else if (Mode == TEXT("top")) { SetCameraMode(EStarshipCameraMode::Top); }
 		else if (Mode == TEXT("bottom")) { SetCameraMode(EStarshipCameraMode::Bottom); }
 		else if (Mode == TEXT("stern")) { SetCameraMode(EStarshipCameraMode::Stern); }
+		else if (Mode == TEXT("bay")) { SetCameraMode(EStarshipCameraMode::Bay); }
 		else { CycleCameraMode(); }
 	}
 	else if (Op == TEXT("steer"))

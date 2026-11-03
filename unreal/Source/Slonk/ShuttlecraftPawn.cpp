@@ -9,6 +9,8 @@
 #include "RcsThrusterComponent.h"
 #include "RunningLightsComponent.h"
 #include "ShieldComponent.h"
+#include "ShipInterior.h"
+#include "Camera/CameraComponent.h"
 #include "SlonkMaterials.h"
 #include "StarshipMovementComponent.h"
 #include "StarshipWeaponsComponent.h"
@@ -281,6 +283,43 @@ void AShuttlecraftPawn::BeginLaunch(AStarshipPawn* Ship)
 {
 	Mothership = Ship;
 	SetPhase(EShuttlePhase::Launching);
+	// The launch is filmed: the bay's camera takes the lift and the slide out, then the fantail's as she clears.
+	BayShot = -1;
+	SetCameraMode(EStarshipCameraMode::Bay);
+}
+
+bool AShuttlecraftPawn::UpdateBayCamera(float DeltaTime)
+{
+	AStarshipPawn* Ship = Mothership.Get();
+	if (!Ship || Phase == EShuttlePhase::Flying) { return false; }
+	const FTransform ShipT = Ship->GetActorTransform();
+	const FVector Local = ShipT.InverseTransformPosition(GetActorLocation());
+	// Two fixed vantage points in the ship's frame, neither with anything between it and the shuttle: high in the
+	// bay's forward port corner below the roof truss looking aft through the door, and astern of the fantail off the
+	// port quarter at the door's height, which she passes close by on the way out and in. The cut is where her
+	// centre crosses the door's axis plane.
+	FVector BayC(-5030.0, 0.0, -1676.0), BayH(1300.0, 800.0, 270.0);
+	if (Ship->Interior) { Ship->Interior->GetRoomBox(EShipRoom::ShuttleBay, BayC, BayH); }
+	const FVector Door = Ship->ShuttleBayOffset;
+	const double AxisX = Ship->BayDoorPivot.X;
+	const int32 Shot = Local.X > AxisX - 100.0 ? 0 : 1;
+	const FVector Eye = Shot == 0
+		? FVector(BayC.X + BayH.X - 120.0, -(BayH.Y - 180.0), BayC.Z - BayH.Z + 320.0)
+		: FVector(Door.X - 3200.0, -900.0, Door.Z + 350.0);
+	const FVector EyeW = ShipT.TransformPosition(Eye);
+	const FVector Aim = GetActorLocation() + ShipT.GetUnitAxis(EAxis::Z) * 60.0;
+	const FVector Dir = (Aim - EyeW).GetSafeNormal();
+	const FRotator Want = FRotationMatrix::MakeFromXZ(Dir, ShipT.GetUnitAxis(EAxis::Z)).Rotator();
+	// Frame the craft at about a third of the height, wide when she is close, never past the chase lens.
+	const double Dist = FVector::Dist(EyeW, Aim);
+	const float WantFOV = FMath::Clamp(2.f * FMath::RadiansToDegrees(FMath::Atan(1250.0 / FMath::Max(Dist, 300.0))), 30.f, 75.f);
+	const bool bCut = Shot != BayShot;
+	BayShot = Shot;
+	const FRotator Rot = bCut ? Want : FMath::RInterpTo(CinematicCamera->GetComponentRotation(), Want, DeltaTime, 7.f);
+	BayFOV = bCut ? WantFOV : FMath::FInterpTo(BayFOV, WantFOV, DeltaTime, 3.f);
+	CinematicCamera->SetWorldLocationAndRotation(EyeW, Rot);
+	CinematicCamera->SetFieldOfView(BayFOV);
+	return true;
 }
 
 void AShuttlecraftPawn::SetPhase(EShuttlePhase NewPhase)
@@ -288,6 +327,8 @@ void AShuttlecraftPawn::SetPhase(EShuttlePhase NewPhase)
 	Phase = NewPhase;
 	PhaseTime = 0.f;
 	DockStep = 0;
+	// The filmed slides are over: back to the pilot's own chase view.
+	if (Phase == EShuttlePhase::Flying && GetCameraMode() == EStarshipCameraMode::Bay) { SetCameraMode(EStarshipCameraMode::Chase); }
 	// The bay slides are kinematic: the flight model sits out until the shuttle is clear.
 	if (Movement)
 	{
@@ -455,6 +496,9 @@ void AShuttlecraftPawn::TickDock(float DeltaTime)
 		if (Dist - Step < 50.0 && FMath::RadiansToDegrees(Rot.AngularDistance(Facing)) < 3.f && Ship->AreBayDoorsOpen())
 		{
 			DockStep = 1;
+			// The run in is filmed from the fantail, then from the bay once she is through the door.
+			BayShot = -1;
+			SetCameraMode(EStarshipCameraMode::Bay);
 		}
 		return;
 	}
