@@ -9,6 +9,7 @@
 #include "PersonPawn.generated.h"
 
 class UCapsuleComponent;
+class UPointLightComponent;
 class UDynamicMeshComponent;
 class USkeletalMeshComponent;
 class USkeletalMesh;
@@ -166,6 +167,10 @@ public:
 	/** How far the boots reach for a hull below the feet (cm), and how high a step they take. */
 	UPROPERTY(EditAnywhere, Category = "Person|Boots") float BootReachCm = 110.f;
 	UPROPERTY(EditAnywhere, Category = "Person|Boots") float StepUpCm = 50.f;
+	/** The boot lamps' colour and light (candela) while holding a hull and while only armed. */
+	UPROPERTY(EditAnywhere, Category = "Person|Boots") FLinearColor BootLightColor = FLinearColor(0.3f, 0.8f, 1.f);
+	UPROPERTY(EditAnywhere, Category = "Person|Boots") float BootLightHolding = 16.f;
+	UPROPERTY(EditAnywhere, Category = "Person|Boots") float BootLightArmed = 4.f;
 	/** Boarding reach from the airlock, cm. */
 	UPROPERTY(EditAnywhere, Category = "Person") float BoardRangeCm = 1000.f;
 	// ---- The figure ----
@@ -221,6 +226,9 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<USkeletalMeshComponent> Figure;
 	/** The EVA helmet with its visor, following the figure's head while the suit is worn. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UDynamicMeshComponent> Helmet;
+	/** The magnetic boots' lamps: a small blue light at each foot, bright while the boots hold a hull, dim when armed. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UPointLightComponent> BootLightL;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UPointLightComponent> BootLightR;
 	/** A dark cap for hair, over the mannequin's crown while the helmet is off. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UDynamicMeshComponent> Hair;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<USpringArmComponent> CameraArm;

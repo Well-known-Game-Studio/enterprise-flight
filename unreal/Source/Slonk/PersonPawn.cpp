@@ -4,6 +4,7 @@
 #include "Components/CapsuleComponent.h"
 #include "Components/DynamicMeshComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/PointLightComponent.h"
 #include "CrewFigure.h"
 #include "Animation/AnimSingleNodeInstance.h"
 #include "Animation/BlendSpace.h"
@@ -130,6 +131,20 @@ APersonPawn::APersonPawn()
 	CrewMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_Crew.M_Crew")));
 	Helmet = MakePart(this, TEXT("Helmet"), Body, FVector(0.f, 0.f, HeadHeightCm - HalfHeightCm));
 	Hair = MakePart(this, TEXT("Hair"), Body, FVector(0.f, 0.f, HeadHeightCm - HalfHeightCm));
+	for (TObjectPtr<UPointLightComponent>* L : { &BootLightL, &BootLightR })
+	{
+		UPointLightComponent* P = CreateDefaultSubobject<UPointLightComponent>(L == &BootLightL ? TEXT("BootLightL") : TEXT("BootLightR"));
+		P->SetupAttachment(Body);
+		P->SetRelativeLocation(FVector(0.f, L == &BootLightL ? -12.f : 12.f, -HalfHeightCm + 6.f));
+		P->SetIntensityUnits(ELightUnits::Candelas);
+		P->SetIntensity(0.f);
+		P->SetLightColor(BootLightColor);
+		P->SetAttenuationRadius(200.f);
+		P->SetSourceRadius(5.f);
+		P->SetCastShadows(false);
+		P->bAffectsWorld = true;
+		*L = P;
+	}
 
 	CameraArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraArm"));
 	CameraArm->SetupAttachment(Body);
@@ -1235,9 +1250,18 @@ void APersonPawn::UpdateFigure(float DeltaTime)
 	if (bSuitWorn != WearsSuit()) { ApplyUniform(); }
 
 	const bool bHolding = Frame == EPersonFrame::Hull && bGrounded;
+	const bool bArmed = bBootsArmed && WearsSuit();
 	for (UMaterialInstanceDynamic* Mid : CrewMIDs)
 	{
-		if (Mid) { Mid->SetScalarParameterValue(TEXT("BootGlow"), bHolding ? 6.f : (bBootsArmed && WearsSuit() ? 1.2f : 0.f)); }
+		if (Mid) { Mid->SetScalarParameterValue(TEXT("BootGlow"), bHolding ? 10.f : (bArmed ? 1.5f : 0.f)); }
+	}
+	// The boot lamps ride the feet and light the hull round them while the boots hold.
+	const float Lamp = bHolding ? BootLightHolding : (bArmed ? BootLightArmed : 0.f);
+	for (const TPair<UPointLightComponent*, FName>& Foot : { TPair<UPointLightComponent*, FName>(BootLightL.Get(), TEXT("foot_l")), TPair<UPointLightComponent*, FName>(BootLightR.Get(), TEXT("foot_r")) })
+	{
+		if (!Foot.Key) { continue; }
+		if (Figure && Figure->DoesSocketExist(Foot.Value)) { Foot.Key->SetWorldLocation(Figure->GetSocketLocation(Foot.Value) + Up * 5.0); }
+		if (!FMath::IsNearlyEqual(Foot.Key->Intensity, Lamp)) { Foot.Key->SetIntensity(Lamp); Foot.Key->SetVisibility(Lamp > 0.f); }
 	}
 	if (Jets)
 	{

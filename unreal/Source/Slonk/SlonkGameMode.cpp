@@ -682,11 +682,12 @@ void ASlonkGameMode::UpdateStarLighting()
 		}
 		if (UDirectionalLightComponent* LightComp = Cast<UDirectionalLightComponent>(It->GetLightComponent()))
 		{
-			// Casters beyond the dynamic shadow distance are culled from the virtual shadow maps; the default 200 m
-			// is inside the chase camera's distance to the hull.
-			if (LightComp->DynamicShadowDistanceMovableLight < SunShadowDistanceCm)
+			// Casters beyond the dynamic shadow distance are culled; the level's 200 m is inside the chase camera's
+			// distance to the hull. On foot the range shrinks so the cascades can resolve a person (see the header).
+			const float WantedDistance = Pawn->IsA<APersonPawn>() ? OnFootShadowDistanceCm : SunShadowDistanceCm;
+			if (!FMath::IsNearlyEqual(LightComp->DynamicShadowDistanceMovableLight, WantedDistance))
 			{
-				LightComp->DynamicShadowDistanceMovableLight = SunShadowDistanceCm;
+				LightComp->DynamicShadowDistanceMovableLight = WantedDistance;
 				LightComp->MarkRenderStateDirty();
 			}
 		}
