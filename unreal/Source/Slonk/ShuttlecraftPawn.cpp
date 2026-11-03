@@ -283,6 +283,7 @@ void AShuttlecraftPawn::BeginLaunch(AStarshipPawn* Ship)
 {
 	Mothership = Ship;
 	SetPhase(EShuttlePhase::Launching);
+	RideWith(Ship);
 	// The launch is filmed: the bay's camera takes the lift and the slide out, then the fantail's as she clears.
 	BayShot = -1;
 	SetCameraMode(EStarshipCameraMode::Bay);
@@ -380,6 +381,8 @@ bool AShuttlecraftPawn::RequestDock()
 	if (Movement && Movement->bLanded) { Movement->TakeOff(); }
 	Ship->OpenBayDoors(true);
 	SetPhase(EShuttlePhase::Docking);
+	RideWith(Ship);
+	DockLocal = Ship->GetActorTransform().InverseTransformPosition(GetActorLocation());
 	ScreenMessage(TEXT("Docking: approach under the bay's control"), FColor::Cyan);
 	return true;
 }
@@ -414,13 +417,24 @@ bool AShuttlecraftPawn::HandleCraftCommand(const FString& Op, const TArray<FStri
 
 void AShuttlecraftPawn::Tick(float DeltaTime)
 {
-	Super::Tick(DeltaTime);
+	// The slides place the craft in the mothership's frame first, so the cameras (Super) frame her where she is
+	// this frame, not where she was: a ship holding orbit moves kilometres a second, and filmed from a frame
+	// behind she was out of shot.
 	switch (Phase)
 	{
 	case EShuttlePhase::Launching: TickLaunch(DeltaTime); break;
 	case EShuttlePhase::Docking: TickDock(DeltaTime); break;
 	default: break;
 	}
+	Super::Tick(DeltaTime);
+}
+
+void AShuttlecraftPawn::RideWith(AStarshipPawn* Ship)
+{
+	// Everything in the sequences is measured in the ship's frame, so the shuttle must tick after the ship has
+	// moved, and carry the ship's velocity so the movement integration between the two agrees with the placement.
+	AddTickPrerequisiteActor(Ship);
+	if (Movement && Ship->Movement) { Movement->Velocity = Ship->Movement->Velocity; }
 }
 
 void AShuttlecraftPawn::TickLaunch(float DeltaTime)
@@ -432,6 +446,7 @@ void AShuttlecraftPawn::TickLaunch(float DeltaTime)
 		return;
 	}
 	PhaseTime += DeltaTime;
+	RideWith(Ship);
 	const FTransform Bay = Ship->GetShuttleBayTransform();
 	const FTransform Park = Ship->GetShuttleParkTransform();
 	// The lift: from the landing box up to the door's height, straight above the park spot.
@@ -483,20 +498,24 @@ void AShuttlecraftPawn::TickDock(float DeltaTime)
 		return;
 	}
 	PhaseTime += DeltaTime;
+	RideWith(Ship);
 	const FTransform Bay = Ship->GetShuttleBayTransform();
-	const FVector Out = Bay.GetUnitAxis(EAxis::X);                 // astern of the ship
 	const FQuat Facing = Bay.GetRotation() * FQuat(FVector::UpVector, PI); // nose toward the door
-	const FVector Here = GetActorLocation();
+	// The approach and the run in are flown in the ship's frame, as a position kept relative to her (DockLocal)
+	// and placed from her transform every tick: measured in the world against a ship under way (holding orbit at
+	// kilometres a second, or carried with a planet's spin), a 40 m/s approach never arrived.
+	const FTransform ShipT = Ship->GetActorTransform();
 	FQuat Rot = FQuat::Slerp(GetActorQuat(), Facing, 1.f - FMath::Exp(-1.5f * DeltaTime));
 	if (DockStep == 0)
 	{
 		// To the approach point astern of the door, fast when far, easing in.
-		const FVector Goal = Bay.TransformPosition(FVector(BayRunCm, 0.f, 0.f));
-		const FVector To = Goal - Here;
+		const FVector Goal = ShipT.InverseTransformPosition(Bay.TransformPosition(FVector(BayRunCm, 0.f, 0.f)));
+		const FVector To = Goal - DockLocal;
 		const double Dist = To.Size();
 		const double Speed = FMath::Clamp(Dist / 1.5, 300.0, 4000.0);
 		const double Step = FMath::Min(Dist, Speed * DeltaTime);
-		SetActorLocationAndRotation(Here + To.GetSafeNormal() * Step, Rot, false, nullptr, ETeleportType::TeleportPhysics);
+		DockLocal += To.GetSafeNormal() * Step;
+		SetActorLocationAndRotation(ShipT.TransformPosition(DockLocal), Rot, false, nullptr, ETeleportType::TeleportPhysics);
 		if (Dist - Step < 50.0 && FMath::RadiansToDegrees(Rot.AngularDistance(Facing)) < 3.f && Ship->AreBayDoorsOpen())
 		{
 			DockStep = 1;
@@ -510,10 +529,11 @@ void AShuttlecraftPawn::TickDock(float DeltaTime)
 	if (DockStep == 1)
 	{
 		// Straight in along the bay axis at bay speed, to the door.
-		const FVector To = Door - Here;
+		const FVector To = ShipT.InverseTransformPosition(Door) - DockLocal;
 		const double Dist = To.Size();
 		const double Step = FMath::Min(Dist, (double)BaySpeedCm * DeltaTime);
-		SetActorLocationAndRotation(Here + To.GetSafeNormal() * Step, Facing, false, nullptr, ETeleportType::TeleportPhysics);
+		DockLocal += To.GetSafeNormal() * Step;
+		SetActorLocationAndRotation(ShipT.TransformPosition(DockLocal), Facing, false, nullptr, ETeleportType::TeleportPhysics);
 		if (Dist - Step < 20.0) { DockStep = 2; PhaseTime = 0.f; }
 		return;
 	}

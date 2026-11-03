@@ -90,6 +90,8 @@ private:
 	void SetPhase(EShuttlePhase NewPhase);
 	void TickLaunch(float DeltaTime);
 	void TickDock(float DeltaTime);
+	/** Tick after the mothership and carry her velocity: the slides and the approach are measured in her frame. */
+	void RideWith(AStarshipPawn* Ship);
 
 	EShuttlePhase Phase = EShuttlePhase::Flying;
 	float PhaseTime = 0.f;
@@ -97,6 +99,8 @@ private:
 	int32 DockStep = 0;
 	/** The Bay camera's current shot: -1 none yet (snap on the first frame), 0 the bay's forward corner, 1 astern of the fantail. */
 	int32 BayShot = -1;
+	/** Docking: the shuttle's position in the mothership's frame, stepped toward the door and placed from her transform each tick. */
+	FVector DockLocal = FVector::ZeroVector;
 	float BayFOV = 50.f;
 
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> HullMID;
