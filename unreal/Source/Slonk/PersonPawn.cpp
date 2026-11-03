@@ -1159,11 +1159,11 @@ void APersonPawn::UpdateFigure(float DeltaTime)
 		{
 			// On the ground: a step into the loop when setting off, a step out of it when stopping; a break now and
 			// then while standing; and when the body turns on the spot past the planted feet, a turn clip.
-			if (bMoving && LastSpeed <= 30.f && (FigureAnim == EFigureAnim::Locomotion || FigureAnim == EFigureAnim::IdleBreak || FigureAnim == EFigureAnim::Turn || FigureAnim == EFigureAnim::Stop))
+			if (bStepIntoWalk && bMoving && LastSpeed <= 30.f && (FigureAnim == EFigureAnim::Locomotion || FigureAnim == EFigureAnim::IdleBreak || FigureAnim == EFigureAnim::Turn || FigureAnim == EFigureAnim::Stop))
 			{
 				PlayFigure(EFigureAnim::Start, (bSprinting ? RunStartAnim : WalkStartAnim).LoadSynchronous(), StartClipSeconds);
 			}
-			else if (!bMoving && LastSpeed > 150.f && FigureAnim == EFigureAnim::Locomotion)
+			else if (bStepIntoWalk && !bMoving && LastSpeed > 150.f && FigureAnim == EFigureAnim::Locomotion)
 			{
 				PlayFigure(EFigureAnim::Stop, (LastSpeed > WalkSpeedCm * 1.3f ? RunStopAnim : WalkStopAnim).LoadSynchronous(), StopClipSeconds);
 			}
@@ -1200,7 +1200,11 @@ void APersonPawn::UpdateFigure(float DeltaTime)
 			OneShotLeft -= DeltaTime;
 			// Moving cuts a break, a turn or a stop short; anything that ends goes back to the loop (or the fall).
 			const bool bInterrupt = bMoving && (FigureAnim == EFigureAnim::IdleBreak || FigureAnim == EFigureAnim::Turn || FigureAnim == EFigureAnim::Stop);
-			if (OneShotLeft <= 0.f || bInterrupt) { PlayFigure(bAirborne ? EFigureAnim::Fall : EFigureAnim::Locomotion); if (bInterrupt && bMoving) { PlayFigure(EFigureAnim::Start, (bSprinting ? RunStartAnim : WalkStartAnim).LoadSynchronous(), StartClipSeconds); } }
+			if (OneShotLeft <= 0.f || bInterrupt)
+			{
+				PlayFigure(bAirborne ? EFigureAnim::Fall : EFigureAnim::Locomotion);
+				if (bStepIntoWalk && bInterrupt && bMoving) { PlayFigure(EFigureAnim::Start, (bSprinting ? RunStartAnim : WalkStartAnim).LoadSynchronous(), StartClipSeconds); }
+			}
 		}
 		if (FigureAnim == EFigureAnim::Locomotion)
 		{

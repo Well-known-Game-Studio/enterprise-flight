@@ -188,6 +188,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Person|Figure") TSoftObjectPtr<UAnimSequence> RunStartAnim;
 	UPROPERTY(EditAnywhere, Category = "Person|Figure") TSoftObjectPtr<UAnimSequence> WalkStopAnim;
 	UPROPERTY(EditAnywhere, Category = "Person|Figure") TSoftObjectPtr<UAnimSequence> RunStopAnim;
+	/** Play the sample's step-into and step-out-of-the-walk clips at a start and a stop. They are forward clips, and the
+	 *  single-node player cannot cross-fade them into the loop, so by default the blend space alone carries the start
+	 *  and stop (its idle sample at speed 0 and its input smoothing), in whatever direction. Motion matching's job later. */
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") bool bStepIntoWalk = false;
 	/** How much of a start or stop clip plays before the loop takes over (s), and how often the idle breaks (s, min..max). */
 	UPROPERTY(EditAnywhere, Category = "Person|Figure") float StartClipSeconds = 0.5f;
 	UPROPERTY(EditAnywhere, Category = "Person|Figure") float StopClipSeconds = 0.7f;
