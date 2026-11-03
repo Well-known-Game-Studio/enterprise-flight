@@ -114,7 +114,7 @@ APersonPawn::APersonPawn()
 	FigureMesh = TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(SlonkCrew::UEFNPath));
 	FigureBaseMap = TSoftObjectPtr<UTexture>(FSoftObjectPath(SlonkCrew::UEFNBasePath));
 	FigureNormalMap = TSoftObjectPtr<UTexture>(FSoftObjectPath(SlonkCrew::UEFNNormalPath));
-	LocomotionBlend = TSoftObjectPtr<UBlendSpace>(FSoftObjectPath(A + TEXT("BS_Crew_Locomotion.BS_Crew_Locomotion")));
+	LocomotionBlend = TSoftObjectPtr<UBlendSpace>(FSoftObjectPath(A + TEXT("BS_Crew_Locomotion2D.BS_Crew_Locomotion2D")));
 	JumpAnim = Seq(TEXT("Jump/M_Neutral_Jump_F_Start_Stand_Lfoot"));
 	FallAnim = Seq(TEXT("Jump/M_Neutral_Jump_Loop_Fall"));
 	LandAnim = Seq(TEXT("Jump/M_Neutral_Jump_F_Land_Stand_Light_Lfoot"));
@@ -197,9 +197,13 @@ void APersonPawn::BuildFigure()
 	{
 		Figure->SetSkeletalMesh(Mesh);
 		if (UMaterialInterface* Crew = CrewMaterial.LoadSynchronous()) { SlonkCrew::Dress(Figure, this, Crew, CrewMIDs, FigureBaseMap.LoadSynchronous(), FigureNormalMap.LoadSynchronous(), nullptr); }
-		// The loops' own pace, so the blend space's speeds can be matched to them (see the log).
+		// The loops' own pace, so the blend space's speeds can be matched to them (see the log). The blend space was
+		// authored through the editor's property tools, which do not rebuild its blend grid: in the editor, make sure.
 		if (UBlendSpace* BS = LocomotionBlend.LoadSynchronous())
 		{
+#if WITH_EDITOR
+			BS->ValidateSampleData();
+#endif
 			for (const FBlendSample& Sample : BS->GetBlendSamples())
 			{
 				if (const UAnimSequence* Seq = Cast<UAnimSequence>(Sample.Animation.Get()); Seq && Sample.SampleValue.Y > 0.f && FMath::IsNearlyZero(Sample.SampleValue.X))
