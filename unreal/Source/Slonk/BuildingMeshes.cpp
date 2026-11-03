@@ -60,6 +60,10 @@ namespace
 			break;
 		}
 		for (int32 V : M.VertexIndicesItr()) { M.SetVertex(V, M.GetVertex(V) * 100.0); }
+		// The faces above are wound outward by the right-hand rule, but GeometryCore's triangle normal is
+		// (C - A) x (B - A), the left-handed reading, and the renderer shows the side that normal faces: as
+		// written every building drew its inside. Turn them so each face's normal leaves the building.
+		M.ReverseOrientation(false);
 		// flat normals per triangle
 		FDynamicMeshNormalOverlay* N = M.Attributes()->PrimaryNormals();
 		for (int32 T : M.TriangleIndicesItr())
