@@ -7,6 +7,7 @@
 #include "CrewFigure.h"
 #include "Animation/AnimSingleNodeInstance.h"
 #include "Animation/BlendSpace.h"
+#include "Misc/Paths.h"
 #include "Animation/AnimSequence.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/Texture.h"
@@ -107,11 +108,25 @@ APersonPawn::APersonPawn()
 	Figure->bAffectDistanceFieldLighting = false;
 	Figure->SetAnimationMode(EAnimationMode::AnimationSingleNode);
 	Figure->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
-	FigureMesh = TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple")));
-	LocomotionBlend = TSoftObjectPtr<UBlendSpace>(FSoftObjectPath(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/BS_Idle_Walk_Run.BS_Idle_Walk_Run")));
-	JumpAnim = TSoftObjectPtr<UAnimSequence>(FSoftObjectPath(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Jump/MM_Jump.MM_Jump")));
-	FallAnim = TSoftObjectPtr<UAnimSequence>(FSoftObjectPath(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Jump/MM_Fall_Loop.MM_Fall_Loop")));
-	LandAnim = TSoftObjectPtr<UAnimSequence>(FSoftObjectPath(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Jump/MM_Land.MM_Land")));
+	// The Game Animation Sample's set on its UEFN mannequin: the loops in a blend space of our own, the one-shots by name.
+	const FString A = TEXT("/Game/Characters/UEFN_Mannequin/Animations/");
+	auto Seq = [&](const FString& Rel) { const FString N = FPaths::GetBaseFilename(Rel); return TSoftObjectPtr<UAnimSequence>(FSoftObjectPath(A + Rel + TEXT(".") + N)); };
+	FigureMesh = TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(SlonkCrew::UEFNPath));
+	FigureBaseMap = TSoftObjectPtr<UTexture>(FSoftObjectPath(SlonkCrew::UEFNBasePath));
+	FigureNormalMap = TSoftObjectPtr<UTexture>(FSoftObjectPath(SlonkCrew::UEFNNormalPath));
+	LocomotionBlend = TSoftObjectPtr<UBlendSpace>(FSoftObjectPath(A + TEXT("BS_Crew_Locomotion.BS_Crew_Locomotion")));
+	JumpAnim = Seq(TEXT("Jump/M_Neutral_Jump_F_Start_Stand_Lfoot"));
+	FallAnim = Seq(TEXT("Jump/M_Neutral_Jump_Loop_Fall"));
+	LandAnim = Seq(TEXT("Jump/M_Neutral_Jump_F_Land_Stand_Light_Lfoot"));
+	LandMovingAnim = Seq(TEXT("Jump/M_Neutral_Jump_F_Land_Walk_Light_Lfoot"));
+	for (int32 i = 1; i <= 6; ++i) { IdleBreaks.Add(Seq(FString::Printf(TEXT("Idle/M_Neutral_Stand_Idle_Break_v%02d"), i))); }
+	for (const TCHAR* Deg : { TEXT("045"), TEXT("090"), TEXT("135"), TEXT("180") })
+	{
+		TurnAnims.Add(Seq(FString::Printf(TEXT("Idle/M_Neutral_Stand_Turn_%s_L"), Deg)));
+		TurnAnims.Add(Seq(FString::Printf(TEXT("Idle/M_Neutral_Stand_Turn_%s_R"), Deg)));
+	}
+	WalkStartAnim = Seq(TEXT("Walk/M_Neutral_Walk_Start_F_Lfoot")); RunStartAnim = Seq(TEXT("Run/M_Neutral_Run_Start_F_Lfoot"));
+	WalkStopAnim = Seq(TEXT("Walk/M_Neutral_Walk_Stop_F_Lfoot")); RunStopAnim = Seq(TEXT("Run/M_Neutral_Run_Stop_F_Lfoot"));
 	CrewMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_Crew.M_Crew")));
 	Helmet = MakePart(this, TEXT("Helmet"), Body, FVector(0.f, 0.f, HeadHeightCm - HalfHeightCm));
 	Hair = MakePart(this, TEXT("Hair"), Body, FVector(0.f, 0.f, HeadHeightCm - HalfHeightCm));
@@ -181,7 +196,19 @@ void APersonPawn::BuildFigure()
 	if (USkeletalMesh* Mesh = FigureMesh.LoadSynchronous())
 	{
 		Figure->SetSkeletalMesh(Mesh);
-		if (UMaterialInterface* Crew = CrewMaterial.LoadSynchronous()) { SlonkCrew::Dress(Figure, this, Crew, CrewMIDs); }
+		if (UMaterialInterface* Crew = CrewMaterial.LoadSynchronous()) { SlonkCrew::Dress(Figure, this, Crew, CrewMIDs, FigureBaseMap.LoadSynchronous(), FigureNormalMap.LoadSynchronous(), nullptr); }
+		// The loops' own pace, so the blend space's speeds can be matched to them (see the log).
+		if (UBlendSpace* BS = LocomotionBlend.LoadSynchronous())
+		{
+			for (const FBlendSample& Sample : BS->GetBlendSamples())
+			{
+				if (const UAnimSequence* Seq = Cast<UAnimSequence>(Sample.Animation.Get()); Seq && Sample.SampleValue.Y > 0.f && FMath::IsNearlyZero(Sample.SampleValue.X))
+				{
+					const float L = Seq->GetPlayLength();
+					UE_LOG(LogTemp, Log, TEXT("Person: %s runs %.0f cm/s by its root over %.1fs (placed at %.0f)"), *Seq->GetName(), L > 0.f ? (float)Seq->ExtractRootMotionFromRange(0.f, L, FAnimExtractContext(0.0, true)).GetTranslation().Size() / L : 0.f, L, Sample.SampleValue.Y);
+				}
+			}
+		}
 		if (UBlendSpace* BS = LocomotionBlend.LoadSynchronous())
 		{
 			Figure->PlayAnimation(BS, true);
@@ -226,6 +253,8 @@ void APersonPawn::BuildFigure()
 		VisorMID->SetVectorParameterValue(TEXT("GlowColor"), FLinearColor(1.f, 0.82f, 0.45f));
 		VisorMID->SetScalarParameterValue(TEXT("Intensity"), 1.2f);
 	}
+	StandYaw = GetActorRotation().Yaw;
+	LastFigureLocation = GetActorLocation();
 	bSuitWorn = !WearsSuit();   // so the first ApplyUniform dresses the figure
 	ApplyUniform();
 }
@@ -1071,23 +1100,25 @@ void APersonPawn::TickHull(float DeltaTime)
 // Figure and camera
 // ---------------------------------------------------------------------------------------------
 
-void APersonPawn::PlayFigure(EFigureAnim Anim)
+void APersonPawn::PlayFigure(EFigureAnim Anim, UAnimationAsset* Asset, float Seconds)
 {
 	if (!Figure) { return; }
-	UAnimationAsset* Asset = nullptr;
-	bool bLoop = true;
-	switch (Anim)
+	bool bLoop = false;
+	if (!Asset)
 	{
-	case EFigureAnim::Jump: Asset = JumpAnim.LoadSynchronous(); bLoop = false; break;
-	case EFigureAnim::Fall: Asset = FallAnim.LoadSynchronous(); break;
-	case EFigureAnim::Land: Asset = LandAnim.LoadSynchronous(); bLoop = false; break;
-	default: Asset = LocomotionBlend.LoadSynchronous(); break;
+		switch (Anim)
+		{
+		case EFigureAnim::Jump: Asset = JumpAnim.LoadSynchronous(); Seconds = 0.55f; break;
+		case EFigureAnim::Fall: Asset = FallAnim.LoadSynchronous(); bLoop = true; break;
+		case EFigureAnim::Land: Asset = LandAnim.LoadSynchronous(); Seconds = 0.6f; break;
+		default: Asset = LocomotionBlend.LoadSynchronous(); bLoop = true; break;
+		}
 	}
 	if (!Asset) { Anim = EFigureAnim::Locomotion; Asset = LocomotionBlend.LoadSynchronous(); bLoop = true; }
 	if (!Asset) { return; }
 	FigureAnim = Anim;
 	Figure->PlayAnimation(Asset, bLoop);
-	OneShotLeft = bLoop ? 0.f : FMath::Max(Asset->GetPlayLength() - 0.1f, 0.1f);
+	OneShotLeft = bLoop ? 0.f : (Seconds > 0.f ? Seconds : FMath::Max(Asset->GetPlayLength() - 0.1f, 0.1f));
 }
 
 void APersonPawn::UpdateFigure(float DeltaTime)
@@ -1100,16 +1131,68 @@ void APersonPawn::UpdateFigure(float DeltaTime)
 
 	if (Figure && Figure->GetSkeletalMeshAsset())
 	{
-		// Leaving the ground with a push: the jump; coming down onto it: the landing; in the air or adrift: the
-		// fall loop, limbs loose. On the ground the blend space by heading and speed.
 		const bool bAirborne = !bGrounded;
+		const bool bOneShot = OneShotLeft > 0.f;
+		const bool bMoving = Speed > 30.f;
+		const bool bSprinting = Speed > WalkSpeedCm * 1.3f;
+		const float ActorYaw = GetActorRotation().Yaw;
+		// Placed somewhere new (a lift, the hatch, the transporter): the feet point where the body does.
+		if (FVector::DistSquared(GetActorLocation(), LastFigureLocation) > 100.0 * 100.0) { StandYaw = ActorYaw; FigureYawOffset = 0.f; }
+		LastFigureLocation = GetActorLocation();
+		// Leaving the ground with a push: the jump; coming down onto it: a landing, lighter in stride; in the air
+		// or adrift: the fall loop, limbs loose.
 		if (bAirborne && bWasGrounded && FVector::DotProduct(Velocity, Up) > 60.0) { PlayFigure(EFigureAnim::Jump); }
-		else if (!bAirborne && !bWasGrounded && FigureAnim != EFigureAnim::Locomotion) { PlayFigure(EFigureAnim::Land); }
-		else if (bAirborne && FigureAnim == EFigureAnim::Locomotion) { PlayFigure(EFigureAnim::Fall); }
+		else if (!bAirborne && !bWasGrounded && (FigureAnim == EFigureAnim::Fall || FigureAnim == EFigureAnim::Jump))
+		{
+			PlayFigure(EFigureAnim::Land, bMoving ? LandMovingAnim.LoadSynchronous() : nullptr, 0.6f);
+		}
+		else if (bAirborne && !bOneShot && FigureAnim != EFigureAnim::Fall) { PlayFigure(EFigureAnim::Fall); }
+		else if (!bAirborne)
+		{
+			// On the ground: a step into the loop when setting off, a step out of it when stopping; a break now and
+			// then while standing; and when the body turns on the spot past the planted feet, a turn clip.
+			if (bMoving && LastSpeed <= 30.f && (FigureAnim == EFigureAnim::Locomotion || FigureAnim == EFigureAnim::IdleBreak || FigureAnim == EFigureAnim::Turn || FigureAnim == EFigureAnim::Stop))
+			{
+				PlayFigure(EFigureAnim::Start, (bSprinting ? RunStartAnim : WalkStartAnim).LoadSynchronous(), StartClipSeconds);
+			}
+			else if (!bMoving && LastSpeed > 150.f && FigureAnim == EFigureAnim::Locomotion)
+			{
+				PlayFigure(EFigureAnim::Stop, (LastSpeed > WalkSpeedCm * 1.3f ? RunStopAnim : WalkStopAnim).LoadSynchronous(), StopClipSeconds);
+			}
+			else if (!bMoving && FigureAnim == EFigureAnim::Locomotion)
+			{
+				const float Turned = FMath::FindDeltaAngleDegrees(StandYaw, ActorYaw);
+				if (FMath::Abs(Turned) > TurnInPlaceDeg && TurnAnims.Num() >= 8)
+				{
+					// The nearest of 45, 90, 135, 180 to the left or right; the feet come round with the clip.
+					const int32 Step = FMath::Clamp(FMath::RoundToInt(FMath::Abs(Turned) / 45.f), 1, 4) - 1;
+					if (UAnimSequence* T = TurnAnims[Step * 2 + (Turned < 0.f ? 0 : 1)].LoadSynchronous())
+					{
+						PlayFigure(EFigureAnim::Turn, T, FMath::Min(T->GetPlayLength() - 0.1f, 0.9f + 0.2f * Step));
+						TurnSeconds = OneShotLeft;
+						TurnUnwind = FigureYawOffset;
+						StandYaw = ActorYaw;
+					}
+				}
+				else
+				{
+					IdleSeconds += DeltaTime;
+					if (IdleSeconds > NextIdleBreak && IdleBreaks.Num() > 0)
+					{
+						if (UAnimSequence* B = IdleBreaks[FMath::RandRange(0, IdleBreaks.Num() - 1)].LoadSynchronous()) { PlayFigure(EFigureAnim::IdleBreak, B, B->GetPlayLength() - 0.1f); }
+						IdleSeconds = 0.f;
+						NextIdleBreak = FMath::FRandRange((float)IdleBreakEvery.X, (float)IdleBreakEvery.Y);
+					}
+				}
+			}
+			if (bMoving) { IdleSeconds = 0.f; StandYaw = ActorYaw; }
+		}
 		if (OneShotLeft > 0.f)
 		{
 			OneShotLeft -= DeltaTime;
-			if (OneShotLeft <= 0.f) { PlayFigure(bAirborne ? EFigureAnim::Fall : EFigureAnim::Locomotion); }
+			// Moving cuts a break, a turn or a stop short; anything that ends goes back to the loop (or the fall).
+			const bool bInterrupt = bMoving && (FigureAnim == EFigureAnim::IdleBreak || FigureAnim == EFigureAnim::Turn || FigureAnim == EFigureAnim::Stop);
+			if (OneShotLeft <= 0.f || bInterrupt) { PlayFigure(bAirborne ? EFigureAnim::Fall : EFigureAnim::Locomotion); if (bInterrupt && bMoving) { PlayFigure(EFigureAnim::Start, (bSprinting ? RunStartAnim : WalkStartAnim).LoadSynchronous(), StartClipSeconds); } }
 		}
 		if (FigureAnim == EFigureAnim::Locomotion)
 		{
@@ -1120,13 +1203,21 @@ void APersonPawn::UpdateFigure(float DeltaTime)
 				Node->SetBlendSpacePosition(FVector(Dir, Speed, 0.f));
 			}
 		}
+		// Standing, the figure keeps the feet where they were planted while the body (and the camera) turn, until a
+		// turn clip brings them round; walking, it faces the way the body does.
+		if (bMoving || bAirborne) { FigureYawOffset = 0.f; }
+		else if (FigureAnim == EFigureAnim::Turn) { FigureYawOffset = TurnUnwind * FMath::Clamp(OneShotLeft / FMath::Max(TurnSeconds, 0.01f), 0.f, 1.f); }
+		else { FigureYawOffset = FMath::FindDeltaAngleDegrees(ActorYaw, StandYaw); }
+		Figure->SetRelativeRotation(FRotator(0.f, -90.f + FigureYawOffset, 0.f));
 		bWasGrounded = bGrounded;
-		// The helmet rides the head bone's position, squared to the body so the visor looks where the person faces.
+		LastSpeed = Speed;
+		// The helmet and the hair cap ride the head bone's position, squared to the body so the visor looks where the person faces.
 		if ((Helmet && Helmet->IsVisible()) || (Hair && Hair->IsVisible()))
 		{
 			const FVector Head = Figure->DoesSocketExist(TEXT("head")) ? Figure->GetSocketLocation(TEXT("head")) + Up * 9.0 : GetActorLocation() + Up * (HeadHeightCm - HalfHeightCm);
-			if (Helmet) { Helmet->SetWorldLocationAndRotation(Head, GetActorQuat()); }
-			if (Hair) { Hair->SetWorldLocationAndRotation(Head, GetActorQuat()); }
+			const FQuat HeadQ = GetActorQuat() * FQuat(FVector::UpVector, FMath::DegreesToRadians(FigureYawOffset));
+			if (Helmet) { Helmet->SetWorldLocationAndRotation(Head, HeadQ); }
+			if (Hair) { Hair->SetWorldLocationAndRotation(Head, HeadQ); }
 		}
 	}
 	if (bSuitWorn != WearsSuit()) { ApplyUniform(); }

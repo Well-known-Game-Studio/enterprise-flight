@@ -15,6 +15,7 @@ class USkeletalMesh;
 class UBlendSpace;
 class UAnimSequence;
 class UAnimationAsset;
+class UTexture;
 class USpringArmComponent;
 class UCameraComponent;
 class UMaterialInstanceDynamic;
@@ -145,8 +146,8 @@ public:
 	FString FrameDescription() const;
 
 	// ---- Tunables ----
-	UPROPERTY(EditAnywhere, Category = "Person|Walk") float WalkSpeedCm = 240.f;
-	UPROPERTY(EditAnywhere, Category = "Person|Walk") float RunSpeedCm = 520.f;
+	UPROPERTY(EditAnywhere, Category = "Person|Walk") float WalkSpeedCm = 200.f;
+	UPROPERTY(EditAnywhere, Category = "Person|Walk") float RunSpeedCm = 500.f;
 	UPROPERTY(EditAnywhere, Category = "Person|Walk") float WalkAccelCm = 900.f;
 	/** Take-off speed of a jump (cm/s): half a metre on Earth, three on a small moon. */
 	UPROPERTY(EditAnywhere, Category = "Person|Walk") float JumpSpeedCm = 320.f;
@@ -168,13 +169,31 @@ public:
 	/** Boarding reach from the airlock, cm. */
 	UPROPERTY(EditAnywhere, Category = "Person") float BoardRangeCm = 1000.f;
 	// ---- The figure ----
-	/** The mannequin (SKM_Manny_Simple or SKM_Quinn_Simple) and its unarmed locomotion set. */
+	/** The Game Animation Sample's mannequin and clips (its skeleton is the UEFN one, so the set goes together). */
 	UPROPERTY(EditAnywhere, Category = "Person|Figure") TSoftObjectPtr<USkeletalMesh> FigureMesh;
-	/** Idle / walk / jog by direction (x, degrees) and speed (y, cm/s). */
+	/** The mannequin's own maps, when its material keeps them to itself. */
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") TSoftObjectPtr<UTexture> FigureBaseMap;
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") TSoftObjectPtr<UTexture> FigureNormalMap;
+	/** Idle / walk / run loops by direction (x, degrees) and speed (y, cm/s). */
 	UPROPERTY(EditAnywhere, Category = "Person|Figure") TSoftObjectPtr<UBlendSpace> LocomotionBlend;
 	UPROPERTY(EditAnywhere, Category = "Person|Figure") TSoftObjectPtr<UAnimSequence> JumpAnim;
 	UPROPERTY(EditAnywhere, Category = "Person|Figure") TSoftObjectPtr<UAnimSequence> FallAnim;
 	UPROPERTY(EditAnywhere, Category = "Person|Figure") TSoftObjectPtr<UAnimSequence> LandAnim;
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") TSoftObjectPtr<UAnimSequence> LandMovingAnim;
+	/** Idle breaks, played now and then while standing; turns in place by angle (45, 90, 135, 180: left then right). */
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") TArray<TSoftObjectPtr<UAnimSequence>> IdleBreaks;
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") TArray<TSoftObjectPtr<UAnimSequence>> TurnAnims;
+	/** Starts and stops (walk, run): the first part of each clip covers the step into and out of the loop. */
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") TSoftObjectPtr<UAnimSequence> WalkStartAnim;
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") TSoftObjectPtr<UAnimSequence> RunStartAnim;
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") TSoftObjectPtr<UAnimSequence> WalkStopAnim;
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") TSoftObjectPtr<UAnimSequence> RunStopAnim;
+	/** How much of a start or stop clip plays before the loop takes over (s), and how often the idle breaks (s, min..max). */
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") float StartClipSeconds = 0.5f;
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") float StopClipSeconds = 0.7f;
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") FVector2D IdleBreakEvery = FVector2D(9.f, 18.f);
+	/** Standing, the feet stay planted while the body turns up to this far; past it a turn-in-place clip plays. */
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") float TurnInPlaceDeg = 40.f;
 	/** M_Crew: the mannequin's maps coloured by rest-pose height; Glow and Dissolve for the transporter. */
 	UPROPERTY(EditAnywhere, Category = "Person|Figure") TSoftObjectPtr<UMaterialInterface> CrewMaterial;
 	/** The uniform aboard (The Wrath of Khan's maroon jacket over black), the suit outside, the skin. */
@@ -277,13 +296,22 @@ private:
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> TransportMID;
 	bool bTransportGlow = false;
 	float TransportDissolve = 0.f;
-	enum class EFigureAnim : uint8 { Locomotion, Jump, Fall, Land };
+	enum class EFigureAnim : uint8 { Locomotion, Start, Stop, IdleBreak, Turn, Jump, Fall, Land };
 	EFigureAnim FigureAnim = EFigureAnim::Locomotion;
 	float OneShotLeft = 0.f;
 	bool bWasGrounded = true;
+	float LastSpeed = 0.f;
+	float IdleSeconds = 0.f;
+	float NextIdleBreak = 12.f;
+	/** The heading the planted feet point along while standing (degrees of actor yaw), and the figure's offset from the body. */
+	float StandYaw = 0.f;
+	float FigureYawOffset = 0.f;
+	float TurnUnwind = 0.f;
+	float TurnSeconds = 1.f;
+	FVector LastFigureLocation = FVector::ZeroVector;
 	bool bSuitWorn = false;
 	/** Colours and helmet for the frame: the uniform aboard, the suit outside. */
 	void ApplyUniform();
 	void ApplyFigureVisibility();
-	void PlayFigure(EFigureAnim Anim);
+	void PlayFigure(EFigureAnim Anim, UAnimationAsset* Asset = nullptr, float Seconds = 0.f);
 };

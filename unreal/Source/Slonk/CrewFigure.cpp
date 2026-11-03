@@ -22,7 +22,7 @@ FCrewDress FCrewDress::Suit(const FLinearColor& Cloth, const FLinearColor& Trim)
 	return D;
 }
 
-void SlonkCrew::Dress(USkinnedMeshComponent* Mesh, UObject* Outer, UMaterialInterface* Crew, TArray<TObjectPtr<UMaterialInstanceDynamic>>& Out)
+void SlonkCrew::Dress(USkinnedMeshComponent* Mesh, UObject* Outer, UMaterialInterface* Crew, TArray<TObjectPtr<UMaterialInstanceDynamic>>& Out, UTexture* Base, UTexture* Normal, UTexture* MRA)
 {
 	Out.Reset();
 	USkeletalMesh* Asset = Mesh ? Cast<USkeletalMesh>(Mesh->GetSkinnedAsset()) : nullptr;
@@ -41,6 +41,10 @@ void SlonkCrew::Dress(USkinnedMeshComponent* Mesh, UObject* Outer, UMaterialInte
 				Mid->SetTextureParameterValue(Pair.Value, Tex);
 			}
 		}
+		// A mesh whose material keeps its maps to itself (the UEFN mannequin) takes them by name.
+		if (Base) { Mid->SetTextureParameterValue(TEXT("Base"), Base); }
+		if (Normal) { Mid->SetTextureParameterValue(TEXT("BNormal"), Normal); }
+		if (MRA) { Mid->SetTextureParameterValue(TEXT("MRA"), MRA); }
 		Mesh->SetMaterial(i, Mid);
 		Out.Add(Mid);
 	}

@@ -10,6 +10,7 @@
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
 class USkinnedMeshComponent;
+class UTexture;
 
 /** The colours M_Crew dresses the mannequin with, by rest-pose height. */
 struct FCrewDress
@@ -28,7 +29,10 @@ namespace SlonkCrew
 	inline const TCHAR* QuinnPath = TEXT("/Game/Characters/Mannequins/Meshes/SKM_Quinn_Simple.SKM_Quinn_Simple");
 	inline const TCHAR* CrewMaterialPath = TEXT("/Game/Slonk/Materials/M_Crew.M_Crew");
 	/** One crew material instance per slot of Mesh, each fed that slot's own mannequin maps, assigned to the mesh. */
-	void Dress(USkinnedMeshComponent* Mesh, UObject* Outer, UMaterialInterface* Crew, TArray<TObjectPtr<UMaterialInstanceDynamic>>& Out);
+	void Dress(USkinnedMeshComponent* Mesh, UObject* Outer, UMaterialInterface* Crew, TArray<TObjectPtr<UMaterialInstanceDynamic>>& Out, UTexture* Base = nullptr, UTexture* Normal = nullptr, UTexture* MRA = nullptr);
+	inline const TCHAR* UEFNPath = TEXT("/Game/Characters/UEFN_Mannequin/Meshes/SKM_UEFN_Mannequin.SKM_UEFN_Mannequin");
+	inline const TCHAR* UEFNBasePath = TEXT("/Game/Characters/UEFN_Mannequin/Textures/T_UEFN_Mannequin_D.T_UEFN_Mannequin_D");
+	inline const TCHAR* UEFNNormalPath = TEXT("/Game/Characters/UEFN_Mannequin/Textures/T_UEFN_Mannequin_N.T_UEFN_Mannequin_N");
 	void SetDress(const TArray<TObjectPtr<UMaterialInstanceDynamic>>& Mids, const FCrewDress& D);
 }
 
