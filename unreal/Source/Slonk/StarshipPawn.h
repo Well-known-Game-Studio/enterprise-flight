@@ -122,7 +122,7 @@ public:
 	/** The shuttle this ship has out (null while it is in the bay). */
 	UPROPERTY(BlueprintReadOnly, Category = "Shuttle") TWeakObjectPtr<AShuttlecraftPawn> ActiveShuttle;
 	/** The shuttlebay door in pawn space (cm): the fantail of the engineering hull. A shuttle leaves it astern. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shuttle") FVector ShuttleBayOffset = FVector(-7250.0, 0.0, -1600.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shuttle") FVector ShuttleBayOffset = FVector(-7250.0, 0.0, -1700.0);
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shuttle") TSubclassOf<AShuttlecraftPawn> ShuttleClass;
 	/** The ship must be below this speed (cm/s) and out of warp to launch. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shuttle") double ShuttleLaunchMaxSpeed = 5.0e4;
