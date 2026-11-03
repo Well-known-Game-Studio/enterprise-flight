@@ -37,6 +37,8 @@ public:
 	bool IsMoving() const { return !FMath::IsNearlyEqual(Fraction, Target, 0.004f); }
 	float GetFraction() const { return Fraction; }
 	void SetShown(bool bShown);
+	/** The gores' outer skin and the stern wall's, once the ship has made them (the hull's own skins, the wall's masked). */
+	void ApplySkins(UMaterialInterface* Outer, UMaterialInterface* WallSkin);
 
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 

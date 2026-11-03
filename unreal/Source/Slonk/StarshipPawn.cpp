@@ -89,7 +89,7 @@ AStarshipPawn::AStarshipPawn()
 	ShipMesh->SetGenerateOverlapEvents(false);
 	ShipMesh->SetMobility(EComponentMobility::Movable);
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> HullFinder(TEXT("/Game/Enterprise/1701-a.1701-a"));
-	SternHullMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Enterprise/Constitution_3_Hull.Constitution_3_Hull")));
+	SternHullMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_ConstitutionMasked.M_ConstitutionMasked")));
 	if (HullFinder.Succeeded())
 	{
 		ShipMesh->SetStaticMesh(HullFinder.Object);
@@ -1072,12 +1072,11 @@ void AStarshipPawn::ApplyHullSkinParams()
 	const FQuat Rot = ShipMesh->GetRelativeRotation().Quaternion();
 	const FVector RelLoc = ShipMesh->GetRelativeLocation();
 	// The skin material keys lamps off the diffuse map; it needs the same mesh->pawn transform as the overlay for its boxes.
-	for (int32 i = 0; i < HullMaterials.Num(); ++i)
+	auto SetSkin = [&](UMaterialInstanceDynamic* Mid, int32 i)
 	{
-		UMaterialInstanceDynamic* Mid = HullMaterials[i];
 		if (!Mid)
 		{
-			continue;
+			return;
 		}
 		Mid->SetScalarParameterValue(TEXT("MeshScale"), Scale);
 		Mid->SetVectorParameterValue(TEXT("MeshRelLoc"), V(RelLoc));
@@ -1095,7 +1094,9 @@ void AStarshipPawn::ApplyHullSkinParams()
 		Mid->SetVectorParameterValue(TEXT("SlotColor"), TorpedoBayGlowColor);
 		Mid->SetVectorParameterValue(TEXT("TubeCentre"), V(TorpedoTubeCentre));
 		Mid->SetVectorParameterValue(TEXT("TubeSize"), V(TorpedoTubeSize));
-	}
+	};
+	for (int32 i = 0; i < HullMaterials.Num(); ++i) { SetSkin(HullMaterials[i], i); }
+	SetSkin(DoorSkin, SternSlotIndex);
 	// The torpedoes leave from the tube mouths, just proud of the housing face so they never spawn inside the recess.
 	if (Weapons)
 	{
@@ -1117,6 +1118,9 @@ void AStarshipPawn::SetupHullMaterials()
 		StarSphere->SetVisibility(false);
 	}
 	HullMaterials.Reset();
+	HullSlotSources.Reset();
+	DoorSkin = nullptr;
+	SternSlotIndex = INDEX_NONE;
 	ThrusterMaterialIndex = INDEX_NONE;
 	if (!ShipMesh || !ShipMesh->GetStaticMesh())
 	{
@@ -1126,42 +1130,14 @@ void AStarshipPawn::SetupHullMaterials()
 	UMaterialInterface* Skin = HullSkinMaterial.LoadSynchronous();
 	for (int32 i = 0; i < NumMaterials; ++i)
 	{
-		UMaterialInterface* Orig = ShipMesh->GetMaterial(i);
-		UMaterialInstanceDynamic* Mid = nullptr;
-		if (Skin && Orig)
+		HullSlotSources.Add(ShipMesh->GetMaterial(i));
+	}
+	for (int32 i = 0; i < NumMaterials; ++i)
+	{
+		// Our own skin material, fed the imported slot's textures.
+		UMaterialInstanceDynamic* Mid = Skin ? MakeHullSkin(i, Skin) : nullptr;
+		if (Mid)
 		{
-			// Our own skin material, fed the imported slot's textures.
-			Mid = UMaterialInstanceDynamic::Create(Skin, this);
-			static const TPair<FName, FName> TexParams[] = { { TEXT("DiffuseColorMap"), TEXT("Diffuse") }, { TEXT("EmissiveColorMap"), TEXT("Glow") }, { TEXT("NormalMap"), TEXT("Normal") } };
-			for (const auto& Pair : TexParams)
-			{
-				UTexture* Tex = nullptr;
-				if (Orig->GetTextureParameterValue(FHashedMaterialParameterInfo(Pair.Key), Tex) && Tex)
-				{
-					Mid->SetTextureParameterValue(Pair.Value, Tex);
-				}
-			}
-			// Roughness (from the set's specular map) and baked occlusion, by slot name: the imported instances
-			// never referenced them.
-			const FString SlotName = ShipMesh->GetMaterialSlotNames().IsValidIndex(i) ? ShipMesh->GetMaterialSlotNames()[i].ToString() : FString();
-			if (SlotName.StartsWith(TEXT("Constitution_")))
-			{
-				const FString Base = FString::Printf(TEXT("/Game/Enterprise/Fed_TMP_%s_"), *SlotName);
-				if (UTexture* Rough = LoadObject<UTexture>(nullptr, *(Base + TEXT("ROUGH"))))
-				{
-					Mid->SetTextureParameterValue(TEXT("Rough"), Rough);
-				}
-				if (UTexture* AO = LoadObject<UTexture>(nullptr, *(Base + TEXT("AO"))))
-				{
-					Mid->SetTextureParameterValue(TEXT("AO"), AO);
-				}
-			}
-			else
-			{
-				// The impulse grille has no such maps: plain roughness, no occlusion.
-				Mid->SetScalarParameterValue(TEXT("RoughMapWeight"), 0.f);
-				Mid->SetScalarParameterValue(TEXT("AOStrength"), 0.f);
-			}
 			ShipMesh->SetMaterial(i, Mid);
 		}
 		else
@@ -1178,6 +1154,44 @@ void AStarshipPawn::SetupHullMaterials()
 		HullMaterials[ThrusterMaterialIndex]->SetScalarParameterValue(TEXT("RedKeyGlow"), 0.f);
 	}
 	ApplyHullSkinParams();
+}
+
+UMaterialInstanceDynamic* AStarshipPawn::MakeHullSkin(int32 Slot, UMaterialInterface* Parent)
+{
+	UMaterialInterface* Orig = HullSlotSources.IsValidIndex(Slot) ? HullSlotSources[Slot].Get() : nullptr;
+	if (!Parent || !Orig || !ShipMesh) { return nullptr; }
+	UMaterialInstanceDynamic* Mid = UMaterialInstanceDynamic::Create(Parent, this);
+	static const TPair<FName, FName> TexParams[] = { { TEXT("DiffuseColorMap"), TEXT("Diffuse") }, { TEXT("EmissiveColorMap"), TEXT("Glow") }, { TEXT("NormalMap"), TEXT("Normal") } };
+	for (const auto& Pair : TexParams)
+	{
+		UTexture* Tex = nullptr;
+		if (Orig->GetTextureParameterValue(FHashedMaterialParameterInfo(Pair.Key), Tex) && Tex)
+		{
+			Mid->SetTextureParameterValue(Pair.Value, Tex);
+		}
+	}
+	// Roughness (from the set's specular map) and baked occlusion, by slot name: the imported instances never
+	// referenced them.
+	const FString SlotName = ShipMesh->GetMaterialSlotNames().IsValidIndex(Slot) ? ShipMesh->GetMaterialSlotNames()[Slot].ToString() : FString();
+	if (SlotName.StartsWith(TEXT("Constitution_")))
+	{
+		const FString Base = FString::Printf(TEXT("/Game/Enterprise/Fed_TMP_%s_"), *SlotName);
+		if (UTexture* Rough = LoadObject<UTexture>(nullptr, *(Base + TEXT("ROUGH"))))
+		{
+			Mid->SetTextureParameterValue(TEXT("Rough"), Rough);
+		}
+		if (UTexture* AO = LoadObject<UTexture>(nullptr, *(Base + TEXT("AO"))))
+		{
+			Mid->SetTextureParameterValue(TEXT("AO"), AO);
+		}
+	}
+	else
+	{
+		// The impulse grille has no such maps: plain roughness, no occlusion.
+		Mid->SetScalarParameterValue(TEXT("RoughMapWeight"), 0.f);
+		Mid->SetScalarParameterValue(TEXT("AOStrength"), 0.f);
+	}
+	return Mid;
 }
 
 void AStarshipPawn::SetupHullLights()
@@ -1368,7 +1382,9 @@ void AStarshipPawn::ApplyViewVisibility()
 	// The seated bridge view counts only while someone sits: with the captain out on the hull or beamed down the
 	// camera mode is left at Bridge, but they must see the ship.
 	const bool bInside = ShownRoom != EShipRoom::Count;
-	const bool bBridge = (CameraMode == EStarshipCameraMode::Bridge && !ActivePerson.IsValid()) || ShownRoom == EShipRoom::Bridge;
+	// ...and only while the player is at this ship's controls: from the shuttle (or any other viewer) she is a ship
+	// seen from outside whatever her own camera mode was left at.
+	const bool bBridge = (CameraMode == EStarshipCameraMode::Bridge && !ActivePerson.IsValid() && IsPlayerControlled()) || ShownRoom == EShipRoom::Bridge;
 	// The shuttle bay keeps the hull: its throat is the stern recess itself (two-sided, so its walls read from
 	// within), the clamshell door is the hull's own, and the rest of the ship shows through the open door.
 	const bool bHullShown = (!bBridge && !bInside) || ShownRoom == EShipRoom::ShuttleBay;
@@ -1597,19 +1613,20 @@ void AStarshipPawn::UpdateHullGlow(float DeltaTime)
 		{
 			if (Mid) { Mid->SetScalarParameterValue(TEXT("SlotGlow"), TorpedoBayGlow * (0.3f + 0.7f * FMath::Clamp(Ready, 0.f, 1.f))); }
 		}
+		if (DoorSkin) { DoorSkin->SetScalarParameterValue(TEXT("SlotGlow"), TorpedoBayGlow * (0.3f + 0.7f * FMath::Clamp(Ready, 0.f, 1.f))); }
 	}
 
 	const TArray<FName> SlotNames = ShipMesh ? ShipMesh->GetMaterialSlotNames() : TArray<FName>();
-	for (int32 i = 0; i < HullMaterials.Num(); ++i)
+	auto SetGlow = [&](UMaterialInstanceDynamic* Mid, int32 i)
 	{
-		if (UMaterialInstanceDynamic* Mid = HullMaterials[i])
-		{
-			const float* SlotWeight = SlotNames.IsValidIndex(i) ? SlotGlowWeights.Find(SlotNames[i]) : nullptr;
-			const float Slot = SlotWeight ? *SlotWeight : 1.f;
-			const float Weight = (i == ThrusterMaterialIndex) ? BaseGlowWeight * ImpulseGlow : BaseGlowWeight * Slot * Glow;
-			Mid->SetScalarParameterValue(GlowParameterName, Weight);
-		}
-	}
+		if (!Mid) { return; }
+		const float* SlotWeight = SlotNames.IsValidIndex(i) ? SlotGlowWeights.Find(SlotNames[i]) : nullptr;
+		const float Slot = SlotWeight ? *SlotWeight : 1.f;
+		const float Weight = (i == ThrusterMaterialIndex) ? BaseGlowWeight * ImpulseGlow : BaseGlowWeight * Slot * Glow;
+		Mid->SetScalarParameterValue(GlowParameterName, Weight);
+	};
+	for (int32 i = 0; i < HullMaterials.Num(); ++i) { SetGlow(HullMaterials[i], i); }
+	SetGlow(DoorSkin, SternSlotIndex);
 
 	for (int32 i = 0; i < HullLights.Num() && i < LightSpecs.Num(); ++i)
 	{
@@ -2963,12 +2980,14 @@ FTransform AStarshipPawn::GetShuttleBayTransform() const
 void AStarshipPawn::SetupBayDoors()
 {
 	if (!IsEnterpriseAMesh(ShipMesh)) { return; }
-	// The painted door's slot takes the masked copy of its material: the hull keeps a hole where the gores sit.
-	if (UMaterialInterface* Stern = SternHullMaterial.LoadSynchronous())
+	// The masked skin, the painted door's slot and its skin first: without any of them the painted door stays.
+	UMaterialInterface* Masked = SternHullMaterial.LoadSynchronous();
+	UMaterialInterface* Skin = HullSkinMaterial.LoadSynchronous();
+	const int32 Slot = ShipMesh->GetMaterialIndex(TEXT("Constitution_3"));
+	if (!Masked || !Skin || Slot == INDEX_NONE || !HullMaterials.IsValidIndex(Slot))
 	{
-		const int32 Slot = ShipMesh->GetMaterialIndex(TEXT("Constitution_3"));
-		if (Slot != INDEX_NONE) { ShipMesh->SetMaterial(Slot, Stern); }
-		else { UE_LOG(LogTemp, Warning, TEXT("BayDoors: no Constitution_3 slot on the hull; the painted door stays")); return; }
+		UE_LOG(LogTemp, Warning, TEXT("BayDoors: no masked stern skin or no Constitution_3 slot on the hull; the painted door stays"));
+		return;
 	}
 	BayDoors = NewObject<UBayDoorsComponent>(this, TEXT("BayDoors"));
 	BayDoors->AttachToComponent(ShipMesh, FAttachmentTransformRules::KeepRelativeTransform);
@@ -2976,10 +2995,29 @@ void AStarshipPawn::SetupBayDoors()
 	BayDoors->RegisterComponent();
 	if (!BayDoors->Build())
 	{
+		// No gores, no hole: the painted door stays.
 		BayDoors->DestroyComponent();
 		BayDoors = nullptr;
 		return;
 	}
+	// Only now, with the eight gores in hand, the hole: the stern slot's skin is remade from the masked skin (the
+	// same maps, roughness, occlusion and lamp keys, with the hole where the gores stand), and the gores wear the
+	// same skin without the hole, the stern wall the masked one, so the closed door is one surface with the hull.
+	UMaterialInstanceDynamic* SternMid = MakeHullSkin(Slot, Masked);
+	DoorSkin = MakeHullSkin(Slot, Skin);
+	if (!SternMid || !DoorSkin)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("BayDoors: the stern slot's skin could not be remade; the painted door stays"));
+		DoorSkin = nullptr;
+		BayDoors->DestroyComponent();
+		BayDoors = nullptr;
+		return;
+	}
+	ShipMesh->SetMaterial(Slot, SternMid);
+	HullMaterials[Slot] = SternMid;
+	SternSlotIndex = Slot;
+	BayDoors->ApplySkins(DoorSkin, SternMid);
+	ApplyHullSkinParams();
 	bBayDoorsWereClosed = true;
 	ApplyViewVisibility();
 	UE_LOG(LogTemp, Log, TEXT("BayDoors: eight gores on the fantail"));
@@ -2990,10 +3028,10 @@ FTransform AStarshipPawn::GetShuttleParkTransform() const
 	FVector C, H;
 	if (Interior && Interior->GetRoomBox(EShipRoom::ShuttleBay, C, H))
 	{
-		// On the landing box, a little up on its skids, nose forward: the launch backs her out.
+		// On the landing box, a little up on its skids, nose forward as the set's parked shuttle stands: the launch
+		// backs her out and she turns once she is clear of the door.
 		const FVector Park(C.X + 150.0, C.Y, C.Z - H.Z + 150.0);
-		const FQuat Facing = GetActorQuat() * FQuat(FVector::UpVector, PI);
-		return FTransform(Facing, GetActorTransform().TransformPosition(Park));
+		return FTransform(GetActorQuat(), GetActorTransform().TransformPosition(Park));
 	}
 	return GetShuttleBayTransform();
 }
@@ -3064,6 +3102,7 @@ bool AStarshipPawn::LaunchShuttle()
 	if (DistantStars) { DistantStars->SetVisibility(false, true); }
 	Shuttle->BeginLaunch(this);
 	PC->Possess(Shuttle);
+	ApplyViewVisibility();   // seen from the shuttle now
 	if (Systems) { Systems->HandOverConn(); }
 	if (AStarshipHUD* H = Cast<AStarshipHUD>(PC->GetHUD()))
 	{
@@ -3080,6 +3119,7 @@ void AStarshipPawn::OnShuttleDocked(AShuttlecraftPawn* Shuttle)
 	if (bPlayerAboard)
 	{
 		PC->Possess(this);
+		ApplyViewVisibility();
 		if (AStarshipHUD* H = Cast<AStarshipHUD>(PC->GetHUD()))
 		{
 			if (H->NavTarget == this) { H->ClearNavTarget(); }

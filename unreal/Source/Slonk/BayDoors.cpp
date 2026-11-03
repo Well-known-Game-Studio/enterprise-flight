@@ -53,6 +53,21 @@ bool UBayDoorsComponent::Build()
 	return true;
 }
 
+void UBayDoorsComponent::ApplySkins(UMaterialInterface* Outer, UMaterialInterface* WallSkin)
+{
+	for (UStaticMeshComponent* G : Gores)
+	{
+		if (!G || !Outer) { continue; }
+		const int32 Slot = G->GetMaterialIndex(TEXT("Constitution_3"));
+		if (Slot != INDEX_NONE) { G->SetMaterial(Slot, Outer); }
+	}
+	if (Wall && WallSkin)
+	{
+		const int32 Slot = Wall->GetMaterialIndex(TEXT("SternWall"));
+		if (Slot != INDEX_NONE) { Wall->SetMaterial(Slot, WallSkin); }
+	}
+}
+
 void UBayDoorsComponent::SetShown(bool bShown)
 {
 	for (UStaticMeshComponent* G : Gores) { if (G) { G->SetVisibility(bShown); } }

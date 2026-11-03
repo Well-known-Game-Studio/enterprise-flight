@@ -442,7 +442,7 @@ void AShuttlecraftPawn::TickLaunch(float DeltaTime)
 		// Off the deck while the clamshell opens; hold at the door's height until it has.
 		const float T = FMath::Clamp(PhaseTime / 2.5f, 0.f, 1.f);
 		const float Ease = T * T * (3.f - 2.f * T);
-		SetActorLocationAndRotation(FMath::Lerp(Park.GetLocation(), Lifted, Ease), Bay.GetRotation(), false, nullptr, ETeleportType::TeleportPhysics);
+		SetActorLocationAndRotation(FMath::Lerp(Park.GetLocation(), Lifted, Ease), Park.GetRotation(), false, nullptr, ETeleportType::TeleportPhysics);
 		if (T >= 1.f && Ship->AreBayDoorsOpen()) { DockStep = 1; PhaseTime = 0.f; }
 		return;
 	}
@@ -451,13 +451,17 @@ void AShuttlecraftPawn::TickLaunch(float DeltaTime)
 		// Backing out: aft through the throat to the door at a crawl.
 		const double Dist = FVector::Dist(Lifted, Bay.GetLocation());
 		const double Along = FMath::Min((double)PhaseTime * TaxiSpeedCm, Dist);
-		SetActorLocationAndRotation(FMath::Lerp(Lifted, Bay.GetLocation(), Dist > 1.0 ? Along / Dist : 1.0), Bay.GetRotation(), false, nullptr, ETeleportType::TeleportPhysics);
+		SetActorLocationAndRotation(FMath::Lerp(Lifted, Bay.GetLocation(), Dist > 1.0 ? Along / Dist : 1.0), Park.GetRotation(), false, nullptr, ETeleportType::TeleportPhysics);
 		if (Along >= Dist - 1.0) { DockStep = 2; PhaseTime = 0.f; }
 		return;
 	}
-	// Out through the door and straight astern, picking up to bay speed over the first second.
+	// Out through the door and straight astern, tail first, picking up to bay speed over the first second; once
+	// she is clear of the fantail she turns on the spot through the next three seconds to face the way she is
+	// going, and flies off nose first.
 	const float Run = BaySpeedCm * FMath::Max(PhaseTime - 0.5f * FMath::Min(PhaseTime, 1.f), 0.f);
-	SetActorLocationAndRotation(Bay.TransformPosition(FVector(Run, 0.f, 0.f)), Bay.GetRotation(), false, nullptr, ETeleportType::TeleportPhysics);
+	const float Turn = FMath::Clamp((PhaseTime - 1.5f) / 3.f, 0.f, 1.f);
+	const FQuat Heading = FQuat::Slerp(Park.GetRotation(), Bay.GetRotation(), Turn * Turn * (3.f - 2.f * Turn));
+	SetActorLocationAndRotation(Bay.TransformPosition(FVector(Run, 0.f, 0.f)), Heading, false, nullptr, ETeleportType::TeleportPhysics);
 	if (Run >= BayRunCm)
 	{
 		SetPhase(EShuttlePhase::Flying);

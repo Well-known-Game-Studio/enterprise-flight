@@ -655,6 +655,8 @@ protected:
 private:
 	void ApplyHullDimensions();
 	void SetupHullMaterials();
+	/** A dynamic instance of Parent fed slot Slot's imported textures and, for the hull plating, its roughness and occlusion maps. Not assigned. */
+	UMaterialInstanceDynamic* MakeHullSkin(int32 Slot, UMaterialInterface* Parent);
 	void SetupHullLights();
 	/** Feed this frame's steering and translation to the thruster FX. */
 	void UpdateThrusters();
@@ -681,6 +683,12 @@ private:
 
 	UPROPERTY()
 	TArray<TObjectPtr<UMaterialInstanceDynamic>> HullMaterials;
+	/** The imported material of each hull slot, kept for its textures when a slot's skin is remade (the stern slot's masked skin). */
+	UPROPERTY() TArray<TObjectPtr<UMaterialInterface>> HullSlotSources;
+	/** The clamshell gores' skin: the stern slot's skin without the hole, kept in step with it. */
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> DoorSkin;
+	/** The stern slot the door is cut from, once the doors are built. */
+	int32 SternSlotIndex = INDEX_NONE;
 
 	UPROPERTY()
 	TObjectPtr<UMaterialInstanceDynamic> WarpPPMID;
