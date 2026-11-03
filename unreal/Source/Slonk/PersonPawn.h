@@ -183,6 +183,7 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Person|Figure") FLinearColor SuitColor = FLinearColor(0.85f, 0.85f, 0.88f);
 	UPROPERTY(EditAnywhere, Category = "Person|Figure") FLinearColor SuitTrim = FLinearColor(0.22f, 0.23f, 0.27f);
 	UPROPERTY(EditAnywhere, Category = "Person|Figure") FLinearColor SkinColor = FLinearColor(0.72f, 0.52f, 0.42f);
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") FLinearColor HairColor = FLinearColor(0.09f, 0.06f, 0.045f);
 	/** The head's centre over the feet in the rest pose (cm): where the helmet sits. */
 	UPROPERTY(EditAnywhere, Category = "Person|Figure") float HeadHeightCm = 166.f;
 	UPROPERTY(EditAnywhere, Category = "Person|Camera") float ThirdPersonDistanceCm = 380.f;
@@ -197,6 +198,8 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<USkeletalMeshComponent> Figure;
 	/** The EVA helmet with its visor, following the figure's head while the suit is worn. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UDynamicMeshComponent> Helmet;
+	/** A dark cap for hair, over the mannequin's crown while the helmet is off. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UDynamicMeshComponent> Hair;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<USpringArmComponent> CameraArm;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UCameraComponent> ThirdCamera;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UCameraComponent> HelmetCamera;
@@ -269,6 +272,7 @@ private:
 	/** The crew material per slot (head and legs, torso), each with its own mannequin maps. */
 	UPROPERTY() TArray<TObjectPtr<UMaterialInstanceDynamic>> CrewMIDs;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> TrimMID;
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> HairMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> VisorMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> TransportMID;
 	bool bTransportGlow = false;

@@ -4,6 +4,7 @@
 #include "Components/CapsuleComponent.h"
 #include "Components/DynamicMeshComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "CrewFigure.h"
 #include "Animation/AnimSingleNodeInstance.h"
 #include "Animation/BlendSpace.h"
 #include "Animation/AnimSequence.h"
@@ -113,6 +114,7 @@ APersonPawn::APersonPawn()
 	LandAnim = TSoftObjectPtr<UAnimSequence>(FSoftObjectPath(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Jump/MM_Land.MM_Land")));
 	CrewMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_Crew.M_Crew")));
 	Helmet = MakePart(this, TEXT("Helmet"), Body, FVector(0.f, 0.f, HeadHeightCm - HalfHeightCm));
+	Hair = MakePart(this, TEXT("Hair"), Body, FVector(0.f, 0.f, HeadHeightCm - HalfHeightCm));
 
 	CameraArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraArm"));
 	CameraArm->SetupAttachment(Body);
@@ -179,26 +181,7 @@ void APersonPawn::BuildFigure()
 	if (USkeletalMesh* Mesh = FigureMesh.LoadSynchronous())
 	{
 		Figure->SetSkeletalMesh(Mesh);
-		CrewMIDs.Reset();
-		if (UMaterialInterface* Crew = CrewMaterial.LoadSynchronous())
-		{
-			const TArray<FSkeletalMaterial>& Slots = Mesh->GetMaterials();
-			for (int32 i = 0; i < Slots.Num(); ++i)
-			{
-				UMaterialInstanceDynamic* Mid = UMaterialInstanceDynamic::Create(Crew, this);
-				static const TPair<FName, FName> TexParams[] = { { TEXT("Base Texture"), TEXT("Base") }, { TEXT("BNormal"), TEXT("BNormal") }, { TEXT("MRA"), TEXT("MRA") } };
-				for (const auto& Pair : TexParams)
-				{
-					UTexture* Tex = nullptr;
-					if (Slots[i].MaterialInterface && Slots[i].MaterialInterface->GetTextureParameterValue(FHashedMaterialParameterInfo(Pair.Key), Tex) && Tex)
-					{
-						Mid->SetTextureParameterValue(Pair.Value, Tex);
-					}
-				}
-				Figure->SetMaterial(i, Mid);
-				CrewMIDs.Add(Mid);
-			}
-		}
+		if (UMaterialInterface* Crew = CrewMaterial.LoadSynchronous()) { SlonkCrew::Dress(Figure, this, Crew, CrewMIDs); }
 		if (UBlendSpace* BS = LocomotionBlend.LoadSynchronous())
 		{
 			Figure->PlayAnimation(BS, true);
@@ -218,6 +201,11 @@ void APersonPawn::BuildFigure()
 	Ellipsoid(HM, FVector(8.f, 0.f, 0.f), FVector(10.f, 12.f, 9.f), 14);       // visor
 	FinishPart(Helmet, HM);
 	Helmet->CastShadow = true;
+	// A dark cap over the crown of the mannequin's head stands for hair when the helmet is off.
+	UDynamicMesh* HairM = NewObject<UDynamicMesh>(this);
+	CurrentMaterialID() = 0;
+	Ellipsoid(HairM, FVector(-1.f, 0.f, 3.f), FVector(12.5f, 12.f, 8.5f), 14);
+	FinishPart(Hair, HairM);
 
 	if (UMaterialInterface* Hull = SlonkMaterials::LoadOrFallback(TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(SlonkMaterials::HullPath)), TEXT("Hull"), true))
 	{
@@ -226,6 +214,11 @@ void APersonPawn::BuildFigure()
 		TrimMID->SetScalarParameterValue(TEXT("PanelScale"), 3.f);
 		TrimMID->SetScalarParameterValue(TEXT("Roughness"), 0.5f);
 		TrimMID->SetScalarParameterValue(TEXT("Metallic"), 0.f);
+		HairMID = UMaterialInstanceDynamic::Create(Hull, this);
+		HairMID->SetVectorParameterValue(TEXT("HullColor"), HairColor);
+		HairMID->SetScalarParameterValue(TEXT("PanelScale"), 3.f);
+		HairMID->SetScalarParameterValue(TEXT("Roughness"), 0.9f);
+		HairMID->SetScalarParameterValue(TEXT("Metallic"), 0.f);
 	}
 	if (UMaterialInterface* Glow = SlonkMaterials::LoadOrFallback(TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(SlonkMaterials::GlowPath)), TEXT("Glow"), false))
 	{
@@ -240,19 +233,13 @@ void APersonPawn::BuildFigure()
 void APersonPawn::ApplyUniform()
 {
 	const bool bSuit = WearsSuit();
-	for (UMaterialInstanceDynamic* Mid : CrewMIDs)
-	{
-		if (!Mid) { continue; }
-		// The suit is one colour from the boots up with dark trim at the hands and boots; the uniform is the jacket
-		// over black trousers, the head and hands bare.
-		Mid->SetVectorParameterValue(TEXT("Torso"), bSuit ? SuitColor : UniformTorso);
-		Mid->SetVectorParameterValue(TEXT("Legs"), bSuit ? SuitColor : UniformLegs);
-		Mid->SetVectorParameterValue(TEXT("Head"), bSuit ? SuitColor : SkinColor);
-		Mid->SetVectorParameterValue(TEXT("Hands"), bSuit ? SuitTrim : SkinColor);
-		Mid->SetVectorParameterValue(TEXT("Boots"), bSuit ? SuitTrim : FLinearColor(0.02f, 0.02f, 0.022f));
-		Mid->SetScalarParameterValue(TEXT("ClothWeight"), bSuit ? 0.4f : 0.7f);
-	}
+	// The suit is one colour from the boots up with dark trim at the hands and boots; the uniform is the jacket
+	// over black trousers, the head and hands bare.
+	FCrewDress D = bSuit ? FCrewDress::Suit(SuitColor, SuitTrim) : FCrewDress::Uniform(UniformTorso, SkinColor);
+	D.Legs = bSuit ? SuitColor : UniformLegs;
+	SlonkCrew::SetDress(CrewMIDs, D);
 	if (TrimMID && VisorMID && Helmet) { Helmet->ConfigureMaterialSet({ TrimMID.Get(), VisorMID.Get() }); }
+	if (HairMID && Hair) { Hair->ConfigureMaterialSet({ HairMID.Get() }); }
 	bSuitWorn = bSuit;
 	ApplyFigureVisibility();
 }
@@ -263,6 +250,7 @@ void APersonPawn::ApplyFigureVisibility()
 	// The dissolve takes the figure from the feet up; the helmet goes last.
 	for (UMaterialInstanceDynamic* Mid : CrewMIDs) { if (Mid) { Mid->SetScalarParameterValue(TEXT("Dissolve"), TransportDissolve); } }
 	if (Helmet) { Helmet->SetVisibility(bFigureShown && bSuitWorn && TransportDissolve <= 0.8f); }
+	if (Hair) { Hair->SetVisibility(bFigureShown && !bSuitWorn && TransportDissolve <= 0.8f); }
 }
 
 void APersonPawn::SetTransportState(float Glow, float Dissolve)
@@ -1122,10 +1110,11 @@ void APersonPawn::UpdateFigure(float DeltaTime)
 		}
 		bWasGrounded = bGrounded;
 		// The helmet rides the head bone's position, squared to the body so the visor looks where the person faces.
-		if (Helmet && Helmet->IsVisible())
+		if ((Helmet && Helmet->IsVisible()) || (Hair && Hair->IsVisible()))
 		{
 			const FVector Head = Figure->DoesSocketExist(TEXT("head")) ? Figure->GetSocketLocation(TEXT("head")) + Up * 9.0 : GetActorLocation() + Up * (HeadHeightCm - HalfHeightCm);
-			Helmet->SetWorldLocationAndRotation(Head, GetActorQuat());
+			if (Helmet) { Helmet->SetWorldLocationAndRotation(Head, GetActorQuat()); }
+			if (Hair) { Hair->SetWorldLocationAndRotation(Head, GetActorQuat()); }
 		}
 	}
 	if (bSuitWorn != WearsSuit()) { ApplyUniform(); }
