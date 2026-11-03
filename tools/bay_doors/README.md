@@ -21,15 +21,18 @@ surface and the open gores carry its texture.
 3. Headless, with the editor closed: `UnrealEditor-Cmd unreal/Slonk.uproject -ExecutePythonScript=tools/bay_doors/import_doors.py -unattended -nosplash`
    → `/Game/Slonk/Ship/SM_BayDoor1..8` (outer skin on `Constitution_3`, inner on `DoorInner`) and `SM_SternWall` (on `Constitution_3_Hull`).
 
-The hull keeps a hole where the door was: `/Game/Enterprise/M_HullMasked` is a copy of the Interchange phong master
-with a masked blend and a Custom node that drops every pixel inside the door cone's radius (mesh space = pawn
-space: x < -6100, -1945 < z < -1243, aft of x -6530, r about the axis < cone + 6 cm, where cone blends the rings
-measured off the mesh, 828 - 0.24 deg at the base and 280 - 0.27 deg at the top for deg the azimuth from astern,
-fitted within -2..+5 cm; the margin must exceed that worst error or slivers of the hull's cone survive along its
-triangle edges. Forward of the stern wall at x -6175 the margin is -30 cm, so the cone's tail and the
-filler ribs there go but the stern's own skin stays), which takes the cone itself and the model's filler behind it and leaves the recess walls, the flanking
-panels and the deck fan; `Constitution_3_Hull` is the stern instance re-parented to it (`scratch-backup/hullmask.py`
-builds the node). `AStarshipPawn::SetupBayDoors` swaps it into the Constitution_3 slot and hangs a
+The hull keeps a hole where the door was: `/Game/Slonk/Materials/M_ConstitutionMasked` is the hull skin material
+(`scratch-backup/hullwin.py`'s `skin`) with a masked blend, two-sided, and a Custom node on its opacity mask that
+drops every pixel inside the door cone's radius (mesh space = pawn space: x < -6100, -1945 < z < -1243, aft of x
+-6530, r about the axis < cone + 6 cm, where cone blends the rings measured off the mesh, 828 - 0.24 deg at the base
+and 280 - 0.27 deg at the top for deg the azimuth from astern, fitted within -2..+5 cm; the margin must exceed that
+worst error or slivers of the hull's cone survive along its triangle edges. Forward of the stern wall at x -6175 the
+margin is -30 cm, so the cone's tail and the filler ribs there go but the stern's own skin stays), which takes the
+cone itself and the model's filler behind it and leaves the recess walls, the flanking panels and the deck fan
+(`scratch-backup/hullskinmask.py` builds it; `M_HullMasked` / `Constitution_3_Hull` in `/Game/Enterprise` are the
+older Interchange-based pair, still the import's fallback for the stern wall). `AStarshipPawn::SetupBayDoors`, once
+the eight gores have built, remakes the Constitution_3 slot's dynamic skin from it with the slot's own maps, gives
+the gores the same skin without the hole and the stern wall the masked one, and hangs a
 `UBayDoorsComponent` on the hull at the axis: opening swings each pair of gores toward its side by the width of
 the gores outside it, so all eight nest in the outermost pair's place with a shrinking radial scale; closed, the gores stand 2.5 % proud
 of the hull cone so they cover the hole's margin band. The bay set's
