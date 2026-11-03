@@ -238,8 +238,12 @@ void APersonPawn::ApplyUniform()
 	FCrewDress D = bSuit ? FCrewDress::Suit(SuitColor, SuitTrim) : FCrewDress::Uniform(UniformTorso, SkinColor);
 	D.Legs = bSuit ? SuitColor : UniformLegs;
 	SlonkCrew::SetDress(CrewMIDs, D);
-	if (TrimMID && VisorMID && Helmet) { Helmet->ConfigureMaterialSet({ TrimMID.Get(), VisorMID.Get() }); }
-	if (HairMID && Hair) { Hair->ConfigureMaterialSet({ HairMID.Get() }); }
+	// Mid-beam (the suit goes on as the figure lands) the helmet keeps the shimmer's glow; its own materials come
+	// back when the transporter lets go.
+	if (bTransportGlow && TransportMID && Helmet) { Helmet->ConfigureMaterialSet({ TransportMID.Get(), TransportMID.Get() }); }
+	else if (TrimMID && VisorMID && Helmet) { Helmet->ConfigureMaterialSet({ TrimMID.Get(), VisorMID.Get() }); }
+	if (bTransportGlow && TransportMID && Hair) { Hair->ConfigureMaterialSet({ TransportMID.Get() }); }
+	else if (HairMID && Hair) { Hair->ConfigureMaterialSet({ HairMID.Get() }); }
 	bSuitWorn = bSuit;
 	ApplyFigureVisibility();
 }
@@ -267,8 +271,16 @@ void APersonPawn::SetTransportState(float Glow, float Dissolve)
 	if (bWantGlow != bTransportGlow)
 	{
 		bTransportGlow = bWantGlow;
-		if (bWantGlow && TransportMID && Helmet) { Helmet->ConfigureMaterialSet({ TransportMID.Get(), TransportMID.Get() }); }
-		else if (TrimMID && VisorMID && Helmet) { Helmet->ConfigureMaterialSet({ TrimMID.Get(), VisorMID.Get() }); }
+		if (bWantGlow && TransportMID)
+		{
+			if (Helmet) { Helmet->ConfigureMaterialSet({ TransportMID.Get(), TransportMID.Get() }); }
+			if (Hair) { Hair->ConfigureMaterialSet({ TransportMID.Get() }); }
+		}
+		else
+		{
+			if (TrimMID && VisorMID && Helmet) { Helmet->ConfigureMaterialSet({ TrimMID.Get(), VisorMID.Get() }); }
+			if (HairMID && Hair) { Hair->ConfigureMaterialSet({ HairMID.Get() }); }
+		}
 	}
 	if (bTransportGlow && TransportMID) { TransportMID->SetScalarParameterValue(TEXT("Intensity"), 1.5f + 9.f * FMath::Clamp(Glow, 0.f, 1.f)); }
 	for (UMaterialInstanceDynamic* Mid : CrewMIDs) { if (Mid) { Mid->SetScalarParameterValue(TEXT("Glow"), FMath::Clamp(Glow, 0.f, 1.f)); } }

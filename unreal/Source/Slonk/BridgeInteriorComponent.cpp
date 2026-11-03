@@ -179,10 +179,17 @@ void UBridgeInteriorComponent::Crew(const FVector& SeatPos, float YawDeg, UMater
 	Figure->SetupAttachment(this);
 	Figure->SetRelativeLocationAndRotation(SeatPos - F * 6.f + FVector(0.f, 0.f, -86.f), FRotator(0.f, YawDeg - 90.f, 0.f));
 	Figure->SetMobility(EComponentMobility::Movable);
+	// Attachment does not pass visibility down: a crew member built while the bridge is hidden stays hidden too.
+	Figure->SetVisibility(IsVisible());
+	Figure->SetHiddenInGame(bHiddenInGame);
 	Figure->RegisterComponent();
 	Figure->Setup((CrewCount++ & 1) != 0, FLinearColor(0.40f, 0.07f, 0.09f), FLinearColor(0.72f, 0.52f, 0.42f));
 	Pieces.Add(Figure);
-	Ball(Figure->GetRelativeTransform().TransformPosition(Figure->HeadCentre()) + FVector(0.f, 0.f, 2.f) - F * 2.f, 11.5f, Hair);
+	// The cap rides the head bone, so a re-posed figure keeps its hair on.
+	if (UStaticMeshComponent* Cap = Ball(Figure->GetRelativeTransform().TransformPosition(Figure->HeadCentre()) + FVector(0.f, 0.f, 2.f) - F * 2.f, 11.5f, Hair))
+	{
+		if (Figure->DoesSocketExist(TEXT("head"))) { Cap->AttachToComponent(Figure, FAttachmentTransformRules::KeepWorldTransform, TEXT("head")); }
+	}
 	Box(SeatPos + F * 22.f + FVector(0, 0, 6) + R.RotateVector(FVector(0, -11, 0)), FVector(44, 16, 14), R, ChairBlack);
 	Box(SeatPos + F * 22.f + FVector(0, 0, 6) + R.RotateVector(FVector(0, 11, 0)), FVector(44, 16, 14), R, ChairBlack);
 }
