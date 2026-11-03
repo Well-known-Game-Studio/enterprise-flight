@@ -2437,6 +2437,12 @@ bool AStarshipPawn::HandleCraftCommand(const FString& Op, const TArray<FString>&
 	if (Op == TEXT("stand")) { StandUp(); return true; }
 	if (Op == TEXT("sit")) { if (APersonPawn* P = ActivePerson.Get()) { if (P->IsAboard()) { SitDown(P); } } return true; }
 	if (Op == TEXT("use")) { if (APersonPawn* P = ActivePerson.Get()) { P->Use(); } return true; }
+	if (Op == TEXT("crewpose") && Args.Num() > 5)
+	{
+		// crewpose <thigh> <calf> <upperarm> <forearm> <lean>: re-pose the seated bridge crew (degrees), for tuning.
+		if (BridgeInterior) { BridgeInterior->ReposeCrew(FCString::Atof(*Args[1]), FCString::Atof(*Args[2]), FCString::Atof(*Args[3]), FCString::Atof(*Args[4]), FCString::Atof(*Args[5])); }
+		return true;
+	}
 	if (Op == TEXT("walkto") && Args.Num() > 1)
 	{
 		// Test: walkto use|lift puts the person at the room's spot without the walk.

@@ -41,11 +41,18 @@ public:
 	UCrewFigureComponent();
 	/** Load the mannequin (Quinn or Manny), dress it in the uniform, and sit it facing its own +Y (the asset's front). Call once registered. */
 	void Setup(bool bQuinn, const FLinearColor& Jacket, const FLinearColor& Skin);
-	/** The seated pose: thighs forward, shins down, forearms out to a console, a little lean back. */
+	/** The seated pose: thighs forward, shins down, forearms out to a console, a little lean back. Angles in degrees
+	 *  about the figure's lateral axis, applied to each bone's rest heading in component space, parents first. */
 	void PoseSeated();
+	void PoseSeated(float Thigh, float Calf, float UpperArm, float Forearm, float Lean);
+	/** The seated angles (degrees): thigh and calf from the rest heading, upper arm and forearm likewise, the lean of the spine. */
+	UPROPERTY(EditAnywhere, Category = "Crew") float SeatThigh = 88.f;
+	UPROPERTY(EditAnywhere, Category = "Crew") float SeatCalf = 0.f;
+	UPROPERTY(EditAnywhere, Category = "Crew") float SeatUpperArm = 38.f;
+	UPROPERTY(EditAnywhere, Category = "Crew") float SeatForearm = 68.f;
+	UPROPERTY(EditAnywhere, Category = "Crew") float SeatLean = -8.f;
 	/** The head's centre now, in component space (for a hair cap). */
 	FVector HeadCentre();
 	UPROPERTY() TArray<TObjectPtr<UMaterialInstanceDynamic>> Mids;
-	/** The sense of the bends about the figure's lateral axis; flipped if the mannequin folds the wrong way. */
-	UPROPERTY(EditAnywhere, Category = "Crew") float BendSign = -1.f;
+
 };

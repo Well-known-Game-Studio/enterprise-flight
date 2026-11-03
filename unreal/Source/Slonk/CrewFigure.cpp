@@ -1,6 +1,7 @@
 // Slonk - the crew figure. See CrewFigure.h.
 #include "CrewFigure.h"
 #include "Engine/SkeletalMesh.h"
+#include "ReferenceSkeleton.h"
 #include "Engine/Texture.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
@@ -81,30 +82,35 @@ void UCrewFigureComponent::Setup(bool bQuinn, const FLinearColor& Jacket, const 
 	PoseSeated();
 }
 
-void UCrewFigureComponent::PoseSeated()
+void UCrewFigureComponent::PoseSeated() { PoseSeated(SeatThigh, SeatCalf, SeatUpperArm, SeatForearm, SeatLean); }
+
+void UCrewFigureComponent::PoseSeated(float Thigh, float Calf, float UpperArm, float Forearm, float Lean)
 {
-	if (!GetSkinnedAsset()) { return; }
-	// Bends are about the figure's lateral axis (the asset faces +Y, so that is X). Children keep their local
-	// transforms when a parent turns, so the shins and forearms are put back to their rest headings afterwards.
-	auto Rest = [&](const TCHAR* B) { return GetBoneRotationByName(FName(B), EBoneSpaces::ComponentSpace).Quaternion(); };
-	auto Set = [&](const TCHAR* B, const FQuat& Q) { SetBoneRotationByName(FName(B), Q.Rotator(), EBoneSpaces::ComponentSpace); };
-	auto Turn = [&](float Deg) { return FQuat(FVector::XAxisVector, FMath::DegreesToRadians(BendSign * Deg)); };
-	// The arm bones swing the other way for the same turn (their rest heading is the mirror of the legs').
-	auto Arm = [&](float Deg) { return FQuat(FVector::XAxisVector, FMath::DegreesToRadians(-BendSign * Deg)); };
-	const FQuat CalfL = Rest(TEXT("calf_l")), CalfR = Rest(TEXT("calf_r")), FootL = Rest(TEXT("foot_l")), FootR = Rest(TEXT("foot_r"));
-	const FQuat ArmL = Rest(TEXT("lowerarm_l")), ArmR = Rest(TEXT("lowerarm_r")), HeadQ = Rest(TEXT("head"));
-	Set(TEXT("spine_03"), Turn(-8.f) * Rest(TEXT("spine_03")));
-	Set(TEXT("thigh_l"), Turn(88.f) * Rest(TEXT("thigh_l")));
-	Set(TEXT("thigh_r"), Turn(88.f) * Rest(TEXT("thigh_r")));
-	Set(TEXT("calf_l"), Turn(-2.f) * CalfL);
-	Set(TEXT("calf_r"), Turn(-2.f) * CalfR);
-	Set(TEXT("foot_l"), FootL);
-	Set(TEXT("foot_r"), FootR);
-	Set(TEXT("upperarm_l"), Arm(38.f) * Rest(TEXT("upperarm_l")));
-	Set(TEXT("upperarm_r"), Arm(38.f) * Rest(TEXT("upperarm_r")));
-	Set(TEXT("lowerarm_l"), Arm(68.f) * ArmL);
-	Set(TEXT("lowerarm_r"), Arm(68.f) * ArmR);
-	Set(TEXT("head"), Turn(6.f) * HeadQ);
+	USkeletalMesh* SM = Cast<USkeletalMesh>(GetSkinnedAsset());
+	if (!SM) { return; }
+	// Every bone's rest heading in component space from the reference skeleton (the poseable mesh's own cache is
+	// only refreshed on request), each turned about the figure's lateral axis (the asset faces +Y, so that is X)
+	// by its angle; a bone with no angle keeps its rest heading, so a shin stays vertical when its thigh swings.
+	const FReferenceSkeleton& Ref = SM->GetRefSkeleton();
+	const TArray<FTransform>& RefPose = Ref.GetRefBonePose();
+	const int32 N = Ref.GetNum();
+	TArray<FQuat> RestComp; RestComp.SetNum(N);
+	TMap<FName, float> Bends = {
+		{ TEXT("spine_03"), Lean }, { TEXT("thigh_l"), Thigh }, { TEXT("thigh_r"), Thigh }, { TEXT("calf_l"), Calf }, { TEXT("calf_r"), Calf },
+		{ TEXT("foot_l"), 0.f }, { TEXT("foot_r"), 0.f }, { TEXT("upperarm_l"), UpperArm }, { TEXT("upperarm_r"), UpperArm },
+		{ TEXT("lowerarm_l"), Forearm }, { TEXT("lowerarm_r"), Forearm }, { TEXT("head"), 0.f } };
+	for (int32 b = 0; b < N; ++b)
+	{
+		const int32 P = Ref.GetParentIndex(b);
+		RestComp[b] = P == INDEX_NONE ? RefPose[b].GetRotation() : RestComp[P] * RefPose[b].GetRotation();
+		if (const float* Deg = Bends.Find(Ref.GetBoneName(b)))
+		{
+			const FQuat Q = FQuat(FVector::XAxisVector, FMath::DegreesToRadians(*Deg)) * RestComp[b];
+			SetBoneRotationByName(Ref.GetBoneName(b), Q.Rotator(), EBoneSpaces::ComponentSpace);
+			// The conversion to bone space reads the parents' cached component transforms: refresh them for the next.
+			RefreshBoneTransforms();
+		}
+	}
 }
 
 FVector UCrewFigureComponent::HeadCentre()

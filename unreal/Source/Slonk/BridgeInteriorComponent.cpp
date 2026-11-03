@@ -187,6 +187,14 @@ void UBridgeInteriorComponent::Crew(const FVector& SeatPos, float YawDeg, UMater
 	Box(SeatPos + F * 22.f + FVector(0, 0, 6) + R.RotateVector(FVector(0, 11, 0)), FVector(44, 16, 14), R, ChairBlack);
 }
 
+void UBridgeInteriorComponent::ReposeCrew(float Thigh, float Calf, float UpperArm, float Forearm, float Lean)
+{
+	for (USceneComponent* C : Pieces)
+	{
+		if (UCrewFigureComponent* F = Cast<UCrewFigureComponent>(C)) { F->PoseSeated(Thigh, Calf, UpperArm, Forearm, Lean); }
+	}
+}
+
 void UBridgeInteriorComponent::SwivelChair(const FVector& FloorPos, float YawDeg, bool bCrew, UMaterialInterface* UniformMat)
 {
 	const FRotator R(0.f, YawDeg, 0.f);
