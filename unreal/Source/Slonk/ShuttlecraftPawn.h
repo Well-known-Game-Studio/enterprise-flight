@@ -61,6 +61,11 @@ public:
 	/** Speed through the bay itself, between the landing box and the door (cm/s). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shuttle") float TaxiSpeedCm = 320.f;
 
+	/** The hull: the bay set's shuttle model (the Type-4 the Constitution refit carried, authored in the bay's frame
+	 *  on its landing box), so the craft that flies is the one parked in the bay. The procedural parts below are
+	 *  the fallback when the model is missing. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shuttle|Look") TSoftObjectPtr<UStaticMesh> ShuttleMesh;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UStaticMeshComponent> HullMesh;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UDynamicMeshComponent> HullPart;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UDynamicMeshComponent> GlowPart;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UDynamicMeshComponent> WarmPart;
@@ -87,6 +92,12 @@ protected:
 
 private:
 	void BuildHull();
+	/** The procedural TMP-era boat, when the bay's model is not there. */
+	void BuildProceduralHull();
+	/** Where the model is in the pawn's frame: the bay's origin sits 1.5 m behind and 1.5 m below the pawn (the park
+	 *  spot is 1.5 m up the box, the model's shuttle 1.5 m forward of the bay's centre). */
+	static FVector ModelOffset() { return FVector(-150.0, 0.0, -150.0); }
+	bool UsesModel() const { return HullMesh != nullptr; }
 	void SetPhase(EShuttlePhase NewPhase);
 	void TickLaunch(float DeltaTime);
 	void TickDock(float DeltaTime);

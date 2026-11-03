@@ -56,11 +56,13 @@ namespace
 
 AShuttlecraftPawn::AShuttlecraftPawn()
 {
-	// A 9.6 m boat: the hull is built here, not loaded.
-	ShipLengthMeters = 9.6f;
-	ShipWidthMeters = 4.6f;
-	ShipHeightMeters = 3.2f;
+	// The bay's 7.1 m shuttle (nose at +3.5 m, stern at -3.6 m, pods to 1.95 m each side, roof pod at 2.7 m, on
+	// skids 1.5 m under the pawn's origin); the procedural 9.6 m boat stands in when the model is missing.
+	ShipLengthMeters = 7.2f;
+	ShipWidthMeters = 4.0f;
+	ShipHeightMeters = 2.8f;
 	bAutoScaleMesh = false;
+	ShuttleMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/Slonk/Rooms/SM_RoomBayShuttle.SM_RoomBayShuttle")));
 	if (ShipMesh)
 	{
 		ShipMesh->SetStaticMesh(nullptr);
@@ -111,10 +113,11 @@ AShuttlecraftPawn::AShuttlecraftPawn()
 	MaxShieldStrength = 25.f;
 	ShieldStrength = 25.f;
 
-	// Cameras: the chase view a little further out in hull lengths, the "bridge" view at the pilot's eyes.
-	ChaseDistanceFactor = 2.2f;
+	// Cameras: the chase view a little further out in hull lengths, the "bridge" view at the pilot's eyes behind
+	// the model's windscreen (which slopes from 1.7 m to 3.25 m ahead of the bay's centre, 1.6 to 2.4 m up).
+	ChaseDistanceFactor = 2.6f;
 	ChaseHeightFactor = 0.32f;
-	BridgeCameraOffset = FVector(300.0, 0.0, 70.0);
+	BridgeCameraOffset = FVector(-20.0, 0.0, 45.0);
 	BridgeFOV = 95.f;
 	CinematicDistanceFactor = 3.f;
 	ShuttleBayOffset = FVector::ZeroVector;
@@ -138,9 +141,37 @@ void AShuttlecraftPawn::BeginPlay()
 	Super::BeginPlay();
 	BuildHull();
 	SetCameraMode(GetCameraMode());
+	MarkFarShadowCasters();   // the hull is built after the base marked its parts
 }
 
 void AShuttlecraftPawn::BuildHull()
+{
+	if (UStaticMesh* Mesh = ShuttleMesh.LoadSynchronous())
+	{
+		HullMesh = NewObject<UStaticMeshComponent>(this, TEXT("HullMesh"));
+		HullMesh->SetupAttachment(CollisionBox);
+		HullMesh->SetStaticMesh(Mesh);
+		HullMesh->SetMobility(EComponentMobility::Movable);
+		HullMesh->SetRelativeLocation(ModelOffset());
+		HullMesh->SetGenerateOverlapEvents(false);
+		HullMesh->bAffectDistanceFieldLighting = false;
+		HullMesh->CastShadow = true;
+		HullMesh->bCastDynamicShadow = true;
+		// The model's own triangles (imported complex) are what the boots meet on her roof and skids.
+		HullMesh->SetCollisionObjectType(ECC_WorldDynamic);
+		HullMesh->SetCollisionResponseToAllChannels(ECR_Ignore);
+		HullMesh->SetCollisionResponseToChannel(APersonPawn::BootsChannel, ECR_Block);
+		HullMesh->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+		HullMesh->RegisterComponent();
+		// The lit slots (pod glow, strips, the beacon) by the set's own binding; the hull keeps its imported white.
+		if (Interior) { Interior->BindSlots(HullMesh); }
+		return;
+	}
+	UE_LOG(LogTemp, Warning, TEXT("Shuttle: %s missing, flying the procedural hull"), *ShuttleMesh.ToString());
+	BuildProceduralHull();
+}
+
+void AShuttlecraftPawn::BuildProceduralHull()
 {
 	using namespace SlonkMesh;
 	UDynamicMesh* HM = NewObject<UDynamicMesh>(this);
@@ -228,10 +259,21 @@ void AShuttlecraftPawn::SetupRunningLights()
 	if (!RunningLights) { return; }
 	using RL = URunningLightsComponent;
 	TArray<FRunningLight> Lights;
-	Lights.Add(FRunningLight(FVector(150.f, -177.f, 10.f), RL::PortRed(), ERunningLightMode::Blink, 1.3f, 0.f, 6.f));
-	Lights.Add(FRunningLight(FVector(150.f, 177.f, 10.f), RL::StarboardGreen(), ERunningLightMode::Blink, 1.3f, 0.f, 6.f));
-	Lights.Add(FRunningLight(FVector(-60.f, 0.f, 140.f), RL::StrobeWhite(), ERunningLightMode::Blink, 1.9f, 0.5f, 6.f));
-	Lights.Add(FRunningLight(FVector(-405.f, 0.f, 95.f), RL::StrobeWhite(), ERunningLightMode::Blink, 1.9f, 0.f, 5.f));
+	if (ShuttleMesh.LoadSynchronous())
+	{
+		// On the model: the pods' outer flanks, the roof pod's beacon, the stern above the hatch.
+		Lights.Add(FRunningLight(FVector(-50.f, -197.f, -80.f), RL::PortRed(), ERunningLightMode::Blink, 1.3f, 0.f, 4.f));
+		Lights.Add(FRunningLight(FVector(-50.f, 197.f, -80.f), RL::StarboardGreen(), ERunningLightMode::Blink, 1.3f, 0.f, 4.f));
+		Lights.Add(FRunningLight(FVector(-100.f, 0.f, 125.f), RL::StrobeWhite(), ERunningLightMode::Blink, 1.9f, 0.5f, 4.f));
+		Lights.Add(FRunningLight(FVector(-513.f, 0.f, 85.f), RL::StrobeWhite(), ERunningLightMode::Blink, 1.9f, 0.f, 4.f));
+	}
+	else
+	{
+		Lights.Add(FRunningLight(FVector(150.f, -177.f, 10.f), RL::PortRed(), ERunningLightMode::Blink, 1.3f, 0.f, 6.f));
+		Lights.Add(FRunningLight(FVector(150.f, 177.f, 10.f), RL::StarboardGreen(), ERunningLightMode::Blink, 1.3f, 0.f, 6.f));
+		Lights.Add(FRunningLight(FVector(-60.f, 0.f, 140.f), RL::StrobeWhite(), ERunningLightMode::Blink, 1.9f, 0.5f, 6.f));
+		Lights.Add(FRunningLight(FVector(-405.f, 0.f, 95.f), RL::StrobeWhite(), ERunningLightMode::Blink, 1.9f, 0.f, 5.f));
+	}
 	RunningLights->SetLights(Lights);
 }
 
@@ -240,19 +282,40 @@ void AShuttlecraftPawn::SetupThrusters()
 	if (!Thrusters) { return; }
 	// Four corner packages (out, up, down) plus fore and aft pairs, all on the sponsons and nose and stern plates.
 	TArray<FRcsNozzle> Nozzles;
-	for (float FX : { -330.f, 300.f })
+	if (ShuttleMesh.LoadSynchronous())
 	{
+		// On the model: pairs at the pods' ends on the flanks, on the roof and under the hull, and fore and aft.
+		for (float FX : { -430.f, 120.f })
+		{
+			for (float S : { -1.f, 1.f })
+			{
+				Nozzles.Add(FRcsNozzle(FVector(FX, S * 196.f, -80.f), FVector(0.f, S, 0.f), 0.7f));
+				Nozzles.Add(FRcsNozzle(FVector(FX, S * 90.f, 91.f), FVector::UpVector, 0.6f));
+				Nozzles.Add(FRcsNozzle(FVector(FX, S * 90.f, -88.f), FVector::DownVector, 0.6f));
+			}
+		}
 		for (float S : { -1.f, 1.f })
 		{
-			Nozzles.Add(FRcsNozzle(FVector(FX, S * 176.f, -20.f), FVector(0.f, S, 0.f), 0.8f));
-			Nozzles.Add(FRcsNozzle(FVector(FX, S * 120.f, 121.f), FVector::UpVector, 0.7f));
-			Nozzles.Add(FRcsNozzle(FVector(FX, S * 120.f, -101.f), FVector::DownVector, 0.7f));
+			Nozzles.Add(FRcsNozzle(FVector(200.f, S * 45.f, -40.f), FVector::ForwardVector, 0.6f));
+			Nozzles.Add(FRcsNozzle(FVector(-512.f, S * 50.f, -5.f), FVector::BackwardVector, 0.6f));
 		}
 	}
-	for (float S : { -1.f, 1.f })
+	else
 	{
-		Nozzles.Add(FRcsNozzle(FVector(401.f, S * 70.f, 10.f), FVector::ForwardVector, 0.7f));
-		Nozzles.Add(FRcsNozzle(FVector(-407.f, S * 70.f, -30.f), FVector::BackwardVector, 0.7f));
+		for (float FX : { -330.f, 300.f })
+		{
+			for (float S : { -1.f, 1.f })
+			{
+				Nozzles.Add(FRcsNozzle(FVector(FX, S * 176.f, -20.f), FVector(0.f, S, 0.f), 0.8f));
+				Nozzles.Add(FRcsNozzle(FVector(FX, S * 120.f, 121.f), FVector::UpVector, 0.7f));
+				Nozzles.Add(FRcsNozzle(FVector(FX, S * 120.f, -101.f), FVector::DownVector, 0.7f));
+			}
+		}
+		for (float S : { -1.f, 1.f })
+		{
+			Nozzles.Add(FRcsNozzle(FVector(401.f, S * 70.f, 10.f), FVector::ForwardVector, 0.7f));
+			Nozzles.Add(FRcsNozzle(FVector(-407.f, S * 70.f, -30.f), FVector::BackwardVector, 0.7f));
+		}
 	}
 	Thrusters->PlumeLength = GetShipLengthCm() * 0.06f;
 	Thrusters->PlumeWidth = GetShipLengthCm() * 0.025f;
@@ -263,7 +326,9 @@ void AShuttlecraftPawn::SetupWeaponBanks()
 {
 	if (!Weapons) { return; }
 	// One emitter under the nose, covering ahead.
-	Weapons->PhaserBanks = { FPhaserBank(TEXT("Nose"), FVector(395.0, 0.0, -60.0), FVector(1.0, 0.0, -0.15)) };
+	Weapons->PhaserBanks = { ShuttleMesh.LoadSynchronous()
+		? FPhaserBank(TEXT("Nose"), FVector(196.0, 0.0, -60.0), FVector(1.0, 0.0, -0.15))     // under the model's nose lamp
+		: FPhaserBank(TEXT("Nose"), FVector(395.0, 0.0, -60.0), FVector(1.0, 0.0, -0.15)) };
 	Weapons->TorpedoTubeOffsets.Reset();
 }
 
@@ -276,6 +341,7 @@ void AShuttlecraftPawn::SetCameraMode(EStarshipCameraMode Mode)
 	{
 		if (P) { P->SetVisibility(bShow); }
 	}
+	if (HullMesh) { HullMesh->SetVisibility(bShow); }
 	if (Thrusters) { Thrusters->SetVisibility(bShow, true); }
 }
 
@@ -284,6 +350,8 @@ void AShuttlecraftPawn::BeginLaunch(AStarshipPawn* Ship)
 	Mothership = Ship;
 	SetPhase(EShuttlePhase::Launching);
 	RideWith(Ship);
+	// The lit slots take the mothership's set materials (the shuttle's own interior never builds any).
+	if (HullMesh && Ship->Interior) { Ship->Interior->BindSlots(HullMesh); }
 	// The launch is filmed: the bay's camera takes the lift and the slide out, then the fantail's as she clears.
 	BayShot = -1;
 	SetCameraMode(EStarshipCameraMode::Bay);
@@ -400,7 +468,9 @@ FTransform AShuttlecraftPawn::GetAirlockTransform() const
 	// the ground), standing the way the shuttle stands.
 	const FTransform T = GetActorTransform();
 	const double Drop = Movement ? Movement->GroundClearanceCm : 150.0;
-	const FVector Pos = T.TransformPosition(FVector(0.0, -330.0, -Drop + APersonPawn::HalfHeightCm));
+	// The model's port door is 0.3 m behind the bay's centre with its step out to 1.85 m; the boat's at the origin.
+	const FVector Beside = UsesModel() ? FVector(-180.0, -230.0, 0.0) : FVector(0.0, -330.0, 0.0);
+	const FVector Pos = T.TransformPosition(Beside + FVector(0.0, 0.0, -Drop + APersonPawn::HalfHeightCm));
 	const FQuat Rot = FRotationMatrix::MakeFromZX(GetActorUpVector(), -GetActorRightVector()).ToQuat();
 	return FTransform(Rot, Pos);
 }
