@@ -525,13 +525,15 @@ namespace SlonkTerrain
 	{
 		FPlanetTerrainSample S = SampleStructure(P, Dir, MinWavelengthCm);
 		if (S.bWater || (MinWavelengthCm > 0.0 && MinWavelengthCm >= RefineStartCm)) { return S; }
-		// Slope from two more structure samples a metre (or half a cell) away along the tangent plane.
-		const double EpsCm = FMath::Max(MinWavelengthCm * 0.5, 100.0);
+		// Slope from structure samples SlopeStepCm apart along the tangent plane, the distance the chunks use.
+		const double EpsCm = FMath::Max(MinWavelengthCm * 0.5, SlopeStepCm * 0.5);
 		const FVector E = FVector::CrossProduct(FMath::Abs(Dir.Z) < 0.9 ? FVector::ZAxisVector : FVector::XAxisVector, Dir).GetSafeNormal();
 		const FVector N = FVector::CrossProduct(Dir, E).GetSafeNormal();
-		const double He = SampleStructure(P, (Dir + E * (EpsCm / P.RadiusCm)).GetSafeNormal(), MinWavelengthCm).HeightCm;
-		const double Hn = SampleStructure(P, (Dir + N * (EpsCm / P.RadiusCm)).GetSafeNormal(), MinWavelengthCm).HeightCm;
-		const double Gx = (He - S.HeightCm) / EpsCm, Gy = (Hn - S.HeightCm) / EpsCm;
+		const double He0 = SampleStructure(P, (Dir - E * (EpsCm / P.RadiusCm)).GetSafeNormal(), MinWavelengthCm).HeightCm;
+		const double He1 = SampleStructure(P, (Dir + E * (EpsCm / P.RadiusCm)).GetSafeNormal(), MinWavelengthCm).HeightCm;
+		const double Hn0 = SampleStructure(P, (Dir - N * (EpsCm / P.RadiusCm)).GetSafeNormal(), MinWavelengthCm).HeightCm;
+		const double Hn1 = SampleStructure(P, (Dir + N * (EpsCm / P.RadiusCm)).GetSafeNormal(), MinWavelengthCm).HeightCm;
+		const double Gx = (He1 - He0) / (2.0 * EpsCm), Gy = (Hn1 - Hn0) / (2.0 * EpsCm);
 		Refine(P, Dir, FMath::Sqrt(Gx * Gx + Gy * Gy), MinWavelengthCm, S);
 		return S;
 	}
