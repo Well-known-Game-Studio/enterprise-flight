@@ -221,8 +221,10 @@ void UPlanetTerrainComponent::ChunkFrame(int32 Face, int32 Depth, int64 X, int64
 	OutCentre = CubeDir(Face, Um, Vm);
 	const FVector A = CubeDir(Face, U0, Vm), B = CubeDir(Face, U1, Vm);
 	const FVector C = CubeDir(Face, Um, V0), D = CubeDir(Face, Um, V1);
-	const double AngU = FMath::Acos(FMath::Clamp(FVector::DotProduct(A, B), -1.0, 1.0));
-	const double AngV = FMath::Acos(FMath::Clamp(FVector::DotProduct(C, D), -1.0, 1.0));
+	// atan2 of the cross and dot products, not acos of the dot: at the fine levels the dot rounds to 1 and acos
+	// to 0, and a zero cell froze the slope step's doubling loop.
+	const double AngU = FMath::Atan2(FVector::CrossProduct(A, B).Size(), FVector::DotProduct(A, B));
+	const double AngV = FMath::Atan2(FVector::CrossProduct(C, D).Size(), FVector::DotProduct(C, D));
 	OutEdge = FMath::Max(AngU, AngV) * Params.RadiusCm;
 }
 
@@ -287,7 +289,8 @@ void UPlanetTerrainComponent::Select(FNode& N, const FVector& CamLocal, double C
 		FreeSubtree(N);
 		return;
 	}
-	const double Dist = FMath::Max(FVector::Dist(CamLocal, N.Origin + N.Centre * N.CentreHeightCm) - N.EdgeCm * 0.75, 0.0);
+	const FVector NodeAt = N.Origin + N.Centre * N.CentreHeightCm;
+	const double Dist = FMath::Max(FMath::Min(FVector::Dist(CamLocal, NodeAt), FVector::Dist(PawnLocal, NodeAt)) - N.EdgeCm * 0.75, 0.0);
 	const double CellCm = N.EdgeCm / FMath::Max(GridSteps, 1);
 	const bool bWantSplit = N.Depth < MaxDepth && CellCm > MinCellCm && Dist < SplitFactor * N.EdgeCm;
 	if (bWantSplit)
@@ -295,7 +298,7 @@ void UPlanetTerrainComponent::Select(FNode& N, const FVector& CamLocal, double C
 		MakeChildren(N);
 		for (int32 i = 0; i < 4; ++i)
 		{
-			RequestBuild(*N.Children[i], FVector::Dist(CamLocal, N.Children[i]->Origin));
+			RequestBuild(*N.Children[i], FMath::Min(FVector::Dist(CamLocal, N.Children[i]->Origin), FVector::Dist(PawnLocal, N.Children[i]->Origin)));
 		}
 		if (AllChildrenReady(N))
 		{
@@ -419,13 +422,16 @@ void UPlanetTerrainComponent::ApplyResult(FNode& N)
 	N.bReady = true;
 }
 
-void UPlanetTerrainComponent::UpdateView(const FVector& ViewLocationWorld)
+void UPlanetTerrainComponent::UpdateView(const FVector& ViewLocationWorld, const FVector& PawnLocationWorld)
 {
 	if (!bConfigured) { return; }
 	++Stamp;
 	VisibleChunks = 0;
 	DeepestVisible = 0;
 	const FVector CamLocal = GetComponentTransform().InverseTransformPositionNoScale(ViewLocationWorld);
+	// The chunks refine for the camera (what is seen) and for the pawn (what is stood on, a chase camera's length
+	// behind it): the split distance is the nearer of the two.
+	PawnLocal = GetComponentTransform().InverseTransformPositionNoScale(PawnLocationWorld);
 	LastCamLocal = CamLocal;
 	const double CamDist = CamLocal.Size();
 	const FVector CamDir = CamDist > 1.0 ? CamLocal / CamDist : FVector::ZAxisVector;
@@ -690,7 +696,8 @@ void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, int32 Fa
 	const FVector CentreDir = Dir(Steps / 2, Steps / 2);
 	const FVector Origin = CentreDir * R;
 	// Cell size from the chunk's middle row; everything finer than two cells would only alias.
-	const double CellCm = FMath::Acos(FMath::Clamp(FVector::DotProduct(Dir(0, Steps / 2), Dir(1, Steps / 2)), -1.0, 1.0)) * R;
+	const FVector D0 = Dir(0, Steps / 2), D1 = Dir(1, Steps / 2);
+	const double CellCm = FMath::Max(FMath::Atan2(FVector::CrossProduct(D0, D1).Size(), FVector::DotProduct(D0, D1)) * R, 1.0e-3);
 	const double MinWavelength = CellCm * 2.0;
 	const double N_EdgeCm = CellCm * Steps;
 

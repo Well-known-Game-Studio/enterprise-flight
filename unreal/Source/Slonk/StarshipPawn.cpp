@@ -2863,7 +2863,7 @@ bool AStarshipPawn::BeamDown(APersonPawn* Person)
 	{
 		const FVector Centre = World->GetActorLocation();
 		const FVector Radial = (GetActorLocation() - Centre).GetSafeNormal();
-		World->PrepareGroundCollisionAt(Centre + Radial * World->GetSurfaceRadiusCm(GetActorLocation()));
+		World->PrepareGroundCollisionAt(Centre + Radial * World->GetSurfaceRadiusCm(GetActorLocation()), FMath::Max(0.3f, TransporterSeconds) * 2.f + 5.f);
 	}
 	return Transport(Person, [this, P, W]()
 	{
@@ -2884,6 +2884,7 @@ bool AStarshipPawn::BeamDown(APersonPawn* Person)
 		Query.AddIgnoredActor(Who);
 		if (GetWorld()->LineTraceSingleByChannel(Hit, Feet + Radial * 30000.0, Feet - Radial * 50.0, APersonPawn::BootsChannel, Query) && Hit.bBlockingHit)
 		{
+			UE_LOG(LogTemp, Log, TEXT("Beam-down: feet on %s, %.2f m over the ground"), *GetNameSafe(Hit.GetComponent()), FVector::Dist(Hit.ImpactPoint, Feet) / 100.0);
 			Feet = Hit.ImpactPoint + Radial * 2.0;
 		}
 		FVector Fwd = GetActorForwardVector() - Radial * FVector::DotProduct(GetActorForwardVector(), Radial);

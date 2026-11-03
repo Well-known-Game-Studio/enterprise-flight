@@ -60,7 +60,8 @@ public:
 	void Configure(const FPlanetTerrainParams& InParams, UMaterialInterface* InMaterial);
 
 	/** Pick LOD for this view (world space), launch builds, swap finished meshes in. Call a few times a second. */
-	void UpdateView(const FVector& ViewLocationWorld);
+	/** Refine for the camera and for the pawn (the ground it stands on matters a chase camera's length away). */
+	void UpdateView(const FVector& ViewLocationWorld, const FVector& PawnLocationWorld);
 
 	void SetTerrainVisible(bool bShow);
 	bool IsTerrainVisible() const { return bTerrainVisible; }
@@ -169,4 +170,5 @@ private:
 	int32 DeepestVisible = 0;
 	int32 ParkedChunks = 0;
 	FVector LastCamLocal = FVector::ZeroVector;
+	FVector PawnLocal = FVector::ZeroVector;
 };
