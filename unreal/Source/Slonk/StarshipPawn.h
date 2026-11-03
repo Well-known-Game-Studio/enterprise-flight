@@ -19,6 +19,7 @@ class UStarshipWeaponsComponent;
 class UWarpStreaksComponent;
 class UBridgeInteriorComponent;
 class UShipInteriorComponent;
+class UBayDoorsComponent;
 struct FShipRoom;
 enum class EShipRoom : uint8;
 class APersonPawn;
@@ -49,7 +50,11 @@ enum class EStarshipCameraMode : uint8
 	Port,
 	Starboard,
 	Top,
-	Bottom
+	Bottom,
+	/** Astern of the fantail at the shuttlebay door's height, looking forward: the clamshell doors and the bay inside. */
+	Stern,
+	/** The shuttle's launch and dock, filmed: fixed shots in the mothership's bay and astern of its door, cut as she passes the door. Only a shuttle can hold it; the ship falls back to Chase. */
+	Bay
 };
 
 /** A running / engine light on the hull, positioned relative to the ship root (cm). */
@@ -117,7 +122,7 @@ public:
 	/** The shuttle this ship has out (null while it is in the bay). */
 	UPROPERTY(BlueprintReadOnly, Category = "Shuttle") TWeakObjectPtr<AShuttlecraftPawn> ActiveShuttle;
 	/** The shuttlebay door in pawn space (cm): the fantail of the engineering hull. A shuttle leaves it astern. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shuttle") FVector ShuttleBayOffset = FVector(-7250.0, 0.0, -1600.0);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shuttle") FVector ShuttleBayOffset = FVector(-7250.0, 0.0, -1700.0);
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shuttle") TSubclassOf<AShuttlecraftPawn> ShuttleClass;
 	/** The ship must be below this speed (cm/s) and out of warp to launch. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shuttle") double ShuttleLaunchMaxSpeed = 5.0e4;
@@ -128,6 +133,18 @@ public:
 	void OnShuttleDocked(AShuttlecraftPawn* Shuttle);
 	/** The bay door in world space, X pointing the way a shuttle leaves (astern). */
 	FTransform GetShuttleBayTransform() const;
+	/** Where the shuttle parks inside the bay, in world space, facing astern; the door transform when there is no bay room. */
+	FTransform GetShuttleParkTransform() const;
+	/** The clamshell door at the fantail (the Enterprise-A hull only; null on other hulls). */
+	UBayDoorsComponent* GetBayDoors() const { return BayDoors; }
+	/** Start the bay doors opening or closing. False, with a message, on a hull without them. */
+	bool OpenBayDoors(bool bOpen);
+	bool AreBayDoorsOpen() const;
+	bool AreBayDoorsClosed() const;
+	/** The hull's stern material with the door hole masked out of it, swapped in for the painted-door slot. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shuttle") TSoftObjectPtr<UMaterialInterface> SternHullMaterial;
+	/** The door's vertical axis on the bay deck, pawn space. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shuttle") FVector BayDoorPivot = FVector(-6330.0, 0.0, -1948.0);
 	virtual FString GetCraftName() const { return TEXT("U.S.S. Enterprise"); }
 	virtual bool IsShuttle() const { return false; }
 
@@ -273,6 +290,10 @@ public:
 	/** The rooms you can walk to by turbolift (the bridge is BridgeInterior's set). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|Cameras")
 	TObjectPtr<UShipInteriorComponent> Interior;
+	UPROPERTY() TObjectPtr<UBayDoorsComponent> BayDoors;
+	FTimerHandle BayDoorTimer;
+	bool bBayDoorsWereClosed = true;
+	void SetupBayDoors();
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|FX")
 	TArray<TObjectPtr<UPointLightComponent>> HullLights;
@@ -558,6 +579,8 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Starship|Camera")
 	EStarshipCameraMode GetCameraMode() const { return CameraMode; }
+	/** Places the cinematic camera for the Bay mode this frame; false when the craft has no such shots (the mode then drops to Chase). */
+	virtual bool UpdateBayCamera(float DeltaTime) { return false; }
 
 	UFUNCTION(BlueprintCallable, Category = "Starship|Camera")
 	void SetFreeLook(bool bEnabled) { bFreeLook = bEnabled; }
@@ -632,6 +655,8 @@ protected:
 private:
 	void ApplyHullDimensions();
 	void SetupHullMaterials();
+	/** A dynamic instance of Parent fed slot Slot's imported textures and, for the hull plating, its roughness and occlusion maps. Not assigned. */
+	UMaterialInstanceDynamic* MakeHullSkin(int32 Slot, UMaterialInterface* Parent);
 	void SetupHullLights();
 	/** Feed this frame's steering and translation to the thruster FX. */
 	void UpdateThrusters();
@@ -658,6 +683,12 @@ private:
 
 	UPROPERTY()
 	TArray<TObjectPtr<UMaterialInstanceDynamic>> HullMaterials;
+	/** The imported material of each hull slot, kept for its textures when a slot's skin is remade (the stern slot's masked skin). */
+	UPROPERTY() TArray<TObjectPtr<UMaterialInterface>> HullSlotSources;
+	/** The clamshell gores' skin: the stern slot's skin without the hole, kept in step with it. */
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> DoorSkin;
+	/** The stern slot the door is cut from, once the doors are built. */
+	int32 SternSlotIndex = INDEX_NONE;
 
 	UPROPERTY()
 	TObjectPtr<UMaterialInstanceDynamic> WarpPPMID;

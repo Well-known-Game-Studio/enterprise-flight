@@ -9,6 +9,8 @@
 #include "RcsThrusterComponent.h"
 #include "RunningLightsComponent.h"
 #include "ShieldComponent.h"
+#include "ShipInterior.h"
+#include "Camera/CameraComponent.h"
 #include "SlonkMaterials.h"
 #include "StarshipMovementComponent.h"
 #include "StarshipWeaponsComponent.h"
@@ -281,6 +283,43 @@ void AShuttlecraftPawn::BeginLaunch(AStarshipPawn* Ship)
 {
 	Mothership = Ship;
 	SetPhase(EShuttlePhase::Launching);
+	// The launch is filmed: the bay's camera takes the lift and the slide out, then the fantail's as she clears.
+	BayShot = -1;
+	SetCameraMode(EStarshipCameraMode::Bay);
+}
+
+bool AShuttlecraftPawn::UpdateBayCamera(float DeltaTime)
+{
+	AStarshipPawn* Ship = Mothership.Get();
+	if (!Ship || Phase == EShuttlePhase::Flying) { return false; }
+	const FTransform ShipT = Ship->GetActorTransform();
+	const FVector Local = ShipT.InverseTransformPosition(GetActorLocation());
+	// Two fixed vantage points in the ship's frame, neither with anything between it and the shuttle: high in the
+	// bay's forward port corner below the roof truss looking aft through the door, and astern of the fantail off the
+	// port quarter at the door's height, which she passes close by on the way out and in. The cut is where her
+	// centre crosses the door's axis plane.
+	FVector BayC(-5030.0, 0.0, -1676.0), BayH(1300.0, 800.0, 270.0);
+	if (Ship->Interior) { Ship->Interior->GetRoomBox(EShipRoom::ShuttleBay, BayC, BayH); }
+	const FVector Door = Ship->ShuttleBayOffset;
+	const double AxisX = Ship->BayDoorPivot.X;
+	const int32 Shot = Local.X > AxisX - 100.0 ? 0 : 1;
+	const FVector Eye = Shot == 0
+		? FVector(BayC.X + BayH.X - 120.0, -(BayH.Y - 180.0), BayC.Z - BayH.Z + 320.0)
+		: FVector(Door.X - 3200.0, -900.0, Door.Z + 350.0);
+	const FVector EyeW = ShipT.TransformPosition(Eye);
+	const FVector Aim = GetActorLocation() + ShipT.GetUnitAxis(EAxis::Z) * 60.0;
+	const FVector Dir = (Aim - EyeW).GetSafeNormal();
+	const FRotator Want = FRotationMatrix::MakeFromXZ(Dir, ShipT.GetUnitAxis(EAxis::Z)).Rotator();
+	// Frame the craft at about a third of the height, wide when she is close, never past the chase lens.
+	const double Dist = FVector::Dist(EyeW, Aim);
+	const float WantFOV = FMath::Clamp(2.f * FMath::RadiansToDegrees(FMath::Atan(1250.0 / FMath::Max(Dist, 300.0))), 30.f, 75.f);
+	const bool bCut = Shot != BayShot;
+	BayShot = Shot;
+	const FRotator Rot = bCut ? Want : FMath::RInterpTo(CinematicCamera->GetComponentRotation(), Want, DeltaTime, 7.f);
+	BayFOV = bCut ? WantFOV : FMath::FInterpTo(BayFOV, WantFOV, DeltaTime, 3.f);
+	CinematicCamera->SetWorldLocationAndRotation(EyeW, Rot);
+	CinematicCamera->SetFieldOfView(BayFOV);
+	return true;
 }
 
 void AShuttlecraftPawn::SetPhase(EShuttlePhase NewPhase)
@@ -288,6 +327,8 @@ void AShuttlecraftPawn::SetPhase(EShuttlePhase NewPhase)
 	Phase = NewPhase;
 	PhaseTime = 0.f;
 	DockStep = 0;
+	// The filmed slides are over: back to the pilot's own chase view.
+	if (Phase == EShuttlePhase::Flying && GetCameraMode() == EStarshipCameraMode::Bay) { SetCameraMode(EStarshipCameraMode::Chase); }
 	// The bay slides are kinematic: the flight model sits out until the shuttle is clear.
 	if (Movement)
 	{
@@ -337,6 +378,7 @@ bool AShuttlecraftPawn::RequestDock()
 		return false;
 	}
 	if (Movement && Movement->bLanded) { Movement->TakeOff(); }
+	Ship->OpenBayDoors(true);
 	SetPhase(EShuttlePhase::Docking);
 	ScreenMessage(TEXT("Docking: approach under the bay's control"), FColor::Cyan);
 	return true;
@@ -390,10 +432,36 @@ void AShuttlecraftPawn::TickLaunch(float DeltaTime)
 		return;
 	}
 	PhaseTime += DeltaTime;
-	// Out through the door and straight astern, picking up to bay speed over the first second.
-	const float Run = BaySpeedCm * FMath::Max(PhaseTime - 0.5f * FMath::Min(PhaseTime, 1.f), 0.f);
 	const FTransform Bay = Ship->GetShuttleBayTransform();
-	SetActorLocationAndRotation(Bay.TransformPosition(FVector(Run, 0.f, 0.f)), Bay.GetRotation(), false, nullptr, ETeleportType::TeleportPhysics);
+	const FTransform Park = Ship->GetShuttleParkTransform();
+	// The lift: from the landing box up to the door's height, straight above the park spot.
+	const FVector Up = Bay.GetRotation().GetUpVector();
+	const FVector Lifted = Park.GetLocation() + Up * FVector::DotProduct(Bay.GetLocation() - Park.GetLocation(), Up);
+	if (DockStep == 0)
+	{
+		// Off the deck while the clamshell opens; hold at the door's height until it has.
+		const float T = FMath::Clamp(PhaseTime / 2.5f, 0.f, 1.f);
+		const float Ease = T * T * (3.f - 2.f * T);
+		SetActorLocationAndRotation(FMath::Lerp(Park.GetLocation(), Lifted, Ease), Park.GetRotation(), false, nullptr, ETeleportType::TeleportPhysics);
+		if (T >= 1.f && Ship->AreBayDoorsOpen()) { DockStep = 1; PhaseTime = 0.f; }
+		return;
+	}
+	if (DockStep == 1)
+	{
+		// Backing out: aft through the throat to the door at a crawl.
+		const double Dist = FVector::Dist(Lifted, Bay.GetLocation());
+		const double Along = FMath::Min((double)PhaseTime * TaxiSpeedCm, Dist);
+		SetActorLocationAndRotation(FMath::Lerp(Lifted, Bay.GetLocation(), Dist > 1.0 ? Along / Dist : 1.0), Park.GetRotation(), false, nullptr, ETeleportType::TeleportPhysics);
+		if (Along >= Dist - 1.0) { DockStep = 2; PhaseTime = 0.f; }
+		return;
+	}
+	// Out through the door and straight astern, tail first, picking up to bay speed over the first second; once
+	// she is clear of the fantail she turns on the spot through the next three seconds to face the way she is
+	// going, and flies off nose first.
+	const float Run = BaySpeedCm * FMath::Max(PhaseTime - 0.5f * FMath::Min(PhaseTime, 1.f), 0.f);
+	const float Turn = FMath::Clamp((PhaseTime - 1.5f) / 3.f, 0.f, 1.f);
+	const FQuat Heading = FQuat::Slerp(Park.GetRotation(), Bay.GetRotation(), Turn * Turn * (3.f - 2.f * Turn));
+	SetActorLocationAndRotation(Bay.TransformPosition(FVector(Run, 0.f, 0.f)), Heading, false, nullptr, ETeleportType::TeleportPhysics);
 	if (Run >= BayRunCm)
 	{
 		SetPhase(EShuttlePhase::Flying);
@@ -402,6 +470,7 @@ void AShuttlecraftPawn::TickLaunch(float DeltaTime)
 			Movement->Velocity = Bay.GetUnitAxis(EAxis::X) * BaySpeedCm + (Ship->Movement ? Ship->Movement->Velocity : FVector::ZeroVector);
 		}
 		ScreenMessage(TEXT("Shuttle clear of the bay. C docks again within 500 m of it; set down on a planet by easing onto the ground."), FColor::Cyan, 10.f);
+		Ship->OpenBayDoors(false);
 	}
 }
 
@@ -428,19 +497,41 @@ void AShuttlecraftPawn::TickDock(float DeltaTime)
 		const double Speed = FMath::Clamp(Dist / 1.5, 300.0, 4000.0);
 		const double Step = FMath::Min(Dist, Speed * DeltaTime);
 		SetActorLocationAndRotation(Here + To.GetSafeNormal() * Step, Rot, false, nullptr, ETeleportType::TeleportPhysics);
-		if (Dist - Step < 50.0 && FMath::RadiansToDegrees(Rot.AngularDistance(Facing)) < 3.f)
+		if (Dist - Step < 50.0 && FMath::RadiansToDegrees(Rot.AngularDistance(Facing)) < 3.f && Ship->AreBayDoorsOpen())
 		{
 			DockStep = 1;
+			// The run in is filmed from the fantail, then from the bay once she is through the door.
+			BayShot = -1;
+			SetCameraMode(EStarshipCameraMode::Bay);
 		}
 		return;
 	}
-	// Straight in along the bay axis at bay speed.
 	const FVector Door = Bay.GetLocation();
-	const FVector To = Door - Here;
-	const double Dist = To.Size();
-	const double Step = FMath::Min(Dist, (double)BaySpeedCm * DeltaTime);
-	SetActorLocationAndRotation(Here + To.GetSafeNormal() * Step, Facing, false, nullptr, ETeleportType::TeleportPhysics);
-	if (Dist - Step < 20.0)
+	if (DockStep == 1)
+	{
+		// Straight in along the bay axis at bay speed, to the door.
+		const FVector To = Door - Here;
+		const double Dist = To.Size();
+		const double Step = FMath::Min(Dist, (double)BaySpeedCm * DeltaTime);
+		SetActorLocationAndRotation(Here + To.GetSafeNormal() * Step, Facing, false, nullptr, ETeleportType::TeleportPhysics);
+		if (Dist - Step < 20.0) { DockStep = 2; PhaseTime = 0.f; }
+		return;
+	}
+	// Through the throat at a crawl to above the landing box, then down onto it.
+	const FTransform Park = Ship->GetShuttleParkTransform();
+	const FVector Up = Bay.GetRotation().GetUpVector();
+	const FVector Lifted = Park.GetLocation() + Up * FVector::DotProduct(Door - Park.GetLocation(), Up);
+	const double Taxi = FVector::Dist(Door, Lifted);
+	const double Along = (double)PhaseTime * TaxiSpeedCm;
+	if (Along < Taxi)
+	{
+		SetActorLocationAndRotation(FMath::Lerp(Door, Lifted, Taxi > 1.0 ? Along / Taxi : 1.0), Facing, false, nullptr, ETeleportType::TeleportPhysics);
+		return;
+	}
+	const float T = FMath::Clamp((float)((Along - Taxi) / TaxiSpeedCm) / 2.0f, 0.f, 1.f);
+	const float Ease = T * T * (3.f - 2.f * T);
+	SetActorLocationAndRotation(FMath::Lerp(Lifted, Park.GetLocation(), Ease), Facing, false, nullptr, ETeleportType::TeleportPhysics);
+	if (T >= 1.f)
 	{
 		Ship->OnShuttleDocked(this);
 	}

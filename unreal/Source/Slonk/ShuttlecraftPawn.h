@@ -37,6 +37,8 @@ public:
 	virtual FString GetCraftName() const override { return TEXT("Shuttlecraft Galileo"); }
 	virtual bool IsShuttle() const override { return true; }
 	virtual void SetCameraMode(EStarshipCameraMode Mode) override;
+	/** The launch and dock filmed from the bay's forward corner and from astern of the fantail, tracking the shuttle; cuts as she crosses the door's axis. */
+	virtual bool UpdateBayCamera(float DeltaTime) override;
 
 	/** Start the launch slide out of Ship's bay; the pawn is at the bay door, facing astern. */
 	void BeginLaunch(AStarshipPawn* Ship);
@@ -56,6 +58,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shuttle") float BayRunCm = 5000.f;
 	/** Speed through the bay door (cm/s). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shuttle") float BaySpeedCm = 700.f;
+	/** Speed through the bay itself, between the landing box and the door (cm/s). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shuttle") float TaxiSpeedCm = 320.f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UDynamicMeshComponent> HullPart;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UDynamicMeshComponent> GlowPart;
@@ -91,6 +95,9 @@ private:
 	float PhaseTime = 0.f;
 	/** Docking: 0 flying to the approach point astern of the door, 1 sliding in. */
 	int32 DockStep = 0;
+	/** The Bay camera's current shot: -1 none yet (snap on the first frame), 0 the bay's forward corner, 1 astern of the fantail. */
+	int32 BayShot = -1;
+	float BayFOV = 50.f;
 
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> HullMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> AccentMID;
