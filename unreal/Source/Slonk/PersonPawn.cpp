@@ -202,7 +202,11 @@ void APersonPawn::BuildFigure()
 		if (UBlendSpace* BS = LocomotionBlend.LoadSynchronous())
 		{
 #if WITH_EDITOR
+			// The grid is serialized with the asset and the property tools leave it as the clone's: rebuild it here, and
+			// the next save of the asset keeps it (ValidateSampleData alone only checks the samples).
 			BS->ValidateSampleData();
+			BS->ResampleData();
+			BS->MarkPackageDirty();
 #endif
 			for (const FBlendSample& Sample : BS->GetBlendSamples())
 			{
