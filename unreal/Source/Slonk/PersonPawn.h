@@ -9,7 +9,14 @@
 #include "PersonPawn.generated.h"
 
 class UCapsuleComponent;
+class UPointLightComponent;
 class UDynamicMeshComponent;
+class USkeletalMeshComponent;
+class USkeletalMesh;
+class UBlendSpace;
+class UAnimSequence;
+class UAnimationAsset;
+class UTexture;
 class USpringArmComponent;
 class UCameraComponent;
 class UMaterialInstanceDynamic;
@@ -105,14 +112,10 @@ public:
 	void SetCameraMode(EPersonCamera Mode);
 	void AdjustZoom(float Steps);
 	EPersonCamera GetCameraMode() const { return CameraMode; }
-	/** The figure's parts (torso, visor, arms, legs), for anything that samples or dresses the body. */
-	TArray<UDynamicMeshComponent*> BodyParts() const;
-	/**
-	 * The whole figure as one hidden static mesh with CPU data, built on first use from the parts in the body's
-	 * frame: what a Niagara static-mesh emitter attaches to and samples (the parts themselves are dynamic meshes,
-	 * which Niagara cannot read).
-	 */
-	UStaticMeshComponent* GetSampleMesh();
+	/** The figure: the UE5 mannequin, dressed by the crew material, for anything that samples or follows the body. */
+	USkeletalMeshComponent* GetFigure() const { return Figure; }
+	/** Outside the ship the figure wears the suit and helmet; aboard, the uniform. */
+	bool WearsSuit() const { return Frame != EPersonFrame::Deck; }
 	/**
 	 * The transporter's hold on the body: Glow 0..1 swaps the suit for the blue shimmer glow (0 restores the suit),
 	 * Dissolve 0..1 hides the figure part by part, legs first and the visor last (0 shows it all again).
@@ -144,8 +147,8 @@ public:
 	FString FrameDescription() const;
 
 	// ---- Tunables ----
-	UPROPERTY(EditAnywhere, Category = "Person|Walk") float WalkSpeedCm = 170.f;
-	UPROPERTY(EditAnywhere, Category = "Person|Walk") float RunSpeedCm = 520.f;
+	UPROPERTY(EditAnywhere, Category = "Person|Walk") float WalkSpeedCm = 200.f;
+	UPROPERTY(EditAnywhere, Category = "Person|Walk") float RunSpeedCm = 500.f;
 	UPROPERTY(EditAnywhere, Category = "Person|Walk") float WalkAccelCm = 900.f;
 	/** Take-off speed of a jump (cm/s): half a metre on Earth, three on a small moon. */
 	UPROPERTY(EditAnywhere, Category = "Person|Walk") float JumpSpeedCm = 320.f;
@@ -164,8 +167,53 @@ public:
 	/** How far the boots reach for a hull below the feet (cm), and how high a step they take. */
 	UPROPERTY(EditAnywhere, Category = "Person|Boots") float BootReachCm = 110.f;
 	UPROPERTY(EditAnywhere, Category = "Person|Boots") float StepUpCm = 50.f;
+	/** The boot lamps' colour and light (candela) while holding a hull and while only armed. */
+	UPROPERTY(EditAnywhere, Category = "Person|Boots") FLinearColor BootLightColor = FLinearColor(0.3f, 0.8f, 1.f);
+	UPROPERTY(EditAnywhere, Category = "Person|Boots") float BootLightHolding = 16.f;
+	UPROPERTY(EditAnywhere, Category = "Person|Boots") float BootLightArmed = 4.f;
 	/** Boarding reach from the airlock, cm. */
 	UPROPERTY(EditAnywhere, Category = "Person") float BoardRangeCm = 1000.f;
+	// ---- The figure ----
+	/** The Game Animation Sample's mannequin and clips (its skeleton is the UEFN one, so the set goes together). */
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") TSoftObjectPtr<USkeletalMesh> FigureMesh;
+	/** The mannequin's own maps, when its material keeps them to itself. */
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") TSoftObjectPtr<UTexture> FigureBaseMap;
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") TSoftObjectPtr<UTexture> FigureNormalMap;
+	/** Idle / walk / run loops by direction (x, degrees) and speed (y, cm/s). */
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") TSoftObjectPtr<UBlendSpace> LocomotionBlend;
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") TSoftObjectPtr<UAnimSequence> JumpAnim;
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") TSoftObjectPtr<UAnimSequence> FallAnim;
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") TSoftObjectPtr<UAnimSequence> LandAnim;
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") TSoftObjectPtr<UAnimSequence> LandMovingAnim;
+	/** Idle breaks, played now and then while standing; turns in place by angle (45, 90, 135, 180: left then right). */
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") TArray<TSoftObjectPtr<UAnimSequence>> IdleBreaks;
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") TArray<TSoftObjectPtr<UAnimSequence>> TurnAnims;
+	/** Starts and stops (walk, run): the first part of each clip covers the step into and out of the loop. */
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") TSoftObjectPtr<UAnimSequence> WalkStartAnim;
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") TSoftObjectPtr<UAnimSequence> RunStartAnim;
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") TSoftObjectPtr<UAnimSequence> WalkStopAnim;
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") TSoftObjectPtr<UAnimSequence> RunStopAnim;
+	/** Play the sample's step-into and step-out-of-the-walk clips at a start and a stop. They are forward clips, and the
+	 *  single-node player cannot cross-fade them into the loop, so by default the blend space alone carries the start
+	 *  and stop (its idle sample at speed 0 and its input smoothing), in whatever direction. Motion matching's job later. */
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") bool bStepIntoWalk = false;
+	/** How much of a start or stop clip plays before the loop takes over (s), and how often the idle breaks (s, min..max). */
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") float StartClipSeconds = 0.5f;
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") float StopClipSeconds = 0.7f;
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") FVector2D IdleBreakEvery = FVector2D(9.f, 18.f);
+	/** Standing, the feet stay planted while the body turns up to this far; past it a turn-in-place clip plays. */
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") float TurnInPlaceDeg = 40.f;
+	/** M_Crew: the mannequin's maps coloured by rest-pose height; Glow and Dissolve for the transporter. */
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") TSoftObjectPtr<UMaterialInterface> CrewMaterial;
+	/** The uniform aboard (The Wrath of Khan's maroon jacket over black), the suit outside, the skin. */
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") FLinearColor UniformTorso = FLinearColor(0.36f, 0.05f, 0.07f);
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") FLinearColor UniformLegs = FLinearColor(0.03f, 0.03f, 0.035f);
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") FLinearColor SuitColor = FLinearColor(0.85f, 0.85f, 0.88f);
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") FLinearColor SuitTrim = FLinearColor(0.22f, 0.23f, 0.27f);
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") FLinearColor SkinColor = FLinearColor(0.72f, 0.52f, 0.42f);
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") FLinearColor HairColor = FLinearColor(0.09f, 0.06f, 0.045f);
+	/** The head's centre over the feet in the rest pose (cm): where the helmet sits. */
+	UPROPERTY(EditAnywhere, Category = "Person|Figure") float HeadHeightCm = 166.f;
 	UPROPERTY(EditAnywhere, Category = "Person|Camera") float ThirdPersonDistanceCm = 380.f;
 	UPROPERTY(EditAnywhere, Category = "Person|Camera") float ThirdPersonFOV = 90.f;
 	UPROPERTY(EditAnywhere, Category = "Person|Camera") float HelmetFOV = 100.f;
@@ -175,12 +223,14 @@ public:
 	static constexpr float EyeHeightCm = 74.f; // above the root
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UCapsuleComponent> Body;
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UDynamicMeshComponent> Torso;
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UDynamicMeshComponent> Visor;
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UDynamicMeshComponent> LeftArm;
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UDynamicMeshComponent> RightArm;
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UDynamicMeshComponent> LeftLeg;
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UDynamicMeshComponent> RightLeg;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<USkeletalMeshComponent> Figure;
+	/** The EVA helmet with its visor, following the figure's head while the suit is worn. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UDynamicMeshComponent> Helmet;
+	/** The magnetic boots' lamps: a small blue light at each foot, bright while the boots hold a hull, dim when armed. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UPointLightComponent> BootLightL;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UPointLightComponent> BootLightR;
+	/** A dark cap for hair, over the mannequin's crown while the helmet is off. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UDynamicMeshComponent> Hair;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<USpringArmComponent> CameraArm;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UCameraComponent> ThirdCamera;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UCameraComponent> HelmetCamera;
@@ -250,15 +300,30 @@ private:
 	FVector DebugSteer = FVector::ZeroVector; float DebugSteerTime = 0.f;
 	FVector2D DebugLook = FVector2D::ZeroVector; float DebugLookTime = 0.f;
 
-	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> SuitMID;
+	/** The crew material per slot (head and legs, torso), each with its own mannequin maps. */
+	UPROPERTY() TArray<TObjectPtr<UMaterialInstanceDynamic>> CrewMIDs;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> TrimMID;
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> HairMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> VisorMID;
-	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> BootLightMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> TransportMID;
-	UPROPERTY() TObjectPtr<UStaticMeshComponent> SampleMesh;
-	UPROPERTY() TObjectPtr<UStaticMesh> SampleMeshAsset;
 	bool bTransportGlow = false;
 	float TransportDissolve = 0.f;
-	void ApplySuitMaterials();
+	enum class EFigureAnim : uint8 { Locomotion, Start, Stop, IdleBreak, Turn, Jump, Fall, Land };
+	EFigureAnim FigureAnim = EFigureAnim::Locomotion;
+	float OneShotLeft = 0.f;
+	bool bWasGrounded = true;
+	float LastSpeed = 0.f;
+	float IdleSeconds = 0.f;
+	float NextIdleBreak = 12.f;
+	/** The heading the planted feet point along while standing (degrees of actor yaw), and the figure's offset from the body. */
+	float StandYaw = 0.f;
+	float FigureYawOffset = 0.f;
+	float TurnUnwind = 0.f;
+	float TurnSeconds = 1.f;
+	FVector LastFigureLocation = FVector::ZeroVector;
+	bool bSuitWorn = false;
+	/** Colours and helmet for the frame: the uniform aboard, the suit outside. */
+	void ApplyUniform();
 	void ApplyFigureVisibility();
+	void PlayFigure(EFigureAnim Anim, UAnimationAsset* Asset = nullptr, float Seconds = 0.f);
 };

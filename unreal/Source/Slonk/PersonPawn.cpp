@@ -3,6 +3,15 @@
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/DynamicMeshComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Components/PointLightComponent.h"
+#include "CrewFigure.h"
+#include "Animation/AnimSingleNodeInstance.h"
+#include "Animation/BlendSpace.h"
+#include "Misc/Paths.h"
+#include "Animation/AnimSequence.h"
+#include "Engine/SkeletalMesh.h"
+#include "Engine/Texture.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -89,13 +98,53 @@ APersonPawn::APersonPawn()
 	Body->SetGenerateOverlapEvents(false);
 	Body->SetCanEverAffectNavigation(false);
 
-	Torso = MakePart(this, TEXT("Torso"), Body, FVector::ZeroVector);
-	Visor = MakePart(this, TEXT("Visor"), Body, FVector::ZeroVector);
-	LeftArm = MakePart(this, TEXT("LeftArm"), Body, FVector(0.f, -24.f, 50.f));
-	RightArm = MakePart(this, TEXT("RightArm"), Body, FVector(0.f, 24.f, 50.f));
-	LeftLeg = MakePart(this, TEXT("LeftLeg"), Body, FVector(0.f, -10.f, 2.f));
-	RightLeg = MakePart(this, TEXT("RightLeg"), Body, FVector(0.f, 10.f, 2.f));
-	Visor->CastShadow = false;
+	// The mannequin stands with its feet at the capsule's foot, facing the capsule's +X (the asset faces +Y).
+	Figure = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("Figure"));
+	Figure->SetupAttachment(Body);
+	Figure->SetRelativeLocationAndRotation(FVector(0.f, 0.f, -HalfHeightCm), FRotator(0.f, -90.f, 0.f));
+	Figure->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Figure->SetGenerateOverlapEvents(false);
+	Figure->SetCanEverAffectNavigation(false);
+	Figure->CastShadow = true;
+	Figure->bAffectDistanceFieldLighting = false;
+	Figure->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+	Figure->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+	// The Game Animation Sample's set on its UEFN mannequin: the loops in a blend space of our own, the one-shots by name.
+	const FString A = TEXT("/Game/Characters/UEFN_Mannequin/Animations/");
+	auto Seq = [&](const FString& Rel) { const FString N = FPaths::GetBaseFilename(Rel); return TSoftObjectPtr<UAnimSequence>(FSoftObjectPath(A + Rel + TEXT(".") + N)); };
+	FigureMesh = TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(SlonkCrew::UEFNPath));
+	FigureBaseMap = TSoftObjectPtr<UTexture>(FSoftObjectPath(SlonkCrew::UEFNBasePath));
+	FigureNormalMap = TSoftObjectPtr<UTexture>(FSoftObjectPath(SlonkCrew::UEFNNormalPath));
+	LocomotionBlend = TSoftObjectPtr<UBlendSpace>(FSoftObjectPath(A + TEXT("BS_Crew_Locomotion2D.BS_Crew_Locomotion2D")));
+	JumpAnim = Seq(TEXT("Jump/M_Neutral_Jump_F_Start_Stand_Lfoot"));
+	FallAnim = Seq(TEXT("Jump/M_Neutral_Jump_Loop_Fall"));
+	LandAnim = Seq(TEXT("Jump/M_Neutral_Jump_F_Land_Stand_Light_Lfoot"));
+	LandMovingAnim = Seq(TEXT("Jump/M_Neutral_Jump_F_Land_Walk_Light_Lfoot"));
+	for (int32 i = 1; i <= 6; ++i) { IdleBreaks.Add(Seq(FString::Printf(TEXT("Idle/M_Neutral_Stand_Idle_Break_v%02d"), i))); }
+	for (const TCHAR* Deg : { TEXT("045"), TEXT("090"), TEXT("135"), TEXT("180") })
+	{
+		TurnAnims.Add(Seq(FString::Printf(TEXT("Idle/M_Neutral_Stand_Turn_%s_L"), Deg)));
+		TurnAnims.Add(Seq(FString::Printf(TEXT("Idle/M_Neutral_Stand_Turn_%s_R"), Deg)));
+	}
+	WalkStartAnim = Seq(TEXT("Walk/M_Neutral_Walk_Start_F_Lfoot")); RunStartAnim = Seq(TEXT("Run/M_Neutral_Run_Start_F_Lfoot"));
+	WalkStopAnim = Seq(TEXT("Walk/M_Neutral_Walk_Stop_F_Lfoot")); RunStopAnim = Seq(TEXT("Run/M_Neutral_Run_Stop_F_Lfoot"));
+	CrewMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_Crew.M_Crew")));
+	Helmet = MakePart(this, TEXT("Helmet"), Body, FVector(0.f, 0.f, HeadHeightCm - HalfHeightCm));
+	Hair = MakePart(this, TEXT("Hair"), Body, FVector(0.f, 0.f, HeadHeightCm - HalfHeightCm));
+	for (TObjectPtr<UPointLightComponent>* L : { &BootLightL, &BootLightR })
+	{
+		UPointLightComponent* P = CreateDefaultSubobject<UPointLightComponent>(L == &BootLightL ? TEXT("BootLightL") : TEXT("BootLightR"));
+		P->SetupAttachment(Body);
+		P->SetRelativeLocation(FVector(0.f, L == &BootLightL ? -12.f : 12.f, -HalfHeightCm + 6.f));
+		P->SetIntensityUnits(ELightUnits::Candelas);
+		P->SetIntensity(0.f);
+		P->SetLightColor(BootLightColor);
+		P->SetAttenuationRadius(200.f);
+		P->SetSourceRadius(5.f);
+		P->SetCastShadows(false);
+		P->bAffectsWorld = true;
+		*L = P;
+	}
 
 	CameraArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraArm"));
 	CameraArm->SetupAttachment(Body);
@@ -158,165 +207,106 @@ void APersonPawn::BeginPlay()
 void APersonPawn::BuildFigure()
 {
 	using namespace SlonkMesh;
-	UDynamicMesh* TM = NewObject<UDynamicMesh>(this);
-	UDynamicMesh* VM = NewObject<UDynamicMesh>(this);
-	UDynamicMesh* AL = NewObject<UDynamicMesh>(this);
-	UDynamicMesh* AR = NewObject<UDynamicMesh>(this);
-	UDynamicMesh* LL = NewObject<UDynamicMesh>(this);
-	UDynamicMesh* LR = NewObject<UDynamicMesh>(this);
+	// The mannequin, one crew material instance per slot carrying that slot's own maps (head and legs, torso).
+	if (USkeletalMesh* Mesh = FigureMesh.LoadSynchronous())
+	{
+		Figure->SetSkeletalMesh(Mesh);
+		if (UMaterialInterface* Crew = CrewMaterial.LoadSynchronous()) { SlonkCrew::Dress(Figure, this, Crew, CrewMIDs, FigureBaseMap.LoadSynchronous(), FigureNormalMap.LoadSynchronous(), nullptr); }
+		// The loops' own pace, so the blend space's speeds can be matched to them (see the log). The blend space was
+		// authored through the editor's property tools, which do not rebuild its blend grid: in the editor, make sure.
+		if (UBlendSpace* BS = LocomotionBlend.LoadSynchronous())
+		{
+#if WITH_EDITOR
+			// The grid is serialized with the asset and the property tools leave it as the clone's: rebuild it here, and
+			// the next save of the asset keeps it (ValidateSampleData alone only checks the samples).
+			BS->ValidateSampleData();
+			BS->ResampleData();
+			BS->MarkPackageDirty();
+#endif
+			for (const FBlendSample& Sample : BS->GetBlendSamples())
+			{
+				if (const UAnimSequence* Seq = Cast<UAnimSequence>(Sample.Animation.Get()); Seq && Sample.SampleValue.Y > 0.f && FMath::IsNearlyZero(Sample.SampleValue.X))
+				{
+					const float L = Seq->GetPlayLength();
+					UE_LOG(LogTemp, Log, TEXT("Person: %s runs %.0f cm/s by its root over %.1fs (placed at %.0f)"), *Seq->GetName(), L > 0.f ? (float)Seq->ExtractRootMotionFromRange(0.f, L, FAnimExtractContext(0.0, true)).GetTranslation().Size() / L : 0.f, L, Sample.SampleValue.Y);
+				}
+			}
+		}
+		if (UBlendSpace* BS = LocomotionBlend.LoadSynchronous())
+		{
+			Figure->PlayAnimation(BS, true);
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Person: %s missing, no figure"), *FigureMesh.ToString());
+	}
 
-	// Root space: +X forward, +Z up, the root 90 cm above the feet. Suit (material 0), trim (1), boot lights (2).
+	// The helmet: a shell round the head with the visor let into its front (shell material 0, visor 1).
+	UDynamicMesh* HM = NewObject<UDynamicMesh>(this);
 	CurrentMaterialID() = 0;
-	Box(TM, FVector(0.f, 0.f, 28.f), FVector(24.f, 36.f, 56.f));              // torso
-	Ellipsoid(TM, FVector(0.f, 0.f, 72.f), FVector(16.f, 16.f, 17.f), 16);     // helmet
-	for (float S : { -1.f, 1.f }) { Ellipsoid(TM, FVector(0.f, S * 22.f, 52.f), FVector(9.f, 9.f, 7.f), 10); } // shoulders
+	Ellipsoid(HM, FVector::ZeroVector, FVector(16.f, 16.f, 17.f), 16);
+	CylinderZ(HM, FVector(0.f, 0.f, -17.f), 9.f, 5.f, 16);                    // neck ring
 	CurrentMaterialID() = 1;
-	CylinderZ(TM, FVector(0.f, 0.f, 55.f), 9.f, 5.f, 16);                     // neck ring
-	Box(TM, FVector(-20.f, 0.f, 30.f), FVector(16.f, 30.f, 44.f));            // pack
-	Box(TM, FVector(-29.f, 0.f, 30.f), FVector(3.f, 22.f, 30.f));             // pack plate
-	Box(TM, FVector(13.f, 0.f, 40.f), FVector(3.f, 16.f, 10.f));              // chest panel
-	for (float S : { -1.f, 1.f }) { Box(TM, FVector(-14.f, S * 17.f, 30.f), FVector(10.f, 4.f, 44.f)); } // pack straps
-
+	Ellipsoid(HM, FVector(8.f, 0.f, 0.f), FVector(10.f, 12.f, 9.f), 14);       // visor
+	FinishPart(Helmet, HM);
+	Helmet->CastShadow = true;
+	// A dark cap over the crown of the mannequin's head stands for hair when the helmet is off.
+	UDynamicMesh* HairM = NewObject<UDynamicMesh>(this);
 	CurrentMaterialID() = 0;
-	Ellipsoid(VM, FVector(8.f, 0.f, 72.f), FVector(10.f, 12.f, 9.f), 14);     // visor
-
-	for (UDynamicMesh* A : { AL, AR })
-	{
-		CurrentMaterialID() = 0;
-		CylinderZ(A, FVector(0.f, 0.f, -56.f), 6.f, 56.f, 12);
-		CurrentMaterialID() = 1;
-		Ellipsoid(A, FVector(0.f, 0.f, -58.f), FVector(7.f, 7.f, 7.f), 10);  // glove
-	}
-	for (UDynamicMesh* L : { LL, LR })
-	{
-		CurrentMaterialID() = 0;
-		CylinderZ(L, FVector(0.f, 0.f, -82.f), 8.f, 84.f, 12);
-		CurrentMaterialID() = 1;
-		Box(L, FVector(5.f, 0.f, -86.f), FVector(24.f, 13.f, 11.f));         // boot
-		CurrentMaterialID() = 2;
-		Box(L, FVector(5.f, 0.f, -91.f), FVector(25.f, 14.f, 2.f));          // boot light
-	}
-
-	FinishPart(Torso, TM);
-	FinishPart(Visor, VM);
-	FinishPart(LeftArm, AL);
-	FinishPart(RightArm, AR);
-	FinishPart(LeftLeg, LL);
-	FinishPart(RightLeg, LR);
+	Ellipsoid(HairM, FVector(-1.f, 0.f, 3.f), FVector(12.5f, 12.f, 8.5f), 14);
+	FinishPart(Hair, HairM);
 
 	if (UMaterialInterface* Hull = SlonkMaterials::LoadOrFallback(TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(SlonkMaterials::HullPath)), TEXT("Hull"), true))
 	{
-		auto Make = [&](const FLinearColor& C, float Rough)
-		{
-			UMaterialInstanceDynamic* M = UMaterialInstanceDynamic::Create(Hull, this);
-			M->SetVectorParameterValue(TEXT("HullColor"), C);
-			M->SetScalarParameterValue(TEXT("PanelScale"), 3.f);
-			M->SetScalarParameterValue(TEXT("Roughness"), Rough);
-			M->SetScalarParameterValue(TEXT("Metallic"), 0.f);
-			return M;
-		};
-		SuitMID = Make(FLinearColor(0.88f, 0.88f, 0.9f), 0.75f);
-		TrimMID = Make(FLinearColor(0.22f, 0.23f, 0.27f), 0.5f);
+		TrimMID = UMaterialInstanceDynamic::Create(Hull, this);
+		TrimMID->SetVectorParameterValue(TEXT("HullColor"), SuitTrim);
+		TrimMID->SetScalarParameterValue(TEXT("PanelScale"), 3.f);
+		TrimMID->SetScalarParameterValue(TEXT("Roughness"), 0.5f);
+		TrimMID->SetScalarParameterValue(TEXT("Metallic"), 0.f);
+		HairMID = UMaterialInstanceDynamic::Create(Hull, this);
+		HairMID->SetVectorParameterValue(TEXT("HullColor"), HairColor);
+		HairMID->SetScalarParameterValue(TEXT("PanelScale"), 3.f);
+		HairMID->SetScalarParameterValue(TEXT("Roughness"), 0.9f);
+		HairMID->SetScalarParameterValue(TEXT("Metallic"), 0.f);
 	}
 	if (UMaterialInterface* Glow = SlonkMaterials::LoadOrFallback(TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(SlonkMaterials::GlowPath)), TEXT("Glow"), false))
 	{
 		VisorMID = UMaterialInstanceDynamic::Create(Glow, this);
 		VisorMID->SetVectorParameterValue(TEXT("GlowColor"), FLinearColor(1.f, 0.82f, 0.45f));
 		VisorMID->SetScalarParameterValue(TEXT("Intensity"), 1.2f);
-		BootLightMID = UMaterialInstanceDynamic::Create(Glow, this);
-		BootLightMID->SetVectorParameterValue(TEXT("GlowColor"), FLinearColor(0.3f, 0.8f, 1.f));
-		BootLightMID->SetScalarParameterValue(TEXT("Intensity"), 0.f);
 	}
-	ApplySuitMaterials();
+	StandYaw = GetActorRotation().Yaw;
+	LastFigureLocation = GetActorLocation();
+	bSuitWorn = !WearsSuit();   // so the first ApplyUniform dresses the figure
+	ApplyUniform();
 }
 
-void APersonPawn::ApplySuitMaterials()
+void APersonPawn::ApplyUniform()
 {
-	if (SuitMID && TrimMID)
-	{
-		Torso->ConfigureMaterialSet({ SuitMID.Get(), TrimMID.Get() });
-		LeftArm->ConfigureMaterialSet({ SuitMID.Get(), TrimMID.Get() });
-		RightArm->ConfigureMaterialSet({ SuitMID.Get(), TrimMID.Get() });
-		UMaterialInterface* BootLight = BootLightMID ? static_cast<UMaterialInterface*>(BootLightMID.Get()) : static_cast<UMaterialInterface*>(TrimMID.Get());
-		LeftLeg->ConfigureMaterialSet({ SuitMID.Get(), TrimMID.Get(), BootLight });
-		RightLeg->ConfigureMaterialSet({ SuitMID.Get(), TrimMID.Get(), BootLight });
-	}
-	if (VisorMID) { Visor->ConfigureMaterialSet({ VisorMID.Get() }); }
-}
-
-UStaticMeshComponent* APersonPawn::GetSampleMesh()
-{
-	if (SampleMesh) { return SampleMesh; }
-	// Every part's triangles into one mesh in the capsule's frame.
-	UE::Geometry::FDynamicMesh3 Combined;
-	Combined.EnableTriangleGroups();
-	Combined.EnableAttributes();
-	UE::Geometry::FDynamicMeshEditor Editor(&Combined);
-	for (UDynamicMeshComponent* P : BodyParts())
-	{
-		UDynamicMesh* DM = P->GetDynamicMesh();
-		if (!DM) { continue; }
-		const FTransform Xf = P->GetComponentTransform().GetRelativeTransform(Body->GetComponentTransform());
-		DM->ProcessMesh([&](const UE::Geometry::FDynamicMesh3& Part)
-		{
-			UE::Geometry::FDynamicMesh3 Copy(Part);
-			if (!Copy.HasAttributes()) { Copy.EnableAttributes(); }
-			UE::Geometry::FMeshIndexMappings Map;
-			Editor.AppendMesh(&Copy, Map, [&Xf](int32, const FVector3d& Pos) { return (FVector3d)Xf.TransformPosition((FVector)Pos); });
-		});
-	}
-	if (Combined.TriangleCount() == 0) { return nullptr; }
-	FMeshDescription MD;
-	FStaticMeshAttributes(MD).Register();
-	FDynamicMeshToMeshDescription Converter;
-	Converter.Convert(&Combined, MD, false);
-	UStaticMesh* Mesh = NewObject<UStaticMesh>(this, NAME_None, RF_Transient);
-	Mesh->bAllowCPUAccess = true;
-	FStaticMaterial Mat(nullptr, TEXT("Suit"));
-#if WITH_EDITORONLY_DATA
-	Mat.ImportedMaterialSlotName = TEXT("Suit");
-#endif
-	Mesh->GetStaticMaterials().Add(Mat);
-	UStaticMesh::FBuildMeshDescriptionsParams Params;
-	Params.bFastBuild = true;
-	Params.bAllowCpuAccess = true;
-	Params.bMarkPackageDirty = false;
-	Params.bCommitMeshDescription = false;
-	Params.bBuildSimpleCollision = false;
-	Mesh->BuildFromMeshDescriptions({ &MD }, Params);
-	SampleMeshAsset = Mesh;
-	SampleMesh = NewObject<UStaticMeshComponent>(this, TEXT("SampleMesh"));
-	SampleMesh->SetupAttachment(Body);
-	SampleMesh->SetStaticMesh(Mesh);
-	SampleMesh->SetMobility(EComponentMobility::Movable);
-	SampleMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	SampleMesh->SetGenerateOverlapEvents(false);
-	SampleMesh->SetVisibility(false);
-	SampleMesh->SetHiddenInGame(true);
-	SampleMesh->CastShadow = false;
-	SampleMesh->RegisterComponent();
-	return SampleMesh;
-}
-
-TArray<UDynamicMeshComponent*> APersonPawn::BodyParts() const
-{
-	TArray<UDynamicMeshComponent*> Parts;
-	for (UDynamicMeshComponent* P : { Torso.Get(), Visor.Get(), LeftArm.Get(), RightArm.Get(), LeftLeg.Get(), RightLeg.Get() })
-	{
-		if (P) { Parts.Add(P); }
-	}
-	return Parts;
+	const bool bSuit = WearsSuit();
+	// The suit is one colour from the boots up with dark trim at the hands and boots; the uniform is the jacket
+	// over black trousers, the head and hands bare.
+	FCrewDress D = bSuit ? FCrewDress::Suit(SuitColor, SuitTrim) : FCrewDress::Uniform(UniformTorso, SkinColor);
+	D.Legs = bSuit ? SuitColor : UniformLegs;
+	SlonkCrew::SetDress(CrewMIDs, D);
+	// Mid-beam (the suit goes on as the figure lands) the helmet keeps the shimmer's glow; its own materials come
+	// back when the transporter lets go.
+	if (bTransportGlow && TransportMID && Helmet) { Helmet->ConfigureMaterialSet({ TransportMID.Get(), TransportMID.Get() }); }
+	else if (TrimMID && VisorMID && Helmet) { Helmet->ConfigureMaterialSet({ TrimMID.Get(), VisorMID.Get() }); }
+	if (bTransportGlow && TransportMID && Hair) { Hair->ConfigureMaterialSet({ TransportMID.Get() }); }
+	else if (HairMID && Hair) { Hair->ConfigureMaterialSet({ HairMID.Get() }); }
+	bSuitWorn = bSuit;
+	ApplyFigureVisibility();
 }
 
 void APersonPawn::ApplyFigureVisibility()
 {
-	// Dissolve order: the legs go first, then the arms, the torso, and the visor last.
-	const TPair<UDynamicMeshComponent*, float> Order[] = {
-		{ LeftLeg.Get(), 0.15f }, { RightLeg.Get(), 0.2f }, { LeftArm.Get(), 0.35f }, { RightArm.Get(), 0.4f }, { Torso.Get(), 0.6f }, { Visor.Get(), 0.8f } };
-	for (const auto& [P, Threshold] : Order)
-	{
-		if (P) { P->SetVisibility(bFigureShown && TransportDissolve <= Threshold); }
-	}
+	if (Figure) { Figure->SetVisibility(bFigureShown); }
+	// The dissolve takes the figure from the feet up; the helmet goes last.
+	for (UMaterialInstanceDynamic* Mid : CrewMIDs) { if (Mid) { Mid->SetScalarParameterValue(TEXT("Dissolve"), TransportDissolve); } }
+	if (Helmet) { Helmet->SetVisibility(bFigureShown && bSuitWorn && TransportDissolve <= 0.8f); }
+	if (Hair) { Hair->SetVisibility(bFigureShown && !bSuitWorn && TransportDissolve <= 0.8f); }
 }
 
 void APersonPawn::SetTransportState(float Glow, float Dissolve)
@@ -335,11 +325,17 @@ void APersonPawn::SetTransportState(float Glow, float Dissolve)
 		bTransportGlow = bWantGlow;
 		if (bWantGlow && TransportMID)
 		{
-			for (UDynamicMeshComponent* P : BodyParts()) { P->ConfigureMaterialSet({ TransportMID.Get(), TransportMID.Get(), TransportMID.Get() }); }
+			if (Helmet) { Helmet->ConfigureMaterialSet({ TransportMID.Get(), TransportMID.Get() }); }
+			if (Hair) { Hair->ConfigureMaterialSet({ TransportMID.Get() }); }
 		}
-		else { ApplySuitMaterials(); }
+		else
+		{
+			if (TrimMID && VisorMID && Helmet) { Helmet->ConfigureMaterialSet({ TrimMID.Get(), VisorMID.Get() }); }
+			if (HairMID && Hair) { Hair->ConfigureMaterialSet({ HairMID.Get() }); }
+		}
 	}
 	if (bTransportGlow && TransportMID) { TransportMID->SetScalarParameterValue(TEXT("Intensity"), 1.5f + 9.f * FMath::Clamp(Glow, 0.f, 1.f)); }
+	for (UMaterialInstanceDynamic* Mid : CrewMIDs) { if (Mid) { Mid->SetScalarParameterValue(TEXT("Glow"), FMath::Clamp(Glow, 0.f, 1.f)); } }
 	TransportDissolve = FMath::Clamp(Dissolve, 0.f, 1.f);
 	ApplyFigureVisibility();
 }
@@ -1127,33 +1123,145 @@ void APersonPawn::TickHull(float DeltaTime)
 // Figure and camera
 // ---------------------------------------------------------------------------------------------
 
+void APersonPawn::PlayFigure(EFigureAnim Anim, UAnimationAsset* Asset, float Seconds)
+{
+	if (!Figure) { return; }
+	bool bLoop = false;
+	if (!Asset)
+	{
+		switch (Anim)
+		{
+		case EFigureAnim::Jump: Asset = JumpAnim.LoadSynchronous(); Seconds = 0.55f; break;
+		case EFigureAnim::Fall: Asset = FallAnim.LoadSynchronous(); bLoop = true; break;
+		case EFigureAnim::Land: Asset = LandAnim.LoadSynchronous(); Seconds = 0.6f; break;
+		default: Asset = LocomotionBlend.LoadSynchronous(); bLoop = true; break;
+		}
+	}
+	if (!Asset) { Anim = EFigureAnim::Locomotion; Asset = LocomotionBlend.LoadSynchronous(); bLoop = true; }
+	if (!Asset) { return; }
+	FigureAnim = Anim;
+	Figure->PlayAnimation(Asset, bLoop);
+	OneShotLeft = bLoop ? 0.f : (Seconds > 0.f ? Seconds : FMath::Max(Asset->GetPlayLength() - 0.1f, 0.1f));
+}
+
 void APersonPawn::UpdateFigure(float DeltaTime)
 {
 	const FVector Up = GetActorUpVector();
 	const FVector Vt = Velocity - Up * FVector::DotProduct(Velocity, Up);
 	const float Speed = bGrounded ? (float)Vt.Size() : 0.f;
 	Stride = FMath::Clamp(Speed / WalkSpeedCm, 0.f, 1.6f);
-	WalkPhase += Speed / 140.f * 2.f * PI * DeltaTime;
-	if (Speed < 5.f) { WalkPhase = FMath::Lerp(WalkPhase, FMath::RoundToFloat(WalkPhase / PI) * PI, 1.f - FMath::Exp(-8.f * DeltaTime)); }
 	Limber = FMath::Lerp(Limber, bGrounded ? 0.f : 1.f, 1.f - FMath::Exp(-4.f * DeltaTime));
 
-	const float Swing = FMath::Sin(WalkPhase);
-	const float LegAmp = 30.f * FMath::Min(Stride, 1.2f);
-	const float ArmAmp = 22.f * FMath::Min(Stride, 1.2f);
-	// Walking: legs and arms swing in opposition. Floating: limbs loose and a little apart, arms out for the pack.
-	const FRotator LegL = FMath::Lerp(FRotator(Swing * LegAmp, 0.f, 0.f), FRotator(-14.f, 0.f, -8.f), Limber);
-	const FRotator LegR = FMath::Lerp(FRotator(-Swing * LegAmp, 0.f, 0.f), FRotator(-6.f, 0.f, 8.f), Limber);
-	const FRotator ArmL = FMath::Lerp(FRotator(-Swing * ArmAmp, 0.f, 0.f), FRotator(-20.f, 0.f, -28.f), Limber);
-	const FRotator ArmR = FMath::Lerp(FRotator(Swing * ArmAmp, 0.f, 0.f), FRotator(-20.f, 0.f, 28.f), Limber);
-	if (LeftLeg) { LeftLeg->SetRelativeRotation(LegL); }
-	if (RightLeg) { RightLeg->SetRelativeRotation(LegR); }
-	if (LeftArm) { LeftArm->SetRelativeRotation(ArmL); }
-	if (RightArm) { RightArm->SetRelativeRotation(ArmR); }
-
-	if (BootLightMID)
+	if (Figure && Figure->GetSkeletalMeshAsset())
 	{
-		const bool bHolding = Frame == EPersonFrame::Hull && bGrounded;
-		BootLightMID->SetScalarParameterValue(TEXT("Intensity"), bHolding ? 6.f : (bBootsArmed ? 1.2f : 0.f));
+		const bool bAirborne = !bGrounded;
+		const bool bOneShot = OneShotLeft > 0.f;
+		const bool bMoving = Speed > 30.f;
+		const bool bSprinting = Speed > WalkSpeedCm * 1.3f;
+		const float ActorYaw = GetActorRotation().Yaw;
+		// Placed somewhere new (a lift, the hatch, the transporter): the feet point where the body does.
+		if (FVector::DistSquared(GetActorLocation(), LastFigureLocation) > 100.0 * 100.0) { StandYaw = ActorYaw; FigureYawOffset = 0.f; }
+		LastFigureLocation = GetActorLocation();
+		// Leaving the ground with a push: the jump; coming down onto it: a landing, lighter in stride; in the air
+		// or adrift: the fall loop, limbs loose.
+		if (bAirborne && bWasGrounded && FVector::DotProduct(Velocity, Up) > 60.0) { PlayFigure(EFigureAnim::Jump); }
+		else if (!bAirborne && !bWasGrounded && (FigureAnim == EFigureAnim::Fall || FigureAnim == EFigureAnim::Jump))
+		{
+			PlayFigure(EFigureAnim::Land, bMoving ? LandMovingAnim.LoadSynchronous() : nullptr, 0.6f);
+		}
+		else if (bAirborne && !bOneShot && FigureAnim != EFigureAnim::Fall) { PlayFigure(EFigureAnim::Fall); }
+		else if (!bAirborne)
+		{
+			// On the ground: a step into the loop when setting off, a step out of it when stopping; a break now and
+			// then while standing; and when the body turns on the spot past the planted feet, a turn clip.
+			if (bStepIntoWalk && bMoving && LastSpeed <= 30.f && (FigureAnim == EFigureAnim::Locomotion || FigureAnim == EFigureAnim::IdleBreak || FigureAnim == EFigureAnim::Turn || FigureAnim == EFigureAnim::Stop))
+			{
+				PlayFigure(EFigureAnim::Start, (bSprinting ? RunStartAnim : WalkStartAnim).LoadSynchronous(), StartClipSeconds);
+			}
+			else if (bStepIntoWalk && !bMoving && LastSpeed > 150.f && FigureAnim == EFigureAnim::Locomotion)
+			{
+				PlayFigure(EFigureAnim::Stop, (LastSpeed > WalkSpeedCm * 1.3f ? RunStopAnim : WalkStopAnim).LoadSynchronous(), StopClipSeconds);
+			}
+			else if (!bMoving && FigureAnim == EFigureAnim::Locomotion)
+			{
+				const float Turned = FMath::FindDeltaAngleDegrees(StandYaw, ActorYaw);
+				if (FMath::Abs(Turned) > TurnInPlaceDeg && TurnAnims.Num() >= 8)
+				{
+					// The nearest of 45, 90, 135, 180 to the left or right; the feet come round with the clip.
+					const int32 Step = FMath::Clamp(FMath::RoundToInt(FMath::Abs(Turned) / 45.f), 1, 4) - 1;
+					if (UAnimSequence* T = TurnAnims[Step * 2 + (Turned < 0.f ? 0 : 1)].LoadSynchronous())
+					{
+						PlayFigure(EFigureAnim::Turn, T, FMath::Min(T->GetPlayLength() - 0.1f, 0.9f + 0.2f * Step));
+						TurnSeconds = OneShotLeft;
+						TurnUnwind = FigureYawOffset;
+						StandYaw = ActorYaw;
+					}
+				}
+				else
+				{
+					IdleSeconds += DeltaTime;
+					if (IdleSeconds > NextIdleBreak && IdleBreaks.Num() > 0)
+					{
+						if (UAnimSequence* B = IdleBreaks[FMath::RandRange(0, IdleBreaks.Num() - 1)].LoadSynchronous()) { PlayFigure(EFigureAnim::IdleBreak, B, B->GetPlayLength() - 0.1f); }
+						IdleSeconds = 0.f;
+						NextIdleBreak = FMath::FRandRange((float)IdleBreakEvery.X, (float)IdleBreakEvery.Y);
+					}
+				}
+			}
+			if (bMoving) { IdleSeconds = 0.f; StandYaw = ActorYaw; }
+		}
+		if (OneShotLeft > 0.f)
+		{
+			OneShotLeft -= DeltaTime;
+			// Moving cuts a break, a turn or a stop short; anything that ends goes back to the loop (or the fall).
+			const bool bInterrupt = bMoving && (FigureAnim == EFigureAnim::IdleBreak || FigureAnim == EFigureAnim::Turn || FigureAnim == EFigureAnim::Stop);
+			if (OneShotLeft <= 0.f || bInterrupt)
+			{
+				PlayFigure(bAirborne ? EFigureAnim::Fall : EFigureAnim::Locomotion);
+				if (bStepIntoWalk && bInterrupt && bMoving) { PlayFigure(EFigureAnim::Start, (bSprinting ? RunStartAnim : WalkStartAnim).LoadSynchronous(), StartClipSeconds); }
+			}
+		}
+		if (FigureAnim == EFigureAnim::Locomotion)
+		{
+			if (UAnimSingleNodeInstance* Node = Figure->GetSingleNodeInstance())
+			{
+				const FVector Fwd = GetActorForwardVector(), Right = GetActorRightVector();
+				const float Dir = Speed > 5.f ? FMath::RadiansToDegrees(FMath::Atan2(FVector::DotProduct(Vt, Right), FVector::DotProduct(Vt, Fwd))) : 0.f;
+				Node->SetBlendSpacePosition(FVector(Dir, Speed, 0.f));
+			}
+		}
+		// Standing, the figure keeps the feet where they were planted while the body (and the camera) turn, until a
+		// turn clip brings them round; walking, it faces the way the body does.
+		if (bMoving || bAirborne) { FigureYawOffset = 0.f; }
+		else if (FigureAnim == EFigureAnim::Turn) { FigureYawOffset = TurnUnwind * FMath::Clamp(OneShotLeft / FMath::Max(TurnSeconds, 0.01f), 0.f, 1.f); }
+		else { FigureYawOffset = FMath::FindDeltaAngleDegrees(ActorYaw, StandYaw); }
+		Figure->SetRelativeRotation(FRotator(0.f, -90.f + FigureYawOffset, 0.f));
+		bWasGrounded = bGrounded;
+		LastSpeed = Speed;
+		// The helmet and the hair cap ride the head bone's position, squared to the body so the visor looks where the person faces.
+		if ((Helmet && Helmet->IsVisible()) || (Hair && Hair->IsVisible()))
+		{
+			const FVector Head = Figure->DoesSocketExist(TEXT("head")) ? Figure->GetSocketLocation(TEXT("head")) + Up * 9.0 : GetActorLocation() + Up * (HeadHeightCm - HalfHeightCm);
+			const FQuat HeadQ = GetActorQuat() * FQuat(FVector::UpVector, FMath::DegreesToRadians(FigureYawOffset));
+			if (Helmet) { Helmet->SetWorldLocationAndRotation(Head, HeadQ); }
+			if (Hair) { Hair->SetWorldLocationAndRotation(Head, HeadQ); }
+		}
+	}
+	if (bSuitWorn != WearsSuit()) { ApplyUniform(); }
+
+	const bool bHolding = Frame == EPersonFrame::Hull && bGrounded;
+	const bool bArmed = bBootsArmed && WearsSuit();
+	for (UMaterialInstanceDynamic* Mid : CrewMIDs)
+	{
+		if (Mid) { Mid->SetScalarParameterValue(TEXT("BootGlow"), bHolding ? 10.f : (bArmed ? 1.5f : 0.f)); }
+	}
+	// The boot lamps ride the feet and light the hull round them while the boots hold.
+	const float Lamp = bHolding ? BootLightHolding : (bArmed ? BootLightArmed : 0.f);
+	for (const TPair<UPointLightComponent*, FName>& Foot : { TPair<UPointLightComponent*, FName>(BootLightL.Get(), TEXT("foot_l")), TPair<UPointLightComponent*, FName>(BootLightR.Get(), TEXT("foot_r")) })
+	{
+		if (!Foot.Key) { continue; }
+		if (Figure && Figure->DoesSocketExist(Foot.Value)) { Foot.Key->SetWorldLocation(Figure->GetSocketLocation(Foot.Value) + Up * 5.0); }
+		if (!FMath::IsNearlyEqual(Foot.Key->Intensity, Lamp)) { Foot.Key->SetIntensity(Lamp); Foot.Key->SetVisibility(Lamp > 0.f); }
 	}
 	if (Jets)
 	{

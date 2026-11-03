@@ -1,4 +1,5 @@
 #include "BridgeInteriorComponent.h"
+#include "CrewFigure.h"
 
 #include "Components/BoxComponent.h"
 #include "Components/DynamicMeshComponent.h"
@@ -172,15 +173,33 @@ void UBridgeInteriorComponent::Crew(const FVector& SeatPos, float YawDeg, UMater
 {
 	const FRotator R(0.f, YawDeg, 0.f);
 	const FVector F = R.Vector();
-	Cyl(SeatPos + FVector(0, 0, 36), 19.f, 60.f, UniformMat, R);
-	Box(SeatPos + FVector(0, 0, 60), FVector(26, 48, 14), R, UniformMat);
-	Cyl(SeatPos + FVector(0, 0, 76), 7.f, 12.f, Skin, R);
-	Ball(SeatPos + FVector(0, 0, 94), 12.f, Skin);
-	Ball(SeatPos + FVector(0, 0, 96.5f) - F * 2.5f, 12.f, Hair);
+	// A seated mannequin in the uniform (Manny and Quinn by turns), its pelvis on the seat, facing the station;
+	// the asset's front is its +Y, hence the quarter turn. A dark cap on the head stands for hair.
+	UCrewFigureComponent* Figure = NewObject<UCrewFigureComponent>(GetOwner() ? static_cast<UObject*>(GetOwner()) : this);
+	Figure->SetupAttachment(this);
+	Figure->SetRelativeLocationAndRotation(SeatPos - F * 6.f + FVector(0.f, 0.f, -86.f), FRotator(0.f, YawDeg - 90.f, 0.f));
+	Figure->SetMobility(EComponentMobility::Movable);
+	// Attachment does not pass visibility down: a crew member built while the bridge is hidden stays hidden too.
+	Figure->SetVisibility(IsVisible());
+	Figure->SetHiddenInGame(bHiddenInGame);
+	Figure->RegisterComponent();
+	Figure->Setup((CrewCount++ & 1) != 0, FLinearColor(0.40f, 0.07f, 0.09f), FLinearColor(0.72f, 0.52f, 0.42f));
+	Pieces.Add(Figure);
+	// The cap rides the head bone, so a re-posed figure keeps its hair on.
+	if (UStaticMeshComponent* Cap = Ball(Figure->GetRelativeTransform().TransformPosition(Figure->HeadCentre()) + FVector(0.f, 0.f, 2.f) - F * 2.f, 11.5f, Hair))
+	{
+		if (Figure->DoesSocketExist(TEXT("head"))) { Cap->AttachToComponent(Figure, FAttachmentTransformRules::KeepWorldTransform, TEXT("head")); }
+	}
 	Box(SeatPos + F * 22.f + FVector(0, 0, 6) + R.RotateVector(FVector(0, -11, 0)), FVector(44, 16, 14), R, ChairBlack);
 	Box(SeatPos + F * 22.f + FVector(0, 0, 6) + R.RotateVector(FVector(0, 11, 0)), FVector(44, 16, 14), R, ChairBlack);
-	Box(SeatPos + F * 16.f + FVector(0, 0, 48) + R.RotateVector(FVector(0, -26, 0)), FVector(34, 9, 9), R, UniformMat);
-	Box(SeatPos + F * 16.f + FVector(0, 0, 48) + R.RotateVector(FVector(0, 26, 0)), FVector(34, 9, 9), R, UniformMat);
+}
+
+void UBridgeInteriorComponent::ReposeCrew(float Thigh, float Calf, float UpperArm, float Forearm, float Lean)
+{
+	for (USceneComponent* C : Pieces)
+	{
+		if (UCrewFigureComponent* F = Cast<UCrewFigureComponent>(C)) { F->PoseSeated(Thigh, Calf, UpperArm, Forearm, Lean); }
+	}
 }
 
 void UBridgeInteriorComponent::SwivelChair(const FVector& FloorPos, float YawDeg, bool bCrew, UMaterialInterface* UniformMat)

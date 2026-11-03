@@ -109,6 +109,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Lighting")
 	float SunShadowDistanceCm = 5.0e6f;
 
+	/** ...but while the player is on foot the range drops to this (cm). The Mac build has no virtual shadow maps
+	 *  (they need Nanite), so the sun's shadows are cascaded shadow maps spread over the whole range: at 50 km the
+	 *  nearest cascade is 800 m wide and a person leaves no shadow at all. Over 400 m the first cascade is 6 m wide
+	 *  and the figure's shadow falls crisp on the hull; the ship around them is still inside the range. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Lighting")
+	float OnFootShadowDistanceCm = 4.0e4f;
+
 	/** Place an icy moon with lineae and a hazy moon around every ringed giant on the first tick, named after it. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Testing")
 	bool bSpawnShowcaseMoons = true;

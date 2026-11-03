@@ -190,6 +190,11 @@ private:
 	UStaticMeshComponent* WallBox(float AngleDeg, float Radial, float Z, float Thickness, float Width, float Height, UMaterialInterface* Mat, float PitchDeg = 0.f, bool bShadow = true);
 	void SwivelChair(const FVector& FloorPos, float YawDeg, bool bCrew, UMaterialInterface* UniformMat);
 	void Crew(const FVector& SeatPos, float YawDeg, UMaterialInterface* UniformMat);
+public:
+	/** Re-pose the seated crew with new angles (the `crewpose` console op, for tuning). */
+	void ReposeCrew(float Thigh, float Calf, float UpperArm, float Forearm, float Lean);
+private:
+	int32 CrewCount = 0;
 
 	UPROPERTY() TObjectPtr<UStaticMesh> CubeMesh;
 	UPROPERTY() TObjectPtr<UStaticMesh> CylinderMesh;
