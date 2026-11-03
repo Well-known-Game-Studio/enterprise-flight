@@ -122,6 +122,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Lighting")
 	int32 OnFootFarCascades = 2;
 
+	/** Flying the shuttle the near range is this (cm), with the far cascades beyond: over the ship's 50 km the
+	 *  nearest cascade was 800 m wide and a 7 m shuttle left no shadow on the ground until she had landed. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Lighting")
+	float ShuttleShadowDistanceCm = 4.0e5f;
+
 	/** Place an icy moon with lineae and a hazy moon around every ringed giant on the first tick, named after it. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Testing")
 	bool bSpawnShowcaseMoons = true;

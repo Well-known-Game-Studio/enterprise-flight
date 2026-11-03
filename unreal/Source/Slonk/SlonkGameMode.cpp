@@ -685,8 +685,10 @@ void ASlonkGameMode::UpdateStarLighting()
 			// Casters beyond the dynamic shadow distance are culled; the level's 200 m is inside the chase camera's
 			// distance to the hull. On foot the range shrinks so the cascades can resolve a person (see the header).
 			const bool bOnFoot = Pawn->IsA<APersonPawn>();
-			const float WantedDistance = bOnFoot ? OnFootShadowDistanceCm : SunShadowDistanceCm;
-			const int32 WantedFar = bOnFoot ? OnFootFarCascades : 0;
+			const AStarshipPawn* Craft = Cast<AStarshipPawn>(Pawn);
+			const bool bShuttle = Craft && Craft->IsShuttle();
+			const float WantedDistance = bOnFoot ? OnFootShadowDistanceCm : (bShuttle ? ShuttleShadowDistanceCm : SunShadowDistanceCm);
+			const int32 WantedFar = bOnFoot || bShuttle ? OnFootFarCascades : 0;
 			if (!FMath::IsNearlyEqual(LightComp->DynamicShadowDistanceMovableLight, WantedDistance)
 				|| LightComp->FarShadowCascadeCount != WantedFar || !FMath::IsNearlyEqual(LightComp->FarShadowDistance, SunShadowDistanceCm))
 			{
