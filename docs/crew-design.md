@@ -150,7 +150,47 @@ A game-instance subsystem (`UCrewRosterSubsystem`) owns the roster, the clock an
 new game generates the complement from a seed; the ship's systems component reads the roster for its counts and
 its officers rather than keeping its own.
 
-## 8. This round
+## 8. Experiences, trust and bias (the next round)
+
+What the first round wired by hand (alerts, hits, repairs, scans, sights, starbases, the captain's actions)
+becomes one interface, and the people gain the two things a captain spends a career managing: trust and bias.
+
+**Experiences.** A mission or an encounter emits an experience: a tag (an enemy ship destroyed, a ship spared, a
+first contact, a rescue, civilians lost, a parley that held, an away party in danger, an order refused, a
+promise kept or broken), an intensity, who was there (people, departments, the whole ship) and where. Every
+person reads it through facets, traits, fears, desires, bonds, ties and biases and comes away with their own
+memory and line of history, stress, a changed need, and now and then a new trait, fear or desire. A pacifist
+takes the destroyed ship hard and the spared one well; the one who feared the Klingons meets them; the one with
+a sister on the colony lives its rescue; the thrill-seeker comes back from danger lit up. The existing hooks are
+rewritten as emitters, so combat, scanning and the starbases are the first encounters it carries.
+
+**Trust.** Each person holds an opinion of the captain, moved by the captain's choices as they see them (the
+same experience read through the same biases: sparing a ship raises a pacifist's trust and lowers a hawk's; a
+promise kept raises everyone's; a reprimand they thought unjust lowers theirs and their friends'; a memorial
+raises the bereaved's). Trust is what steadies them under fire, what makes an order hold when it is hard, and
+what runs out: low trust is the source of refusals, requests for transfer, insubordination events and, at the
+bottom, a word to a starbase. Trust between people is the affinity the first round already keeps, and suspicion
+is its negative made specific: a person suspected of something (a recruit from a border world after a sabotage,
+a rival after a loss) by named others, with rumour as its carrier.
+
+**Bias.** Each person carries dispositions toward species and toward the powers (Klingon, Romulan, Orion, the
+Federation's own neighbours), from their home, their species, their history and their traits: a colonist whose
+world the Klingons raided, a Vulcan's view of Tellarites, an Andorian's of Vulcans, a human who has never left
+Earth. They move with experience: serving a watch beside a Vulcan who pulled them out of a burning compartment,
+a captain who treats a species fairly or unfairly in front of them, a first contact that went well, a betrayal.
+They have teeth: bonds form slower across a bias and quarrels come easier; a diplomacy or security check that
+involves a species suffers or gains by the party's dispositions, so who goes on the away party matters; incidents
+aboard (a slur in the mess, a fight on the gamma watch, a refusal to serve under someone) need handling; and off
+the ship a world's or a station's crowd has its own dispositions toward the crew the captain sends ashore.
+
+**The captain's tools** are the ones already there, now with these levers behind them: a word (listen,
+encourage, order, promise), commendation and reprimand, who is posted and watched with whom, leave, memorials,
+and above all the choices in missions (whom to spare, whom to trust, whom to send). The first officer reports
+rifts as they open; the personnel file shows trust in the captain and the dispositions that matter; a ship-wide
+cohesion reading sums it up. Squashed early and nurtured right, biases fade and the crew holds; left alone they
+harden and the ship divides.
+
+## 9. This round
 
 Built now: the record and its generator (names by species, facets, skills by rank and department, traits, initial
 bonds), the clock and the hourly and daily steps (needs, mood, stress, experience, memories, personal moments,
