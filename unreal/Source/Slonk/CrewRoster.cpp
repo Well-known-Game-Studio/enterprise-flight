@@ -1108,9 +1108,10 @@ void UCrewRosterSubsystem::LiveDay(const FCrewShipState& Ship)
 		}
 	}
 	// Promises: a want promised and then had is a promise kept; one promised and still waiting after 15 days, broken.
+	// Ashore or away counts: a leave promised and granted is kept while they are on it.
 	for (FCrewMember& M : Roster)
 	{
-		if (!M.IsAboard()) { continue; }
+		if (M.Condition == ECrewCondition::Dead || M.Condition == ECrewCondition::Transferred) { continue; }
 		for (FCrewWant& W : M.Wants)
 		{
 			if (!W.bPromised) { continue; }
@@ -1184,10 +1185,11 @@ void UCrewRosterSubsystem::PersonalMoment(FCrewMember& M, const FCrewShipState& 
 	{
 	case 0: if (FCrewMember* O = Colleague(Rng.FRand() < 0.75f))
 		{
-			// A friendship across a grudge comes slower, and softens it when it comes.
-			const float B = M.Bias(FName(*O->Species));
-			if (B < -0.2f && Rng.FRand() < -B) { break; }
+			// A friendship across a grudge, on either side, comes slower, and softens it when it comes.
+			const float B = M.Bias(FName(*O->Species)), B2 = O->Bias(FName(*M.Species));
+			if ((B < -0.2f && Rng.FRand() < -B) || (B2 < -0.2f && Rng.FRand() < -B2)) { break; }
 			if (B < 0.f) { MoveBias(M, FName(*O->Species), 0.05f, O->FullName()); }
+			if (B2 < 0.f) { MoveBias(*O, FName(*M.Species), 0.05f, M.FullName()); }
 			const FString Hobby = Pick(Rng, Hobbies);
 			Bond(M, *O, 0.25f, ECrewRelation::Friend);
 			Record(M, ECrewEventKind::Moment, FString::Printf(TEXT("Struck up a friendship with %s over %s."), *O->Styled(), *Hobby), false, { O->Id });
@@ -1349,8 +1351,9 @@ void UCrewRosterSubsystem::Experience(const FCrewExperience& E)
 	int32 Reached = 0;
 	for (FCrewMember& M : Roster)
 	{
-		if (!M.IsAboard() && M.Condition != ECrewCondition::Away) { continue; }
 		const bool bThere = E.Involved.Contains(M.Id);
+		if (M.Condition == ECrewCondition::Dead || M.Condition == ECrewCondition::Transferred) { continue; }
+		if (!M.IsAboard() && !bThere) { continue; }   // the ashore and away hear nothing unless it was theirs
 		if (E.Involved.Num() > 0 && !bThere && I < 0.3f) { continue; }   // a small thing stays with those who were there
 		float Share = bThere ? 1.f : 0.35f;
 		float V = Valence;
@@ -1420,7 +1423,7 @@ float UCrewRosterSubsystem::Cohesion() const
 	{
 		if (!M.IsAboard()) { continue; }
 		++N; Trust += (M.Trust + 1.f) * 0.5f;
-		float Pos = 0.f; for (const FCrewRelationship& R : M.Relationships) { if (R.Affinity > 0.2f) { Pos += 1.f; } }
+		float Pos = 0.f; for (const FCrewRelationship& R : M.Relationships) { const FCrewMember* O = Find(R.Other); if (R.Affinity > 0.2f && O && O->IsAboard()) { Pos += 1.f; } }
 		Bonds += FMath::Min(Pos, 4.f) / 4.f;
 		float Worst = 0.f; for (const FCrewBias& B : M.Biases) { if (B.Disposition < 0.f) { Worst = FMath::Max(Worst, -B.Disposition); } }
 		Division += Worst;
@@ -1890,7 +1893,11 @@ bool UCrewRosterSubsystem::Talk(int32 Id, const FString& How, FString& OutReply)
 	}
 	else if (H == TEXT("promise"))
 	{
-		if (Want)
+		if (Want && Want->bPromised)
+		{
+			OutReply = FString::Printf(TEXT("%s has your word on %s already, since day %d"), *M->Styled(), *Want->Text, Want->PromisedDay);
+		}
+		else if (Want)
 		{
 			M->Trust = FMath::Min(M->Trust + 0.06f, 1.f);
 			const_cast<FCrewWant*>(Want)->bPromised = true; const_cast<FCrewWant*>(Want)->PromisedDay = GetDay();
