@@ -259,7 +259,7 @@ void UCrewRosterSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
 	Load();
-	if (Roster.Num() == 0) { NewComplement(0); }
+	if (Roster.Num() == 0 && Lost.Num() == 0) { NewComplement(0); }   // a roster emptied by its losses stays so; ship crew reset starts over
 	Rng.Initialize(Seed ^ (int32)(Hours * 7.0));
 }
 
@@ -384,14 +384,16 @@ namespace
 	}
 }
 
-FCrewMember UCrewRosterSubsystem::MakePerson(FRandomStream& R, ECrewDepartment Dept, ECrewRank Rank, int32 Index)
+FCrewMember UCrewRosterSubsystem::MakePerson(FRandomStream& R, ECrewDepartment Dept, ECrewRank Rank, int32 Index, const FCrewNamed* Named)
 {
 	FCrewMember M;
 	M.Id = NextId++;
-	// Species: three in four human, the rest the Federation's neighbours.
-	const float S = R.FRand();
+	// Species: three in four human, the rest the Federation's neighbours; the named staff are who they are, and
+	// everything that follows from a species (facets, home, family) follows from theirs.
+	const float S = Named ? -1.f : R.FRand();
 	const bool bShe = R.FRand() < 0.5f;
-	if (S < 0.74f) { MakeNamed(R, M, Pick(R, HumanFirst), Pick(R, HumanLast), TEXT("Human"), bShe ? TEXT("she") : TEXT("he")); }
+	if (Named) { MakeNamed(R, M, Named->First, Named->Last, Named->Species, Named->Pronoun); Rank = Named->Rank; }
+	else if (S < 0.74f) { MakeNamed(R, M, Pick(R, HumanFirst), Pick(R, HumanLast), TEXT("Human"), bShe ? TEXT("she") : TEXT("he")); }
 	else if (S < 0.82f) { MakeNamed(R, M, Pick(R, VulcanNames), TEXT(""), TEXT("Vulcan"), bShe ? TEXT("she") : TEXT("he")); }
 	else if (S < 0.87f) { MakeNamed(R, M, Pick(R, AndorianNames), TEXT(""), TEXT("Andorian"), bShe ? TEXT("she") : TEXT("he")); }
 	else if (S < 0.90f) { MakeNamed(R, M, Pick(R, TellariteNames), TEXT(""), TEXT("Tellarite"), bShe ? TEXT("she") : TEXT("he")); }
@@ -558,7 +560,7 @@ void UCrewRosterSubsystem::NewComplement(int32 InSeed, int32 Complement)
 	const int32 Sizes[(int32)ECrewDepartment::Count] = { 6, 24, 60, 150, 70, 30, 36, 60, 66 };
 	int32 Scale = FMath::Max(Complement, 20);
 	// The senior staff by name: the ship's own, then a first officer and a chief of the boat.
-	struct FNamed { ECrewDepartment Dept; const TCHAR* First; const TCHAR* Last; const TCHAR* Species; const TCHAR* Pronoun; ECrewRank Rank; };
+	using FNamed = FCrewNamed;
 	const FNamed Heads[] = {
 		{ ECrewDepartment::Command, TEXT("Ilse"), TEXT("Varga"), TEXT("Human"), TEXT("she"), ECrewRank::Commander },
 		{ ECrewDepartment::Engineering, TEXT("Rhys"), TEXT("Dahl"), TEXT("Human"), TEXT("he"), ECrewRank::LtCommander },
@@ -582,10 +584,12 @@ void UCrewRosterSubsystem::NewComplement(int32 InSeed, int32 Complement)
 		for (int32 i = 0; i < Count; ++i)
 		{
 			ECrewRank Rank = i == 0 ? ECrewRank::LtCommander : (i == 1 ? ECrewRank::Lieutenant : RankFromIndex(R, i - 2, Count - 2));
-			FCrewMember M = MakePerson(R, Dept, Rank, i);
+			const FNamed* Named = nullptr;
+			if (i == 0) { for (const FNamed& H : Heads) { if (H.Dept == Dept) { Named = &H; } } }
+			if (i == 1) { for (const FNamed& H : Seconds) { if (H.Dept == Dept) { Named = &H; } } }
+			FCrewMember M = MakePerson(R, Dept, Rank, i, Named);
 			if (i == 0)
 			{
-				for (const FNamed& H : Heads) { if (H.Dept == Dept) { MakeNamed(R, M, H.First, H.Last, H.Species, H.Pronoun); M.Rank = H.Rank; M.Home = M.Species == TEXT("Vulcan") ? TEXT("Vulcan") : M.Species == TEXT("Andorian") ? TEXT("Andoria") : Pick(R, Homes); UsedNames.Add(M.FullName()); } }
 				M.bHead = true;
 				M.Skills[(int32)SkillOf(Dept)] = FMath::Max(M.Skills[(int32)SkillOf(Dept)], 72.f + R.FRandRange(0.f, 20.f));
 				M.Skills[(int32)ECrewSkill::Command] = FMath::Max(M.Skills[(int32)ECrewSkill::Command], 55.f + R.FRandRange(0.f, 25.f));
@@ -594,7 +598,6 @@ void UCrewRosterSubsystem::NewComplement(int32 InSeed, int32 Complement)
 			}
 			else if (i == 1)
 			{
-				for (const FNamed& H : Seconds) { if (H.Dept == Dept) { MakeNamed(R, M, H.First, H.Last, H.Species, H.Pronoun); M.Rank = H.Rank; M.Home = Pick(R, Homes); UsedNames.Add(M.FullName()); } }
 				M.bSecond = true;
 				M.Skills[(int32)SkillOf(Dept)] = FMath::Max(M.Skills[(int32)SkillOf(Dept)], 52.f + R.FRandRange(0.f, 16.f));
 				M.Watch = ECrewWatch::Beta;
@@ -936,7 +939,7 @@ void UCrewRosterSubsystem::LearnFromPeers()
 				const float Ahead = T.Skill(S) - Own;
 				if (Ahead < 3.f || Ahead > 25.f) { continue; }
 				float Gain = 0.9f * (1.f - FMath::Abs(Ahead - 10.f) / 15.f);   // best about ten points ahead
-				if (const FCrewRelationship* R = L.RelationWith(T.Id)) { Gain *= R->Kind == ECrewRelation::Mentor ? 1.6f : R->Affinity > 0.2f ? 1.3f : R->Affinity < -0.2f ? 0.6f : 1.f; }
+				if (const FCrewRelationship* R = L.RelationWith(T.Id)) { Gain *= R->Kind == ECrewRelation::Protege ? 1.6f : R->Affinity > 0.2f ? 1.3f : R->Affinity < -0.2f ? 0.6f : 1.f; }
 				if (T.HasTrait(TEXT("Perfectionist"))) { Gain *= 1.15f; }
 				if (Gain > BestGain) { BestGain = Gain; BestT = Ti; }
 			}
@@ -988,7 +991,11 @@ void UCrewRosterSubsystem::LiveHour(const FCrewShipState& Ship)
 			// Ashore or away they live their own hour: no alert, no scare, no quarrel on a watch they are not on.
 			for (float& V : M.Needs) { V = FMath::Clamp(V, 0.f, 1.f); }
 			M.Stress = FMath::Max(M.Stress - 0.02f, 0.f);
-			if (M.Condition == ECrewCondition::OnLeave) { M.ConditionHours = FMath::Max(M.ConditionHours - 1.f, 0.f); if (M.ConditionHours <= 0.f && Ship.bAlongside) { M.Condition = ECrewCondition::Fit; Record(M, ECrewEventKind::Leave, TEXT("Back aboard from leave.")); } }
+			if (M.Condition == ECrewCondition::OnLeave)
+			{
+				M.ConditionHours = FMath::Max(M.ConditionHours - 1.f, 0.f);
+				if (M.ConditionHours <= 0.f && Ship.bAlongside && (M.LeaveStation.IsEmpty() || Ship.StationName == M.LeaveStation)) { M.Condition = ECrewCondition::Fit; M.LeaveStation.Empty(); Record(M, ECrewEventKind::Leave, TEXT("Back aboard from leave.")); Place(M); }
+			}
 			UpdateMood(M);
 			continue;
 		}
@@ -1201,8 +1208,8 @@ void UCrewRosterSubsystem::NoteHitCompartment(const FString& Compartment)
 {
 	LastHitCompartment = Compartment; LastHitHours = Hours;
 	// Several hits can land before the next reconciliation; each keeps its compartment in the draw for the hour.
-	for (int32 i = RecentHitCompartments.Num() - 1; i >= 0; --i) { if (Hours - RecentHitCompartments[i].Value >= 1.0) { RecentHitCompartments.RemoveAt(i); } }
-	if (!Compartment.IsEmpty()) { RecentHitCompartments.Add(TPair<FString, double>(Compartment, Hours)); }
+	for (int32 i = RecentHitCompartments.Num() - 1; i >= 0; --i) { if (Hours - RecentHitCompartments[i].Value >= 1.0 || RecentHitCompartments[i].Key == Compartment) { RecentHitCompartments.RemoveAt(i); } }
+	if (!Compartment.IsEmpty()) { RecentHitCompartments.Add(TPair<FString, double>(Compartment, Hours)); }   // one entry each, the latest last
 }
 
 void UCrewRosterSubsystem::Wound(FCrewMember& M, bool bCritical, const FString& Where)
@@ -1236,6 +1243,7 @@ void UCrewRosterSubsystem::Kill(FCrewMember& M, const FString& Where)
 		}
 	}
 	if (M.bHead) { PromoteToHead(M.Department, FString::Printf(TEXT("%s was killed"), *M.Styled())); }
+	else if (M.bSecond) { M.bSecond = false; EnsureSecond(M.Department); }
 	Lost.Add(M);
 }
 
@@ -1327,7 +1335,8 @@ void UCrewRosterSubsystem::SyncCasualties(float InjuredF, float CriticalF, float
 	int32 Sickbay = 0;
 	for (int32 n = HaveDead; n < Dead; ++n)
 	{
-		FCrewMember* Patient = (FromSickbay > 0 || Local.Num() + Elsewhere.Num() == 0) ? LongestCritical() : nullptr;
+		FCrewMember* Patient = (FromSickbay > 0 || !bFreshHit || Local.Num() + Elsewhere.Num() == 0) ? LongestCritical() : nullptr;
+		if (!Patient && (!bFreshHit || Local.Num() + Elsewhere.Num() == 0)) { Patient = LongestInjured(); }   // bad air takes the wounded too
 		if (Patient) { --FromSickbay; ++Sickbay; Kill(*Patient, TEXT("Sickbay")); Killed.Add(Patient->Styled()); continue; }
 		if (FCrewMember* M = Take()) { Kill(*M, bFreshHit && M->Where != TEXT("Sickbay") && M->Activity != ECrewActivity::Leave ? M->Where : Where); Killed.Add(M->Styled()); }
 	}
@@ -1584,7 +1593,7 @@ bool UCrewRosterSubsystem::GrantLeave(int32 Id, int32 Days, FString& OutReply)
 	if (M->Condition != ECrewCondition::Fit) { OutReply = FString::Printf(TEXT("%s is %s"), *M->Styled(), *ConditionName(M->Condition).ToLower()); return false; }
 	if (!bAlongside) { OutReply = TEXT("Shore leave needs a station alongside"); return false; }
 	if (M->bHead) { OutReply = TEXT("The ship keeps its department heads; the second may go"); return false; }
-	M->Condition = ECrewCondition::OnLeave; M->ConditionHours = FMath::Max(Days, 1) * 24.f;
+	M->Condition = ECrewCondition::OnLeave; M->ConditionHours = FMath::Max(Days, 1) * 24.f; M->LeaveStation = AlongsideStation;
 	if (M->bSecond) { M->bSecond = false; EnsureSecond(M->Department); }
 	Record(*M, ECrewEventKind::Leave, FString::Printf(TEXT("%d days' leave granted at %s."), Days, *AlongsideStation));
 	Remember(*M, TEXT("Shore leave"), 0.2f);

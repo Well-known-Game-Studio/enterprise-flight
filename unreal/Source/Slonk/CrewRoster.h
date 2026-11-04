@@ -160,6 +160,8 @@ struct FCrewMember
 	UPROPERTY(BlueprintReadOnly) ECrewCondition Condition = ECrewCondition::Fit;
 	/** Ship's hours until a wound heals or a leave ends. */
 	UPROPERTY(BlueprintReadOnly) float ConditionHours = 0.f;
+	/** The station they were left at on leave; they come back aboard only alongside it. */
+	UPROPERTY(BlueprintReadOnly) FString LeaveStation;
 	UPROPERTY(BlueprintReadOnly) TArray<FCrewMemory> Memories;
 	UPROPERTY(BlueprintReadOnly) TArray<FCrewEvent> History;
 	UPROPERTY(BlueprintReadOnly) FCrewService Service;
@@ -383,7 +385,8 @@ private:
 	void PromoteToHead(ECrewDepartment Dept, const FString& Why);
 	bool Report(ECrewDepartment From, const FString& Text, const FLinearColor& Color = FLinearColor(0.75f, 0.9f, 1.f), bool bAlways = false);
 	int32 RequestsToday = 0;
-	FCrewMember MakePerson(FRandomStream& R, ECrewDepartment Dept, ECrewRank Rank, int32 Index);
+	struct FCrewNamed { ECrewDepartment Dept; const TCHAR* First; const TCHAR* Last; const TCHAR* Species; const TCHAR* Pronoun; ECrewRank Rank; };
+	FCrewMember MakePerson(FRandomStream& R, ECrewDepartment Dept, ECrewRank Rank, int32 Index, const FCrewNamed* Named = nullptr);
 	void MakeNamed(FRandomStream& R, FCrewMember& M, const TCHAR* First, const TCHAR* Last, const TCHAR* Species, const TCHAR* Pronoun);
 	void MakeRecruits(const FString& StationName);
 	void MakeTies(FRandomStream& R, FCrewMember& M);

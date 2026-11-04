@@ -126,7 +126,7 @@ void UShipSystemsComponent::SyncOfficersFromRoster()
 		O.Name = H->FullName();
 		O.Rank = H->Department == ECrewDepartment::Medical ? TEXT("Dr.") : UCrewRosterSubsystem::RankShort(H->Rank);
 		const FCrewMember* S2 = R->Second(D);
-		O.Acting = S2 ? S2->Styled() : TEXT("the duty officer");
+		O.Acting = S2 && S2->IsFit() ? S2->Styled() : TEXT("the duty officer");
 		// A new head (the roster promotes a successor the moment one is lost, or a new complement) starts clean;
 		// the station's availability is then the head's own condition, however it came about (a hit on their
 		// post, the roster's casualty draw, leave).
@@ -394,7 +394,7 @@ void UShipSystemsComponent::TickCrew(float DeltaTime)
 			{
 				// The head comes back in person, and the count with them (unless sickbay already returned them).
 				UCrewRosterSubsystem* Ros = Roster.Get();
-				if (!Ros || Ros->HealHead(UCrewRosterSubsystem::DepartmentOf(O.Station))) { if (Crew.Injured >= 1.f) { Crew.Injured -= 1.f; Crew.Fit += 1.f; } }
+				if (!Ros || Ros->HealHead(UCrewRosterSubsystem::DepartmentOf(O.Station))) { const float Part = FMath::Min(Crew.Injured, 1.f); Crew.Injured -= Part; Crew.Fit += Part; }
 				O.bInjured = false;
 				Report(O.Station, TEXT("Back on duty, Captain."), FLinearColor(0.6f, 1.f, 0.6f));
 			}
