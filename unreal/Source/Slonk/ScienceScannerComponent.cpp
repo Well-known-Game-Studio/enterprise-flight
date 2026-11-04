@@ -1,6 +1,7 @@
 // Slonk - science sensors.
 
 #include "ScienceScannerComponent.h"
+#include "CrewRoster.h"
 #include "PlanetBody.h"
 #include "StarBody.h"
 #include "StarSystem.h"
@@ -310,6 +311,14 @@ void UScienceScannerComponent::Complete()
 	const bool bRepeat = Log->IsScanned(R.Key);
 	BuildRecord(R);
 	const int32 Earned = Log->Add(R);
+	UGameInstance* GI = GetWorld() ? GetWorld()->GetGameInstance() : nullptr;
+	if (UCrewRosterSubsystem* Crew = GI ? GI->GetSubsystem<UCrewRosterSubsystem>() : nullptr)
+	{
+		// The science watch grows with every scan; a sight some of them wanted is theirs now.
+		Crew->NoteScan(TargetLabel, Earned, !R.Discovery.IsEmpty() && !bRepeat);
+		if (Kind == EScanKind::Nebula) { Crew->NoteSight(TEXT("SeeNebula"), FString::Printf(TEXT("The %s nebula, close enough to touch"), *TargetLabel)); }
+		if (const APlanetBody* PB = Cast<APlanetBody>(T)) { if (PB->IsGiant()) { Crew->NoteSight(TEXT("SeeGiant"), FString::Printf(TEXT("%s filling the viewports"), *TargetLabel)); } }
+	}
 
 	// The system survey: every star and planet scanned pays once.
 	int32 SurveyBonus = 0;

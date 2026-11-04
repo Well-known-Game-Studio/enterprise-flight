@@ -59,6 +59,8 @@ public:
 	UButton* AddSidebarButton(const FString& Label, const FLinearColor& Color, TFunction<void()> OnClick);
 	/** Bind any UButton made elsewhere to a callable. */
 	void Bind(UButton* Button, TFunction<void()> OnClick, const FString& Label = FString());
+	/** Drop the binding of a button that is about to go (a rebuilt list), so the callbacks do not pile up. */
+	void Unbind(UButton* Button);
 	/** Fire the button whose label (as bound, or as currently shown) matches, case-insensitively; for the console and scripts. */
 	bool ClickButton(const FString& Label);
 	UVerticalBox* GetContent() const { return Content; }
@@ -92,6 +94,11 @@ protected:
 	UPROPERTY() TObjectPtr<UCanvasPanel> Canvas;
 	UPROPERTY() TObjectPtr<UVerticalBox> Sidebar;
 	UPROPERTY() TObjectPtr<UBorder> SidebarFiller;
+	UPROPERTY() TArray<TObjectPtr<USizeBox>> SidebarBoxes;
+	UPROPERTY() TArray<TObjectPtr<UTextBlock>> SidebarLabels;
+	float SidebarHeight = 0.f;
+	/** Size the sidebar's buttons to the column: full height when they fit, evenly shrunk when they do not. */
+	void FitSidebar();
 	UPROPERTY() TObjectPtr<UBorder> ContentBorder;
 	UPROPERTY() TObjectPtr<UVerticalBox> Content;
 	UPROPERTY() TObjectPtr<UTextBlock> TitleText;

@@ -14,6 +14,7 @@
 #include "StarshipWeaponsComponent.h"
 #include "SlonkUIRoot.h"
 #include "LcarsPanels.h"
+#include "CrewPanel.h"
 #include "ShipSystemsComponent.h"
 #include "MsdPanel.h"
 #include "StarChartPanel.h"
@@ -133,6 +134,7 @@ void AStarshipPlayerController::CreateDefaultInputAssets()
 	Ensure(IA_Engineering, TEXT("IA_Engineering"), EInputActionValueType::Boolean);
 	Ensure(IA_Tactical, TEXT("IA_Tactical"), EInputActionValueType::Boolean);
 	Ensure(IA_Medical, TEXT("IA_Medical"), EInputActionValueType::Boolean);
+	Ensure(IA_Crew, TEXT("IA_Crew"), EInputActionValueType::Boolean);
 	Ensure(IA_Msd, TEXT("IA_Msd"), EInputActionValueType::Boolean);
 	Ensure(IA_AlertGreen, TEXT("IA_AlertGreen"), EInputActionValueType::Boolean);
 	Ensure(IA_AlertYellow, TEXT("IA_AlertYellow"), EInputActionValueType::Boolean);
@@ -230,6 +232,7 @@ void AStarshipPlayerController::CreateDefaultInputAssets()
 	Map(Ctx, IA_Engineering, EKeys::Comma);
 	Map(Ctx, IA_Tactical, EKeys::Period);
 	Map(Ctx, IA_Medical, EKeys::Semicolon);
+	Map(Ctx, IA_Crew, EKeys::Equals);
 	Map(Ctx, IA_Msd, EKeys::Apostrophe);
 	Map(Ctx, IA_AlertGreen, EKeys::Five);
 	Map(Ctx, IA_AlertYellow, EKeys::Six);
@@ -347,6 +350,7 @@ void AStarshipPlayerController::SetupInputComponent()
 	EIC->BindAction(IA_Engineering, ETriggerEvent::Started, this, &AStarshipPlayerController::OnEngineering);
 	EIC->BindAction(IA_Tactical, ETriggerEvent::Started, this, &AStarshipPlayerController::OnTactical);
 	EIC->BindAction(IA_Medical, ETriggerEvent::Started, this, &AStarshipPlayerController::OnMedical);
+	EIC->BindAction(IA_Crew, ETriggerEvent::Started, this, &AStarshipPlayerController::OnCrew);
 	EIC->BindAction(IA_Msd, ETriggerEvent::Started, this, &AStarshipPlayerController::OnMsd);
 	EIC->BindAction(IA_AlertGreen, ETriggerEvent::Started, this, &AStarshipPlayerController::OnAlertGreen);
 	EIC->BindAction(IA_AlertYellow, ETriggerEvent::Started, this, &AStarshipPlayerController::OnAlertYellow);
@@ -818,6 +822,11 @@ void AStarshipPlayerController::OnTactical()
 void AStarshipPlayerController::OnMedical()
 {
 	if (UIRoot) { UIRoot->TogglePanel(UMedicalPanel::StaticClass()); }
+}
+
+void AStarshipPlayerController::OnCrew()
+{
+	if (UIRoot) { UIRoot->TogglePanel(UCrewPanel::StaticClass()); }
 }
 
 void AStarshipPlayerController::OnMsd()

@@ -1,6 +1,7 @@
 // Slonk - main menu, controls and science log panels.
 
 #include "LcarsPanels.h"
+#include "CrewPanel.h"
 #include "SlonkUIRoot.h"
 #include "StarChartPanel.h"
 #include "StarshipPawn.h"
@@ -46,6 +47,7 @@ void UMainMenuPanel::BuildContent()
 	AddSidebarButton(TEXT("Engineering"), Lcars::Tan, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UEngineeringPanel>(); } });
 	AddSidebarButton(TEXT("Tactical"), Lcars::Red, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UTacticalPanel>(); } });
 	AddSidebarButton(TEXT("Sickbay"), Lcars::Sky, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UMedicalPanel>(); } });
+	AddSidebarButton(TEXT("Crew"), Lcars::Tan, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UCrewPanel>(); } });
 	AddSidebarButton(TEXT("Systems Display"), Lcars::Lilac, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UMsdPanel>(); } });
 	AddSidebarButton(TEXT("Controls"), Lcars::Lavender, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UControlsPanel>(); } });
 	AddSidebarButton(TEXT("Settings"), Lcars::Tan, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<USettingsPanel>(); } });
@@ -156,7 +158,7 @@ void UControlsPanel::BuildContent()
 		{ TEXT("N"), TEXT("nav markers") },
 		{ TEXT("M"), TEXT("star chart") },
 		{ TEXT("/"), TEXT("science log") },
-		{ TEXT(",  .  ;  '"), TEXT("engineering, tactical, sickbay boards, master systems display") },
+		{ TEXT(",  .  ;  '  ="), TEXT("engineering, tactical, sickbay boards, master systems display") },
 		{ TEXT("5  6  7"), TEXT("condition green, yellow alert, red alert") },
 		{ TEXT("H"), TEXT("this list") },
 		{ TEXT("Escape"), TEXT("main menu") },
