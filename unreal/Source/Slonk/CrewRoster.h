@@ -259,8 +259,12 @@ public:
 	void NoteAlert(EAlertState NewAlert);
 	/** A hit landed in this compartment: the next casualties come from the people in it. */
 	void NoteHitCompartment(const FString& Compartment);
-	/** The medical model's counts changed: wound, kill and heal people by name to match. Returns the lines to report. */
-	void SyncCasualties(int32 Fit, int32 Injured, int32 Critical, int32 Dead, TArray<FString>& OutLines);
+	/** The medical model's counts changed: wound, kill and heal people by name to match (the dead and the newly
+	 *  wounded from the compartment hit while the hit is fresh, else from sickbay's patients for the dead). Returns
+	 *  the lines to report. */
+	void SyncCasualties(int32 Injured, int32 Critical, int32 Dead, TArray<FString>& OutLines);
+	/** Those the medical model should count: aboard and not ashore or away. */
+	int32 CountMembers() const;
 	/** A department head is hurt (lost: killed, and the second steps up) or back on duty. */
 	void NoteHeadHurt(ECrewDepartment Dept, bool bLost, float Seconds);
 	void NoteHeadRecovered(ECrewDepartment Dept);
@@ -363,11 +367,15 @@ private:
 	void MakeNamed(FRandomStream& R, FCrewMember& M, const TCHAR* First, const TCHAR* Last, const TCHAR* Species, const TCHAR* Pronoun);
 	void MakeRecruits(const FString& StationName);
 	void MakeTies(FRandomStream& R, FCrewMember& M);
-	void Reunion(FCrewMember& M, FCrewTie& T, bool bAlongside);
+	void Reunion(FCrewMember& M, FCrewTie& T, bool bAshore);
 	FString PostingFor(FRandomStream& R, ECrewDepartment Dept, int32 Index) const;
 	void Dirty() { ++Revision; }
 	TArray<int32> PresentIn(const FString& Compartment, bool bFitOnly) const;
-	TArray<int32> Candidates(const FString& Compartment) const;
+	/** Fit people in the compartment hit (while the hit is fresh) and, after them, anyone fit aboard. */
+	void Candidates(const FString& Compartment, TArray<int32>& OutLocal, TArray<int32>& OutElsewhere) const;
+	void SetRelation(FCrewMember& From, int32 To, ECrewRelation Kind, float Affinity);
+	bool bAlongside = false;
+	FString AlongsideStation;
 
 	UPROPERTY() TArray<FCrewMember> Roster;
 	UPROPERTY() TArray<FCrewMember> Lost;

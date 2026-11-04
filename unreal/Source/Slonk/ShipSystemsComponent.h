@@ -59,6 +59,8 @@ struct FOfficer
 	UPROPERTY(BlueprintReadOnly) bool bInjured = false;
 	UPROPERTY(BlueprintReadOnly) bool bLost = false;
 	float RecoverSeconds = 0.f;
+	/** The roster member who holds the station now; a change resets the availability. */
+	int32 RosterId = -1;
 	/** Who answers for the station right now. */
 	FString Speaker() const;
 	bool OnDuty() const { return !bInjured && !bLost; }
@@ -231,6 +233,8 @@ public:
 	bool IsUnderFire() const;
 	/** Names and ranks of the officer list from the roster's heads and seconds. */
 	void SyncOfficersFromRoster();
+	/** The medical counts and the officer list from the roster as it is (a session's start, a new complement). */
+	void ResetCountsFromRoster();
 	static FString SystemName(EShipSystem System);
 	static FString StationName(EStation Station);
 	static FString AlertName(EAlertState Alert);

@@ -114,6 +114,19 @@ void ULcarsPanel::Bind(UButton* Button, TFunction<void()> OnClick, const FString
 	Button->OnClicked.AddDynamic(B, &ULcarsButtonBinding::Fire);
 }
 
+void ULcarsPanel::Unbind(UButton* Button)
+{
+	for (int32 i = Bindings.Num() - 1; i >= 0; --i)
+	{
+		ULcarsButtonBinding* B = Bindings[i];
+		if (!B || B->Button.Get() == Button || !B->Button.IsValid())
+		{
+			if (B && B->Button.IsValid()) { B->Button->OnClicked.RemoveDynamic(B, &ULcarsButtonBinding::Fire); }
+			Bindings.RemoveAt(i);
+		}
+	}
+}
+
 bool ULcarsPanel::ClickButton(const FString& Label)
 {
 	const FString Want = Label.TrimStartAndEnd();

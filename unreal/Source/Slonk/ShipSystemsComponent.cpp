@@ -126,8 +126,12 @@ void UShipSystemsComponent::SyncOfficersFromRoster()
 		O.Name = H->FullName();
 		O.Rank = H->Department == ECrewDepartment::Medical ? TEXT("Dr.") : UCrewRosterSubsystem::RankShort(H->Rank);
 		if (const FCrewMember* S2 = R->Second(D)) { O.Acting = S2->Styled(); }
-		// The roster found a successor for a head who was lost: the station is manned again.
-		if (O.bLost && H->Condition != ECrewCondition::Dead) { O.bLost = false; O.bInjured = false; O.RecoverSeconds = 0.f; }
+		// A new head (a successor to one lost, a reset) starts clean; the station's availability is the head's own
+		// condition, however it came about (a hit on their post, the roster's casualty draw, leave).
+		if (O.RosterId != H->Id) { O.RosterId = H->Id; O.bLost = false; O.bInjured = false; O.RecoverSeconds = 0.f; }
+		O.bLost = H->Condition == ECrewCondition::Dead;
+		O.bInjured = !O.bLost && H->Condition != ECrewCondition::Fit;
+		if (!O.bInjured) { O.RecoverSeconds = 0.f; }
 	}
 	RosterRevisionSeen = R->GetRevision();
 }
@@ -175,8 +179,15 @@ void UShipSystemsComponent::TickRoster(float DeltaTime)
 	R->AdvanceSeconds(DeltaTime, State);
 	// The counts the medical model keeps become people.
 	TArray<FString> Lines;
-	R->SyncCasualties(FMath::RoundToInt(Crew.Fit), FMath::RoundToInt(Crew.Injured), FMath::RoundToInt(Crew.Critical), FMath::RoundToInt(Crew.Dead), Lines);
+	R->SyncCasualties(FMath::RoundToInt(Crew.Injured), FMath::RoundToInt(Crew.Critical), FMath::RoundToInt(Crew.Dead), Lines);
 	for (const FString& L : Lines) { Report(EStation::Medical, L, FLinearColor(1.f, 0.7f, 0.6f)); }
+	// Membership follows the roster (recruits, transfers, leave) while the counts keep their fractional progress.
+	const int32 Members = R->CountMembers();
+	if (Members != Crew.Complement)
+	{
+		Crew.Complement = Members;
+		Crew.Fit = FMath::Max(0.f, Crew.Complement - Crew.Injured - Crew.Critical - Crew.Dead);
+	}
 	TArray<FCrewReport> Said;
 	R->DrainReports(Said);
 	for (const FCrewReport& C : Said)
@@ -201,9 +212,25 @@ void UShipSystemsComponent::BeginPlay()
 		if (UCrewRosterSubsystem* R = Roster.Get())
 		{
 			if (AStarshipPawn* S = Ship()) { R->SetShipName(S->GetCraftName()); }
-			SyncOfficersFromRoster();
+			ResetCountsFromRoster();
 		}
 	}
+}
+
+void UShipSystemsComponent::ResetCountsFromRoster()
+{
+	// The medical model's counts start from the saved people: whoever was under treatment still is, the lost
+	// of earlier sessions are not fit crew, and the officer list is the roster's heads.
+	UCrewRosterSubsystem* R = Roster.Get();
+	if (!R) { return; }
+	Crew.Injured = (float)R->CountCondition(ECrewCondition::Injured);
+	Crew.Critical = (float)R->CountCondition(ECrewCondition::Critical);
+	Crew.Dead = 0.f;
+	Crew.Complement = R->CountMembers();
+	Crew.Fit = FMath::Max(0.f, Crew.Complement - Crew.Injured - Crew.Critical);
+	PendingWounded = 0.f; PendingDead = 0.f;
+	for (FOfficer& O : Officers) { O.RosterId = -1; }
+	SyncOfficersFromRoster();
 }
 
 void UShipSystemsComponent::CacheBase()
@@ -339,7 +366,7 @@ void UShipSystemsComponent::TickCrew(float DeltaTime)
 	// Officers heal in sickbay.
 	for (FOfficer& O : Officers)
 	{
-		if (O.bInjured && !O.bLost)
+		if (O.bInjured && !O.bLost && O.RecoverSeconds > 0.f)
 		{
 			O.RecoverSeconds -= DeltaTime * (Stores.MedicalSupplies > 0.f ? 1.f : 0.5f);
 			if (O.RecoverSeconds <= 0.f) { O.bInjured = false; Report(O.Station, TEXT("Back on duty, Captain."), FLinearColor(0.6f, 1.f, 0.6f)); if (UCrewRosterSubsystem* Ros = Roster.Get()) { Ros->NoteHeadRecovered(UCrewRosterSubsystem::DepartmentOf(O.Station)); } }

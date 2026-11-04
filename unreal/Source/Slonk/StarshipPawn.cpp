@@ -3284,7 +3284,7 @@ void AStarshipPawn::HandleCrewCommand(const TArray<FString>& Args)
 		Say(FString::Printf(TEXT("%d ship's hours lived: stardate %s, morale %d%%"), H, *R->StardateText(), FMath::RoundToInt(R->Morale() * 100.f)));
 	}
 	else if (What == TEXT("stardate")) { Say(FString::Printf(TEXT("Stardate %s, %02d:00, %s watch, day %d aboard"), *R->StardateText(), R->GetHourOfDay(), *UCrewRosterSubsystem::WatchName(R->WatchOnDuty()), R->GetDay())); }
-	else if (What == TEXT("reset")) { R->NewComplement(Word(2).IsNumeric() ? FCString::Atoi(*Word(2)) : 0); if (Systems) { Systems->SyncOfficersFromRoster(); } Say(FString::Printf(TEXT("New complement of %d"), R->GetRoster().Num()), FColor::Orange); }
+	else if (What == TEXT("reset")) { R->NewComplement(Word(2).IsNumeric() ? FCString::Atoi(*Word(2)) : 0); if (Systems) { Systems->ResetCountsFromRoster(); } Say(FString::Printf(TEXT("New complement of %d"), R->GetRoster().Num()), FColor::Orange); }
 	else if (What == TEXT("lost")) { for (const FCrewMember& L : R->GetLost()) { Say(FString::Printf(TEXT("   %s, %s"), *L.Styled(), L.History.Num() ? *L.History.Last().Text : TEXT("")), FColor::White, 15.f); } Say(FString::Printf(TEXT("%d lost"), R->GetLost().Num())); }
 	else { Say(TEXT("ship crew list [dept] | show <name> | trouble | promote|demote|commend|reprimand <name> | watch <name> a|b|g | post <name> <dept> | leave <name> [days] | talk <name> listen|encourage|order|promise | recruits | signon <n> | discharge <name> | memorial | lost | check <skill> <difficulty> [names] | time <hours> | stardate | reset [seed]"), FColor::Orange, 12.f); }
 }

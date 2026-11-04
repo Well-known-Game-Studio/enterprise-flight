@@ -41,6 +41,7 @@ private:
 	UPROPERTY() TObjectPtr<UVerticalBox> FileBox;
 	UPROPERTY() TObjectPtr<UButton> FilterButton;
 	UPROPERTY() TObjectPtr<UButton> SortButton;
+	UPROPERTY() TArray<TObjectPtr<UButton>> RowButtons;
 	/** -2: in trouble, -1: senior staff, 0..: a department, Count: everyone. */
 	int32 Filter = -1;
 	int32 Sort = 0;

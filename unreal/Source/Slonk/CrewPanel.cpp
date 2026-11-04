@@ -84,6 +84,8 @@ void UCrewPanel::FillList()
 {
 	UCrewRosterSubsystem* R = Roster();
 	if (!R || !ListBox) { return; }
+	for (UButton* B : RowButtons) { Unbind(B); }
+	RowButtons.Reset();
 	ListBox->ClearChildren();
 	TArray<const FCrewMember*> Rows;
 	if (Filter == -2) { for (int32 Id : R->InTrouble()) { if (const FCrewMember* M = R->Find(Id)) { Rows.Add(M); } } }
@@ -118,6 +120,7 @@ void UCrewPanel::FillList()
 		if (Label) { Label->SetFont(Lcars::Font(12.f, false, 0)); Label->SetColorAndOpacity(FSlateColor(M->Id == SelectedId ? Lcars::Black : FLinearColor::White)); Label->SetJustification(ETextJustify::Left); }
 		const int32 Id = M->Id;
 		Bind(B, [this, Id]() { SelectedId = Id; LastFileKey.Reset(); LastRevision = -1; }, M->FullName());
+		RowButtons.Add(B);
 		if (UScrollBoxSlot* Sl = Cast<UScrollBoxSlot>(ListBox->AddChild(B))) { Sl->SetPadding(FMargin(0.f, 1.f, 0.f, 1.f)); }
 	}
 }
