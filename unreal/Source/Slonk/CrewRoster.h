@@ -106,6 +106,16 @@ struct FCrewExperience
 	UPROPERTY(BlueprintReadWrite) bool bCaptainsChoice = false;
 };
 
+/** Words across a grudge not yet answered by the captain. */
+USTRUCT(BlueprintType)
+struct FCrewIncident
+{
+	GENERATED_BODY()
+	UPROPERTY() int32 Offender = -1;
+	UPROPERTY() int32 Victim = -1;
+	UPROPERTY() int32 Day = 0;
+};
+
 /** A bond with another person. */
 USTRUCT(BlueprintType)
 struct FCrewRelationship
@@ -291,6 +301,7 @@ public:
 	UPROPERTY() double HourAccumulator = 0.0;
 	UPROPERTY() TMap<int32, int32> PeerHours;
 	UPROPERTY() TArray<int32> Targets;
+	UPROPERTY() TArray<FCrewIncident> Incidents;
 };
 
 /**
@@ -493,7 +504,7 @@ private:
 	int32 LastSyncInjured = 0, LastSyncCritical = 0, LastSyncDead = 0;
 	float ReportCooldownSeconds = 0.f;
 	int32 MourningDays = 0;
-	int32 LastIncidentOffender = -1, LastIncidentVictim = -1, LastIncidentDay = -100;
+	UPROPERTY() TArray<FCrewIncident> Incidents;
 	int32 RiftsReported = -100;
 	/** The lost before the medical model's current count began (a new session, a resupply). */
 	int32 DeadBase = 0;

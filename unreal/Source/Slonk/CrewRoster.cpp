@@ -283,7 +283,7 @@ void UCrewRosterSubsystem::Load()
 		if (const USlonkCrewSaveGame* Save = Cast<USlonkCrewSaveGame>(UGameplayStatics::LoadGameFromSlot(SlotName, 0)))
 		{
 			Roster = Save->Roster; Lost = Save->Lost; Hours = Save->Hours; Seed = Save->Seed; NextId = Save->NextId; ShipName = Save->ShipName;
-			MourningDays = Save->MourningDays; HourAccumulator = Save->HourAccumulator; PeerHours = Save->PeerHours; Targets = Save->Targets;
+			MourningDays = Save->MourningDays; HourAccumulator = Save->HourAccumulator; PeerHours = Save->PeerHours; Targets = Save->Targets; Incidents = Save->Incidents;
 			// The dead are kept in Lost; a relaunch must not count them as members again.
 			Roster.RemoveAll([](const FCrewMember& M) { return M.Condition == ECrewCondition::Dead; });
 			Validate();
@@ -331,7 +331,7 @@ void UCrewRosterSubsystem::Save()
 	USlonkCrewSaveGame* Save = Cast<USlonkCrewSaveGame>(UGameplayStatics::CreateSaveGameObject(USlonkCrewSaveGame::StaticClass()));
 	if (!Save) { return; }
 	Save->Roster = Roster; Save->Lost = Lost; Save->Hours = Hours; Save->Seed = Seed; Save->NextId = NextId; Save->ShipName = ShipName;
-	Save->MourningDays = MourningDays; Save->HourAccumulator = HourAccumulator; Save->PeerHours = PeerHours; Save->Targets = Targets;
+	Save->MourningDays = MourningDays; Save->HourAccumulator = HourAccumulator; Save->PeerHours = PeerHours; Save->Targets = Targets; Save->Incidents = Incidents;
 	UGameplayStatics::SaveGameToSlot(Save, SlotName, 0);
 	bSaveWanted = false;
 }
@@ -591,6 +591,7 @@ void UCrewRosterSubsystem::NewComplement(int32 InSeed, int32 Complement)
 	FRandomStream R(Seed);
 	Rng.Initialize(Seed);
 	Roster.Reset(); Lost.Reset(); Recruits.Reset(); NextId = 0; Hours = 0.0; HourAccumulator = 0.0; DeadBase = 0; MourningDays = 0; PeerHours.Reset(); UsedNames.Reset();
+	Incidents.Reset(); IncidentsToday = 0; RequestsToday = 0; RiftsReported = -100; Reports.Reset();
 	Targets.SetNum((int32)ECrewDepartment::Count);
 	// Department strengths for a refit's 502.
 	const int32 Sizes[(int32)ECrewDepartment::Count] = { 6, 24, 60, 150, 70, 30, 36, 60, 66 };
@@ -1287,7 +1288,8 @@ void UCrewRosterSubsystem::Incident(FCrewMember& M, FCrewMember& O, bool bBias)
 	O.Stress = FMath::Min(O.Stress + 0.05f, 1.f);
 	bool bHad = false; for (FCrewSuspicion& X : O.Suspicions) { if (X.Of == M.Id) { X.Weight = FMath::Min(X.Weight + 0.2f, 1.f); bHad = true; } }
 	if (!bHad) { FCrewSuspicion S; S.Of = M.Id; S.Weight = 0.3f; S.Why = FString::Printf(TEXT("what %s said about %ss"), *M.Pronoun, *O.Species); S.SinceDay = GetDay(); O.Suspicions.Add(S); }
-	LastIncidentOffender = M.Id; LastIncidentVictim = O.Id; LastIncidentDay = GetDay();
+	bool bPending = false; for (FCrewIncident& P : Incidents) { if (P.Offender == M.Id && P.Victim == O.Id) { P.Day = GetDay(); bPending = true; } }
+	if (!bPending) { FCrewIncident P; P.Offender = M.Id; P.Victim = O.Id; P.Day = GetDay(); Incidents.Add(P); }
 	if (IncidentsToday++ < 2)
 	{
 		Report(ECrewDepartment::Command, FString::Printf(TEXT("An incident %s: %s had words for %s about %ss. %s let it pass; I'd rather you didn't."), *What, *M.Styled(), *O.Styled(), *O.Species, *DepartmentName(M.Department)), FLinearColor(1.f, 0.7f, 0.5f), true);
@@ -1314,13 +1316,15 @@ void UCrewRosterSubsystem::MoveBias(FCrewMember& M, FName Group, float Delta, co
 		{
 			// Hardened dispositions move slowly; what moves one toward nothing is easier than what moves it away.
 			const bool bSoftening = (B.Disposition > 0.f) != (Delta > 0.f);
+			const float Was = B.Disposition;
 			B.Disposition = FMath::Clamp(B.Disposition + Delta * (bSoftening ? 1.f : 0.6f) * (1.f - FMath::Abs(B.Disposition) * 0.5f), -1.f, 1.f);
-			if (FMath::Abs(B.Disposition) < 0.05f) { B.Disposition = 0.f; B.Reason = TEXT("got over it"); }
+			// Small steps accumulate; the reason follows a step worth telling, and a grudge crossed back to nothing is "got over".
+			if (FMath::Abs(Was) >= 0.2f && FMath::Abs(B.Disposition) < 0.05f) { B.Reason = TEXT("got over it"); }
 			else if (!Reason.IsEmpty() && FMath::Abs(Delta) > 0.08f) { B.Reason = Reason; }
 			return;
 		}
 	}
-	if (FMath::Abs(Delta) >= 0.05f) { FCrewBias B; B.Group = Group; B.Disposition = FMath::Clamp(Delta, -1.f, 1.f); B.Reason = Reason; M.Biases.Add(B); }
+	FCrewBias B; B.Group = Group; B.Disposition = FMath::Clamp(Delta, -1.f, 1.f); B.Reason = Reason.IsEmpty() ? TEXT("first impressions") : Reason; M.Biases.Add(B);
 }
 
 void UCrewRosterSubsystem::Experience(const FCrewExperience& E)
@@ -1779,10 +1783,15 @@ bool UCrewRosterSubsystem::Reprimand(int32 Id, const FString& For, FString& OutR
 	if (!M->IsAboard()) { OutReply = FString::Printf(TEXT("%s is %s"), *M->Styled(), *ConditionName(M->Condition).ToLower()); return false; }
 	++M->Service.Reprimands;
 	Record(*M, ECrewEventKind::Reprimanded, FString::Printf(TEXT("Reprimanded by the captain%s."), For.IsEmpty() ? TEXT("") : *(TEXT(" for ") + For)), true);
-	// Answering an incident: the offender's grudge is squashed a little and the one it was said to sees it.
-	if (LastIncidentOffender == M->Id && GetDay() - LastIncidentDay <= 2)
+	// Answering an incident: every pending one this person caused in the last two days is settled; the grudge is
+	// squashed a little and the one it was said to sees it. Older ones have gone cold.
+	for (int32 i = Incidents.Num() - 1; i >= 0; --i)
 	{
-		if (FCrewMember* V = FindMutable(LastIncidentVictim))
+		const FCrewIncident P = Incidents[i];
+		if (GetDay() - P.Day > 2) { Incidents.RemoveAt(i); continue; }
+		if (P.Offender != M->Id) { continue; }
+		Incidents.RemoveAt(i);
+		if (FCrewMember* V = FindMutable(P.Victim))
 		{
 			MoveBias(*M, FName(*V->Species), 0.15f, TEXT("the captain's reprimand"));
 			V->Trust = FMath::Min(V->Trust + 0.12f, 1.f); Remember(*V, TEXT("The captain answered it"), 0.12f);
@@ -1790,7 +1799,6 @@ bool UCrewRosterSubsystem::Reprimand(int32 Id, const FString& For, FString& OutR
 			FCrewExperience E; E.Tag = TEXT("Captain.Fair"); E.Intensity = 0.4f; E.Group = FName(*V->Species); E.Text = FString::Printf(TEXT("The captain came down on %s over what was said about %ss"), *M->Styled(), *V->Species); E.bCaptainsChoice = true;
 			Experience(E);
 		}
-		LastIncidentOffender = -1;
 	}
 	const bool bProud = M->HasTrait(TEXT("WoundedPride"));
 	Remember(*M, TEXT("Reprimanded"), bProud ? -0.25f : -0.15f, bProud);

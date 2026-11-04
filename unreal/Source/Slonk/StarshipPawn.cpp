@@ -3183,7 +3183,8 @@ void AStarshipPawn::HandleCrewCommand(const TArray<FString>& Args)
 		// experience <tag> [intensity] [group] [place:<name>] [names...]: dev, until the missions emit their own.
 		FCrewExperience E; E.Tag = FName(*Word(2)); E.Intensity = Word(3).IsNumeric() ? FCString::Atof(*Word(3)) : 0.6f;
 		int32 i = Word(3).IsNumeric() ? 4 : 3;
-		if (Args.IsValidIndex(i) && !Args[i].StartsWith(TEXT("place:")) && R->FindByName(Args[i]) == nullptr) { E.Group = FName(*Args[i]); ++i; }
+		// An optional people or power: a word that is not a modifier, an id or a name aboard.
+		if (Args.IsValidIndex(i) && !Args[i].StartsWith(TEXT("place:")) && Args[i].ToLower() != TEXT("choice") && !Args[i].IsNumeric() && Person(i) == nullptr) { E.Group = FName(*Args[i]); ++i; }
 		while (i < Args.Num())
 		{
 			if (Args[i].StartsWith(TEXT("place:"))) { E.Place = Args[i].RightChop(6).Replace(TEXT("_"), TEXT(" ")); ++i; continue; }
@@ -3246,7 +3247,7 @@ void AStarshipPawn::HandleCrewCommand(const TArray<FString>& Args)
 		for (const FCrewRelationship& Rl : M->Relationships) { const FCrewMember* O = R->Find(Rl.Other); if (O && FMath::Abs(Rl.Affinity) > 0.3f) { Say(FString::Printf(TEXT("   %s: %s (%+.0f)"), *UCrewRosterSubsystem::RelationName(Rl.Kind), *O->Styled(), Rl.Affinity * 100.f), FColor::White, 20.f); } }
 		for (const FCrewTie& T : M->Ties) { Say(FString::Printf(TEXT("   %s: %s, %s %s"), T.bFamily ? TEXT("family") : TEXT("friend"), *T.Name, *T.Relation, *T.Where()), FColor::White, 20.f); }
 		Say(FString::Printf(TEXT("   trusts the captain %+.0f"), M->Trust * 100.f), FColor::White, 20.f);
-		for (const FCrewBias& B : M->Biases) { Say(FString::Printf(TEXT("   %s %ss (%+.0f): %s"), B.Disposition < -0.4f ? TEXT("hates") : B.Disposition < 0.f ? TEXT("wary of") : B.Disposition > 0.4f ? TEXT("admires") : TEXT("warm to"), *B.Group.ToString(), B.Disposition * 100.f, *B.Reason), FColor::White, 20.f); }
+		for (const FCrewBias& B : M->Biases) { if (FMath::Abs(B.Disposition) < 0.08f) { continue; } Say(FString::Printf(TEXT("   %s %ss (%+.0f): %s"), B.Disposition < -0.4f ? TEXT("hates") : B.Disposition < 0.f ? TEXT("wary of") : B.Disposition > 0.4f ? TEXT("admires") : TEXT("warm to"), *B.Group.ToString(), B.Disposition * 100.f, *B.Reason), FColor::White, 20.f); }
 		for (const FCrewSuspicion& Su : M->Suspicions) { if (const FCrewMember* O = R->Find(Su.Of)) { Say(FString::Printf(TEXT("   suspects %s: %s (%.0f)"), *O->Styled(), *Su.Why, Su.Weight * 100.f), FColor::White, 20.f); } }
 		for (int32 i = FMath::Max(0, M->History.Num() - 6); i < M->History.Num(); ++i) { Say(FString::Printf(TEXT("   %.1f %s"), M->History[i].Stardate, *M->History[i].Text), FColor::White, 20.f); }
 	}

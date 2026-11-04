@@ -1,4 +1,5 @@
 #include "SpaceVessel.h"
+#include "ShuttlecraftPawn.h"
 #include "BorgCube.h"
 #include "Kismet/GameplayStatics.h"
 #include "ShipSystemsComponent.h"
@@ -310,13 +311,16 @@ void ASpaceVessel::BeginDying()
 	if (UWorld* W = GetWorld())
 	{
 		APawn* PlayerPawn = UGameplayStatics::GetPlayerPawn(W, 0);
-		AStarshipPawn* Ship = Cast<AStarshipPawn>(PlayerPawn);
-		if (!Ship) { if (const APersonPawn* P = Cast<APersonPawn>(PlayerPawn)) { Ship = P->Craft.Get(); } }
+		AStarshipPawn* Craft = Cast<AStarshipPawn>(PlayerPawn);
+		if (!Craft) { if (const APersonPawn* P = Cast<APersonPawn>(PlayerPawn)) { Craft = P->Craft.Get(); } }
+		// The shuttle's people are the ship's: the roster is the mothership's, the hand that fired is the craft's.
+		AStarshipPawn* Ship = Craft;
+		if (const AShuttlecraftPawn* Sh = Cast<AShuttlecraftPawn>(Craft)) { Ship = Sh->Mothership.Get(); }
 		if (Ship && Ship->Systems && Ship->Systems->GetRoster() && Cast<AActor>(Ship) != Cast<AActor>(this))
 		{
 			const bool bHostile = IsA<ABorgCube>();
 			AActor* Causer = LastDamageCauser.Get();
-			const bool bOurs = Causer && (Causer == Ship || Causer->GetOwner() == Ship);
+			const bool bOurs = Causer && (Causer == Cast<AActor>(Craft) || Causer->GetOwner() == Cast<AActor>(Craft) || Causer == Cast<AActor>(Ship) || Causer->GetOwner() == Cast<AActor>(Ship));
 			FCrewExperience E;
 			E.Tag = bHostile ? TEXT("Combat.EnemyDestroyed") : TEXT("Combat.FriendlyLost");
 			E.Intensity = bHostile ? 0.7f : 0.9f;

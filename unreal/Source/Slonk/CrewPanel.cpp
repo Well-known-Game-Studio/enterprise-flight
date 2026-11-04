@@ -207,7 +207,7 @@ void UCrewPanel::FillFile()
 	}
 	Heading(TEXT("Opinions"));
 	Line(FString::Printf(TEXT("Trusts the captain %+.0f: %s."), M->Trust * 100.f, M->Trust > 0.5f ? TEXT("would follow you anywhere") : M->Trust > 0.2f ? TEXT("believes in you") : M->Trust > -0.1f ? TEXT("reserving judgement") : M->Trust > -0.4f ? TEXT("has doubts") : TEXT("has lost faith")), 13.f, M->Trust < -0.1f ? Lcars::Salmon : FLinearColor::White);
-	for (const FCrewBias& B : M->Biases) { Line(FString::Printf(TEXT("%s %ss (%+.0f): %s."), B.Disposition < -0.4f ? TEXT("Hates") : B.Disposition < 0.f ? TEXT("Wary of") : B.Disposition > 0.4f ? TEXT("Admires") : TEXT("Warm to"), *B.Group.ToString(), B.Disposition * 100.f, *B.Reason), 13.f, B.Disposition < -0.3f ? Lcars::Salmon : FLinearColor::White); }
+	for (const FCrewBias& B : M->Biases) { if (FMath::Abs(B.Disposition) < 0.08f) { continue; } Line(FString::Printf(TEXT("%s %ss (%+.0f): %s."), B.Disposition < -0.4f ? TEXT("Hates") : B.Disposition < 0.f ? TEXT("Wary of") : B.Disposition > 0.4f ? TEXT("Admires") : TEXT("Warm to"), *B.Group.ToString(), B.Disposition * 100.f, *B.Reason), 13.f, B.Disposition < -0.3f ? Lcars::Salmon : FLinearColor::White); }
 	for (const FCrewSuspicion& Su : M->Suspicions) { const FCrewMember* O = R->Find(Su.Of); if (O) { Line(FString::Printf(TEXT("Suspects %s: %s."), *O->Styled(), *Su.Why), 13.f, Lcars::Gold); } }
 	if (M->Ties.Num() > 0)
 	{
