@@ -158,7 +158,7 @@ A game-instance subsystem (`UCrewRosterSubsystem`) owns the roster, the clock an
 new game generates the complement from a seed; the ship's systems component reads the roster for its counts and
 its officers rather than keeping its own.
 
-## 8. Experiences, trust and bias (the next round)
+## 8. Experiences, trust and bias
 
 What the first round wired by hand (alerts, hits, repairs, scans, sights, starbases, the captain's actions)
 becomes one interface, and the people gain the two things a captain spends a career managing: trust and bias.
@@ -197,6 +197,19 @@ and above all the choices in missions (whom to spare, whom to trust, whom to sen
 rifts as they open; the personnel file shows trust in the captain and the dispositions that matter; a ship-wide
 cohesion reading sums it up. Squashed early and nurtured right, biases fade and the crew holds; left alone they
 harden and the ship divides.
+
+**Built (second round).** `FCrewExperience` and `UCrewRosterSubsystem::Experience`: a tag, an intensity, who
+was there, the people or power concerned, a place, the text, and whether it was the captain's choice; every
+person reads it through facets, traits, fears, desires, ties and biases, and comes away with a memory, a line of
+history, stress, sometimes a lasting mark (a veteran made, a fear taken up, a pacifist disillusioned). Trust per
+person, moved by the captain's choices, promises kept and broken (a want promised in a word and had, or not
+within fifteen days), and incidents answered; it steadies people under fire and in checks, and when it runs out
+there are refusals on watch and requests for transfer. Biases toward peoples and powers from home, species,
+history and traits, moved by experience and by friendships made across them; they slow bonds, start incidents
+(words across a grudge, reported to the captain, answered by a reprimand that squashes the grudge a little and
+restores the one it was said to), and count in a check that names a people. Suspicions are kept with their
+reasons. The first vessel the ship destroys or loses emits an experience; `ship crew experience` emits any
+other, until the missions emit their own. Cohesion sums trust, bonds and division.
 
 ## 9. This round
 

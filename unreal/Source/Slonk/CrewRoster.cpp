@@ -164,6 +164,7 @@ FString UCrewRosterSubsystem::TraitText(FName Trait)
 {
 	for (const FTraitDef& T : TraitDefs) { if (Trait == FName(T.Tag)) { return T.Text; } }
 	if (Trait == TEXT("Survivor")) { return TEXT("Survivor: walked out of a compartment that killed others"); }
+	if (Trait == TEXT("Disillusioned")) { return TEXT("Disillusioned: saw the captain take a life that could have been spared"); }
 	return Trait.ToString();
 }
 bool UCrewRosterSubsystem::ParseDepartment(const FString& Word, ECrewDepartment& Out)
@@ -241,6 +242,12 @@ FString FCrewMember::Styled() const
 	return R.IsEmpty() ? FullName() : R + TEXT(" ") + FullName();
 }
 
+float FCrewMember::Bias(FName Group) const
+{
+	for (const FCrewBias& B : Biases) { if (B.Group == Group) { return B.Disposition; } }
+	return 0.f;
+}
+
 FString FCrewTie::Where() const
 {
 	if (Place.IsEmpty()) { return Kind == ECrewTiePlace::World ? TEXT("on a colony world") : Kind == ECrewTiePlace::Ship ? TEXT("aboard a starship") : TEXT("at a starbase"); }
@@ -303,6 +310,7 @@ void UCrewRosterSubsystem::Validate()
 		for (float& V : M.Needs) { V = FMath::Clamp(V, 0.f, 1.f); }
 		M.Mood = FMath::Clamp(M.Mood, 0.f, 1.f); M.Stress = FMath::Clamp(M.Stress, 0.f, 1.f);
 		if (M.Pronoun.IsEmpty()) { M.Pronoun = TEXT("they"); }
+		if (!M.bOpinionsSeeded) { FRandomStream R(M.Id * 104729 + Seed); SeedOpinions(R, M); }
 		if (Seen.Contains(M.Id) || M.Id < 0) { const int32 Old = M.Id; M.Id = ++MaxId + 1000000; UE_LOG(LogTemp, Warning, TEXT("Crew: %s had id %d already in use; now %d (their bonds and others' point at the other holder)"), *M.FullName(), Old, M.Id); }
 		Seen.Add(M.Id); MaxId = FMath::Max(MaxId, M.Id);
 	}
@@ -458,6 +466,7 @@ FCrewMember UCrewRosterSubsystem::MakePerson(FRandomStream& R, ECrewDepartment D
 		FCrewWant W; W.Tag = F.Tag; W.Text = F.Text; W.bFear = true; W.SinceDay = GetDay(); M.Wants.Add(W);
 	}
 	MakeTies(R, M);
+	SeedOpinions(R, M);
 	if (M.HasTrait(TEXT("Homesick")) || (M.Facet(ECrewFacet::Sociability) > 60.f && R.FRand() < 0.3f))
 	{
 		for (const FCrewTie& T : M.Ties) { if (T.bFamily) { FCrewWant W; W.Tag = TEXT("Visit"); W.Text = FString::Printf(TEXT("a visit to %s %s"), *T.Relation, *T.Name); W.SinceDay = GetDay(); M.Wants.Add(W); break; } }
@@ -503,6 +512,33 @@ void UCrewRosterSubsystem::MakeTies(FRandomStream& R, FCrewMember& M)
 		if (T.Relation.Contains(TEXT("Lexington"))) { T.Kind = ECrewTiePlace::Ship; T.Place = TEXT("U.S.S. Lexington"); }
 		M.Ties.Add(T);
 	}
+}
+
+void UCrewRosterSubsystem::SeedOpinions(FRandomStream& R, FCrewMember& M)
+{
+	// Trust in the captain starts a little above nothing, more for the loyal by nature, less for the ambitious.
+	M.Trust = FMath::Clamp(0.15f + (M.Facet(ECrewFacet::Discipline) - 50.f) / 250.f - (M.Facet(ECrewFacet::Ambition) - 50.f) / 400.f + R.FRandRange(-0.1f, 0.1f), -0.3f, 0.6f);
+	M.Biases.Reset();
+	auto Add = [&](const TCHAR* Group, float D, const FString& Why) { if (FMath::Abs(D) < 0.05f) { return; } for (FCrewBias& B : M.Biases) { if (B.Group == Group) { B.Disposition = FMath::Clamp(B.Disposition + D, -1.f, 1.f); return; } } FCrewBias B; B.Group = Group; B.Disposition = FMath::Clamp(D, -1.f, 1.f); B.Reason = Why; M.Biases.Add(B); };
+	// The powers: the border colonies remember the Klingons, the veterans whoever they fought, the odd one the Orions.
+	const bool bBorder = M.Home.Contains(TEXT("Cestus")) || M.Home.Contains(TEXT("Deneva")) || M.Home.Contains(TEXT("Tarsus")) || M.Home.Contains(TEXT("Rigel")) || M.Home.Contains(TEXT("Starbase"));
+	if (bBorder && R.FRand() < 0.5f) { Add(TEXT("Klingon"), -R.FRandRange(0.2f, 0.6f), TEXT("grew up on the border")); }
+	if (M.HasTrait(TEXT("Veteran"))) { Add(R.FRand() < 0.7f ? TEXT("Klingon") : TEXT("Romulan"), -R.FRandRange(0.2f, 0.5f), TEXT("fought them")); }
+	if (R.FRand() < 0.12f) { Add(TEXT("Orion"), -R.FRandRange(0.2f, 0.5f), TEXT("the syndicate took someone")); }
+	if (R.FRand() < 0.08f) { Add(TEXT("Klingon"), R.FRandRange(0.1f, 0.3f), TEXT("served alongside one")); }
+	// The peoples: a few old grudges and a few admirations, mostly mild; the empathetic hold fewer.
+	const float Prej = R.FRand() * (1.3f - M.Facet(ECrewFacet::Empathy) / 100.f);
+	if (M.Species == TEXT("Vulcan")) { if (Prej > 0.5f) { Add(TEXT("Tellarite"), -R.FRandRange(0.1f, 0.4f), TEXT("finds them illogical")); } if (R.FRand() < 0.3f) { Add(TEXT("Andorian"), -R.FRandRange(0.1f, 0.3f), TEXT("old history")); } }
+	else if (M.Species == TEXT("Andorian")) { if (Prej > 0.4f) { Add(TEXT("Vulcan"), -R.FRandRange(0.1f, 0.4f), TEXT("old history")); } if (R.FRand() < 0.3f) { Add(TEXT("Human"), R.FRandRange(0.1f, 0.3f), TEXT("fought beside them")); } }
+	else if (M.Species == TEXT("Tellarite")) { if (Prej > 0.4f) { Add(TEXT("Vulcan"), -R.FRandRange(0.1f, 0.3f), TEXT("finds them cold")); } }
+	else if (M.Species == TEXT("Human"))
+	{
+		if (Prej > 0.75f) { static const TCHAR* Others[] = { TEXT("Tellarite"), TEXT("Andorian"), TEXT("Vulcan"), TEXT("Caitian"), TEXT("Bolian"), TEXT("Deltan") }; Add(Others[R.RandRange(0, 5)], -R.FRandRange(0.15f, 0.4f), TEXT("never left Earth before the Academy")); }
+		if (R.FRand() < 0.2f) { Add(TEXT("Vulcan"), R.FRandRange(0.1f, 0.3f), TEXT("admires the discipline")); }
+	}
+	if (M.Facet(ECrewFacet::Empathy) < 30.f && R.FRand() < 0.3f) { Add(TEXT("Betazoid"), -R.FRandRange(0.1f, 0.3f), TEXT("dislikes being read")); }
+	M.Suspicions.Reset();
+	M.bOpinionsSeeded = true;
 }
 
 void UCrewRosterSubsystem::BindPlaces(const TArray<FString>& Worlds, const TArray<FString>& Stations, const TArray<FString>& Ships)
@@ -1011,7 +1047,7 @@ void UCrewRosterSubsystem::LiveHour(const FCrewShipState& Ship)
 		for (float& V : M.Needs) { V = FMath::Clamp(V, 0.f, 1.f); }
 		// Stress.
 		if (bRed) { M.Stress += (0.04f + 0.01f * FMath::Min((float)(Hours - AlertSinceHours) / 24.f, 2.f)) * (1.3f - Cour); }
-		if (Ship.bUnderFire) { M.Stress += 0.08f * (1.3f - Cour) * (M.HasTrait(TEXT("Veteran")) ? 0.5f : 1.f); }
+		if (Ship.bUnderFire) { M.Stress += 0.08f * (1.3f - Cour) * (M.HasTrait(TEXT("Veteran")) ? 0.5f : 1.f) * (1.f - FMath::Clamp(M.Trust, 0.f, 1.f) * 0.3f); }
 		if (!bRed && !Ship.bUnderFire) { M.Stress -= 0.03f * (0.5f + Res); }
 		if (M.Condition == ECrewCondition::Critical) { M.Stress += 0.02f; }
 		M.Stress = FMath::Clamp(M.Stress, 0.f, 1.f);
@@ -1070,13 +1106,40 @@ void UCrewRosterSubsystem::LiveDay(const FCrewShipState& Ship)
 			if (Waited > 20 && Waited % 10 == 0) { Remember(M, FString::Printf(TEXT("Still waiting for %s"), *W.Text), -0.06f); ++Pressed; }
 		}
 	}
+	// Promises: a want promised and then had is a promise kept; one promised and still waiting after 15 days, broken.
+	for (FCrewMember& M : Roster)
+	{
+		if (!M.IsAboard()) { continue; }
+		for (FCrewWant& W : M.Wants)
+		{
+			if (!W.bPromised) { continue; }
+			if (W.bGranted) { W.bPromised = false; FCrewExperience E; E.Tag = TEXT("Promise.Kept"); E.Intensity = 0.6f; E.Involved = { M.Id }; E.Text = FString::Printf(TEXT("The captain kept a promise: %s"), *W.Text); E.bCaptainsChoice = true; Experience(E); }
+			else if (Day - W.PromisedDay > 15) { W.bPromised = false; FCrewExperience E; E.Tag = TEXT("Promise.Broken"); E.Intensity = 0.6f; E.Involved = { M.Id }; E.Text = FString::Printf(TEXT("The captain's promise of %s came to nothing"), *W.Text); E.bCaptainsChoice = true; Experience(E); }
+		}
+	}
+	// Those who have lost faith ask to go; the rifts between peoples are counted.
+	int32 Transfers = 0, Rifts = 0;
+	for (FCrewMember& M : Roster)
+	{
+		if (!M.IsAboard()) { continue; }
+		for (const FCrewBias& B : M.Biases) { if (B.Disposition < -0.4f) { ++Rifts; break; } }
+		if (M.Trust < -0.4f && M.Mood < 0.5f && Rng.FRand() < 0.15f)
+		{
+			bool bAsked = false; for (const FCrewWant& W : M.Wants) { if (W.Tag == TEXT("Transfer")) { bAsked = true; } }
+			if (!bAsked) { FCrewWant W; W.Tag = TEXT("Transfer"); W.Text = TEXT("a transfer off the ship"); W.SinceDay = Day; M.Wants.Add(W); Record(M, ECrewEventKind::Transfer, TEXT("Put in for a transfer off the ship."), true); ++Transfers; }
+		}
+	}
+	IncidentsToday = 0;
 	const FCrewMember* XO = Head(ECrewDepartment::Command);
 	if (XO)
 	{
-		const float Mor = Morale();
+		const float Mor = Morale(), Tr = MeanTrust();
 		FString Line = FString::Printf(TEXT("Morning report, stardate %s: morale %s (%.0f%%), %d aboard"), *StardateText(), Mor > 0.7f ? TEXT("high") : Mor > 0.5f ? TEXT("fair") : Mor > 0.35f ? TEXT("low") : TEXT("poor"), Mor * 100.f, CountAboard());
 		if (Low > 0) { Line += FString::Printf(TEXT(", %d in low spirits"), Low); }
 		if (Pressed > 0) { Line += FString::Printf(TEXT(", %d requests outstanding"), Pressed); }
+		Line += FString::Printf(TEXT("; the ship %s you"), Tr > 0.5f ? TEXT("would follow") : Tr > 0.2f ? TEXT("trusts") : Tr > -0.1f ? TEXT("is reserving judgement on") : Tr > -0.4f ? TEXT("doubts") : TEXT("has lost faith in"));
+		if (Transfers > 0) { Line += FString::Printf(TEXT(", %d put in for transfer"), Transfers); }
+		if (FMath::Abs(Rifts - RiftsReported) >= 5) { RiftsReported = Rifts; Line += FString::Printf(TEXT(", %d carry a grudge against a people or a power"), Rifts); }
 		Line += TEXT(".");
 		Report(ECrewDepartment::Command, Line, Mor < 0.35f ? FLinearColor(1.f, 0.6f, 0.4f) : FLinearColor(0.75f, 0.9f, 1.f), true);
 	}
@@ -1120,6 +1183,10 @@ void UCrewRosterSubsystem::PersonalMoment(FCrewMember& M, const FCrewShipState& 
 	{
 	case 0: if (FCrewMember* O = Colleague(Rng.FRand() < 0.75f))
 		{
+			// A friendship across a grudge comes slower, and softens it when it comes.
+			const float B = M.Bias(FName(*O->Species));
+			if (B < -0.2f && Rng.FRand() < -B) { break; }
+			if (B < 0.f) { MoveBias(M, FName(*O->Species), 0.05f, O->FullName()); }
 			const FString Hobby = Pick(Rng, Hobbies);
 			Bond(M, *O, 0.25f, ECrewRelation::Friend);
 			Record(M, ECrewEventKind::Moment, FString::Printf(TEXT("Struck up a friendship with %s over %s."), *O->Styled(), *Hobby), false, { O->Id });
@@ -1130,6 +1197,7 @@ void UCrewRosterSubsystem::PersonalMoment(FCrewMember& M, const FCrewShipState& 
 			FCrewMember* O = nullptr;
 			for (const FCrewRelationship& R : M.Relationships) { if (R.Kind == ECrewRelation::Rival) { O = FindMutable(R.Other); break; } }
 			if (!O) { O = Colleague(true); }
+			if (O && O->IsAboard() && M.Bias(FName(*O->Species)) < -0.25f && Rng.FRand() < 0.5f) { Incident(M, *O, true); break; }
 			if (O && O->IsAboard())
 			{
 				Bond(M, *O, -0.15f, ECrewRelation::Rival);
@@ -1176,6 +1244,15 @@ void UCrewRosterSubsystem::PersonalMoment(FCrewMember& M, const FCrewShipState& 
 	case 10: M.Stress = FMath::Max(M.Stress - 0.35f, 0.f);
 		{
 			const bool bMistake = bOnWatch;
+			if (M.Trust < -0.3f && bOnWatch)
+			{
+				// It comes out as a refusal when they do not believe in the captain.
+				Record(M, ECrewEventKind::Moment, TEXT("Refused an order on watch and said why; written up."), true);
+				Remember(M, TEXT("Said no"), -0.05f);
+				M.Trust = FMath::Max(M.Trust - 0.05f, -1.f);
+				Report(M.Department, FString::Printf(TEXT("%s refused an order on watch, Captain. I've written it up; I think it's you %s has the quarrel with."), *M.Styled(), *M.Pronoun), FLinearColor(1.f, 0.6f, 0.5f), true);
+				break;
+			}
 			Record(M, ECrewEventKind::Moment, bMistake ? TEXT("Lost the thread on watch: a mistake the station caught, and a dressing down.") : TEXT("An outburst in the mess; walked it off."), true);
 			Remember(M, TEXT("Came apart for a moment"), -0.15f);
 			Report(bMistake ? M.Department : ECrewDepartment::Command, FString::Printf(TEXT("%s %s; I'd keep an eye on %s."), *M.Styled(), bMistake ? TEXT("fumbled the station on watch") : TEXT("lost their temper off watch"), M.Pronoun == TEXT("they") ? TEXT("them") : (M.Pronoun == TEXT("she") ? TEXT("her") : TEXT("him"))), FLinearColor(1.f, 0.75f, 0.4f), true);
@@ -1184,6 +1261,36 @@ void UCrewRosterSubsystem::PersonalMoment(FCrewMember& M, const FCrewShipState& 
 		if (Rng.FRand() < 0.3f) { Report(ECrewDepartment::Services, FString::Printf(TEXT("A birthday in the mess for %s; the galley did a cake."), *M.Styled())); }
 		break;
 	default: break;
+	}
+}
+
+bool UCrewRosterSubsystem::DevIncident(int32 Offender, int32 Victim)
+{
+	FCrewMember* M = FindMutable(Offender); FCrewMember* O = FindMutable(Victim);
+	if (!M || !O || M == O) { return false; }
+	Incident(*M, *O, true);
+	Dirty(); RequestSave();
+	return true;
+}
+
+void UCrewRosterSubsystem::Incident(FCrewMember& M, FCrewMember& O, bool bBias)
+{
+	// Words across a grudge, in the mess or on the watch: the one it was said to loses a little faith in a ship
+	// that lets it pass, the one who said it hardens unless the captain answers it. Two a day reach the log.
+	Bond(M, O, -0.2f, ECrewRelation::Rival);
+	const FString What = M.Activity == ECrewActivity::OnWatch ? TEXT("on the watch") : TEXT("in the mess");
+	const FString Them = O.Pronoun == TEXT("they") ? TEXT("them") : (O.Pronoun == TEXT("she") ? TEXT("her") : TEXT("him"));
+	Record(M, ECrewEventKind::Moment, FString::Printf(TEXT("Words with %s %s about what %ss are like; it went too far."), *O.Styled(), *What, *O.Species), true, { O.Id });
+	Record(O, ECrewEventKind::Moment, FString::Printf(TEXT("%s had words for %s %s, and for %ss generally."), *M.Styled(), *Them, *What, *O.Species), true, { M.Id });
+	Remember(O, FString::Printf(TEXT("What %s said about %ss"), *M.FullName(), *O.Species), -0.12f);
+	O.Trust = FMath::Max(O.Trust - 0.03f, -1.f);
+	O.Stress = FMath::Min(O.Stress + 0.05f, 1.f);
+	bool bHad = false; for (FCrewSuspicion& X : O.Suspicions) { if (X.Of == M.Id) { X.Weight = FMath::Min(X.Weight + 0.2f, 1.f); bHad = true; } }
+	if (!bHad) { FCrewSuspicion S; S.Of = M.Id; S.Weight = 0.3f; S.Why = FString::Printf(TEXT("what %s said about %ss"), *M.Pronoun, *O.Species); S.SinceDay = GetDay(); O.Suspicions.Add(S); }
+	LastIncidentOffender = M.Id; LastIncidentVictim = O.Id; LastIncidentDay = GetDay();
+	if (IncidentsToday++ < 2)
+	{
+		Report(ECrewDepartment::Command, FString::Printf(TEXT("An incident %s: %s had words for %s about %ss. %s let it pass; I'd rather you didn't."), *What, *M.Styled(), *O.Styled(), *O.Species, *DepartmentName(M.Department)), FLinearColor(1.f, 0.7f, 0.5f), true);
 	}
 }
 
@@ -1197,6 +1304,126 @@ bool UCrewRosterSubsystem::Report(ECrewDepartment From, const FString& Text, con
 }
 
 // ---- the ship's events ----
+
+void UCrewRosterSubsystem::MoveBias(FCrewMember& M, FName Group, float Delta, const FString& Reason)
+{
+	if (Group.IsNone() || FMath::IsNearlyZero(Delta)) { return; }
+	for (FCrewBias& B : M.Biases)
+	{
+		if (B.Group == Group)
+		{
+			// Hardened dispositions move slowly; what moves one toward nothing is easier than what moves it away.
+			const bool bSoftening = (B.Disposition > 0.f) != (Delta > 0.f);
+			B.Disposition = FMath::Clamp(B.Disposition + Delta * (bSoftening ? 1.f : 0.6f) * (1.f - FMath::Abs(B.Disposition) * 0.5f), -1.f, 1.f);
+			if (FMath::Abs(B.Disposition) < 0.05f) { B.Disposition = 0.f; B.Reason = TEXT("got over it"); }
+			else if (!Reason.IsEmpty() && FMath::Abs(Delta) > 0.08f) { B.Reason = Reason; }
+			return;
+		}
+	}
+	if (FMath::Abs(Delta) >= 0.05f) { FCrewBias B; B.Group = Group; B.Disposition = FMath::Clamp(Delta, -1.f, 1.f); B.Reason = Reason; M.Biases.Add(B); }
+}
+
+void UCrewRosterSubsystem::Experience(const FCrewExperience& E)
+{
+	// The event's plain valence for a neutral person, then what each person is makes of it.
+	struct FKind { const TCHAR* Tag; float Valence; float StressK; };
+	static const FKind Kinds[] = {
+		{ TEXT("Combat.EnemyDestroyed"), 0.08f, 0.05f }, { TEXT("Combat.ShipSpared"), 0.04f, 0.f }, { TEXT("Combat.FriendlyLost"), -0.3f, 0.2f },
+		{ TEXT("Contact.First"), 0.15f, 0.05f }, { TEXT("Contact.Friendly"), 0.08f, 0.f }, { TEXT("Contact.Hostile"), -0.08f, 0.15f },
+		{ TEXT("Rescue"), 0.2f, 0.05f }, { TEXT("Loss.Civilians"), -0.25f, 0.15f }, { TEXT("Parley.Held"), 0.12f, 0.f }, { TEXT("Parley.Failed"), -0.1f, 0.05f },
+		{ TEXT("Away.Danger"), -0.05f, 0.25f }, { TEXT("Away.Routine"), 0.06f, 0.f }, { TEXT("Order.Refused"), -0.12f, 0.1f },
+		{ TEXT("Promise.Kept"), 0.15f, 0.f }, { TEXT("Promise.Broken"), -0.25f, 0.05f }, { TEXT("Captain.Fair"), 0.1f, 0.f }, { TEXT("Captain.Unfair"), -0.15f, 0.05f },
+		{ TEXT("Discovery"), 0.1f, 0.f }, { TEXT("Shore"), 0.1f, 0.f },
+	};
+	float Valence = 0.05f, StressK = 0.05f;
+	for (const FKind& K : Kinds) { if (E.Tag == FName(K.Tag)) { Valence = K.Valence; StressK = K.StressK; } }
+	const FString TagS = E.Tag.ToString();
+	const bool bKill = TagS == TEXT("Combat.EnemyDestroyed"), bSpared = TagS == TEXT("Combat.ShipSpared"), bFirst = TagS == TEXT("Contact.First"), bRescue = TagS == TEXT("Rescue");
+	const bool bCivilians = TagS == TEXT("Loss.Civilians"), bDanger = TagS == TEXT("Away.Danger"), bHostile = TagS == TEXT("Contact.Hostile"), bFriendlyContact = TagS == TEXT("Contact.Friendly") || TagS == TEXT("Parley.Held");
+	const bool bUnfair = TagS == TEXT("Captain.Unfair"), bFair = TagS == TEXT("Captain.Fair"), bFriendlyLost = TagS == TEXT("Combat.FriendlyLost");
+	const float I = FMath::Clamp(E.Intensity, 0.05f, 1.f);
+	int32 Reached = 0;
+	for (FCrewMember& M : Roster)
+	{
+		if (!M.IsAboard() && M.Condition != ECrewCondition::Away) { continue; }
+		const bool bThere = E.Involved.Contains(M.Id);
+		if (E.Involved.Num() > 0 && !bThere && I < 0.3f) { continue; }   // a small thing stays with those who were there
+		float Share = bThere ? 1.f : 0.35f;
+		float V = Valence;
+		const float Emp = M.Facet(ECrewFacet::Empathy) / 100.f, Cur = M.Facet(ECrewFacet::Curiosity) / 100.f, Cour = M.Facet(ECrewFacet::Courage) / 100.f, Disc = M.Facet(ECrewFacet::Discipline) / 100.f;
+		const float Bias = M.Bias(E.Group);
+		// Who they are reads the event.
+		if (bKill) { V = M.HasTrait(TEXT("Pacifist")) ? -0.2f : 0.05f + (1.f - Emp) * 0.1f + (M.HasTrait(TEXT("Veteran")) ? 0.05f : 0.f); V -= FMath::Max(Bias, 0.f) * 0.3f; V += FMath::Max(-Bias, 0.f) * 0.15f; }
+		if (bSpared) { V = (M.HasTrait(TEXT("Pacifist")) ? 0.2f : (Emp - 0.5f) * 0.3f) - FMath::Max(-Bias, 0.f) * 0.3f; }
+		if (bFirst) { V *= 0.5f + Cur; }
+		if (bRescue) { V *= 0.5f + Emp; }
+		if (bCivilians) { V *= 0.5f + Emp; }
+		if (bDanger) { V = bThere ? (M.HasTrait(TEXT("ThrillSeeker")) ? 0.18f : (Cour - 0.6f) * 0.3f) : 0.f; }
+		if (bHostile) { V -= FMath::Max(-Bias, 0.f) * 0.15f; }
+		if (bFriendlyContact) { V += FMath::Max(Bias, 0.f) * 0.1f; }
+		if (bFriendlyLost) { V *= 0.7f + Emp * 0.6f; }
+		if (bUnfair || bFair) { V *= (E.Group.IsNone() || M.Species == E.Group.ToString()) ? 1.5f : 1.f; if (bUnfair && M.Facet(ECrewFacet::Empathy) < 35.f && Bias < -0.2f) { V = 0.03f; } }
+		// Their own people at the place live it twice; a fear of the group is a fear met.
+		bool bTied = false; for (const FCrewTie& T : M.Ties) { if (!E.Place.IsEmpty() && T.Place == E.Place) { bTied = true; } }
+		if (bTied) { Share = 1.f; V *= 2.f; }
+		float Stress = StressK * I * Share * (1.4f - Cour) * (1.f - FMath::Clamp(M.Trust, 0.f, 1.f) * 0.3f);
+		for (const FCrewWant& W : M.Wants) { if (W.bFear && !E.Group.IsNone() && W.Tag.ToString().Contains(E.Group.ToString())) { Stress += 0.12f * I; V -= 0.05f; } }
+		const float Weight = V * I * Share;
+		if (FMath::Abs(Weight) < 0.01f && Stress < 0.02f) { continue; }
+		++Reached;
+		M.Stress = FMath::Clamp(M.Stress + Stress, 0.f, 1.f);
+		if (bHostile || bDanger || bFriendlyLost) { M.Needs[(int32)ECrewNeed::Safety] = FMath::Max(M.Needs[(int32)ECrewNeed::Safety] - 0.15f * I * Share, 0.f); }
+		Remember(M, E.Text, Weight, FMath::Abs(Weight) > 0.25f || (bTied && FMath::Abs(Weight) > 0.12f));
+		if (bThere || bTied || FMath::Abs(Weight) > 0.08f)
+		{
+			Record(M, ECrewEventKind::Mission, FString::Printf(TEXT("%s%s"), *E.Text, bThere ? TEXT("") : TEXT(" (heard of it)")), bThere && FMath::Abs(Weight) > 0.1f, E.Involved);
+		}
+		// The captain's choice, as they saw it.
+		if (E.bCaptainsChoice) { M.Trust = FMath::Clamp(M.Trust + Weight * 0.6f * (0.7f + Disc * 0.6f), -1.f, 1.f); }
+		// A disposition moved by the experience: a group met well softens, a group met badly hardens.
+		if (!E.Group.IsNone())
+		{
+			if (bFriendlyContact || bFirst || bRescue) { MoveBias(M, E.Group, 0.06f * I * Share, FString::Printf(TEXT("met them well: %s"), *E.Text)); }
+			if (bHostile || bFriendlyLost || bCivilians) { MoveBias(M, E.Group, -0.08f * I * Share, E.Text); }
+			if (bKill && !M.HasTrait(TEXT("Pacifist"))) { MoveBias(M, E.Group, -0.02f * I * Share, FString()); }
+		}
+		// Now and then the event leaves a mark that stays.
+		if (bThere && bDanger && Rng.FRand() < 0.15f * I) { M.Traits.AddUnique(TEXT("Veteran")); }
+		if (bCivilians && Weight < -0.15f && Rng.FRand() < 0.3f) { bool bHas = false; for (const FCrewWant& W : M.Wants) { if (W.Tag == TEXT("LosingPeople")) { bHas = true; } } if (!bHas) { FCrewWant W; W.Tag = TEXT("LosingPeople"); W.Text = TEXT("failing the people in their charge"); W.bFear = true; W.SinceDay = GetDay(); M.Wants.Add(W); } }
+		if (bRescue && bThere && M.HasTrait(TEXT("ThrillSeeker"))) { for (FCrewWant& W : M.Wants) { if (W.Tag == TEXT("AwayMission") && !W.bGranted) { W.bGranted = true; } } }
+		if (bKill && M.HasTrait(TEXT("Pacifist")) && E.bCaptainsChoice && Rng.FRand() < 0.2f * I) { M.Traits.AddUnique(TEXT("Disillusioned")); }
+		UpdateMood(M);
+	}
+	if (Reached > 0)
+	{
+		Dirty(); RequestSave();
+		UE_LOG(LogTemp, Log, TEXT("Crew: experience %s (%.2f) reached %d: %s"), *TagS, I, Reached, *E.Text);
+	}
+}
+
+float UCrewRosterSubsystem::MeanTrust() const
+{
+	float Sum = 0.f; int32 N = 0;
+	for (const FCrewMember& M : Roster) { if (M.IsAboard()) { Sum += M.Trust; ++N; } }
+	return N > 0 ? Sum / N : 0.f;
+}
+
+float UCrewRosterSubsystem::Cohesion() const
+{
+	// Trust in the captain, the bonds between people, and the biases that divide them.
+	float Trust = 0.f, Bonds = 0.f, Division = 0.f; int32 N = 0;
+	for (const FCrewMember& M : Roster)
+	{
+		if (!M.IsAboard()) { continue; }
+		++N; Trust += (M.Trust + 1.f) * 0.5f;
+		float Pos = 0.f; for (const FCrewRelationship& R : M.Relationships) { if (R.Affinity > 0.2f) { Pos += 1.f; } }
+		Bonds += FMath::Min(Pos, 4.f) / 4.f;
+		float Worst = 0.f; for (const FCrewBias& B : M.Biases) { if (B.Disposition < 0.f) { Worst = FMath::Max(Worst, -B.Disposition); } }
+		Division += Worst;
+	}
+	if (N == 0) { return 0.5f; }
+	return FMath::Clamp(0.5f * Trust / N + 0.3f * Bonds / N + 0.2f * (1.f - Division / N), 0.f, 1.f);
+}
 
 void UCrewRosterSubsystem::NoteAlert(EAlertState NewAlert)
 {
@@ -1552,6 +1779,19 @@ bool UCrewRosterSubsystem::Reprimand(int32 Id, const FString& For, FString& OutR
 	if (!M->IsAboard()) { OutReply = FString::Printf(TEXT("%s is %s"), *M->Styled(), *ConditionName(M->Condition).ToLower()); return false; }
 	++M->Service.Reprimands;
 	Record(*M, ECrewEventKind::Reprimanded, FString::Printf(TEXT("Reprimanded by the captain%s."), For.IsEmpty() ? TEXT("") : *(TEXT(" for ") + For)), true);
+	// Answering an incident: the offender's grudge is squashed a little and the one it was said to sees it.
+	if (LastIncidentOffender == M->Id && GetDay() - LastIncidentDay <= 2)
+	{
+		if (FCrewMember* V = FindMutable(LastIncidentVictim))
+		{
+			MoveBias(*M, FName(*V->Species), 0.15f, TEXT("the captain's reprimand"));
+			V->Trust = FMath::Min(V->Trust + 0.12f, 1.f); Remember(*V, TEXT("The captain answered it"), 0.12f);
+			for (FCrewSuspicion& X : V->Suspicions) { if (X.Of == M->Id) { X.Weight *= 0.5f; } }
+			FCrewExperience E; E.Tag = TEXT("Captain.Fair"); E.Intensity = 0.4f; E.Group = FName(*V->Species); E.Text = FString::Printf(TEXT("The captain came down on %s over what was said about %ss"), *M->Styled(), *V->Species); E.bCaptainsChoice = true;
+			Experience(E);
+		}
+		LastIncidentOffender = -1;
+	}
 	const bool bProud = M->HasTrait(TEXT("WoundedPride"));
 	Remember(*M, TEXT("Reprimanded"), bProud ? -0.25f : -0.15f, bProud);
 	M->Stress = FMath::Min(M->Stress + 0.15f, 1.f);
@@ -1620,6 +1860,7 @@ bool UCrewRosterSubsystem::Talk(int32 Id, const FString& How, FString& OutReply)
 	M->Needs[(int32)ECrewNeed::Recognition] = FMath::Min(M->Needs[(int32)ECrewNeed::Recognition] + 0.3f, 1.f);
 	if (H == TEXT("listen"))
 	{
+		M->Trust = FMath::Min(M->Trust + 0.04f, 1.f);
 		M->Stress = FMath::Max(M->Stress - 0.15f * (0.5f + M->Facet(ECrewFacet::Empathy) / 200.f), 0.f);
 		Remember(*M, TEXT("The captain listened"), 0.1f);
 		OutReply = Want ? FString::Printf(TEXT("%s talks, in the end, about %s"), *M->Styled(), *Want->Text) : FString::Printf(TEXT("%s has nothing pressing, and is glad to be asked"), *M->Styled());
@@ -1643,6 +1884,8 @@ bool UCrewRosterSubsystem::Talk(int32 Id, const FString& How, FString& OutReply)
 	{
 		if (Want)
 		{
+			M->Trust = FMath::Min(M->Trust + 0.06f, 1.f);
+			const_cast<FCrewWant*>(Want)->bPromised = true; const_cast<FCrewWant*>(Want)->PromisedDay = GetDay();
 			Remember(*M, FString::Printf(TEXT("The captain promised %s"), *Want->Text), 0.18f);
 			OutReply = FString::Printf(TEXT("%s will hold you to %s"), *M->Styled(), *Want->Text);
 			Record(*M, ECrewEventKind::Moment, FString::Printf(TEXT("The captain promised %s."), *Want->Text));
@@ -1705,7 +1948,7 @@ FString UCrewRosterSubsystem::Memorial()
 	return Names.Num() > 0 ? FString::Printf(TEXT("The ship stands for %s"), *FString::Join(Names, TEXT(", "))) : TEXT("The ship stands a moment for those lost elsewhere");
 }
 
-FCrewCheck UCrewRosterSubsystem::Check(ECrewSkill Skill, float Difficulty, const TArray<int32>& InIds, float CaptainBonus)
+FCrewCheck UCrewRosterSubsystem::Check(ECrewSkill Skill, float Difficulty, const TArray<int32>& InIds, float CaptainBonus, FName Group)
 {
 	FCrewCheck Out;
 	TArray<int32> Ids = InIds;
@@ -1729,6 +1972,9 @@ FCrewCheck UCrewRosterSubsystem::Check(ECrewSkill Skill, float Difficulty, const
 		float E = M->Skill(Skill) + (M->Facet(ECrewFacet::Discipline) - 50.f) / 10.f - M->Stress * 20.f - (1.f - M->Need(ECrewNeed::Rest)) * 12.f;
 		if (M->Condition == ECrewCondition::Injured) { E -= 15.f; }
 		if (M->HasTrait(TEXT("Perfectionist"))) { E += 4.f; }
+		E += M->Trust * 6.f;   // steadier under a captain they believe in
+		// Dealing with a people or a power: a grudge shows, a sympathy helps, most of all in a parley or a search.
+		if (!Group.IsNone()) { const float B = M->Bias(Group); E += (Skill == ECrewSkill::Diplomacy || Skill == ECrewSkill::Security) ? (B < 0.f ? B * 20.f : B * 8.f) : B * 4.f; }
 		if (E > Best) { Best = E; Out.BestId = Id; }
 		if (E < Worst) { Worst = E; Out.WorstId = Id; }
 		Sum += E; ++N;

@@ -1,4 +1,9 @@
 #include "SpaceVessel.h"
+#include "BorgCube.h"
+#include "Kismet/GameplayStatics.h"
+#include "ShipSystemsComponent.h"
+#include "PersonPawn.h"
+#include "CrewRoster.h"
 
 #include "Components/DynamicMeshComponent.h"
 #include "ExplosionEffect.h"
@@ -289,6 +294,7 @@ float ASpaceVessel::TakeDamage(float DamageAmount, const FDamageEvent& DamageEve
 		Shield->RegisterImpact(Point, FMath::Clamp(Applied / 20.f, 0.3f, 2.5f));
 	}
 	Health -= Applied;
+	if (DamageCauser) { LastDamageCauser = DamageCauser; }
 	if (Health <= 0.f && !bDying)
 	{
 		BeginDying();
@@ -300,6 +306,27 @@ void ASpaceVessel::BeginDying()
 {
 	bDying = true;
 	DeathTimer = DeathSeconds;
+	// The ship's people live it: an enemy destroyed, or a friend lost, and by whose hand.
+	if (UWorld* W = GetWorld())
+	{
+		APawn* PlayerPawn = UGameplayStatics::GetPlayerPawn(W, 0);
+		AStarshipPawn* Ship = Cast<AStarshipPawn>(PlayerPawn);
+		if (!Ship) { if (const APersonPawn* P = Cast<APersonPawn>(PlayerPawn)) { Ship = P->Craft.Get(); } }
+		if (Ship && Ship->Systems && Ship->Systems->GetRoster() && Cast<AActor>(Ship) != Cast<AActor>(this))
+		{
+			const bool bHostile = IsA<ABorgCube>();
+			AActor* Causer = LastDamageCauser.Get();
+			const bool bOurs = Causer && (Causer == Ship || Causer->GetOwner() == Ship);
+			FCrewExperience E;
+			E.Tag = bHostile ? TEXT("Combat.EnemyDestroyed") : TEXT("Combat.FriendlyLost");
+			E.Intensity = bHostile ? 0.7f : 0.9f;
+			E.Group = bHostile ? TEXT("Borg") : TEXT("Federation");
+			E.bCaptainsChoice = bOurs;
+			E.Text = bHostile ? FString::Printf(TEXT("The %s destroyed%s"), *GetDisplayName(), bOurs ? TEXT(" by our hand") : TEXT("")) : FString::Printf(TEXT("The %s lost%s"), *GetDisplayName(), bOurs ? TEXT(" to our own fire") : TEXT(" with all hands"));
+			E.Place = GetDisplayName();
+			Ship->Systems->GetRoster()->Experience(E);
+		}
+	}
 	DeathFlashTimer = 0.f;
 	DeathRng.Initialize(Seed * 13 + 5);
 	Tags.Remove(ASpaceTarget::TargetableTag);

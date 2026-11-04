@@ -60,6 +60,52 @@ struct FCrewTie
 	FString Where() const;
 };
 
+/** A disposition toward a people or a power: -1 hatred .. 1 affection, moved by what they live through. */
+USTRUCT(BlueprintType)
+struct FCrewBias
+{
+	GENERATED_BODY()
+	UPROPERTY(BlueprintReadOnly) FName Group;
+	UPROPERTY(BlueprintReadOnly) float Disposition = 0.f;
+	/** Why, in a few words, for the file. */
+	UPROPERTY(BlueprintReadOnly) FString Reason;
+};
+
+/** A suspicion of someone aboard, with its reason; rumour carries it. */
+USTRUCT(BlueprintType)
+struct FCrewSuspicion
+{
+	GENERATED_BODY()
+	UPROPERTY(BlueprintReadOnly) int32 Of = -1;
+	UPROPERTY(BlueprintReadOnly) float Weight = 0.f;
+	UPROPERTY(BlueprintReadOnly) FString Why;
+	UPROPERTY(BlueprintReadOnly) int32 SinceDay = 0;
+};
+
+/** Something that happened, for everyone it reaches to live in their own terms: a mission's turn, an encounter,
+ *  the captain's choice. Tags (dotted): Combat.EnemyDestroyed, Combat.ShipSpared, Combat.FriendlyLost,
+ *  Contact.First, Contact.Friendly, Contact.Hostile, Rescue, Loss.Civilians, Parley.Held, Parley.Failed,
+ *  Away.Danger, Away.Routine, Order.Refused, Promise.Kept, Promise.Broken, Captain.Fair, Captain.Unfair,
+ *  Discovery, Shore. */
+USTRUCT(BlueprintType)
+struct FCrewExperience
+{
+	GENERATED_BODY()
+	UPROPERTY(BlueprintReadWrite) FName Tag;
+	/** 0..1: how big it was. */
+	UPROPERTY(BlueprintReadWrite) float Intensity = 0.5f;
+	/** Those who were there; empty means the whole ship hears of it (at less than being there). */
+	UPROPERTY(BlueprintReadWrite) TArray<int32> Involved;
+	/** The people or power it concerned (Klingon, Borg, Vulcan, Federation...), if any. */
+	UPROPERTY(BlueprintReadWrite) FName Group;
+	/** Where, by the galaxy's name, if anywhere: those with people there live it twice. */
+	UPROPERTY(BlueprintReadWrite) FString Place;
+	/** The plain description for the histories ("the Klingon cruiser destroyed off Cestus III"). */
+	UPROPERTY(BlueprintReadWrite) FString Text;
+	/** The captain decided it: trust moves with how each person saw the choice. */
+	UPROPERTY(BlueprintReadWrite) bool bCaptainsChoice = false;
+};
+
 /** A bond with another person. */
 USTRUCT(BlueprintType)
 struct FCrewRelationship
@@ -82,6 +128,9 @@ struct FCrewWant
 	/** Day it was taken up; a desire ignored for long is a pressure. */
 	UPROPERTY(BlueprintReadOnly) int32 SinceDay = 0;
 	UPROPERTY(BlueprintReadOnly) bool bGranted = false;
+	/** The captain promised it, on this day. */
+	UPROPERTY(BlueprintReadOnly) bool bPromised = false;
+	UPROPERTY(BlueprintReadOnly) int32 PromisedDay = 0;
 };
 
 /** A moment that still weighs on the mood, decaying over days unless permanent. */
@@ -157,6 +206,12 @@ struct FCrewMember
 	UPROPERTY(BlueprintReadOnly) TArray<FCrewRelationship> Relationships;
 	/** Family and friends elsewhere. */
 	UPROPERTY(BlueprintReadOnly) TArray<FCrewTie> Ties;
+	/** Opinion of the captain: -1 would see them relieved .. 1 would follow them anywhere. */
+	UPROPERTY(BlueprintReadOnly) float Trust = 0.2f;
+	UPROPERTY(BlueprintReadOnly) TArray<FCrewBias> Biases;
+	UPROPERTY(BlueprintReadOnly) TArray<FCrewSuspicion> Suspicions;
+	/** Trust and biases have been given to this record (older saves get theirs on load). */
+	UPROPERTY(BlueprintReadOnly) bool bOpinionsSeeded = false;
 	UPROPERTY(BlueprintReadOnly) ECrewCondition Condition = ECrewCondition::Fit;
 	/** Ship's hours until a wound heals or a leave ends. */
 	UPROPERTY(BlueprintReadOnly) float ConditionHours = 0.f;
@@ -179,6 +234,8 @@ struct FCrewMember
 	float Skill(ECrewSkill S) const { return Skills.IsValidIndex((int32)S) ? Skills[(int32)S] : 0.f; }
 	float Facet(ECrewFacet F) const { return Facets.IsValidIndex((int32)F) ? Facets[(int32)F] : 50.f; }
 	float Need(ECrewNeed N) const { return Needs.IsValidIndex((int32)N) ? Needs[(int32)N] : 0.5f; }
+	/** Disposition toward a people or power (0 when none is held). */
+	float Bias(FName Group) const;
 	bool HasTrait(FName T) const { return Traits.Contains(T); }
 	const FCrewRelationship* RelationWith(int32 Other) const;
 };
@@ -287,6 +344,13 @@ public:
 	/** The galaxy's own names for the ties generated as placeholders: worlds, stations and ships. */
 	void BindPlaces(const TArray<FString>& Worlds, const TArray<FString>& Stations, const TArray<FString>& Ships);
 	bool HasUnboundTies() const;
+	/** Something happened: everyone it reaches lives it in their own terms (see FCrewExperience). */
+	void Experience(const FCrewExperience& E);
+	/** A disposition moved by experience: toward a group, by this much, for this reason. */
+	void MoveBias(FCrewMember& M, FName Group, float Delta, const FString& Reason);
+	/** How the ship holds together: trust, bonds and the biases that divide it, 0..1. */
+	UFUNCTION(BlueprintPure, Category = "Crew") float Cohesion() const;
+	UFUNCTION(BlueprintPure, Category = "Crew") float MeanTrust() const;
 	/** Lines for the bridge log since the last call. */
 	void DrainReports(TArray<FCrewReport>& Out) { Out = MoveTemp(Reports); Reports.Reset(); }
 
@@ -304,8 +368,9 @@ public:
 	bool Discharge(int32 Id, FString& OutReply);
 	/** A day of mourning: grief settles faster, the lost are named. */
 	FString Memorial();
-	/** A check against some of the crew (an empty list: the department's head and second). */
-	FCrewCheck Check(ECrewSkill Skill, float Difficulty, const TArray<int32>& Ids, float CaptainBonus = 0.f);
+	/** A check against some of the crew (an empty list: the department's head and second). A group named makes
+	 *  the party's dispositions toward it count: a prejudiced negotiator does worse, a sympathetic one better. */
+	FCrewCheck Check(ECrewSkill Skill, float Difficulty, const TArray<int32>& Ids, float CaptainBonus = 0.f, FName Group = NAME_None);
 
 	// ---- queries ----
 	const TArray<FCrewMember>& GetRoster() const { return Roster; }
@@ -351,6 +416,8 @@ public:
 	/** A fresh complement from a seed (0: from the clock). */
 	UFUNCTION(BlueprintCallable, Category = "Crew") void NewComplement(int32 Seed, int32 Complement = 502);
 	UFUNCTION(BlueprintCallable, Category = "Crew") void Reset();
+	/** Dev: words across a grudge between these two, for the captain to answer. */
+	bool DevIncident(int32 Offender, int32 Victim);
 	/** Dev: live this many ship's hours at once. */
 	void DevAdvanceHours(int32 HoursToLive, const FCrewShipState& Ship);
 	void Save();
@@ -392,6 +459,9 @@ private:
 	void MakeNamed(FRandomStream& R, FCrewMember& M, const TCHAR* First, const TCHAR* Last, const TCHAR* Species, const TCHAR* Pronoun);
 	void MakeRecruits(const FString& StationName);
 	void MakeTies(FRandomStream& R, FCrewMember& M);
+	void SeedOpinions(FRandomStream& R, FCrewMember& M);
+	void Incident(FCrewMember& M, FCrewMember& O, bool bBias);
+	int32 IncidentsToday = 0;
 	void Reunion(FCrewMember& M, FCrewTie& T, bool bAshore);
 	FString PostingFor(FRandomStream& R, ECrewDepartment Dept, int32 Index) const;
 	void Dirty() { ++Revision; }
@@ -423,6 +493,8 @@ private:
 	int32 LastSyncInjured = 0, LastSyncCritical = 0, LastSyncDead = 0;
 	float ReportCooldownSeconds = 0.f;
 	int32 MourningDays = 0;
+	int32 LastIncidentOffender = -1, LastIncidentVictim = -1, LastIncidentDay = -100;
+	int32 RiftsReported = -100;
 	/** The lost before the medical model's current count began (a new session, a resupply). */
 	int32 DeadBase = 0;
 	FRandomStream Rng;

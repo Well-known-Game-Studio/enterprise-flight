@@ -60,7 +60,7 @@ void UCrewPanel::BuildContent()
 		if (R->GetRevision() == DayLineRevision) { return DayLine; }   // the scans behind it are per revision, not per frame
 		DayLineRevision = R->GetRevision();
 		const float Mor = R->Morale();
-		DayLine = FString::Printf(TEXT("stardate %s, %02d:00, %s watch   %d aboard, %d lost   morale %d%% %s   %d in trouble"), *R->StardateText(), R->GetHourOfDay(), *UCrewRosterSubsystem::WatchName(R->WatchOnDuty()).ToLower(), R->CountAboard(), R->GetLost().Num(), FMath::RoundToInt(Mor * 100.f), Mor > 0.7f ? TEXT("(high)") : Mor > 0.5f ? TEXT("(fair)") : Mor > 0.35f ? TEXT("(low)") : TEXT("(poor)"), R->InTrouble().Num());
+		DayLine = FString::Printf(TEXT("stardate %s, %02d:00, %s watch   %d aboard, %d lost   morale %d%% %s   trust %+.0f   cohesion %d%%   %d in trouble"), *R->StardateText(), R->GetHourOfDay(), *UCrewRosterSubsystem::WatchName(R->WatchOnDuty()).ToLower(), R->CountAboard(), R->GetLost().Num(), FMath::RoundToInt(Mor * 100.f), Mor > 0.7f ? TEXT("(high)") : Mor > 0.5f ? TEXT("(fair)") : Mor > 0.35f ? TEXT("(low)") : TEXT("(poor)"), R->MeanTrust() * 100.f, FMath::RoundToInt(R->Cohesion() * 100.f), R->InTrouble().Num());
 		return DayLine;
 	}, Lcars::Peach, 14.f);
 
@@ -205,6 +205,10 @@ void UCrewPanel::FillFile()
 		if (W.bFear) { Line(FString::Printf(TEXT("Fears %s."), *W.Text), 13.f, Lcars::Salmon); }
 		else { Line(FString::Printf(TEXT("%s %s%s."), W.bGranted ? TEXT("Had") : TEXT("Wants"), *W.Text, W.bGranted ? TEXT("") : *FString::Printf(TEXT(" (since day %d)"), W.SinceDay)), 13.f, W.bGranted ? Lcars::Dim : FLinearColor::White); }
 	}
+	Heading(TEXT("Opinions"));
+	Line(FString::Printf(TEXT("Trusts the captain %+.0f: %s."), M->Trust * 100.f, M->Trust > 0.5f ? TEXT("would follow you anywhere") : M->Trust > 0.2f ? TEXT("believes in you") : M->Trust > -0.1f ? TEXT("reserving judgement") : M->Trust > -0.4f ? TEXT("has doubts") : TEXT("has lost faith")), 13.f, M->Trust < -0.1f ? Lcars::Salmon : FLinearColor::White);
+	for (const FCrewBias& B : M->Biases) { Line(FString::Printf(TEXT("%s %ss (%+.0f): %s."), B.Disposition < -0.4f ? TEXT("Hates") : B.Disposition < 0.f ? TEXT("Wary of") : B.Disposition > 0.4f ? TEXT("Admires") : TEXT("Warm to"), *B.Group.ToString(), B.Disposition * 100.f, *B.Reason), 13.f, B.Disposition < -0.3f ? Lcars::Salmon : FLinearColor::White); }
+	for (const FCrewSuspicion& Su : M->Suspicions) { const FCrewMember* O = R->Find(Su.Of); if (O) { Line(FString::Printf(TEXT("Suspects %s: %s."), *O->Styled(), *Su.Why), 13.f, Lcars::Gold); } }
 	if (M->Ties.Num() > 0)
 	{
 		Heading(TEXT("Elsewhere"));
