@@ -94,6 +94,11 @@ protected:
 	UPROPERTY() TObjectPtr<UCanvasPanel> Canvas;
 	UPROPERTY() TObjectPtr<UVerticalBox> Sidebar;
 	UPROPERTY() TObjectPtr<UBorder> SidebarFiller;
+	UPROPERTY() TArray<TObjectPtr<USizeBox>> SidebarBoxes;
+	UPROPERTY() TArray<TObjectPtr<UTextBlock>> SidebarLabels;
+	float SidebarHeight = 0.f;
+	/** Size the sidebar's buttons to the column: full height when they fit, evenly shrunk when they do not. */
+	void FitSidebar();
 	UPROPERTY() TObjectPtr<UBorder> ContentBorder;
 	UPROPERTY() TObjectPtr<UVerticalBox> Content;
 	UPROPERTY() TObjectPtr<UTextBlock> TitleText;

@@ -127,6 +127,21 @@ void ULcarsPanel::Unbind(UButton* Button)
 	}
 }
 
+void ULcarsPanel::FitSidebar()
+{
+	// The column is a fixed height: with more buttons than it holds at full size, every button shrinks evenly
+	// (never below 26 px) and its label with it, so a long list of boards or decks still fits the frame.
+	const int32 N = SidebarBoxes.Num();
+	if (N == 0 || SidebarHeight <= 0.f) { return; }
+	const float Each = FMath::Clamp((SidebarHeight - (N - 1) * Lcars::Gap) / N, 26.f, Lcars::ButtonH);
+	const float FontSize = Each >= 38.f ? 14.f : Each >= 31.f ? 12.f : 11.f;
+	for (int32 i = 0; i < N; ++i)
+	{
+		if (SidebarBoxes[i]) { SidebarBoxes[i]->SetHeightOverride(Each); }
+		if (SidebarLabels[i]) { SidebarLabels[i]->SetFont(Lcars::Font(FontSize)); }
+	}
+}
+
 bool ULcarsPanel::ClickButton(const FString& Label)
 {
 	const FString Want = Label.TrimStartAndEnd();
@@ -150,13 +165,16 @@ UButton* ULcarsPanel::AddSidebarButton(const FString& Label, const FLinearColor&
 	if (!Sidebar) { return nullptr; }
 	// The first block of the column takes the elbow's inner notch: it is drawn under it, so just a plain block.
 	const FVector4 Radii(0.f, 0.f, 0.f, 0.f);
-	UButton* Button = Lcars::MakeButton(WidgetTree, Label, Color, nullptr, &Radii);
+	UTextBlock* LabelText = nullptr;
+	UButton* Button = Lcars::MakeButton(WidgetTree, Label, Color, &LabelText, &Radii);
 	USizeBox* Box = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
 	Box->SetHeightOverride(Lcars::ButtonH);
 	Box->AddChild(Button);
 	// Insert before the filler so the filler stays last.
 	const int32 Index = SidebarFiller ? Sidebar->GetChildIndex(SidebarFiller) : Sidebar->GetChildrenCount();
 	Sidebar->InsertChildAt(Index, Box);
+	SidebarBoxes.Add(Box); SidebarLabels.Add(LabelText);
+	FitSidebar();
 	if (UVerticalBoxSlot* S = Cast<UVerticalBoxSlot>(Box->Slot))
 	{
 		S->SetPadding(FMargin(0.f, 0.f, 0.f, Lcars::Gap));
@@ -277,7 +295,8 @@ void ULcarsPanel::BuildFrame()
 	// Sidebar column between the elbows: buttons, then a filler block to the bottom elbow.
 	Sidebar = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("Sidebar"));
 	const float SideY = ElbowH + Gap;
-	Place(Sidebar, 0.f, SideY, SidebarW, H - SideY - ElbowH - Gap, 0);
+	SidebarHeight = H - SideY - ElbowH - Gap;
+	Place(Sidebar, 0.f, SideY, SidebarW, SidebarHeight, 0);
 	SidebarFiller = MakeBlock(WidgetTree, Lilac, FVector4(0.f, 0.f, 0.f, 0.f));
 	if (UVerticalBoxSlot* S = Sidebar->AddChildToVerticalBox(SidebarFiller)) { S->SetSize(FSlateChildSize(ESlateSizeRule::Fill)); }
 

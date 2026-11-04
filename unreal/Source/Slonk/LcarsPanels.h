@@ -106,7 +106,7 @@ protected:
 	virtual void BuildContent() override;
 	virtual FString PanelTitle() const override { return TEXT("Turbolift"); }
 	virtual FLinearColor FrameColor() const override { return Lcars::Tan; }
-	virtual FVector2D PanelSize() const override { return FVector2D(760.0, 440.0); }
+	virtual FVector2D PanelSize() const override { return FVector2D(760.0, 540.0); }
 };
 
 /** ; : the chief medical officer's board. The crew by condition, sickbay and its supplies, life support and the air,
