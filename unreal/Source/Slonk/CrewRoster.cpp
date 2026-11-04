@@ -736,7 +736,17 @@ void UCrewRosterSubsystem::Candidates(const FString& Compartment, TArray<int32>&
 {
 	// Those in the compartment hit (within the last ship's hour) are taken first; the rest of the fit crew only
 	// once they are spent.
-	OutLocal = (!Compartment.IsEmpty() && Hours - LastHitHours < 1.0) ? PresentIn(Compartment, true) : TArray<int32>();
+	OutLocal.Reset();
+	if (!Compartment.IsEmpty() && Hours - LastHitHours < 1.0)
+	{
+		// The compartment of the latest hit first, then the others struck within the hour.
+		OutLocal = PresentIn(Compartment, true);
+		for (int32 i = RecentHitCompartments.Num() - 1; i >= 0; --i)
+		{
+			if (RecentHitCompartments[i].Key == Compartment || Hours - RecentHitCompartments[i].Value >= 1.0) { continue; }
+			for (int32 Id : PresentIn(RecentHitCompartments[i].Key, true)) { OutLocal.AddUnique(Id); }
+		}
+	}
 	TSet<int32> Local(OutLocal);
 	OutElsewhere.Reset();
 	for (const FCrewMember& M : Roster) { if (M.IsFit() && M.IsAboard() && !Local.Contains(M.Id)) { OutElsewhere.Add(M.Id); } }
@@ -1190,6 +1200,9 @@ void UCrewRosterSubsystem::NoteAlert(EAlertState NewAlert)
 void UCrewRosterSubsystem::NoteHitCompartment(const FString& Compartment)
 {
 	LastHitCompartment = Compartment; LastHitHours = Hours;
+	// Several hits can land before the next reconciliation; each keeps its compartment in the draw for the hour.
+	for (int32 i = RecentHitCompartments.Num() - 1; i >= 0; --i) { if (Hours - RecentHitCompartments[i].Value >= 1.0) { RecentHitCompartments.RemoveAt(i); } }
+	if (!Compartment.IsEmpty()) { RecentHitCompartments.Add(TPair<FString, double>(Compartment, Hours)); }
 }
 
 void UCrewRosterSubsystem::Wound(FCrewMember& M, bool bCritical, const FString& Where)
@@ -1316,7 +1329,7 @@ void UCrewRosterSubsystem::SyncCasualties(float InjuredF, float CriticalF, float
 	{
 		FCrewMember* Patient = (FromSickbay > 0 || Local.Num() + Elsewhere.Num() == 0) ? LongestCritical() : nullptr;
 		if (Patient) { --FromSickbay; ++Sickbay; Kill(*Patient, TEXT("Sickbay")); Killed.Add(Patient->Styled()); continue; }
-		if (FCrewMember* M = Take()) { Kill(*M, Where); Killed.Add(M->Styled()); }
+		if (FCrewMember* M = Take()) { Kill(*M, bFreshHit && M->Where != TEXT("Sickbay") && M->Activity != ECrewActivity::Leave ? M->Where : Where); Killed.Add(M->Styled()); }
 	}
 	// Under treatment: more than before means new wounds (critical first while the model's critical count is
 	// above ours), fewer means the longest-treated return to duty.
@@ -1326,7 +1339,7 @@ void UCrewRosterSubsystem::SyncCasualties(float InjuredF, float CriticalF, float
 		FCrewMember* M = Take();
 		if (!M) { break; }
 		const bool bCritical = CountCondition(ECrewCondition::Critical) < Critical;
-		Wound(*M, bCritical, Where); Wounded.Add(M->Styled());
+		Wound(*M, bCritical, bFreshHit && M->Where != TEXT("Sickbay") ? M->Where : Where); Wounded.Add(M->Styled());
 	}
 	for (int32 n = TargetTreat; n < NowTreat; ++n)
 	{
@@ -1351,7 +1364,7 @@ void UCrewRosterSubsystem::SyncCasualties(float InjuredF, float CriticalF, float
 	auto Join = [](const TArray<FString>& Names) { FString S; for (int32 i = 0; i < Names.Num() && i < 3; ++i) { S += (i ? TEXT(", ") : TEXT("")) + Names[i]; } if (Names.Num() > 3) { S += FString::Printf(TEXT(" and %d more"), Names.Num() - 3); } return S; };
 	if (Killed.Num()) { OutLines.Add(FString::Printf(TEXT("Lost %s: %s."), Sickbay == Killed.Num() ? TEXT("in sickbay") : bFreshHit ? *(TEXT("in ") + Where) : TEXT("aboard"), *Join(Killed))); }
 	if (Wounded.Num()) { OutLines.Add(FString::Printf(TEXT("Wounded %s: %s."), bFreshHit ? *(TEXT("in ") + Where) : TEXT("aboard"), *Join(Wounded))); }
-	if (Killed.Num() || Wounded.Num()) { Dirty(); RequestSave(); }
+	Dirty(); RequestSave();   // something moved: a wound, a death, a recovery or the split
 	if (Healed.Num() && Rng.FRand() < 0.3f) { OutLines.Add(FString::Printf(TEXT("Back on their feet: %s."), *Join(Healed))); }
 }
 
@@ -1385,6 +1398,7 @@ void UCrewRosterSubsystem::NoteRepair(const FString& SystemName, bool bUnderFire
 			if (bUnderFire) { Remember(M, FString::Printf(TEXT("%s back under fire"), *SystemName), 0.08f); }
 		}
 	}
+	Dirty(); RequestSave();
 }
 
 void UCrewRosterSubsystem::NoteScan(const FString& Label, int32 Points, bool bDiscovery)
@@ -1433,7 +1447,7 @@ void UCrewRosterSubsystem::NoteStarbase(const FString& StationName)
 		}
 	}
 	if (Ashore > 1) { Report(ECrewDepartment::Command, FString::Printf(TEXT("%d of the crew have people at %s; I've let them go across while we're alongside."), Ashore, *StationName), FLinearColor(0.75f, 0.9f, 1.f), true); }
-	Dirty();
+	Dirty(); RequestSave();
 }
 
 void UCrewRosterSubsystem::NoteResupplyDone(const FString& StationName, TArray<FString>& OutLines)

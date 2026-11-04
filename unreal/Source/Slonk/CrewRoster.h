@@ -412,6 +412,7 @@ private:
 	FString ShipName;
 	FString LastHitCompartment;
 	double LastHitHours = -1000.0;
+	TArray<TPair<FString, double>> RecentHitCompartments;
 	EAlertState Alert = EAlertState::Green;
 	double AlertSinceHours = 0.0;
 	int32 LastSyncInjured = 0, LastSyncCritical = 0, LastSyncDead = 0;
