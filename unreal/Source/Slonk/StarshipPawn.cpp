@@ -3186,10 +3186,11 @@ void AStarshipPawn::HandleCrewCommand(const TArray<FString>& Args)
 		{
 			if (!bDept && !(M.bHead || M.bSecond)) { continue; }
 			if (bDept && M.Department != D) { continue; }
-			if (N++ > 40) { break; }
+			if (N >= 40) { break; }
+			++N;
 			Say(FString::Printf(TEXT("   %3d %-26s %-12s %-20s %-5s mood %d%% %s"), M.Id, *M.Styled(), *UCrewRosterSubsystem::DepartmentName(M.Department), *M.Posting, *UCrewRosterSubsystem::WatchName(M.Watch), FMath::RoundToInt(M.Mood * 100.f), *UCrewRosterSubsystem::ConditionName(M.Condition)), FColor::White, 15.f);
 		}
-		Say(bDept ? FString::Printf(TEXT("%s: %d listed"), *UCrewRosterSubsystem::DepartmentName(D), N) : TEXT("Senior staff (ship crew list <department> for the rest)"));
+		Say(bDept ? FString::Printf(TEXT("%s: %d shown"), *UCrewRosterSubsystem::DepartmentName(D), N) : TEXT("Senior staff (ship crew list <department> for the rest)"));
 	}
 	else if (What == TEXT("trouble"))
 	{
@@ -3264,7 +3265,7 @@ void AStarshipPawn::HandleCrewCommand(const TArray<FString>& Args)
 		for (int32 i = 0; i < Rc.Num(); ++i) { Say(FString::Printf(TEXT("   %d  %-26s %-12s %s %d  %s"), i, *Rc[i].Styled(), *UCrewRosterSubsystem::DepartmentName(Rc[i].Department), *UCrewRosterSubsystem::SkillName(UCrewRosterSubsystem::SkillOf(Rc[i].Department)), FMath::RoundToInt(Rc[i].Skill(UCrewRosterSubsystem::SkillOf(Rc[i].Department))), *Rc[i].Backstory), FColor::White, 15.f); }
 		Say(FString::Printf(TEXT("Recruits at %s; ship crew signon <n>"), *R->GetRecruitStation()));
 	}
-	else if (What == TEXT("signon")) { const bool bOk = R->SignOn(FCString::Atoi(*Word(2)), Reply); Say(Reply, bOk ? FColor::Cyan : FColor::Orange); }
+	else if (What == TEXT("signon")) { if (!Word(2).IsNumeric()) { Say(TEXT("signon <n> (ship crew recruits lists them)"), FColor::Orange); return; } const bool bOk = R->SignOn(FCString::Atoi(*Word(2)), Reply); Say(Reply, bOk ? FColor::Cyan : FColor::Orange); }
 	else if (What == TEXT("memorial")) { Say(R->Memorial(), FColor::Cyan, 12.f); if (Systems) { Systems->ReportAs(TEXT("The captain"), TEXT("All hands: a memorial for those we have lost."), FLinearColor(0.8f, 0.8f, 1.f)); } }
 	else if (What == TEXT("check"))
 	{

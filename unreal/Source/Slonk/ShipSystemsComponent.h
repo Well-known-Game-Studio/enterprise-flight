@@ -283,6 +283,9 @@ private:
 	int32 RosterRevisionSeen = -1;
 	float NearbyTimer = 0.f;
 	TArray<FString> NearbyNames;
+	FString AlongsideNoted;
+	TArray<FString> HeldLines;
+	float HeldLineCooldown = 0.f;
 	int32 PickRandomSystem() const;
 	void InjureOfficer(float ThroughShields, const FCompartment* Where);
 	/** Wound and kill in proportion to what got through; Scale weights it by how many people are where it landed. */

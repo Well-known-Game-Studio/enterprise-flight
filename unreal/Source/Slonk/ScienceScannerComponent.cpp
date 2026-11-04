@@ -311,7 +311,8 @@ void UScienceScannerComponent::Complete()
 	const bool bRepeat = Log->IsScanned(R.Key);
 	BuildRecord(R);
 	const int32 Earned = Log->Add(R);
-	if (UCrewRosterSubsystem* Crew = GetWorld()->GetGameInstance()->GetSubsystem<UCrewRosterSubsystem>())
+	UGameInstance* GI = GetWorld() ? GetWorld()->GetGameInstance() : nullptr;
+	if (UCrewRosterSubsystem* Crew = GI ? GI->GetSubsystem<UCrewRosterSubsystem>() : nullptr)
 	{
 		// The science watch grows with every scan; a sight some of them wanted is theirs now.
 		Crew->NoteScan(TargetLabel, Earned, !R.Discovery.IsEmpty() && !bRepeat);

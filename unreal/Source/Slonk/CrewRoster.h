@@ -228,6 +228,10 @@ public:
 	UPROPERTY() int32 Seed = 0;
 	UPROPERTY() int32 NextId = 0;
 	UPROPERTY() FString ShipName;
+	UPROPERTY() int32 MourningDays = 0;
+	UPROPERTY() double HourAccumulator = 0.0;
+	UPROPERTY() TMap<int32, int32> PeerHours;
+	UPROPERTY() TArray<int32> Targets;
 };
 
 /**
@@ -262,12 +266,13 @@ public:
 	/** The medical model's counts changed: wound, kill and heal people by name to match (the dead and the newly
 	 *  wounded from the compartment hit while the hit is fresh, else from sickbay's patients for the dead). Returns
 	 *  the lines to report. */
-	void SyncCasualties(int32 Injured, int32 Critical, int32 Dead, TArray<FString>& OutLines);
+	void SyncCasualties(float Injured, float Critical, float Dead, TArray<FString>& OutLines);
 	/** Those the medical model should count: aboard and not ashore or away. */
 	int32 CountMembers() const;
 	/** A department head is hurt (lost: killed, and the second steps up) or back on duty. */
 	void NoteHeadHurt(ECrewDepartment Dept, bool bLost, float Seconds);
-	void NoteHeadRecovered(ECrewDepartment Dept);
+	/** The ship's recovery timer has run: the head is fit again (true if they were under treatment). */
+	bool HealHead(ECrewDepartment Dept);
 	/** Engineers repaired something; the science watch finished a scan; something worth seeing passed. */
 	void NoteRepair(const FString& SystemName, bool bUnderFire);
 	void NoteScan(const FString& Label, int32 Points, bool bDiscovery);
@@ -310,6 +315,7 @@ public:
 	/** Find by (part of) a name, the first match. */
 	const FCrewMember* FindByName(const FString& Name) const;
 	int32 CountAboard() const;
+	int32 TargetFor(ECrewDepartment D) const;
 	int32 CountCondition(ECrewCondition C) const;
 	float Morale() const;
 	/** Those with a need below a quarter, high stress or a wound, worst first. */
@@ -317,7 +323,7 @@ public:
 	int32 GetRevision() const { return Revision; }
 	FString GetShipName() const { return ShipName; }
 	/** The ship registers at its start: its name, and the medical model's counts start from nothing. */
-	void SetShipName(const FString& Name) { ShipName = Name; DeadBase = Lost.Num(); }
+	void SetShipName(const FString& Name) { ShipName = Name; DeadBase = Lost.Num() - CountCondition(ECrewCondition::Dead); }
 
 	// ---- names ----
 	static FString DepartmentName(ECrewDepartment D);
@@ -343,16 +349,30 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Crew") void Reset();
 	/** Dev: live this many ship's hours at once. */
 	void DevAdvanceHours(int32 HoursToLive, const FCrewShipState& Ship);
-	void Save() const;
+	void Save();
+	/** Mark the roster changed; it is written a few seconds later, or at the day's end. */
+	void RequestSave();
 
 private:
 	void Load();
+	bool bSaveWanted = false;
+	float SaveDelaySeconds = 0.f;
+	/** Per-department strengths this complement was generated with (recruits and replacements fill to them). */
+	TArray<int32> Targets;
+	/** Older saves: arrays to their lengths, values to their ranges, heads and seconds and ids made good. */
+	void Validate();
+	/** The next best in the department becomes its second if it has none. */
+	void EnsureSecond(ECrewDepartment Dept);
 	void LiveHour(const FCrewShipState& Ship);
 	void LiveDay(const FCrewShipState& Ship);
 	void Place(FCrewMember& M);
 	void UpdateMood(FCrewMember& M);
 	void Grow(FCrewMember& M, ECrewSkill S, float XP);
 	void PersonalMoment(FCrewMember& M, const FCrewShipState& Ship);
+	/** The hour's learning from the colleague a little ahead on the same watch and posting. */
+	void LearnFromPeers();
+	TMap<int32, int32> PeerHours;
+	TSet<FString> UsedNames;
 	void Remember(FCrewMember& M, const FString& Text, float Weight, bool bPermanent = false);
 	void Record(FCrewMember& M, ECrewEventKind Kind, const FString& Text, bool bMilestone = false, const TArray<int32>& Others = {});
 	void Bond(FCrewMember& A, FCrewMember& B, float Delta, ECrewRelation KindIfNew);
@@ -361,7 +381,7 @@ private:
 	void Kill(FCrewMember& M, const FString& Where);
 	void Heal(FCrewMember& M);
 	void PromoteToHead(ECrewDepartment Dept, const FString& Why);
-	void Report(ECrewDepartment From, const FString& Text, const FLinearColor& Color = FLinearColor(0.75f, 0.9f, 1.f), bool bAlways = false);
+	bool Report(ECrewDepartment From, const FString& Text, const FLinearColor& Color = FLinearColor(0.75f, 0.9f, 1.f), bool bAlways = false);
 	int32 RequestsToday = 0;
 	FCrewMember MakePerson(FRandomStream& R, ECrewDepartment Dept, ECrewRank Rank, int32 Index);
 	void MakeNamed(FRandomStream& R, FCrewMember& M, const TCHAR* First, const TCHAR* Last, const TCHAR* Species, const TCHAR* Pronoun);

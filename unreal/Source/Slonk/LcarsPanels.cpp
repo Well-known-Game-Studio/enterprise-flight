@@ -158,7 +158,7 @@ void UControlsPanel::BuildContent()
 		{ TEXT("N"), TEXT("nav markers") },
 		{ TEXT("M"), TEXT("star chart") },
 		{ TEXT("/"), TEXT("science log") },
-		{ TEXT(",  .  ;  '"), TEXT("engineering, tactical, sickbay boards, master systems display") },
+		{ TEXT(",  .  ;  '  ="), TEXT("engineering, tactical, sickbay boards, master systems display") },
 		{ TEXT("5  6  7"), TEXT("condition green, yellow alert, red alert") },
 		{ TEXT("H"), TEXT("this list") },
 		{ TEXT("Escape"), TEXT("main menu") },

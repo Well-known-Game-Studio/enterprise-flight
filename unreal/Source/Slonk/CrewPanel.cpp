@@ -57,8 +57,11 @@ void UCrewPanel::BuildContent()
 	AddLiveRow(Content, TEXT("Ship's day"), [this]()
 	{
 		UCrewRosterSubsystem* R = Roster(); if (!R) { return FString(TEXT("no roster")); }
+		if (R->GetRevision() == DayLineRevision) { return DayLine; }   // the scans behind it are per revision, not per frame
+		DayLineRevision = R->GetRevision();
 		const float Mor = R->Morale();
-		return FString::Printf(TEXT("stardate %s, %02d:00, %s watch   %d aboard, %d lost   morale %d%% %s   %d in trouble"), *R->StardateText(), R->GetHourOfDay(), *UCrewRosterSubsystem::WatchName(R->WatchOnDuty()).ToLower(), R->CountAboard(), R->GetLost().Num(), FMath::RoundToInt(Mor * 100.f), Mor > 0.7f ? TEXT("(high)") : Mor > 0.5f ? TEXT("(fair)") : Mor > 0.35f ? TEXT("(low)") : TEXT("(poor)"), R->InTrouble().Num());
+		DayLine = FString::Printf(TEXT("stardate %s, %02d:00, %s watch   %d aboard, %d lost   morale %d%% %s   %d in trouble"), *R->StardateText(), R->GetHourOfDay(), *UCrewRosterSubsystem::WatchName(R->WatchOnDuty()).ToLower(), R->CountAboard(), R->GetLost().Num(), FMath::RoundToInt(Mor * 100.f), Mor > 0.7f ? TEXT("(high)") : Mor > 0.5f ? TEXT("(fair)") : Mor > 0.35f ? TEXT("(low)") : TEXT("(poor)"), R->InTrouble().Num());
+		return DayLine;
 	}, Lcars::Peach, 14.f);
 
 	// Two columns: the list, the file.
@@ -77,34 +80,55 @@ void UCrewPanel::BuildContent()
 void UCrewPanel::NativeOnActivated()
 {
 	Super::NativeOnActivated();
-	LastRevision = -1; LastFilter = -99; LastFileKey.Reset();
+	LastRevision = -1; LastFilter = -99; LastFileKey.Reset(); RowIds.Reset();
 }
 
-void UCrewPanel::FillList()
+TArray<const FCrewMember*> UCrewPanel::GatherRows(UCrewRosterSubsystem* R) const
 {
-	UCrewRosterSubsystem* R = Roster();
-	if (!R || !ListBox) { return; }
-	for (UButton* B : RowButtons) { Unbind(B); }
-	RowButtons.Reset();
-	ListBox->ClearChildren();
 	TArray<const FCrewMember*> Rows;
 	if (Filter == -2) { for (int32 Id : R->InTrouble()) { if (const FCrewMember* M = R->Find(Id)) { Rows.Add(M); } } }
 	else
 	{
 		for (const FCrewMember& M : R->GetRoster())
 		{
-			if (M.Condition == ECrewCondition::Transferred) { continue; }
+			if (M.Condition == ECrewCondition::Transferred || M.Condition == ECrewCondition::Dead) { continue; }
 			if (Filter == -1 && !(M.bHead || M.bSecond)) { continue; }
 			if (Filter >= 0 && Filter < (int32)ECrewDepartment::Count && (int32)M.Department != Filter) { continue; }
 			Rows.Add(&M);
 		}
-	}
-	if (Filter != -2)
-	{
 		if (Sort == 0) { Rows.Sort([](const FCrewMember& A, const FCrewMember& B) { return A.Rank != B.Rank ? A.Rank > B.Rank : A.LastName + A.FirstName < B.LastName + B.FirstName; }); }
 		else if (Sort == 1) { Rows.Sort([](const FCrewMember& A, const FCrewMember& B) { return A.Mood < B.Mood; }); }
 		else { Rows.Sort([](const FCrewMember& A, const FCrewMember& B) { return (A.LastName.IsEmpty() ? A.FirstName : A.LastName) < (B.LastName.IsEmpty() ? B.FirstName : B.LastName); }); }
 	}
+	return Rows;
+}
+
+void UCrewPanel::StyleRow(const FCrewMember& M, bool bSelected)
+{
+	UButton* B = RowById.FindRef(M.Id); UTextBlock* L = RowLabelById.FindRef(M.Id);
+	if (!B) { return; }
+	const FLinearColor Col = M.Condition != ECrewCondition::Fit ? Lcars::Gold : (bSelected ? Lcars::Peach : Lcars::Darker(MoodColor(M.Mood), 0.45f));
+	Lcars::SetButtonColor(B, Col);
+	if (L) { L->SetText(FText::FromString(RowText(M).ToUpper())); L->SetColorAndOpacity(FSlateColor(bSelected || M.Condition != ECrewCondition::Fit ? Lcars::Black : FLinearColor::White)); }
+}
+
+void UCrewPanel::FillList()
+{
+	UCrewRosterSubsystem* R = Roster();
+	if (!R || !ListBox) { return; }
+	TArray<const FCrewMember*> Rows = GatherRows(R);
+	// The same people in the same order: restyle in place (the text, the mood colour), no widgets remade.
+	bool bSame = Rows.Num() == RowIds.Num();
+	for (int32 i = 0; bSame && i < Rows.Num(); ++i) { bSame = Rows[i]->Id == RowIds[i]; }
+	if (bSame && RowIds.Num() > 0)
+	{
+		for (const FCrewMember* M : Rows) { StyleRow(*M, M->Id == SelectedId); }
+		LastSelected = SelectedId;
+		return;
+	}
+	for (UButton* B : RowButtons) { Unbind(B); }
+	RowButtons.Reset(); RowIds.Reset(); RowById.Reset(); RowLabelById.Reset();
+	ListBox->ClearChildren();
 	const FString Heading = Filter == -2 ? TEXT("In trouble") : Filter == -1 ? TEXT("Senior staff") : Filter < (int32)ECrewDepartment::Count ? UCrewRosterSubsystem::DepartmentName((ECrewDepartment)Filter) : TEXT("Everyone");
 	const FString Short = Filter == -2 ? TEXT("Trouble") : Filter == -1 ? TEXT("Staff") : Filter < (int32)ECrewDepartment::Count ? UCrewRosterSubsystem::DepartmentName((ECrewDepartment)Filter) : TEXT("All");
 	if (FilterButton) { if (UTextBlock* T = Cast<UTextBlock>(FilterButton->GetChildAt(0))) { T->SetText(FText::FromString((TEXT("Show: ") + Short).ToUpper())); } }
@@ -115,14 +139,15 @@ void UCrewPanel::FillList()
 	for (const FCrewMember* M : Rows)
 	{
 		UTextBlock* Label = nullptr;
-		const FLinearColor Col = M->Condition == ECrewCondition::Dead ? Lcars::Red : M->Condition != ECrewCondition::Fit ? Lcars::Gold : (M->Id == SelectedId ? Lcars::Peach : Lcars::Darker(MoodColor(M->Mood), 0.45f));
-		UButton* B = Lcars::MakeButton(WidgetTree, RowText(*M), Col, &Label);
-		if (Label) { Label->SetFont(Lcars::Font(12.f, false, 0)); Label->SetColorAndOpacity(FSlateColor(M->Id == SelectedId ? Lcars::Black : FLinearColor::White)); Label->SetJustification(ETextJustify::Left); }
+		UButton* B = Lcars::MakeButton(WidgetTree, RowText(*M), Lcars::Peach, &Label);
+		if (Label) { Label->SetFont(Lcars::Font(12.f, false, 0)); Label->SetJustification(ETextJustify::Left); }
 		const int32 Id = M->Id;
-		Bind(B, [this, Id]() { SelectedId = Id; LastFileKey.Reset(); LastRevision = -1; }, M->FullName());
-		RowButtons.Add(B);
+		Bind(B, [this, Id]() { SelectedId = Id; LastFileKey.Reset(); }, M->FullName());
+		RowButtons.Add(B); RowIds.Add(Id); RowById.Add(Id, B); RowLabelById.Add(Id, Label);
 		if (UScrollBoxSlot* Sl = Cast<UScrollBoxSlot>(ListBox->AddChild(B))) { Sl->SetPadding(FMargin(0.f, 1.f, 0.f, 1.f)); }
+		StyleRow(*M, Id == SelectedId);
 	}
+	LastSelected = SelectedId;
 }
 
 void UCrewPanel::FillFile()
@@ -143,7 +168,7 @@ void UCrewPanel::FillFile()
 	Line(FString::Printf(TEXT("%s, %d, of %s (%s). %s."), *M->Species, M->Age, *M->Home, *M->Pronoun, *M->Backstory), 13.f, Lcars::Dim);
 	const FString State = M->Condition == ECrewCondition::Fit ? UCrewRosterSubsystem::ActivityName(M->Activity) : UCrewRosterSubsystem::ConditionName(M->Condition);
 	Line(FString::Printf(TEXT("Now: %s, %s.   Mood %d%%   stress %d%%"), *State.ToLower(), *M->Where, FMath::RoundToInt(M->Mood * 100.f), FMath::RoundToInt(M->Stress * 100.f)), 13.f, MoodColor(M->Mood), 4.f);
-	if (M->Condition == ECrewCondition::Injured || M->Condition == ECrewCondition::Critical) { Line(FString::Printf(TEXT("Under treatment, about %.0f hours to go."), M->ConditionHours), 13.f, Lcars::Gold); }
+	if (M->Condition == ECrewCondition::Injured || M->Condition == ECrewCondition::Critical) { Line(M->ConditionHours > 0.5f ? FString::Printf(TEXT("Under treatment, about %.0f hours to go."), M->ConditionHours) : FString(TEXT("Under treatment in sickbay.")), 13.f, Lcars::Gold); }
 	if (M->bHead) { Line(FString::Printf(TEXT("Head of %s."), *UCrewRosterSubsystem::DepartmentName(M->Department).ToLower()), 13.f, Lcars::Gold); }
 	else if (M->bSecond) { Line(FString::Printf(TEXT("Second in %s."), *UCrewRosterSubsystem::DepartmentName(M->Department).ToLower()), 13.f, Lcars::Gold); }
 
@@ -223,9 +248,16 @@ void UCrewPanel::Refresh()
 	if (!R) { return; }
 	if (Filter != LastFilter || Sort != LastSort || R->GetRevision() != LastRevision)
 	{
+		if (Filter != LastFilter || Sort != LastSort) { RowIds.Reset(); }   // a new list, not the same people
 		LastFilter = Filter; LastSort = Sort; LastRevision = R->GetRevision();
 		FillList();
 		LastFileKey.Reset();
+	}
+	else if (SelectedId != LastSelected)
+	{
+		if (const FCrewMember* Old = R->Find(LastSelected)) { StyleRow(*Old, false); }
+		if (const FCrewMember* New = R->Find(SelectedId)) { StyleRow(*New, true); }
+		LastSelected = SelectedId;
 	}
 	const FCrewMember* M = R->Find(SelectedId);
 	const FString Key = M ? FString::Printf(TEXT("%d/%d/%d/%d/%d"), M->Id, M->History.Num(), M->Memories.Num(), FMath::RoundToInt(M->Mood * 100.f), (int32)M->Condition) : TEXT("none");

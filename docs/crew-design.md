@@ -28,6 +28,14 @@ quartermastering). Skills grow by use: an hour at a posting earns experience in 
 more, teaching from a mentor more still. Growth slows as a skill rises, so a crewman's first year is quick and a
 chief engineer's last ten points are a career.
 
+People learn best from those a little ahead of them: every hour on watch, each person finds the colleague at the
+same posting whose skill is three to twenty-five points above their own, best about ten, and takes experience
+from working beside them; a friend or a mentor teaches better, a far superior's lecture goes over heads, and
+there is nothing to learn from below. The one teaching settles their own knowledge a little and finds purpose in
+it; forty hours of it make a bond, lines in both logs, and meet the desire to train someone up. A watch shared at
+a posting also makes acquaintances slowly, so the roster's bonds grow out of who is posted with whom, which is
+the captain's to arrange.
+
 **Facets** (0 to 100, fixed at birth, drifting slowly with experience): resolve (how stress is carried), empathy,
 curiosity, discipline, courage, sociability, ambition. They decide how a person reacts to the same event: a
 curious one is lifted by a nebula flight; a disciplined one by a tidy repair; a courageous one is steadier at red

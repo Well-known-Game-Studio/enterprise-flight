@@ -125,12 +125,13 @@ void UShipSystemsComponent::SyncOfficersFromRoster()
 		if (!H) { continue; }
 		O.Name = H->FullName();
 		O.Rank = H->Department == ECrewDepartment::Medical ? TEXT("Dr.") : UCrewRosterSubsystem::RankShort(H->Rank);
-		if (const FCrewMember* S2 = R->Second(D)) { O.Acting = S2->Styled(); }
-		// A new head (a successor to one lost, a reset) starts clean; the station's availability is the head's own
-		// condition, however it came about (a hit on their post, the roster's casualty draw, leave).
+		const FCrewMember* S2 = R->Second(D);
+		O.Acting = S2 ? S2->Styled() : TEXT("the duty officer");
+		// A new head (the roster promotes a successor the moment one is lost, or a new complement) starts clean;
+		// the station's availability is then the head's own condition, however it came about (a hit on their
+		// post, the roster's casualty draw, leave).
 		if (O.RosterId != H->Id) { O.RosterId = H->Id; O.bLost = false; O.bInjured = false; O.RecoverSeconds = 0.f; }
-		O.bLost = H->Condition == ECrewCondition::Dead;
-		O.bInjured = !O.bLost && H->Condition != ECrewCondition::Fit;
+		O.bInjured = H->Condition != ECrewCondition::Fit;
 		if (!O.bInjured) { O.RecoverSeconds = 0.f; }
 	}
 	RosterRevisionSeen = R->GetRevision();
@@ -144,8 +145,17 @@ void UShipSystemsComponent::TickRoster(float DeltaTime)
 	FCrewShipState State;
 	State.Alert = Alert;
 	State.bUnderFire = IsUnderFire();
-	State.bAlongside = IsResupplying();
-	if (const ASpaceVessel* V = Cast<ASpaceVessel>(ResupplyStation.Get())) { State.StationName = V->GetDisplayName(); }
+	// Alongside: within resupply range of a station and slow, resupplying or not. The roster hears of it once
+	// on arrival (mail, recruits, those with people there).
+	{
+		FString Why; AActor* Station = ResupplyStation.Get();
+		const bool bNear = IsResupplying() || CanResupply(Why, &Station);
+		const ASpaceVessel* V = bNear ? Cast<ASpaceVessel>(Station) : nullptr;
+		State.bAlongside = bNear && V != nullptr;
+		State.StationName = V ? V->GetDisplayName() : FString();
+		if (State.bAlongside && State.StationName != AlongsideNoted) { AlongsideNoted = State.StationName; R->NoteStarbase(State.StationName); }
+		else if (!State.bAlongside) { AlongsideNoted.Empty(); }
+	}
 	State.MedicalSupplies = Stores.MedicalSupplies;
 	State.SickbayBeds = Crew.SickbayBeds;
 	// Who and what is within hailing distance, looked up every few seconds; the galaxy's names for the crew's ties
@@ -179,8 +189,17 @@ void UShipSystemsComponent::TickRoster(float DeltaTime)
 	R->AdvanceSeconds(DeltaTime, State);
 	// The counts the medical model keeps become people.
 	TArray<FString> Lines;
-	R->SyncCasualties(FMath::RoundToInt(Crew.Injured), FMath::RoundToInt(Crew.Critical), FMath::RoundToInt(Crew.Dead), Lines);
-	for (const FString& L : Lines) { Report(EStation::Medical, L, FLinearColor(1.f, 0.7f, 0.6f)); }
+	R->SyncCasualties(Crew.Injured, Crew.Critical, Crew.Dead, Lines);
+	if (R->GetRevision() != RosterRevisionSeen) { SyncOfficersFromRoster(); }   // a successor speaks, not the one just lost
+	// The dead are named at once; the wounded a few seconds apart, under steady fire the names would come every tick.
+	for (const FString& L : Lines) { if (L.StartsWith(TEXT("Lost"))) { Report(EStation::Medical, L, FLinearColor(1.f, 0.6f, 0.5f)); } else { HeldLines.Add(L); } }
+	HeldLineCooldown = FMath::Max(HeldLineCooldown - DeltaTime, 0.f);
+	if (HeldLines.Num() > 0 && HeldLineCooldown <= 0.f)
+	{
+		HeldLineCooldown = 6.f;
+		Report(EStation::Medical, HeldLines.Num() == 1 ? HeldLines[0] : FString::Printf(TEXT("%s (and %d more lines from sickbay)"), *HeldLines[0], HeldLines.Num() - 1), FLinearColor(1.f, 0.75f, 0.65f));
+		HeldLines.Reset();
+	}
 	// Membership follows the roster (recruits, transfers, leave) while the counts keep their fractional progress.
 	const int32 Members = R->CountMembers();
 	if (Members != Crew.Complement)
@@ -195,6 +214,7 @@ void UShipSystemsComponent::TickRoster(float DeltaTime)
 		const EStation St = UCrewRosterSubsystem::StationOf(C.From);
 		if (St != EStation::Count) { Report(St, C.Text, C.Color); }
 		else if (const FCrewMember* H = R->Head(C.From)) { ReportAs(H->Styled(), C.Text, C.Color); }
+		else { ReportAs(UCrewRosterSubsystem::DepartmentName(C.From), C.Text, C.Color); }
 	}
 	if (R->GetRevision() != RosterRevisionSeen) { SyncOfficersFromRoster(); }
 }
@@ -225,9 +245,9 @@ void UShipSystemsComponent::ResetCountsFromRoster()
 	if (!R) { return; }
 	Crew.Injured = (float)R->CountCondition(ECrewCondition::Injured);
 	Crew.Critical = (float)R->CountCondition(ECrewCondition::Critical);
-	Crew.Dead = 0.f;
+	Crew.Dead = (float)R->CountCondition(ECrewCondition::Dead);
 	Crew.Complement = R->CountMembers();
-	Crew.Fit = FMath::Max(0.f, Crew.Complement - Crew.Injured - Crew.Critical);
+	Crew.Fit = FMath::Max(0.f, Crew.Complement - Crew.Injured - Crew.Critical - Crew.Dead);
 	PendingWounded = 0.f; PendingDead = 0.f;
 	for (FOfficer& O : Officers) { O.RosterId = -1; }
 	SyncOfficersFromRoster();
@@ -302,6 +322,7 @@ void UShipSystemsComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 
 void UShipSystemsComponent::TickLifeSupport(float DeltaTime)
 {
+	if (Atmosphere < 0.6f) { if (UCrewRosterSubsystem* R = Roster.Get()) { R->NoteHitCompartment(FString()); } }
 	// Life support at half or better keeps the air; below that the decks slowly lose it, and people with it.
 	const float Target = AtmosphereTarget();
 	const float Rate = Target > Atmosphere ? 0.05f : 0.03f;
@@ -369,7 +390,14 @@ void UShipSystemsComponent::TickCrew(float DeltaTime)
 		if (O.bInjured && !O.bLost && O.RecoverSeconds > 0.f)
 		{
 			O.RecoverSeconds -= DeltaTime * (Stores.MedicalSupplies > 0.f ? 1.f : 0.5f);
-			if (O.RecoverSeconds <= 0.f) { O.bInjured = false; Report(O.Station, TEXT("Back on duty, Captain."), FLinearColor(0.6f, 1.f, 0.6f)); if (UCrewRosterSubsystem* Ros = Roster.Get()) { Ros->NoteHeadRecovered(UCrewRosterSubsystem::DepartmentOf(O.Station)); } }
+			if (O.RecoverSeconds <= 0.f)
+			{
+				// The head comes back in person, and the count with them (unless sickbay already returned them).
+				UCrewRosterSubsystem* Ros = Roster.Get();
+				if (!Ros || Ros->HealHead(UCrewRosterSubsystem::DepartmentOf(O.Station))) { if (Crew.Injured >= 1.f) { Crew.Injured -= 1.f; Crew.Fit += 1.f; } }
+				O.bInjured = false;
+				Report(O.Station, TEXT("Back on duty, Captain."), FLinearColor(0.6f, 1.f, 0.6f));
+			}
 		}
 	}
 	// The doctor's report, batched.
@@ -441,7 +469,6 @@ bool UShipSystemsComponent::BeginResupply()
 	}
 	ResupplyLeft = ResupplySeconds; ResupplyStation = Station;
 	const ASpaceVessel* V = Cast<ASpaceVessel>(Station);
-	if (UCrewRosterSubsystem* R = Roster.Get()) { R->NoteStarbase(V ? V->GetDisplayName() : TEXT("the station")); }
 	Report(EStation::Operations, FString::Printf(TEXT("%s has us. Taking on torpedoes, parts and supplies, their repair teams are coming aboard, wounded going across. About %.0f seconds."), V ? *V->GetDisplayName() : TEXT("The station"), ResupplySeconds));
 	return true;
 }
@@ -629,15 +656,19 @@ void UShipSystemsComponent::InjureOfficer(float ThroughShields, const FCompartme
 	if (Up.Num() == 0) { return; }
 	FOfficer& O = Officers[Up[FMath::RandHelper(Up.Num())]];
 	const FString Who = FString::Printf(TEXT("%s %s"), *O.Rank, *O.Name);
+	// The officer is one of the crew: the counts move with them, so the roster finds them in the counts rather
+	// than undoing the wound on the next tick.
 	if (ThroughShields > 100.f && FMath::FRand() < 0.15f)
 	{
 		O.bLost = true;
+		if (Crew.Fit >= 1.f) { Crew.Fit -= 1.f; Crew.Dead += 1.f; }
 		Report(EStation::Medical, FString::Printf(TEXT("%s is dead, Captain. %s has %s."), *Who, *O.Acting, *StationName(O.Station).ToLower()), FLinearColor(1.f, 0.4f, 0.4f));
 		if (UCrewRosterSubsystem* R = Roster.Get()) { R->NoteHeadHurt(UCrewRosterSubsystem::DepartmentOf(O.Station), true, 0.f); }
 	}
 	else
 	{
 		O.bInjured = true; O.RecoverSeconds = 90.f + ThroughShields;
+		if (Crew.Fit >= 1.f) { Crew.Fit -= 1.f; Crew.Injured += 1.f; }
 		Report(EStation::Medical, FString::Printf(TEXT("%s is down, we have them in sickbay. %s has %s."), *Who, *O.Acting, *StationName(O.Station).ToLower()), FLinearColor(1.f, 0.6f, 0.5f));
 		if (UCrewRosterSubsystem* R = Roster.Get()) { R->NoteHeadHurt(UCrewRosterSubsystem::DepartmentOf(O.Station), false, O.RecoverSeconds); }
 	}

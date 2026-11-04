@@ -42,6 +42,15 @@ private:
 	UPROPERTY() TObjectPtr<UButton> FilterButton;
 	UPROPERTY() TObjectPtr<UButton> SortButton;
 	UPROPERTY() TArray<TObjectPtr<UButton>> RowButtons;
+	/** The rows on screen, by crew id, so a revision or a click restyles in place instead of rebuilding 500 widgets. */
+	TArray<int32> RowIds;
+	TMap<int32, UButton*> RowById;
+	TMap<int32, UTextBlock*> RowLabelById;
+	int32 LastSelected = -1;
+	int32 DayLineRevision = -1;
+	FString DayLine;
+	void StyleRow(const FCrewMember& M, bool bSelected);
+	TArray<const FCrewMember*> GatherRows(UCrewRosterSubsystem* R) const;
 	/** -2: in trouble, -1: senior staff, 0..: a department, Count: everyone. */
 	int32 Filter = -1;
 	int32 Sort = 0;
