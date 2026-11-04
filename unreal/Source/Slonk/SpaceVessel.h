@@ -170,6 +170,7 @@ protected:
 	bool bBeyondHorizon = false;
 	bool bTractored = false;
 	bool bDying = false;
+	TWeakObjectPtr<AActor> LastDamageCauser;
 	float DeathTimer = 0.f;
 	float DeathFlashTimer = 0.f;
 	FRandomStream DeathRng;

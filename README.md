@@ -184,7 +184,10 @@ rotate through postings, quarters, mess and rec deck, and every hour each person
 experience accrues, memories fade, moments happen (friendships, quarrels, letters, breakthroughs, a scare at red
 alert, a birthday in the mess). Hits wound and kill people by name from the compartment struck, friends grieve,
 heads of department who fall are succeeded by their seconds, and a starbase offers recruits for the vacancies.
-The crew panel (`=`) lists the roster by department with a personnel file for each, and the captain's hand is the
+Each person reads what happens through who they are: an enemy destroyed or spared, a first contact, a rescue,
+civilians lost, a promise kept or broken, the captain's fairness, all land as their own memories and move their
+trust in the captain and their dispositions toward peoples and powers; grudges slow friendships and start
+incidents the captain is asked to answer, and count against a parley with that people. The crew panel (`=`) lists the roster by department with a personnel file for each, and the captain's hand is the
 sidebar: commend, reprimand, promote, leave, a word. `ship crew ...` does the same from the console, with
 `check <skill> <difficulty>` for the mission checks to come. The design is in `docs/crew-design.md`.
 
