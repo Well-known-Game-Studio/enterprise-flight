@@ -973,16 +973,29 @@ void APlanetBody::UpdateNearCollision(const FVector& ViewLocal, bool bForce)
 {
 	if (!BuildingsNear) { return; }
 	const FVector View = ViewLocal;
-	if (!bForce && FVector::Dist(View, CityNearCentre) < 15000.0) { return; }
+	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
+	const bool bPinned = Now < CityPinUntil;
+	if (!bForce && FVector::Dist(View, CityNearCentre) < 15000.0 && bPinned == bCityPinApplied) { return; }
 	CityNearCentre = View;
+	bCityPinApplied = bPinned;
 	TArray<FTransform> Near;
 	const double ReachSq = FMath::Square(50000.0);		// 500 m
 	for (const FTransform& Tm : CityInstances)
 	{
-		if (FVector::DistSquared(Tm.GetLocation(), View) < ReachSq) { Near.Add(Tm); }
+		// Round the view, and round a pinned spot (a transporter's destination) while its pin lasts.
+		if (FVector::DistSquared(Tm.GetLocation(), View) < ReachSq || (bPinned && FVector::DistSquared(Tm.GetLocation(), CityPinLocal) < ReachSq)) { Near.Add(Tm); }
 	}
 	BuildingsNear->ClearInstances();
 	if (Near.Num() > 0) { BuildingsNear->AddInstances(Near, false, false); }
+}
+
+void APlanetBody::PrepareGroundCollisionAt(const FVector& WorldPos, float Seconds)
+{
+	// Pinned for a while: the refresh round the camera (every 0.7 s, once it has moved 150 m) would otherwise
+	// drop the destination's buildings again before a transport's arrival trace runs.
+	CityPinLocal = Body ? Body->GetComponentTransform().InverseTransformPosition(WorldPos) * Body->GetComponentScale() : WorldPos - GetActorLocation();
+	CityPinUntil = (GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0) + Seconds;
+	UpdateNearCollision(CityNearCentre.X < 1.0e29 ? CityNearCentre : CityPinLocal, true);
 }
 
 void APlanetBody::ClearCities()
@@ -1541,7 +1554,8 @@ void APlanetBody::Tick(float DeltaTime)
 		{
 			FVector ViewLoc; FRotator ViewRot;
 			PC->GetPlayerViewPoint(ViewLoc, ViewRot);
-			Terrain->UpdateView(ViewLoc);
+			const APawn* Pawn = PC->GetPawn();
+			Terrain->UpdateView(ViewLoc, Pawn ? Pawn->GetActorLocation() : ViewLoc);
 			UpdateCities(ViewLoc, DeltaTime);
 		}
 	}

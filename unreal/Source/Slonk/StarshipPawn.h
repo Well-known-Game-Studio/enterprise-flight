@@ -294,6 +294,8 @@ public:
 	FTimerHandle BayDoorTimer;
 	bool bBayDoorsWereClosed = true;
 	void SetupBayDoors();
+	/** Flag every shadowing part of the craft to cast into the sun's far cascades (used while the player is on foot). */
+	void MarkFarShadowCasters();
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|FX")
 	TArray<TObjectPtr<UPointLightComponent>> HullLights;

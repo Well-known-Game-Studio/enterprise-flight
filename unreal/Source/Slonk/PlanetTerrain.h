@@ -104,6 +104,9 @@ namespace SlonkTerrain
 	 * and a measured elevation model could stand in for the structure later without touching the refinement.
 	 */
 	constexpr double RefineStartCm = 2.0e4;
+	/** The distance the structure's slope is measured over for the refinement, whatever the detail level: the
+	 *  chunks take it from a lattice this far apart, the point sample from two structure samples this far away. */
+	constexpr double SlopeStepCm = 2.0e3;
 
 	/**
 	 * Height and biome at a unit direction (planet local frame), both stages. MinWavelengthCm bounds the finest

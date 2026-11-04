@@ -113,7 +113,11 @@ private:
 	 * the asset is missing, and the caller builds the primitive room instead.
 	 */
 	UStaticMeshComponent* RoomMesh(const TSoftObjectPtr<UStaticMesh>& Asset, const FVector& FloorCenter);
+public:
+	/** Give a set mesh's slots their materials by the Blender slot names (screens, strips, glows, glass); the
+	 *  shuttle pawn dresses the bay's shuttle model with it. */
 	void BindSlots(UStaticMeshComponent* C);
+private:
 	/** The parked shuttle built from primitives at S (the bay's placeholder when its mesh is missing). */
 	void PrimitiveShuttle(const FVector& S);
 	TWeakObjectPtr<UStaticMeshComponent> BayShuttle;

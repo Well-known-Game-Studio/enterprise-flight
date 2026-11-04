@@ -36,8 +36,6 @@
 
 namespace
 {
-	constexpr ECollisionChannel BootsChannel = ECC_GameTraceChannel1;
-
 	UDynamicMeshComponent* MakePart(AActor* Owner, const TCHAR* Name, USceneComponent* Parent, const FVector& Pivot)
 	{
 		UDynamicMeshComponent* C = Owner->CreateDefaultSubobject<UDynamicMeshComponent>(Name);

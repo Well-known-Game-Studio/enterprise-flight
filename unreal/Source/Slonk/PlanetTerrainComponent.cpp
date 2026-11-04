@@ -221,8 +221,10 @@ void UPlanetTerrainComponent::ChunkFrame(int32 Face, int32 Depth, int64 X, int64
 	OutCentre = CubeDir(Face, Um, Vm);
 	const FVector A = CubeDir(Face, U0, Vm), B = CubeDir(Face, U1, Vm);
 	const FVector C = CubeDir(Face, Um, V0), D = CubeDir(Face, Um, V1);
-	const double AngU = FMath::Acos(FMath::Clamp(FVector::DotProduct(A, B), -1.0, 1.0));
-	const double AngV = FMath::Acos(FMath::Clamp(FVector::DotProduct(C, D), -1.0, 1.0));
+	// atan2 of the cross and dot products, not acos of the dot: at the fine levels the dot rounds to 1 and acos
+	// to 0, and a zero cell froze the slope step's doubling loop.
+	const double AngU = FMath::Atan2(FVector::CrossProduct(A, B).Size(), FVector::DotProduct(A, B));
+	const double AngV = FMath::Atan2(FVector::CrossProduct(C, D).Size(), FVector::DotProduct(C, D));
 	OutEdge = FMath::Max(AngU, AngV) * Params.RadiusCm;
 }
 
@@ -241,6 +243,8 @@ UDynamicMeshComponent* UPlanetTerrainComponent::AcquireMesh()
 	// Shadows are switched on per chunk by size in ApplyResult; the dynamic flag has to be on for any to cast.
 	C->CastShadow = false;
 	C->bCastDynamicShadow = true;
+	// On foot the sun's near cascades reach 400 m and far cascades take the rest: the hills beyond stay shadowed.
+	C->bCastFarShadow = true;
 	C->SetVisibility(false);
 	C->RegisterComponent();
 	if (MID) { C->SetMaterial(0, MID); }
@@ -285,7 +289,8 @@ void UPlanetTerrainComponent::Select(FNode& N, const FVector& CamLocal, double C
 		FreeSubtree(N);
 		return;
 	}
-	const double Dist = FMath::Max(FVector::Dist(CamLocal, N.Origin + N.Centre * N.CentreHeightCm) - N.EdgeCm * 0.75, 0.0);
+	const FVector NodeAt = N.Origin + N.Centre * N.CentreHeightCm;
+	const double Dist = FMath::Max(FMath::Min(FVector::Dist(CamLocal, NodeAt), FVector::Dist(PawnLocal, NodeAt)) - N.EdgeCm * 0.75, 0.0);
 	const double CellCm = N.EdgeCm / FMath::Max(GridSteps, 1);
 	const bool bWantSplit = N.Depth < MaxDepth && CellCm > MinCellCm && Dist < SplitFactor * N.EdgeCm;
 	if (bWantSplit)
@@ -293,7 +298,7 @@ void UPlanetTerrainComponent::Select(FNode& N, const FVector& CamLocal, double C
 		MakeChildren(N);
 		for (int32 i = 0; i < 4; ++i)
 		{
-			RequestBuild(*N.Children[i], FVector::Dist(CamLocal, N.Children[i]->Origin));
+			RequestBuild(*N.Children[i], FMath::Min(FVector::Dist(CamLocal, N.Children[i]->Origin), FVector::Dist(PawnLocal, N.Children[i]->Origin)));
 		}
 		if (AllChildrenReady(N))
 		{
@@ -417,13 +422,16 @@ void UPlanetTerrainComponent::ApplyResult(FNode& N)
 	N.bReady = true;
 }
 
-void UPlanetTerrainComponent::UpdateView(const FVector& ViewLocationWorld)
+void UPlanetTerrainComponent::UpdateView(const FVector& ViewLocationWorld, const FVector& PawnLocationWorld)
 {
 	if (!bConfigured) { return; }
 	++Stamp;
 	VisibleChunks = 0;
 	DeepestVisible = 0;
 	const FVector CamLocal = GetComponentTransform().InverseTransformPositionNoScale(ViewLocationWorld);
+	// The chunks refine for the camera (what is seen) and for the pawn (what is stood on, a chase camera's length
+	// behind it): the split distance is the nearer of the two.
+	PawnLocal = GetComponentTransform().InverseTransformPositionNoScale(PawnLocationWorld);
 	LastCamLocal = CamLocal;
 	const double CamDist = CamLocal.Size();
 	const FVector CamDir = CamDist > 1.0 ? CamLocal / CamDist : FVector::ZAxisVector;
@@ -667,7 +675,7 @@ void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, int32 Fa
 	const double Cells = (double)((int64)1 << Depth);
 	const double U0 = -1.0 + 2.0 * X / Cells, U1 = -1.0 + 2.0 * (X + 1) / Cells;
 	const double V0 = -1.0 + 2.0 * Y / Cells, V1 = -1.0 + 2.0 * (Y + 1) / Cells;
-	auto Dir = [&](int32 i, int32 j)
+	auto Dir = [&](double i, double j)
 	{
 		const double U = U0 + (U1 - U0) * i / Steps;
 		const double V = V0 + (V1 - V0) * j / Steps;
@@ -688,8 +696,10 @@ void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, int32 Fa
 	const FVector CentreDir = Dir(Steps / 2, Steps / 2);
 	const FVector Origin = CentreDir * R;
 	// Cell size from the chunk's middle row; everything finer than two cells would only alias.
-	const double CellCm = FMath::Acos(FMath::Clamp(FVector::DotProduct(Dir(0, Steps / 2), Dir(1, Steps / 2)), -1.0, 1.0)) * R;
+	const FVector D0 = Dir(0, Steps / 2), D1 = Dir(1, Steps / 2);
+	const double CellCm = FMath::Max(FMath::Atan2(FVector::CrossProduct(D0, D1).Size(), FVector::DotProduct(D0, D1)) * R, 1.0e-3);
 	const double MinWavelength = CellCm * 2.0;
+	const double N_EdgeCm = CellCm * Steps;
 
 	// Sample the structure on a grid with a two-cell margin: the refinement wants the structure's slope at every
 	// vertex, and the border normals want refined neighbours, so the slope needs one more ring beyond that.
@@ -711,14 +721,56 @@ void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, int32 Fa
 	// fractal detail from the slope of its elevation model: every level finer than 200 m cells runs it.
 	if (MinWavelength < SlonkTerrain::RefineStartCm)
 	{
+		// The slope is measured over the same distance at every level. Taken over the chunk's own cell it changed
+		// with the level (a 5 m cell and a 50 m cell read different slopes off the same ground), and since it
+		// scales the whole of the refinement, neighbouring chunks at different levels stood metres apart along
+		// their shared edge: walls and trenches round every level change. The step is the chunk's cell halved
+		// or doubled into (SlopeStepCm / 4, SlopeStepCm / 2]: one value for every level of a planet, since the
+		// cells halve level by level. Finer chunks take it as every Lm-th grid point (child lattices fall on their
+		// parents'); the few coarser ones, whose cells are wider than the step, sample the structure that far to
+		// each side of every grid point. Between lattice points the slope is interpolated.
+		double StepCm = CellCm;
+		while (StepCm > SlonkTerrain::SlopeStepCm * 0.5) { StepCm *= 0.5; }
+		while (StepCm * 2.0 <= SlonkTerrain::SlopeStepCm * 0.5) { StepCm *= 2.0; }
+		const int32 Lm = FMath::Max(FMath::RoundToInt32(StepCm / CellCm), 1);
+		const double SubStep = StepCm / CellCm;          // in grid cells; under 1 only on the coarse levels
+		const int32 LA = Steps / Lm;                     // lattice cells across the chunk
+		const int32 LMargin = 3, LW = LA + 1 + 2 * LMargin;   // the slope one past the vertex ring one past the chunk
+		TArray<double> GxL, GyL; GxL.SetNumUninitialized(LW * LW); GyL.SetNumUninitialized(LW * LW);
+		auto StructureAt = [&](double i, double j) -> double
+		{
+			const int32 ii = FMath::RoundToInt32(i), jj = FMath::RoundToInt32(j);
+			const bool bOnGrid = FMath::IsNearlyEqual(i, (double)ii) && FMath::IsNearlyEqual(j, (double)jj) && ii >= -Margin && ii <= Steps + Margin && jj >= -Margin && jj <= Steps + Margin;
+			return bOnGrid ? Smp[(jj + Margin) * W + (ii + Margin)].HeightCm : SlonkTerrain::SampleStructure(P, Dir(i, j), MinWavelength).HeightCm;
+		};
+		for (int32 b = -LMargin; b <= LA + LMargin; ++b)
+		{
+			for (int32 a = -LMargin; a <= LA + LMargin; ++a)
+			{
+				const double i = (double)a * Lm, j = (double)b * Lm;
+				const int32 k = (b + LMargin) * LW + (a + LMargin);
+				GxL[k] = (StructureAt(i + SubStep, j) - StructureAt(i - SubStep, j)) / (2.0 * StepCm);
+				GyL[k] = (StructureAt(i, j + SubStep) - StructureAt(i, j - SubStep)) / (2.0 * StepCm);
+			}
+		}
+		auto LatticeSlope = [&](int32 a, int32 b, double& Gx, double& Gy)
+		{
+			const int32 k = (b + LMargin) * LW + (a + LMargin);
+			Gx = GxL[k]; Gy = GyL[k];
+		};
 		for (int32 j = -1; j <= Steps + 1; ++j)
 		{
 			for (int32 i = -1; i <= Steps + 1; ++i)
 			{
 				const int32 k = (j + Margin) * W + (i + Margin);
 				if (Smp[k].bWater) { continue; }
-				const double Gx = (Smp[k + 1].HeightCm - Smp[k - 1].HeightCm) / (2.0 * CellCm);
-				const double Gy = (Smp[k + W].HeightCm - Smp[k - W].HeightCm) / (2.0 * CellCm);
+				const int32 a0 = FMath::FloorToInt32((double)i / Lm), b0 = FMath::FloorToInt32((double)j / Lm);
+				const double Fa = (double)(i - a0 * Lm) / Lm, Fb = (double)(j - b0 * Lm) / Lm;
+				double G00x, G00y, G10x, G10y, G01x, G01y, G11x, G11y;
+				LatticeSlope(a0, b0, G00x, G00y); LatticeSlope(a0 + 1, b0, G10x, G10y);
+				LatticeSlope(a0, b0 + 1, G01x, G01y); LatticeSlope(a0 + 1, b0 + 1, G11x, G11y);
+				const double Gx = FMath::Lerp(FMath::Lerp(G00x, G10x, Fa), FMath::Lerp(G01x, G11x, Fa), Fb);
+				const double Gy = FMath::Lerp(FMath::Lerp(G00y, G10y, Fa), FMath::Lerp(G01y, G11y, Fa), Fb);
 				SlonkTerrain::Refine(P, Dirs[k], FMath::Sqrt(Gx * Gx + Gy * Gy), MinWavelength, Smp[k]);
 			}
 		}
@@ -820,8 +872,9 @@ void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, int32 Fa
 		}
 	}
 	// Skirt: the border loop dropped a little below the surface hides the hairline gap against a neighbour at
-	// another depth. A few per cent of the edge covers the height a coarser neighbour can miss by.
-	const double SkirtCm = FMath::Max(CellCm * 1.5, 100.0);
+	// another depth. Two per cent of the edge covers the height a coarser neighbour can miss by (the octaves
+	// between the two levels' cutoffs); a cell and a half was a metre on fine chunks, nothing like it.
+	const double SkirtCm = FMath::Max(FMath::Max(CellCm * 1.5, N_EdgeCm * 0.02), 100.0);
 	TArray<int32> Loop;
 	for (int32 i = 0; i <= Steps; ++i) { Loop.Add(i); }
 	for (int32 j = 1; j <= Steps; ++j) { Loop.Add(j * GW + Steps); }
