@@ -62,6 +62,13 @@ friend, rival, mentor/protégé, partner, family). They form from shared shifts,
 and they carry consequences: a friend's death is grief (mood down for days, a permanent memory, a chance of a
 fear), a rival's promotion is resentment, a mentor's presence speeds learning.
 
+**Ties elsewhere**: family and friends off the ship, each a name, a relation (a sister, a father, an academy
+roommate, a former captain), and a place: a world, another ship of the fleet, or a station, bound to the galaxy's
+own names once the systems exist. Letters come from them and carry news, good or bad; when their ship is in
+hailing range a channel is asked for and granted; when the ship lies alongside their station the person goes
+ashore for an evening and comes back the better for it, and the desire to visit home is met. They are the
+mission generator's hostages: a colony in trouble is somebody's mother's colony.
+
 **Condition**: fit, injured (hours to recover, under treatment or walking), critical (in sickbay, may die), dead,
 on leave, away (on an away mission), transferred. The medical round's four counts become sums over the roster,
 so a hit that wounds twelve wounds twelve people by name.
@@ -103,8 +110,10 @@ The ship already produces the big events; the roster listens.
 - **Orders**: diverting power and alert changes are the captain's doing; a long red alert without a fight wears
   the crew; a reprimand or a commendation after an engagement lands on the person it names.
 - **Starbases**: alongside, shore leave restores the needs of whoever is granted it, letters arrive for the
-  homesick, the dead are replaced from a recruit pool generated for that station and date (browse, sign on,
-  refuse), and the discontented may ask to transfer.
+  homesick, anyone with people at the station goes across to them, the dead are replaced from a recruit pool
+  generated for that station and date (browse, sign on, refuse), and the discontented may ask to transfer.
+- **Passing places and ships**: a world or a vessel within hailing distance that someone aboard has a tie to
+  is a signal home for them, logged and remembered.
 - **The captain on foot**: walking the ship and speaking to someone at their station is recognition; later, a
   conversation with a few lines (listen, encourage, order, promise) that the person's facets read.
 

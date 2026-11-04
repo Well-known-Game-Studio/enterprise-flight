@@ -23,6 +23,11 @@ namespace
 	const TCHAR* Classes[] = { TEXT("Academy class of '74"), TEXT("Academy class of '77"), TEXT("Academy class of '79"), TEXT("Academy class of '81"), TEXT("enlisted at Mars"), TEXT("enlisted at Earth"), TEXT("transferred from the Lexington"), TEXT("transferred from the Yorktown"), TEXT("transferred from Starbase 11"), TEXT("transferred from the Hood") };
 	const TCHAR* Hobbies[] = { TEXT("chess"), TEXT("the rec deck's handball court"), TEXT("Andorian flute"), TEXT("old films"), TEXT("the hydroponics bay"), TEXT("cards"), TEXT("tri-dimensional chess"), TEXT("sketching the nebulae"), TEXT("the ship's choir"), TEXT("fencing") };
 
+	const TCHAR* FamilyRelations[] = { TEXT("mother"), TEXT("father"), TEXT("sister"), TEXT("brother"), TEXT("daughter"), TEXT("son"), TEXT("partner"), TEXT("grandmother"), TEXT("uncle"), TEXT("cousin") };
+	const TCHAR* FriendRelations[] = { TEXT("academy roommate"), TEXT("oldest friend"), TEXT("former captain"), TEXT("first chief"), TEXT("shipmate from the Lexington"), TEXT("childhood friend"), TEXT("old flame"), TEXT("mentor at the Academy") };
+	const TCHAR* NewsGood[] = { TEXT("has been promoted"), TEXT("is getting married"), TEXT("has had a child"), TEXT("has a new posting"), TEXT("sends a recording of the harvest festival"), TEXT("writes that the colony is thriving") };
+	const TCHAR* NewsBad[] = { TEXT("is in hospital"), TEXT("writes that the harvest failed"), TEXT("has lost a friend"), TEXT("writes of trouble at the border"), TEXT("has not written in a long while") };
+
 	struct FTraitDef { const TCHAR* Tag; const TCHAR* Text; float Weight; };
 	const FTraitDef TraitDefs[] = {
 		{ TEXT("Veteran"), TEXT("Veteran: steady under fire, restless on idle days"), 0.8f },
@@ -45,6 +50,7 @@ namespace
 		{ TEXT("Promotion"), TEXT("a promotion") }, { TEXT("AwayMission"), TEXT("a place on an away mission") }, { TEXT("ShoreLeave"), TEXT("shore leave at a starbase") },
 		{ TEXT("Letter"), TEXT("a letter from home") }, { TEXT("BridgePosting"), TEXT("a posting on the bridge") }, { TEXT("SeeNebula"), TEXT("a close look at a nebula") },
 		{ TEXT("SeeGiant"), TEXT("a flight past a gas giant") }, { TEXT("Commendation"), TEXT("a commendation") }, { TEXT("Teach"), TEXT("someone to train up") },
+		{ TEXT("Visit"), TEXT("a visit home") },
 	};
 	const FWantDef FearDefs[] = {
 		{ TEXT("Vacuum"), TEXT("death in the dark between the stars") }, { TEXT("Klingons"), TEXT("the Klingons") }, { TEXT("Transporter"), TEXT("the transporter") },
@@ -235,6 +241,12 @@ FString FCrewMember::Styled() const
 	return R.IsEmpty() ? FullName() : R + TEXT(" ") + FullName();
 }
 
+FString FCrewTie::Where() const
+{
+	if (Place.IsEmpty()) { return Kind == ECrewTiePlace::World ? TEXT("on a colony world") : Kind == ECrewTiePlace::Ship ? TEXT("aboard a starship") : TEXT("at a starbase"); }
+	return Kind == ECrewTiePlace::Ship ? TEXT("aboard the ") + Place : (Kind == ECrewTiePlace::Station ? TEXT("at ") : TEXT("on ")) + Place;
+}
+
 const FCrewRelationship* FCrewMember::RelationWith(int32 Other) const
 {
 	for (const FCrewRelationship& R : Relationships) { if (R.Other == Other) { return &R; } }
@@ -372,10 +384,96 @@ FCrewMember UCrewRosterSubsystem::MakePerson(FRandomStream& R, ECrewDepartment D
 		const FWantDef& F = M.HasTrait(TEXT("TransporterShy")) ? FearDefs[2] : FearDefs[R.RandRange(0, UE_ARRAY_COUNT(FearDefs) - 1)];
 		FCrewWant W; W.Tag = F.Tag; W.Text = F.Text; W.bFear = true; W.SinceDay = GetDay(); M.Wants.Add(W);
 	}
+	MakeTies(R, M);
+	if (M.HasTrait(TEXT("Homesick")) || (M.Facet(ECrewFacet::Sociability) > 60.f && R.FRand() < 0.3f))
+	{
+		for (const FCrewTie& T : M.Ties) { if (T.bFamily) { FCrewWant W; W.Tag = TEXT("Visit"); W.Text = FString::Printf(TEXT("a visit to %s %s"), *T.Relation, *T.Name); W.SinceDay = GetDay(); M.Wants.Add(W); break; } }
+	}
 	M.Service.JoinedStardate = GetStardate();
 	M.Condition = ECrewCondition::Fit;
 	UpdateMood(M);
 	return M;
+}
+
+void UCrewRosterSubsystem::MakeTies(FRandomStream& R, FCrewMember& M)
+{
+	// Family at home (named for the species), and for most a friend in the fleet or at a station; the places
+	// stay placeholders until the galaxy's own names are known.
+	auto NameLike = [&](const FCrewMember& Of) -> FString
+	{
+		if (Of.Species == TEXT("Human")) { return FString(Pick(R, HumanFirst)) + TEXT(" ") + (R.FRand() < 0.7f && !Of.LastName.IsEmpty() ? Of.LastName : FString(Pick(R, HumanLast))); }
+		if (Of.Species == TEXT("Vulcan")) { return Pick(R, VulcanNames); }
+		if (Of.Species == TEXT("Andorian")) { return Pick(R, AndorianNames); }
+		if (Of.Species == TEXT("Tellarite")) { return Pick(R, TellariteNames); }
+		if (Of.Species == TEXT("Caitian")) { return Pick(R, CaitianNames); }
+		if (Of.Species == TEXT("Bolian")) { return Pick(R, BolianNames); }
+		if (Of.Species == TEXT("Deltan")) { return Pick(R, DeltanNames); }
+		if (Of.Species == TEXT("Betazoid")) { return Pick(R, BetazoidNames); }
+		return FString(Pick(R, HumanFirst)) + TEXT(" ") + Pick(R, HumanLast);
+	};
+	const int32 Family = R.FRand() < 0.15f ? 0 : (R.FRand() < 0.6f ? 1 : 2);
+	for (int32 i = 0; i < Family; ++i)
+	{
+		FCrewTie T; T.Name = NameLike(M); T.Relation = Pick(R, FamilyRelations); T.bFamily = true; T.Affinity = R.FRandRange(0.5f, 0.95f);
+		// Most family is at home; some has gone to the fleet or a station.
+		const float P = R.FRand();
+		if (P < 0.7f) { T.Kind = ECrewTiePlace::World; T.Place = M.Home.Contains(TEXT(", Earth")) ? TEXT("Earth") : M.Home; if (M.Home.StartsWith(TEXT("Starbase"))) { T.Kind = ECrewTiePlace::Station; T.Place = M.Home; } }
+		else if (P < 0.88f) { T.Kind = ECrewTiePlace::Ship; }
+		else { T.Kind = ECrewTiePlace::Station; }
+		M.Ties.Add(T);
+	}
+	if (R.FRand() < 0.75f)
+	{
+		FCrewTie T; T.Name = NameLike(M); T.Relation = Pick(R, FriendRelations); T.Affinity = R.FRandRange(0.3f, 0.8f);
+		const float P = R.FRand();
+		T.Kind = P < 0.45f ? ECrewTiePlace::Ship : P < 0.75f ? ECrewTiePlace::Station : ECrewTiePlace::World;
+		if (T.Relation.Contains(TEXT("Lexington"))) { T.Kind = ECrewTiePlace::Ship; T.Place = TEXT("U.S.S. Lexington"); }
+		M.Ties.Add(T);
+	}
+}
+
+void UCrewRosterSubsystem::BindPlaces(const TArray<FString>& Worlds, const TArray<FString>& Stations, const TArray<FString>& Ships)
+{
+	int32 Bound = 0;
+	for (FCrewMember& M : Roster)
+	{
+		FRandomStream R(M.Id * 7919 + Seed);
+		for (FCrewTie& T : M.Ties)
+		{
+			if (!T.Place.IsEmpty()) { continue; }
+			const TArray<FString>& From = T.Kind == ECrewTiePlace::World ? Worlds : T.Kind == ECrewTiePlace::Station ? Stations : Ships;
+			if (From.Num() == 0) { continue; }
+			T.Place = From[R.RandRange(0, From.Num() - 1)];
+			++Bound;
+		}
+	}
+	if (Bound > 0) { UE_LOG(LogTemp, Log, TEXT("Crew: %d ties bound to the galaxy's names (%d worlds, %d stations, %d ships)"), Bound, Worlds.Num(), Stations.Num(), Ships.Num()); Dirty(); Save(); }
+}
+
+bool UCrewRosterSubsystem::HasUnboundTies() const
+{
+	for (const FCrewMember& M : Roster) { for (const FCrewTie& T : M.Ties) { if (T.Place.IsEmpty()) { return true; } } }
+	return false;
+}
+
+void UCrewRosterSubsystem::Reunion(FCrewMember& M, FCrewTie& T, bool bAlongside)
+{
+	T.LastContactDay = GetDay();
+	const FString Who = FString::Printf(TEXT("%s %s"), *T.Relation, *T.Name);
+	if (bAlongside)
+	{
+		Remember(M, FString::Printf(TEXT("An evening with %s"), *T.Name), 0.18f * (0.5f + T.Affinity));
+		Record(M, ECrewEventKind::Moment, FString::Printf(TEXT("Alongside %s: an evening ashore with %s."), *T.Place, *Who), true);
+		M.Needs[(int32)ECrewNeed::Belonging] = FMath::Min(M.Needs[(int32)ECrewNeed::Belonging] + 0.3f, 1.f);
+		for (FCrewWant& W : M.Wants) { if (W.Tag == TEXT("Visit") && !W.bGranted && T.bFamily) { W.bGranted = true; Remember(M, TEXT("Home, for a few hours"), 0.2f, true); } }
+		Report(T.bFamily ? ECrewDepartment::Command : M.Department, FString::Printf(TEXT("%s has family at %s; %s asked for a few hours ashore and had them."), *M.Styled(), *T.Place, *M.Pronoun));
+	}
+	else
+	{
+		Remember(M, FString::Printf(TEXT("A signal from %s"), *T.Name), 0.1f * (0.5f + T.Affinity));
+		Record(M, ECrewEventKind::Moment, FString::Printf(TEXT("Within hailing range of %s: a few minutes on subspace with %s."), T.Kind == ECrewTiePlace::Ship ? *(TEXT("the ") + T.Place) : *T.Place, *Who));
+		if (T.Kind == ECrewTiePlace::Ship) { Report(ECrewDepartment::Operations, FString::Printf(TEXT("The %s is in range; %s has %s aboard her and asked for a channel. Granted."), *T.Place, *M.Styled(), *Who)); }
+	}
 }
 
 void UCrewRosterSubsystem::NewComplement(int32 InSeed, int32 Complement)
@@ -480,6 +578,7 @@ void UCrewRosterSubsystem::MakeRecruits(const FString& StationName)
 		NextId = 100000 + RecruitDay * 100 + i;   // provisional ids; a real one on signing
 		FCrewMember M = MakePerson(R, Dept, RankFromIndex(R, R.RandRange(0, 9), 10), R.RandRange(0, 20));
 		M.Backstory = FString::Printf(TEXT("%s; met at %s"), Pick(R, Classes), *StationName);
+		if (R.FRand() < 0.4f && M.Ties.Num() > 0) { M.Ties[0].Kind = ECrewTiePlace::Station; M.Ties[0].Place = StationName; }
 		Recruits.Add(M);
 	}
 	NextId = SavedNext;
@@ -727,6 +826,16 @@ void UCrewRosterSubsystem::LiveHour(const FCrewShipState& Ship)
 		}
 		if (M.Condition == ECrewCondition::OnLeave) { M.ConditionHours -= 1.f; if (M.ConditionHours <= 0.f) { M.Condition = ECrewCondition::Fit; Record(M, ECrewEventKind::Leave, TEXT("Back aboard from leave.")); } }
 		else if (M.Condition == ECrewCondition::Injured || M.Condition == ECrewCondition::Critical) { M.ConditionHours = FMath::Max(M.ConditionHours - 1.f, 0.f); }
+		// Someone they know, within hailing distance: a signal, or an evening ashore when alongside.
+		if (Ship.Nearby.Num() > 0 && M.IsAboard())
+		{
+			for (FCrewTie& T : M.Ties)
+			{
+				if (T.Place.IsEmpty() || GetDay() - T.LastContactDay < 5) { continue; }
+				bool bNear = false; for (const FString& Near : Ship.Nearby) { if (Near == T.Place || (T.Kind == ECrewTiePlace::Ship && Near.Contains(T.Place))) { bNear = true; break; } }
+				if (bNear && Rng.FRand() < 0.5f) { Reunion(M, T, Ship.bAlongside && T.Kind == ECrewTiePlace::Station && Ship.StationName == T.Place); break; }
+			}
+		}
 		UpdateMood(M);
 		PersonalMoment(M, Ship);
 	}
@@ -818,9 +927,16 @@ void UCrewRosterSubsystem::PersonalMoment(FCrewMember& M, const FCrewShipState& 
 				M.Stress = FMath::Min(M.Stress + 0.05f, 1.f);
 			}
 		} break;
-	case 2: Record(M, ECrewEventKind::Letter, FString::Printf(TEXT("A letter from home, %s."), *M.Home)); Remember(M, TEXT("A letter from home"), M.HasTrait(TEXT("Homesick")) ? 0.2f : 0.1f);
-		for (FCrewWant& W : M.Wants) { if (W.Tag == TEXT("Letter") && !W.bGranted) { W.bGranted = true; Remember(M, TEXT("Word from home at last"), 0.15f); } }
-		break;
+	case 2: {
+			const FCrewTie* T = M.Ties.Num() > 0 ? &M.Ties[Rng.RandRange(0, M.Ties.Num() - 1)] : nullptr;
+			const bool bBad = T && Rng.FRand() < 0.18f;
+			const FString News = T ? FString::Printf(TEXT("%s %s %s %s."), *T->Relation, *T->Name, *T->Where(), bBad ? Pick(Rng, NewsBad) : Pick(Rng, NewsGood)) : FString();
+			Record(M, ECrewEventKind::Letter, T ? FString::Printf(TEXT("A letter from %s: %s"), *T->Name, *News) : FString::Printf(TEXT("A letter from home, %s."), *M.Home));
+			if (bBad) { Remember(M, FString::Printf(TEXT("Worry for %s"), *T->Name), -0.12f * (0.5f + T->Affinity)); M.Stress = FMath::Min(M.Stress + 0.08f, 1.f); }
+			else { Remember(M, T ? FString::Printf(TEXT("A letter from %s"), *T->Name) : TEXT("A letter from home"), (M.HasTrait(TEXT("Homesick")) ? 0.2f : 0.1f) * (T ? 0.6f + T->Affinity * 0.6f : 1.f)); }
+			if (T) { const_cast<FCrewTie*>(T)->LastContactDay = GetDay(); }
+			for (FCrewWant& W : M.Wants) { if (W.Tag == TEXT("Letter") && !W.bGranted) { W.bGranted = true; Remember(M, TEXT("Word from home at last"), 0.15f); } }
+		} break;
 	case 3: Record(M, ECrewEventKind::Discovery, TEXT("A small breakthrough at the station: a pattern in the sensor returns nobody had seen.")); Remember(M, TEXT("A breakthrough"), 0.15f); Grow(M, ECrewSkill::Science, 8.f);
 		if (Rng.FRand() < 0.25f) { Report(ECrewDepartment::Science, FString::Printf(TEXT("%s has found something in the sensor returns worth a second look."), *M.Styled())); }
 		break;
@@ -1062,15 +1178,22 @@ void UCrewRosterSubsystem::NoteSight(FName Tag, const FString& Text)
 void UCrewRosterSubsystem::NoteStarbase(const FString& StationName)
 {
 	if (RecruitStation != StationName || RecruitDay != GetDay()) { MakeRecruits(StationName); }
-	// Letters come aboard with the station's mail.
+	// Letters come aboard with the station's mail, and anyone with family or a friend at this station goes ashore.
+	int32 Ashore = 0;
 	for (FCrewMember& M : Roster)
 	{
-		if (M.IsAboard() && (M.HasTrait(TEXT("Homesick")) || Rng.FRand() < 0.3f))
+		if (!M.IsAboard()) { continue; }
+		if (M.HasTrait(TEXT("Homesick")) || Rng.FRand() < 0.3f)
 		{
 			Remember(M, TEXT("Mail from the station"), M.HasTrait(TEXT("Homesick")) ? 0.15f : 0.06f);
 			for (FCrewWant& W : M.Wants) { if (W.Tag == TEXT("Letter") && !W.bGranted) { W.bGranted = true; } }
 		}
+		for (FCrewTie& T : M.Ties)
+		{
+			if (T.Kind == ECrewTiePlace::Station && T.Place == StationName && GetDay() - T.LastContactDay >= 1) { Reunion(M, T, true); ++Ashore; break; }
+		}
 	}
+	if (Ashore > 1) { Report(ECrewDepartment::Command, FString::Printf(TEXT("%d of the crew have people at %s; I've let them go across while we're alongside."), Ashore, *StationName), FLinearColor(0.75f, 0.9f, 1.f), true); }
 	Dirty();
 }
 

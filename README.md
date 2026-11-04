@@ -178,7 +178,8 @@ Hits land somewhere in particular. The ship carries a compartment map in her own
 
 Everyone aboard is a person: five hundred records with a name, species and home, a rank, department, posting and
 watch, skills that grow with use, facets of character, traits, needs, mood and stress, desires and fears, bonds
-with others, a personal log and a service record. A ship's clock runs (an hour a minute by default), three watches
+with others, family and friends elsewhere (on worlds, aboard other ships, at stations: letters come from them,
+a ship in range is a channel home, a station alongside an evening ashore), a personal log and a service record. A ship's clock runs (an hour a minute by default), three watches
 rotate through postings, quarters, mess and rec deck, and every hour each person lives a little: needs drift,
 experience accrues, memories fade, moments happen (friendships, quarrels, letters, breakthroughs, a scare at red
 alert, a birthday in the mess). Hits wound and kill people by name from the compartment struck, friends grieve,

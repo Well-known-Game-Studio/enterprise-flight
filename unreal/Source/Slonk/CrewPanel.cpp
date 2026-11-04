@@ -177,6 +177,15 @@ void UCrewPanel::FillFile()
 		if (W.bFear) { Line(FString::Printf(TEXT("Fears %s."), *W.Text), 13.f, Lcars::Salmon); }
 		else { Line(FString::Printf(TEXT("%s %s%s."), W.bGranted ? TEXT("Had") : TEXT("Wants"), *W.Text, W.bGranted ? TEXT("") : *FString::Printf(TEXT(" (since day %d)"), W.SinceDay)), 13.f, W.bGranted ? Lcars::Dim : FLinearColor::White); }
 	}
+	if (M->Ties.Num() > 0)
+	{
+		Heading(TEXT("Elsewhere"));
+		for (const FCrewTie& T : M->Ties)
+		{
+			const int32 Since = R->GetDay() - T.LastContactDay;
+			Line(FString::Printf(TEXT("%s%s, %s %s%s"), T.bFamily ? TEXT("") : TEXT("friend: "), *T.Name, *T.Relation, *T.Where(), Since < 60 ? *FString::Printf(TEXT("; last word %d day%s ago"), Since, Since == 1 ? TEXT("") : TEXT("s")) : TEXT("")), 13.f, T.bFamily ? FLinearColor::White : Lcars::Dim);
+		}
+	}
 	if (M->Relationships.Num() > 0)
 	{
 		Heading(TEXT("Bonds"));

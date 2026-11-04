@@ -277,6 +277,8 @@ private:
 	void TickRoster(float DeltaTime);
 	TWeakObjectPtr<UCrewRosterSubsystem> Roster;
 	int32 RosterRevisionSeen = -1;
+	float NearbyTimer = 0.f;
+	TArray<FString> NearbyNames;
 	int32 PickRandomSystem() const;
 	void InjureOfficer(float ThroughShields, const FCompartment* Where);
 	/** Wound and kill in proportion to what got through; Scale weights it by how many people are where it landed. */

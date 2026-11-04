@@ -39,6 +39,27 @@ enum class ECrewRelation : uint8 { Acquaintance = 0, Friend, CloseFriend, Rival,
 UENUM(BlueprintType)
 enum class ECrewEventKind : uint8 { Joined = 0, Promoted, Demoted, Commended, Reprimanded, Wounded, Recovered, Died, Bereaved, Moment, Mission, Discovery, Leave, Letter, Transfer, Memorial, Check, Count UMETA(Hidden) };
 
+UENUM(BlueprintType)
+enum class ECrewTiePlace : uint8 { World = 0, Ship, Station, Count UMETA(Hidden) };
+
+/** Someone elsewhere: family or a friend on a world, aboard another ship or at a station. Letters come from them,
+ *  passing their place is a reunion, and the missions to come will put them in harm's way. */
+USTRUCT(BlueprintType)
+struct FCrewTie
+{
+	GENERATED_BODY()
+	UPROPERTY(BlueprintReadOnly) FString Name;
+	/** "sister", "father", "academy roommate", "former captain"... */
+	UPROPERTY(BlueprintReadOnly) FString Relation;
+	UPROPERTY(BlueprintReadOnly) ECrewTiePlace Kind = ECrewTiePlace::World;
+	/** The world, ship or station; empty until bound to the galaxy's own names. */
+	UPROPERTY(BlueprintReadOnly) FString Place;
+	UPROPERTY(BlueprintReadOnly) bool bFamily = false;
+	UPROPERTY(BlueprintReadOnly) float Affinity = 0.5f;
+	UPROPERTY(BlueprintReadOnly) int32 LastContactDay = -100;
+	FString Where() const;
+};
+
 /** A bond with another person. */
 USTRUCT(BlueprintType)
 struct FCrewRelationship
@@ -134,6 +155,8 @@ struct FCrewMember
 	UPROPERTY(BlueprintReadOnly) float Stress = 0.f;
 	UPROPERTY(BlueprintReadOnly) TArray<FCrewWant> Wants;
 	UPROPERTY(BlueprintReadOnly) TArray<FCrewRelationship> Relationships;
+	/** Family and friends elsewhere. */
+	UPROPERTY(BlueprintReadOnly) TArray<FCrewTie> Ties;
 	UPROPERTY(BlueprintReadOnly) ECrewCondition Condition = ECrewCondition::Fit;
 	/** Ship's hours until a wound heals or a leave ends. */
 	UPROPERTY(BlueprintReadOnly) float ConditionHours = 0.f;
@@ -190,6 +213,8 @@ struct FCrewShipState
 	FString StationName;
 	float MedicalSupplies = 1.f;
 	int32 SickbayBeds = 24;
+	/** Named things within hailing distance: the station alongside, vessels in range, the worlds close by. */
+	TArray<FString> Nearby;
 };
 
 UCLASS()
@@ -246,6 +271,9 @@ public:
 	/** Alongside a station: recruits are offered, letters come, leave can be granted. Resupply done: the dead replaced. */
 	void NoteStarbase(const FString& StationName);
 	void NoteResupplyDone(const FString& StationName, TArray<FString>& OutLines);
+	/** The galaxy's own names for the ties generated as placeholders: worlds, stations and ships. */
+	void BindPlaces(const TArray<FString>& Worlds, const TArray<FString>& Stations, const TArray<FString>& Ships);
+	bool HasUnboundTies() const;
 	/** Lines for the bridge log since the last call. */
 	void DrainReports(TArray<FCrewReport>& Out) { Out = MoveTemp(Reports); Reports.Reset(); }
 
@@ -334,6 +362,8 @@ private:
 	FCrewMember MakePerson(FRandomStream& R, ECrewDepartment Dept, ECrewRank Rank, int32 Index);
 	void MakeNamed(FRandomStream& R, FCrewMember& M, const TCHAR* First, const TCHAR* Last, const TCHAR* Species, const TCHAR* Pronoun);
 	void MakeRecruits(const FString& StationName);
+	void MakeTies(FRandomStream& R, FCrewMember& M);
+	void Reunion(FCrewMember& M, FCrewTie& T, bool bAlongside);
 	FString PostingFor(FRandomStream& R, ECrewDepartment Dept, int32 Index) const;
 	void Dirty() { ++Revision; }
 	TArray<int32> PresentIn(const FString& Compartment, bool bFitOnly) const;

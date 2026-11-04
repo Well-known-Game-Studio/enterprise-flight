@@ -3214,6 +3214,7 @@ void AStarshipPawn::HandleCrewCommand(const TArray<FString>& Args)
 		Say(FString::Printf(TEXT("   mood %d%% stress %d%%  %s now: %s, %s"), FMath::RoundToInt(M->Mood * 100.f), FMath::RoundToInt(M->Stress * 100.f), *Nd, *UCrewRosterSubsystem::ActivityName(M->Activity).ToLower(), *M->Where), FColor::White, 20.f);
 		for (const FCrewWant& W : M->Wants) { Say(FString::Printf(TEXT("   %s %s%s"), W.bFear ? TEXT("fears") : (W.bGranted ? TEXT("had") : TEXT("wants")), *W.Text, W.bGranted ? TEXT(" (granted)") : TEXT("")), FColor::White, 20.f); }
 		for (const FCrewRelationship& Rl : M->Relationships) { const FCrewMember* O = R->Find(Rl.Other); if (O && FMath::Abs(Rl.Affinity) > 0.3f) { Say(FString::Printf(TEXT("   %s: %s (%+.0f)"), *UCrewRosterSubsystem::RelationName(Rl.Kind), *O->Styled(), Rl.Affinity * 100.f), FColor::White, 20.f); } }
+		for (const FCrewTie& T : M->Ties) { Say(FString::Printf(TEXT("   %s: %s, %s %s"), T.bFamily ? TEXT("family") : TEXT("friend"), *T.Name, *T.Relation, *T.Where()), FColor::White, 20.f); }
 		for (int32 i = FMath::Max(0, M->History.Num() - 6); i < M->History.Num(); ++i) { Say(FString::Printf(TEXT("   %.1f %s"), M->History[i].Stardate, *M->History[i].Text), FColor::White, 20.f); }
 	}
 	else if (What == TEXT("promote") || What == TEXT("demote") || What == TEXT("commend") || What == TEXT("reprimand") || What == TEXT("discharge"))

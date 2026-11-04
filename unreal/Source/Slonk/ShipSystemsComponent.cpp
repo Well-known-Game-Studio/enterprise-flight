@@ -1,5 +1,7 @@
 #include "ShipSystemsComponent.h"
 #include "CrewRoster.h"
+#include "PlanetBody.h"
+#include "EngineUtils.h"
 #include "ShipCompartments.h"
 #include "EngineUtils.h"
 #include "ScienceScannerComponent.h"
@@ -142,6 +144,34 @@ void UShipSystemsComponent::TickRoster(float DeltaTime)
 	if (const ASpaceVessel* V = Cast<ASpaceVessel>(ResupplyStation.Get())) { State.StationName = V->GetDisplayName(); }
 	State.MedicalSupplies = Stores.MedicalSupplies;
 	State.SickbayBeds = Crew.SickbayBeds;
+	// Who and what is within hailing distance, looked up every few seconds; the galaxy's names for the crew's ties
+	// elsewhere, once the systems have spawned.
+	NearbyTimer -= DeltaTime;
+	if (NearbyTimer <= 0.f)
+	{
+		NearbyTimer = 4.f;
+		NearbyNames.Reset();
+		if (!State.StationName.IsEmpty()) { NearbyNames.Add(State.StationName); }
+		const FVector Here = S->GetActorLocation();
+		TArray<FString> Worlds, Stations, Ships;
+		const bool bBind = R->HasUnboundTies() && GetWorld()->GetTimeSeconds() > 6.f;
+		for (TActorIterator<ASpaceVessel> It(GetWorld()); It; ++It)
+		{
+			if (Cast<AActor>(*It) == Cast<AActor>(S)) { continue; }
+			const FString N = It->GetDisplayName();
+			if (FVector::Dist(It->GetActorLocation(), Here) < 3.0e7) { NearbyNames.AddUnique(N); }
+			if (bBind) { (Cast<ASpaceStation>(*It) ? Stations : Ships).Add(N); }
+		}
+		for (TActorIterator<APlanetBody> It(GetWorld()); It; ++It)
+		{
+			if (It->IsMoon()) { continue; }
+			const FString N = It->GetDisplayName();
+			if (FVector::Dist(It->GetActorLocation(), Here) < It->GetRadiusCm() * 6.0) { NearbyNames.AddUnique(N); }
+			if (bBind && It->HasSolidSurface()) { Worlds.Add(N); }
+		}
+		if (bBind && (Worlds.Num() + Stations.Num() + Ships.Num()) > 0) { R->BindPlaces(Worlds, Stations, Ships); }
+	}
+	State.Nearby = NearbyNames;
 	R->AdvanceSeconds(DeltaTime, State);
 	// The counts the medical model keeps become people.
 	TArray<FString> Lines;
