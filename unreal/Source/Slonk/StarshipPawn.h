@@ -655,6 +655,8 @@ protected:
 	virtual bool HandleCraftCommand(const FString& Op, const TArray<FString>& Args);
 	/** ship crew ...: the roster from the console (list, files, the captain's actions, dev time). */
 	void HandleCrewCommand(const TArray<FString>& Args);
+	/** ship mission ...: the board, the inbox, accept/act/abandon, parties, dev spawning. */
+	void HandleMissionCommand(const TArray<FString>& Args);
 
 private:
 	void ApplyHullDimensions();

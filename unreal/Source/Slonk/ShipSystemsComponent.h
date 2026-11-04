@@ -235,6 +235,8 @@ public:
 	void SyncOfficersFromRoster();
 	/** The medical counts and the officer list from the roster as it is (a session's start, a new complement). */
 	void ResetCountsFromRoster();
+	/** One named person hurt or killed off the ship (a mission): the medical counts and the roster move together. */
+	bool HurtCrewMember(int32 Id, bool bKilled, bool bCritical, const FString& Where);
 	static FString SystemName(EShipSystem System);
 	static FString StationName(EStation Station);
 	static FString AlertName(EAlertState Alert);
@@ -281,6 +283,8 @@ private:
 	void TickRoster(float DeltaTime);
 	TWeakObjectPtr<UCrewRosterSubsystem> Roster;
 	int32 RosterRevisionSeen = -1;
+	/** The missions live the ship's time too and speak through the same log. */
+	void TickMissions(float DeltaTime, const TArray<FString>& Nearby, bool bAlongside, const FString& StationName);
 	float NearbyTimer = 0.f;
 	TArray<FString> NearbyNames;
 	FString AlongsideNoted;
