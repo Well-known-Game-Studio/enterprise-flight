@@ -322,7 +322,7 @@ void UShipSystemsComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 
 void UShipSystemsComponent::TickLifeSupport(float DeltaTime)
 {
-	if (Atmosphere < 0.6f) { if (UCrewRosterSubsystem* R = Roster.Get()) { R->NoteHitCompartment(FString()); } }
+	if (Atmosphere < 0.6f && !IsUnderFire()) { if (UCrewRosterSubsystem* R = Roster.Get()) { R->NoteMedicalHazard(); } }
 	// Life support at half or better keeps the air; below that the decks slowly lose it, and people with it.
 	const float Target = AtmosphereTarget();
 	const float Rate = Target > Atmosphere ? 0.05f : 0.03f;

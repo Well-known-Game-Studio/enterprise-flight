@@ -265,6 +265,8 @@ public:
 	void NoteAlert(EAlertState NewAlert);
 	/** A hit landed in this compartment: the next casualties come from the people in it. */
 	void NoteHitCompartment(const FString& Compartment);
+	/** The ship is losing air or the like: no compartment, and the dead are sickbay's patients first. */
+	void NoteMedicalHazard();
 	/** The medical model's counts changed: wound, kill and heal people by name to match (the dead and the newly
 	 *  wounded from the compartment hit while the hit is fresh, else from sickbay's patients for the dead). Returns
 	 *  the lines to report. */

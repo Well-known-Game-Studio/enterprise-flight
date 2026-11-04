@@ -1204,6 +1204,12 @@ void UCrewRosterSubsystem::NoteAlert(EAlertState NewAlert)
 	Alert = NewAlert; AlertSinceHours = Hours;
 }
 
+void UCrewRosterSubsystem::NoteMedicalHazard()
+{
+	// Bad air is no hit: the next casualties are nobody's compartment, and its dead are the patients first.
+	LastHitCompartment.Empty(); LastHitHours = -1000.0; RecentHitCompartments.Reset();
+}
+
 void UCrewRosterSubsystem::NoteHitCompartment(const FString& Compartment)
 {
 	LastHitCompartment = Compartment; LastHitHours = Hours;
