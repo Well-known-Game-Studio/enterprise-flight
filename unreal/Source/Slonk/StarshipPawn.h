@@ -653,6 +653,8 @@ protected:
 	virtual void SetupWeaponBanks();
 	/** First look at a console op; true when handled (the shuttle takes "dock" here). */
 	virtual bool HandleCraftCommand(const FString& Op, const TArray<FString>& Args);
+	/** ship crew ...: the roster from the console (list, files, the captain's actions, dev time). */
+	void HandleCrewCommand(const TArray<FString>& Args);
 
 private:
 	void ApplyHullDimensions();

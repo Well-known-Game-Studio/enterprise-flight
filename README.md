@@ -174,6 +174,19 @@ Hits land somewhere in particular. The ship carries a compartment map in her own
 
 ![The master systems display in elevation and in plan: hits flashing where they landed, the starboard nacelle selected, the aft shield reinforced](https://github.com/user-attachments/assets/e3ecf24d-f14a-452c-a71c-606465985377)
 
+## The crew
+
+Everyone aboard is a person: five hundred records with a name, species and home, a rank, department, posting and
+watch, skills that grow with use, facets of character, traits, needs, mood and stress, desires and fears, bonds
+with others, a personal log and a service record. A ship's clock runs (an hour a minute by default), three watches
+rotate through postings, quarters, mess and rec deck, and every hour each person lives a little: needs drift,
+experience accrues, memories fade, moments happen (friendships, quarrels, letters, breakthroughs, a scare at red
+alert, a birthday in the mess). Hits wound and kill people by name from the compartment struck, friends grieve,
+heads of department who fall are succeeded by their seconds, and a starbase offers recruits for the vacancies.
+The crew panel (`=`) lists the roster by department with a personnel file for each, and the captain's hand is the
+sidebar: commend, reprimand, promote, leave, a word. `ship crew ...` does the same from the console, with
+`check <skill> <difficulty>` for the mission checks to come. The design is in `docs/crew-design.md`.
+
 ## The bridge and the rooms
 
 The Star Trek VI bridge is built from code in Blender (`blender/bridge-st6`) and imported as one mesh with its Okudagram screens bound to live readouts. From the captain's chair the viewscreen shows the real view ahead; the crew figures are placeholders for now. Main engineering, sickbay, the shuttle bay, the transporter room and the airlock's staging area are built the same way (`blender/rooms/build_rooms.py`, one mesh per room plus the parked shuttle), laid out after the sets of the first six films and walked on their own triangles; their slots bind to the Okudagram screens, the lit strips and panels, the glowing core and pad, and a glass material.

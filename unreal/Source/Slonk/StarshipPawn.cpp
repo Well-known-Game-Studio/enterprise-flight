@@ -29,6 +29,8 @@
 #include "SlonkUIRoot.h"
 #include "LcarsPanel.h"
 #include "LcarsPanels.h"
+#include "CrewPanel.h"
+#include "CrewRoster.h"
 #include "StarChartPanel.h"
 #include "MsdPanel.h"
 #include "Kismet/GameplayStatics.h"
@@ -2251,6 +2253,10 @@ void AStarshipPawn::ProcessDebugCommand()
 		if (ArgStr(1) == TEXT("stop") || ArgStr(1) == TEXT("off")) { if (Scanner) { Scanner->Cancel(); } }
 		else { ToggleScan(); }
 	}
+	else if (Op == TEXT("crew"))
+	{
+		HandleCrewCommand(Args);
+	}
 	else if (Op == TEXT("science"))
 	{
 		// science [reset]: list the log on screen, or wipe it (testing).
@@ -2285,6 +2291,7 @@ void AStarshipPawn::ProcessDebugCommand()
 		else if (What == TEXT("engineering") || What == TEXT("eng")) { UI->TogglePanel(UEngineeringPanel::StaticClass()); }
 		else if (What == TEXT("tactical") || What == TEXT("tac")) { UI->TogglePanel(UTacticalPanel::StaticClass()); }
 		else if (What == TEXT("medical") || What == TEXT("sickbay")) { UI->TogglePanel(UMedicalPanel::StaticClass()); }
+		else if (What == TEXT("crew") || What == TEXT("roster")) { UI->TogglePanel(UCrewPanel::StaticClass()); }
 		else if (What == TEXT("msd") || What == TEXT("systems") || What == TEXT("damage")) { UI->TogglePanel(UMsdPanel::StaticClass()); }
 		else if (What == TEXT("lift") || What == TEXT("turbolift")) { UI->TogglePanel(UTurboliftPanel::StaticClass()); }
 		else if (What == TEXT("close")) { UI->CloseAll(); }
@@ -2364,7 +2371,8 @@ void AStarshipPawn::ProcessDebugCommand()
 			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km]"),
 			TEXT("ship shuttle  (launch the shuttlecraft; aboard it, dock when the bay is within 500 m) | ship takeoff"),
 			TEXT("ship scan [stop]  (sensors on the locked / nav target; landed: survey the ground) | ship science [reset]"),
-			TEXT("ship ui menu | chart | science | engineering | tactical | medical | msd | controls | settings | close | click <button>   (the LCARS panels)"),
+			TEXT("ship ui menu | chart | science | engineering | tactical | medical | crew | msd | controls | settings | close | click <button>   (the LCARS panels)"),
+			TEXT("ship crew list [dept] | show <name> | trouble | promote|demote|commend|reprimand <name> [why] | watch <name> alpha|beta|gamma | post <name> <dept> | leave <name> [days] | talk <name> listen|encourage|order|promise | recruits | signon <n> | discharge <name> | memorial | check <skill> <difficulty> [names] | time <hours> | stardate | reset [seed]"),
 			TEXT("ship order alert red|yellow|green | power <system>|balance | repair <system>|auto | shields fore|aft|port|starboard|even | triage critical|walking | resupply | report"),
 			TEXT("ship exec <console command>"),
 		};
@@ -3138,6 +3146,146 @@ bool AStarshipPawn::LaunchShuttle()
 	}
 	UE_LOG(LogTemp, Log, TEXT("Shuttle launched from %s at %s"), *GetCraftName(), *GetShuttleBayTransform().GetLocation().ToString());
 	return true;
+}
+
+namespace
+{
+	bool ParseDepartmentSafe(const FString& Word, ECrewDepartment& Out) { return !Word.IsEmpty() && UCrewRosterSubsystem::ParseDepartment(Word, Out); }
+}
+
+void AStarshipPawn::HandleCrewCommand(const TArray<FString>& Args)
+{
+	UCrewRosterSubsystem* R = GetGameInstance() ? GetGameInstance()->GetSubsystem<UCrewRosterSubsystem>() : nullptr;
+	if (!R) { ScreenMessage(TEXT("No crew roster"), FColor::Orange); return; }
+	auto Word = [&](int32 i) { return Args.IsValidIndex(i) ? Args[i] : FString(); };
+	const FString What = Word(1).ToLower();
+	auto Say = [&](const FString& T, FColor C = FColor::Cyan, float Secs = 10.f) { ScreenMessage(T, C, Secs); };
+	auto Person = [&](int32 i, int32* OutNext = nullptr) -> const FCrewMember*
+	{
+		// A name of one or two words, or an id.
+		if (!Args.IsValidIndex(i)) { return nullptr; }
+		if (Args[i].IsNumeric()) { if (OutNext) { *OutNext = i + 1; } return R->Find(FCString::Atoi(*Args[i])); }
+		if (Args.IsValidIndex(i + 1) && !Args[i + 1].IsNumeric())
+		{
+			if (const FCrewMember* M = R->FindByName(Args[i] + TEXT(" ") + Args[i + 1])) { if (M->FullName().ToLower() == (Args[i] + TEXT(" ") + Args[i + 1]).ToLower()) { if (OutNext) { *OutNext = i + 2; } return M; } }
+		}
+		if (OutNext) { *OutNext = i + 1; }
+		return R->FindByName(Args[i]);
+	};
+	auto Rest = [&](int32 From) { FString S; for (int32 i = From; i < Args.Num(); ++i) { S += (S.IsEmpty() ? TEXT("") : TEXT(" ")) + Args[i]; } return S; };
+	FString Reply;
+	if (What.IsEmpty() || What == TEXT("status"))
+	{
+		Say(FString::Printf(TEXT("Crew: stardate %s %02d:00 (%s watch), %d aboard, %d lost, morale %d%%, %d in trouble. ship crew list|show|trouble|..."), *R->StardateText(), R->GetHourOfDay(), *UCrewRosterSubsystem::WatchName(R->WatchOnDuty()), R->CountAboard(), R->GetLost().Num(), FMath::RoundToInt(R->Morale() * 100.f), R->InTrouble().Num()));
+	}
+	else if (What == TEXT("list"))
+	{
+		ECrewDepartment D; const bool bDept = ParseDepartmentSafe(Word(2), D);
+		int32 N = 0;
+		for (const FCrewMember& M : R->GetRoster())
+		{
+			if (!bDept && !(M.bHead || M.bSecond)) { continue; }
+			if (bDept && M.Department != D) { continue; }
+			if (N++ > 40) { break; }
+			Say(FString::Printf(TEXT("   %3d %-26s %-12s %-20s %-5s mood %d%% %s"), M.Id, *M.Styled(), *UCrewRosterSubsystem::DepartmentName(M.Department), *M.Posting, *UCrewRosterSubsystem::WatchName(M.Watch), FMath::RoundToInt(M.Mood * 100.f), *UCrewRosterSubsystem::ConditionName(M.Condition)), FColor::White, 15.f);
+		}
+		Say(bDept ? FString::Printf(TEXT("%s: %d listed"), *UCrewRosterSubsystem::DepartmentName(D), N) : TEXT("Senior staff (ship crew list <department> for the rest)"));
+	}
+	else if (What == TEXT("trouble"))
+	{
+		for (int32 Id : R->InTrouble())
+		{
+			const FCrewMember* M = R->Find(Id); if (!M) { continue; }
+			float Worst = 1.f; int32 Wi = 0; for (int32 i = 0; i < M->Needs.Num(); ++i) { if (M->Needs[i] < Worst) { Worst = M->Needs[i]; Wi = i; } }
+			Say(FString::Printf(TEXT("   %3d %-26s mood %d%% stress %d%% %s, wants for %s"), M->Id, *M->Styled(), FMath::RoundToInt(M->Mood * 100.f), FMath::RoundToInt(M->Stress * 100.f), *UCrewRosterSubsystem::ConditionName(M->Condition), *UCrewRosterSubsystem::NeedName((ECrewNeed)Wi).ToLower()), FColor::White, 15.f);
+		}
+		Say(FString::Printf(TEXT("%d in trouble"), R->InTrouble().Num()));
+	}
+	else if (What == TEXT("show") || What == TEXT("file"))
+	{
+		const FCrewMember* M = Person(2);
+		if (!M) { Say(TEXT("Who? ship crew show <name|id>"), FColor::Orange); return; }
+		Say(FString::Printf(TEXT("%s (%d): %s, %s dept, %s, %s watch, %s; %s, %d, of %s; %s"), *M->Styled(), M->Id, *UCrewRosterSubsystem::RankName(M->Rank), *UCrewRosterSubsystem::DepartmentName(M->Department), *M->Posting, *UCrewRosterSubsystem::WatchName(M->Watch), *UCrewRosterSubsystem::ConditionName(M->Condition), *M->Species, M->Age, *M->Home, *M->Backstory), FColor::White, 20.f);
+		FString Sk; for (int32 i = 0; i < M->Skills.Num(); ++i) { if (M->Skills[i] >= 30.f) { Sk += FString::Printf(TEXT("%s %d  "), *UCrewRosterSubsystem::SkillName((ECrewSkill)i), FMath::RoundToInt(M->Skills[i])); } }
+		FString Fa; for (int32 i = 0; i < M->Facets.Num(); ++i) { Fa += FString::Printf(TEXT("%s %d  "), *UCrewRosterSubsystem::FacetName((ECrewFacet)i).Left(3), FMath::RoundToInt(M->Facets[i])); }
+		Say(TEXT("   skills: ") + Sk, FColor::White, 20.f); Say(TEXT("   facets: ") + Fa, FColor::White, 20.f);
+		FString Tr; for (FName T : M->Traits) { Tr += UCrewRosterSubsystem::TraitText(T) + TEXT("; "); } if (!Tr.IsEmpty()) { Say(TEXT("   ") + Tr, FColor::White, 20.f); }
+		FString Nd; for (int32 i = 0; i < M->Needs.Num(); ++i) { Nd += FString::Printf(TEXT("%s %d%%  "), *UCrewRosterSubsystem::NeedName((ECrewNeed)i).ToLower(), FMath::RoundToInt(M->Needs[i] * 100.f)); }
+		Say(FString::Printf(TEXT("   mood %d%% stress %d%%  %s now: %s, %s"), FMath::RoundToInt(M->Mood * 100.f), FMath::RoundToInt(M->Stress * 100.f), *Nd, *UCrewRosterSubsystem::ActivityName(M->Activity).ToLower(), *M->Where), FColor::White, 20.f);
+		for (const FCrewWant& W : M->Wants) { Say(FString::Printf(TEXT("   %s %s%s"), W.bFear ? TEXT("fears") : (W.bGranted ? TEXT("had") : TEXT("wants")), *W.Text, W.bGranted ? TEXT(" (granted)") : TEXT("")), FColor::White, 20.f); }
+		for (const FCrewRelationship& Rl : M->Relationships) { const FCrewMember* O = R->Find(Rl.Other); if (O && FMath::Abs(Rl.Affinity) > 0.3f) { Say(FString::Printf(TEXT("   %s: %s (%+.0f)"), *UCrewRosterSubsystem::RelationName(Rl.Kind), *O->Styled(), Rl.Affinity * 100.f), FColor::White, 20.f); } }
+		for (int32 i = FMath::Max(0, M->History.Num() - 6); i < M->History.Num(); ++i) { Say(FString::Printf(TEXT("   %.1f %s"), M->History[i].Stardate, *M->History[i].Text), FColor::White, 20.f); }
+	}
+	else if (What == TEXT("promote") || What == TEXT("demote") || What == TEXT("commend") || What == TEXT("reprimand") || What == TEXT("discharge"))
+	{
+		int32 Next = 3; const FCrewMember* M = Person(2, &Next);
+		if (!M) { Say(TEXT("Who?"), FColor::Orange); return; }
+		bool bOk = false;
+		if (What == TEXT("promote")) { bOk = R->Promote(M->Id, Reply); }
+		else if (What == TEXT("demote")) { bOk = R->Demote(M->Id, Reply); }
+		else if (What == TEXT("commend")) { bOk = R->Commend(M->Id, Rest(Next), Reply); }
+		else if (What == TEXT("reprimand")) { bOk = R->Reprimand(M->Id, Rest(Next), Reply); }
+		else { bOk = R->Discharge(M->Id, Reply); }
+		Say(Reply, bOk ? FColor::Cyan : FColor::Orange);
+	}
+	else if (What == TEXT("watch"))
+	{
+		int32 Next = 3; const FCrewMember* M = Person(2, &Next);
+		const FString W = Word(Next).ToLower();
+		const ECrewWatch Watch = W.StartsWith(TEXT("b")) ? ECrewWatch::Beta : W.StartsWith(TEXT("g")) ? ECrewWatch::Gamma : ECrewWatch::Alpha;
+		if (!M) { Say(TEXT("Who?"), FColor::Orange); return; }
+		R->SetWatch(M->Id, Watch, Reply); Say(Reply);
+	}
+	else if (What == TEXT("post"))
+	{
+		int32 Next = 3; const FCrewMember* M = Person(2, &Next);
+		ECrewDepartment D;
+		if (!M) { Say(TEXT("Who?"), FColor::Orange); return; }
+		if (!UCrewRosterSubsystem::ParseDepartment(Word(Next), D)) { Say(TEXT("post <name> <department> [compartment words]"), FColor::Orange); return; }
+		R->SetPosting(M->Id, D, Rest(Next + 1), Reply); Say(Reply);
+	}
+	else if (What == TEXT("leave"))
+	{
+		int32 Next = 3; const FCrewMember* M = Person(2, &Next);
+		if (!M) { Say(TEXT("Who?"), FColor::Orange); return; }
+		R->GrantLeave(M->Id, Word(Next).IsNumeric() ? FCString::Atoi(*Word(Next)) : 3, Reply); Say(Reply);
+	}
+	else if (What == TEXT("talk"))
+	{
+		int32 Next = 3; const FCrewMember* M = Person(2, &Next);
+		if (!M) { Say(TEXT("Who?"), FColor::Orange); return; }
+		const bool bOk = R->Talk(M->Id, Word(Next).IsEmpty() ? TEXT("listen") : Word(Next), Reply); Say(Reply, bOk ? FColor::Cyan : FColor::Orange, 12.f);
+	}
+	else if (What == TEXT("recruits"))
+	{
+		if (R->GetRecruits().Num() == 0) { Say(TEXT("No recruits offered: resupply alongside a station first"), FColor::Orange); return; }
+		const TArray<FCrewMember>& Rc = R->GetRecruits();
+		for (int32 i = 0; i < Rc.Num(); ++i) { Say(FString::Printf(TEXT("   %d  %-26s %-12s %s %d  %s"), i, *Rc[i].Styled(), *UCrewRosterSubsystem::DepartmentName(Rc[i].Department), *UCrewRosterSubsystem::SkillName(UCrewRosterSubsystem::SkillOf(Rc[i].Department)), FMath::RoundToInt(Rc[i].Skill(UCrewRosterSubsystem::SkillOf(Rc[i].Department))), *Rc[i].Backstory), FColor::White, 15.f); }
+		Say(FString::Printf(TEXT("Recruits at %s; ship crew signon <n>"), *R->GetRecruitStation()));
+	}
+	else if (What == TEXT("signon")) { const bool bOk = R->SignOn(FCString::Atoi(*Word(2)), Reply); Say(Reply, bOk ? FColor::Cyan : FColor::Orange); }
+	else if (What == TEXT("memorial")) { Say(R->Memorial(), FColor::Cyan, 12.f); if (Systems) { Systems->ReportAs(TEXT("The captain"), TEXT("All hands: a memorial for those we have lost."), FLinearColor(0.8f, 0.8f, 1.f)); } }
+	else if (What == TEXT("check"))
+	{
+		ECrewSkill S;
+		if (!UCrewRosterSubsystem::ParseSkill(Word(2), S)) { Say(TEXT("check <skill> <difficulty> [names]"), FColor::Orange); return; }
+		const float Diff = Word(3).IsNumeric() ? FCString::Atof(*Word(3)) : 50.f;
+		TArray<int32> Ids; int32 i = 4;
+		while (i < Args.Num()) { int32 Next = i + 1; if (const FCrewMember* M = Person(i, &Next)) { Ids.Add(M->Id); } i = Next; }
+		const FCrewCheck C = R->Check(S, Diff, Ids);
+		Say(C.Summary, C.bSuccess ? FColor::Green : FColor::Orange, 12.f);
+	}
+	else if (What == TEXT("time"))
+	{
+		const int32 H = Word(2).IsNumeric() ? FCString::Atoi(*Word(2)) : 24;
+		FCrewShipState St; St.Alert = Systems ? Systems->GetAlert() : EAlertState::Green;
+		R->DevAdvanceHours(H, St);
+		Say(FString::Printf(TEXT("%d ship's hours lived: stardate %s, morale %d%%"), H, *R->StardateText(), FMath::RoundToInt(R->Morale() * 100.f)));
+	}
+	else if (What == TEXT("stardate")) { Say(FString::Printf(TEXT("Stardate %s, %02d:00, %s watch, day %d aboard"), *R->StardateText(), R->GetHourOfDay(), *UCrewRosterSubsystem::WatchName(R->WatchOnDuty()), R->GetDay())); }
+	else if (What == TEXT("reset")) { R->NewComplement(Word(2).IsNumeric() ? FCString::Atoi(*Word(2)) : 0); if (Systems) { Systems->SyncOfficersFromRoster(); } Say(FString::Printf(TEXT("New complement of %d"), R->GetRoster().Num()), FColor::Orange); }
+	else if (What == TEXT("lost")) { for (const FCrewMember& L : R->GetLost()) { Say(FString::Printf(TEXT("   %s, %s"), *L.Styled(), L.History.Num() ? *L.History.Last().Text : TEXT("")), FColor::White, 15.f); } Say(FString::Printf(TEXT("%d lost"), R->GetLost().Num())); }
+	else { Say(TEXT("ship crew list [dept] | show <name> | trouble | promote|demote|commend|reprimand <name> | watch <name> a|b|g | post <name> <dept> | leave <name> [days] | talk <name> listen|encourage|order|promise | recruits | signon <n> | discharge <name> | memorial | lost | check <skill> <difficulty> [names] | time <hours> | stardate | reset [seed]"), FColor::Orange, 12.f); }
 }
 
 void AStarshipPawn::MarkFarShadowCasters()

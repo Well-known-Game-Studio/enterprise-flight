@@ -103,6 +103,7 @@ struct FBridgeLogEntry
 };
 
 class AStarshipPawn;
+class UCrewRosterSubsystem;
 
 /** A place inside the ship, in pawn space, with what lives there. See ShipCompartments.h for the map. */
 struct FCompartment
@@ -222,6 +223,14 @@ public:
 	const FOfficer* OfficerAt(EStation Station) const;
 	/** An officer speaks: on the screen, and into the bridge log. */
 	void Report(EStation From, const FString& Text, const FLinearColor& Color = FLinearColor(0.75f, 0.9f, 1.f));
+	/** A line from someone without a station of their own (the first officer, the chief of the boat). */
+	void ReportAs(const FString& Speaker, const FString& Text, const FLinearColor& Color = FLinearColor(0.75f, 0.9f, 1.f));
+	/** The crew roster behind the counts and the officers' names (null on craft without the crew model). */
+	UCrewRosterSubsystem* GetRoster() const { return Roster.Get(); }
+	/** The ship was hit within the last few seconds. */
+	bool IsUnderFire() const;
+	/** Names and ranks of the officer list from the roster's heads and seconds. */
+	void SyncOfficersFromRoster();
 	static FString SystemName(EShipSystem System);
 	static FString StationName(EStation Station);
 	static FString AlertName(EAlertState Alert);
@@ -264,6 +273,10 @@ private:
 	int32 ReinforcedFacing = -1;
 	/** Break a system by Loss, with the chief's report; Where names the compartment when known. */
 	void DamageSystem(int32 Index, float Loss, const FString& Where);
+	/** The roster lives the ship's time, names the casualties and lends its heads to the officer list. */
+	void TickRoster(float DeltaTime);
+	TWeakObjectPtr<UCrewRosterSubsystem> Roster;
+	int32 RosterRevisionSeen = -1;
 	int32 PickRandomSystem() const;
 	void InjureOfficer(float ThroughShields, const FCompartment* Where);
 	/** Wound and kill in proportion to what got through; Scale weights it by how many people are where it landed. */
