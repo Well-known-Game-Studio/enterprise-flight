@@ -73,6 +73,8 @@ public:
 
 	/** Add a completed scan: applies the first-of-kind bonus, stores and saves. Returns the record's total points. */
 	int32 Add(FScanRecord& Record);
+	/** A reward in points from elsewhere (a mission's findings): stored as a record with these points as given, no scan bonuses. */
+	int32 AddReward(const FString& Key, const FString& System, const FString& Label, int32 Points, const FString& Note);
 	bool IsScanned(const FString& Key) const { return Find(Key) != nullptr; }
 	const FScanRecord* Find(const FString& Key) const;
 	const TArray<FScanRecord>& GetRecords() const { return Records; }

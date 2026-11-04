@@ -10,6 +10,8 @@
 #include "SpaceTraffic.h"
 #include "StarshipPawn.h"
 #include "ShipSystemsComponent.h"
+#include "ShuttlecraftPawn.h"
+#include "PersonPawn.h"
 #include "ScienceLog.h"
 
 const TCHAR* UMissionSubsystem::SlotName = TEXT("Missions");
@@ -58,22 +60,22 @@ void UMissionSubsystem::Load()
 	{
 		if (const USlonkMissionSaveGame* S = Cast<USlonkMissionSaveGame>(UGameplayStatics::LoadGameFromSlot(SlotName, 0)))
 		{
-			Missions = S->Missions; Inbox = S->Inbox; Standing = S->Standing; NextId = S->NextId; NextOrdersHours = S->NextOrdersHours; NextEventHours = S->NextEventHours; Completed = S->Completed; Failed = S->Failed;
+			Missions = S->Missions; Inbox = S->Inbox; Standing = S->Standing; NextId = S->NextId; NextOrdersHours = S->NextOrdersHours; NextEventHours = S->NextEventHours; Completed = S->Completed; Failed = S->Failed; BoardDays = S->BoardDays;
 			for (FMission& M : Missions)
 			{
-				if (M.IsOpen() && M.Source == EMissionSource::Event && M.TargetKind == EMissionTarget::Vessel) { M.State = EMissionState::Expired; M.ClosedStardate = M.DeadlineStardate; M.Log.Add(TEXT("      Contact lost between sessions.")); }
+				if (M.IsOpen() && M.Source == EMissionSource::Event && M.TargetKind == EMissionTarget::Vessel) { M.State = EMissionState::Expired; M.ClosedStardate = M.DeadlineStardate; M.Log.Add(TEXT("      Contact lost between sessions.")); bSaveWanted = true; SaveDelaySeconds = 2.f; }
 			}
 			UE_LOG(LogTemp, Log, TEXT("Missions: loaded %d (%d open), standing %d"), Missions.Num(), Open().Num(), Standing);
 		}
 	}
-	Dirty();
+	++Revision;
 }
 
 void UMissionSubsystem::Save()
 {
 	USlonkMissionSaveGame* S = Cast<USlonkMissionSaveGame>(UGameplayStatics::CreateSaveGameObject(USlonkMissionSaveGame::StaticClass()));
 	if (!S) { return; }
-	S->Missions = Missions; S->Inbox = Inbox; S->Standing = Standing; S->NextId = NextId; S->NextOrdersHours = NextOrdersHours; S->NextEventHours = NextEventHours; S->Completed = Completed; S->Failed = Failed;
+	S->Missions = Missions; S->Inbox = Inbox; S->Standing = Standing; S->NextId = NextId; S->NextOrdersHours = NextOrdersHours; S->NextEventHours = NextEventHours; S->Completed = Completed; S->Failed = Failed; S->BoardDays = BoardDays;
 	UGameplayStatics::SaveGameToSlot(S, SlotName, 0);
 	bSaveWanted = false;
 }
@@ -81,8 +83,20 @@ void UMissionSubsystem::Save()
 void UMissionSubsystem::Reset()
 {
 	UGameplayStatics::DeleteGameInSlot(SlotName, 0);
-	Missions.Reset(); Inbox.Reset(); Standing = 0; NextId = 1; Completed = 0; Failed = 0; NextOrdersHours = 0.0; NextEventHours = 0.0; BoardPostedAt.Empty();
+	Missions.Reset(); Inbox.Reset(); Standing = 0; NextId = 1; Completed = 0; Failed = 0; NextOrdersHours = 0.0; NextEventHours = 0.0; BoardPostedAt.Empty(); BoardDays.Empty();
 	Dirty(); Save();
+}
+
+AStarshipPawn* UMissionSubsystem::CrewedShip() const
+{
+	// The ship whose people these are, whether the player sits in her chair, flies her shuttle or walks a deck.
+	APawn* PlayerPawn = UGameplayStatics::GetPlayerPawn(GetWorld(), 0);
+	AStarshipPawn* Craft = Cast<AStarshipPawn>(PlayerPawn);
+	if (!Craft) { if (const APersonPawn* P = Cast<APersonPawn>(PlayerPawn)) { Craft = P->Craft.Get(); } }
+	if (const AShuttlecraftPawn* Sh = Cast<AShuttlecraftPawn>(Craft)) { Craft = Sh->Mothership.Get(); }
+	if (Craft && Craft->Systems && Craft->Systems->GetRoster()) { return Craft; }
+	for (TActorIterator<AStarshipPawn> It(GetWorld()); It; ++It) { if (!It->IsShuttle() && It->Systems && It->Systems->GetRoster()) { return *It; } }
+	return nullptr;
 }
 
 UCrewRosterSubsystem* UMissionSubsystem::Roster() const
@@ -147,7 +161,7 @@ void UMissionSubsystem::AdvanceSeconds(float Seconds, const FMissionShipState& S
 	{
 		NextEventHours = H + Rng.FRandRange(1.0, 3.0);
 		int32 Events = 0; for (const FMission& M : Missions) { if (M.IsOpen() && M.Source == EMissionSource::Event) { ++Events; } }
-		if (!Ship.bAlongside && !Ship.bUnderFire && Events == 0) { RollEvent(); }
+		if (!Ship.bAlongside && !Ship.bUnderFire && !Ship.bAtWarp && Events == 0) { RollEvent(); }
 	}
 	Expire();
 	if (bSaveWanted) { SaveDelaySeconds -= Seconds; if (SaveDelaySeconds <= 0.f) { Save(); } }
@@ -178,7 +192,7 @@ void UMissionSubsystem::Close(FMission& M, EMissionState State, const FString& W
 {
 	M.State = State; M.ClosedStardate = Stardate();
 	M.Log.Add(FString::Printf(TEXT("%.1f  %s: %s."), Stardate(), *StateName(State), *Why));
-	Dirty(); bSaveWanted = true; SaveDelaySeconds = 2.f;
+	Dirty();
 }
 
 // ---- generation ----
@@ -231,7 +245,7 @@ FMission UMissionSubsystem::MakeMission(EMissionKind Kind, EMissionSource Source
 	M.From = Source == EMissionSource::Starfleet ? Pick(R, Admirals) : Source == EMissionSource::Starbase ? FString::Printf(TEXT("%s operations"), *Last.StationName) : TEXT("the bridge");
 	const double Days = R.FRandRange(4.0, 9.0);
 	M.DeadlineStardate = Stardate() + Days;
-	PickTarget(M, R);
+	if (!PickTarget(M, R)) { M.Id = -1; return M; }   // nowhere to send it: the caller drops it
 	const FString T = M.TargetName.IsEmpty() ? TEXT("here") : M.TargetName;
 	using S = ECrewSkill; using D = ECrewDepartment;
 	switch (Kind)
@@ -351,31 +365,33 @@ void UMissionSubsystem::IssueOrders()
 	FRandomStream R(Rng.RandRange(1, 1 << 20));
 	static const EMissionKind Kinds[] = { EMissionKind::Survey, EMissionKind::Diplomacy, EMissionKind::Medical, EMissionKind::Patrol, EMissionKind::Survey, EMissionKind::Delivery };
 	FMission M = MakeMission(Kinds[R.RandRange(0, UE_ARRAY_COUNT(Kinds) - 1)], EMissionSource::Starfleet, R);
-	if (M.TargetKind != EMissionTarget::None && M.TargetName.IsEmpty()) { return; }
+	if (M.Id < 0) { return; }
 	M.State = EMissionState::Offered;
 	Missions.Add(M);
 	FStarfleetMessage Msg; Msg.Stardate = Stardate(); Msg.From = M.From; Msg.Subject = M.Title; Msg.MissionId = M.Id;
 	Msg.Text = FString::Printf(TEXT("To the %s. %s Report completion by stardate %.1f. %s, Starfleet Command."), *(Roster() ? Roster()->GetShipName() : FString(TEXT("Enterprise"))), *M.Brief, M.DeadlineStardate, *M.From);
 	Inbox.Add(Msg);
 	Report(FString::Printf(TEXT("Subspace message from Starfleet Command, Captain: %s. In your inbox."), *M.Title), FLinearColor(0.75f, 0.9f, 1.f), ECrewDepartment::Operations);
-	Dirty(); bSaveWanted = true; SaveDelaySeconds = 2.f;
+	Dirty();
 }
 
 void UMissionSubsystem::PostBoard(const FString& StationName)
 {
 	FRandomStream R(GetTypeHash(StationName) ^ (int32)(Hours() / 24.0));
 	static const EMissionKind Kinds[] = { EMissionKind::Delivery, EMissionKind::Survey, EMissionKind::Diplomacy, EMissionKind::Medical };
-	for (const FMission& M : Missions) { if (M.State == EMissionState::Offered && M.Source == EMissionSource::Starbase && M.PostedAt == StationName) { return; } }
+	const int32 Day = (int32)(Hours() / 24.0);
+	if (const int32* Posted = BoardDays.Find(StationName)) { if (*Posted == Day) { return; } }
+	BoardDays.Add(StationName, Day);
 	int32 Posted = 0;
 	for (int32 i = 0; i < 3; ++i)
 	{
 		FMission M = MakeMission(Kinds[R.RandRange(0, UE_ARRAY_COUNT(Kinds) - 1)], EMissionSource::Starbase, R);
-		if (M.TargetKind != EMissionTarget::None && M.TargetName.IsEmpty()) { continue; }
+		if (M.Id < 0) { continue; }
 		M.State = EMissionState::Offered; M.PostedAt = StationName; M.DeadlineStardate = Stardate() + R.FRandRange(3.0, 6.0);
 		Missions.Add(M); ++Posted;
 	}
 	if (Posted > 0) { Report(FString::Printf(TEXT("%s has %d assignments posted for any ship that will take them; they are on the mission board."), *StationName, Posted), FLinearColor(0.75f, 0.9f, 1.f), ECrewDepartment::Operations); }
-	Dirty(); bSaveWanted = true; SaveDelaySeconds = 2.f;
+	Dirty();
 }
 
 void UMissionSubsystem::RollEvent()
@@ -389,7 +405,7 @@ void UMissionSubsystem::RollEvent()
 	if (M.TargetKind == EMissionTarget::Vessel) { SpawnEventVessel(M, M.TargetName); }
 	Missions.Add(M);
 	Report(FString::Printf(TEXT("%s. It is on the mission board, Captain."), *M.Brief), FLinearColor(1.f, 0.85f, 0.5f), Kind == EMissionKind::Anomaly || Kind == EMissionKind::Contact ? ECrewDepartment::Science : ECrewDepartment::Operations);
-	Dirty(); bSaveWanted = true; SaveDelaySeconds = 2.f;
+	Dirty();
 }
 
 void UMissionSubsystem::SpawnEventVessel(FMission& M, const FString& Name)
@@ -407,6 +423,7 @@ int32 UMissionSubsystem::DevSpawn(EMissionKind Kind, EMissionSource Source)
 {
 	FRandomStream R(Rng.RandRange(1, 1 << 20));
 	FMission M = MakeMission(Kind, Source, R);
+	if (M.Id < 0) { return -1; }
 	if (Source == EMissionSource::Event)
 	{
 		M.State = EMissionState::Active; M.DeadlineStardate = Stardate() + 1.0;
@@ -420,7 +437,7 @@ int32 UMissionSubsystem::DevSpawn(EMissionKind Kind, EMissionSource Source)
 		else { M.PostedAt = Last.StationName.IsEmpty() ? TEXT("the board") : Last.StationName; }
 	}
 	Missions.Add(M);
-	Dirty(); bSaveWanted = true; SaveDelaySeconds = 2.f;
+	Dirty();
 	return M.Id;
 }
 
@@ -436,7 +453,7 @@ bool UMissionSubsystem::Accept(int32 Id, FString& OutReply)
 		M.Log.Add(FString::Printf(TEXT("%.1f  Accepted%s."), Stardate(), M.Source == EMissionSource::Starbase ? *(TEXT(" at ") + M.PostedAt) : TEXT("")));
 		for (FStarfleetMessage& Msg : Inbox) { if (Msg.MissionId == Id) { Msg.bRead = true; } }
 		OutReply = FString::Printf(TEXT("%s accepted%s"), *M.Title, M.TargetName.IsEmpty() ? TEXT("") : *FString::Printf(TEXT("; make for %s"), *M.TargetName));
-		Dirty(); bSaveWanted = true; SaveDelaySeconds = 2.f;
+		Dirty();
 		return true;
 	}
 	OutReply = TEXT("No such mission"); return false;
@@ -501,14 +518,14 @@ void UMissionSubsystem::Hurt(const FMission& M, const TArray<int32>& Party, floa
 	// A failure with risk: someone of the party is wounded, now and then killed, through the ship's medical model.
 	if (Party.Num() == 0 || Rng.FRand() >= Risk) { return; }
 	UCrewRosterSubsystem* R = Roster();
-	AStarshipPawn* Ship = Cast<AStarshipPawn>(UGameplayStatics::GetPlayerPawn(GetWorld(), 0));
+	AStarshipPawn* Ship = CrewedShip();
 	if (!R || !Ship || !Ship->Systems) { return; }
 	const int32 Id = Party[Rng.RandRange(0, Party.Num() - 1)];
 	const FCrewMember* C = R->Find(Id);
 	if (!C) { return; }
 	const bool bKilled = Risk > 0.3f && Rng.FRand() < 0.25f;
 	const FString Where = M.TargetName.IsEmpty() ? M.Title : M.TargetName;
-	Ship->Systems->HurtCrewMember(Id, bKilled, Rng.FRand() < 0.35f, Where);
+	if (!Ship->Systems->HurtCrewMember(Id, bKilled, Rng.FRand() < 0.35f, Where)) { return; }
 	Report(FString::Printf(TEXT("%s %s on %s."), *C->Styled(), bKilled ? TEXT("was killed") : TEXT("is hurt"), *Where), FLinearColor(1.f, 0.5f, 0.4f), ECrewDepartment::Medical);
 }
 
@@ -550,7 +567,7 @@ bool UMissionSubsystem::Act(int32 Id, int32 Option, FMissionOutcome& Out, FStrin
 		{
 			Close(M, EMissionState::Completed, C.bSuccess ? TEXT("carried through") : TEXT("done, though not well"));
 			Standing += C.bSuccess ? M.Standing : M.Standing / 3; ++Completed;
-			if (M.ScienceEarned > 0) { if (UScienceLogSubsystem* L = GetGameInstance() ? GetGameInstance()->GetSubsystem<UScienceLogSubsystem>() : nullptr) { FScanRecord Rec; Rec.Kind = EScanKind::Surface; Rec.Label = M.Title; Rec.System = M.TargetName; Rec.Key = FString::Printf(TEXT("mission/%d"), M.Id); Rec.Points = M.ScienceEarned; Rec.Discovery = Out.Text; L->Add(Rec); } }
+			if (M.ScienceEarned > 0) { if (UScienceLogSubsystem* L = GetGameInstance() ? GetGameInstance()->GetSubsystem<UScienceLogSubsystem>() : nullptr) { L->AddReward(FString::Printf(TEXT("mission/%d"), M.Id), M.TargetName.IsEmpty() ? FString(TEXT("Mission")) : M.TargetName, M.Title, M.ScienceEarned, Out.Text); } }
 			Report(FString::Printf(TEXT("%s: complete. Starfleet's regard: %+d."), *M.Title, C.bSuccess ? M.Standing : M.Standing / 3), FLinearColor(0.6f, 1.f, 0.6f));
 		}
 		else
@@ -561,6 +578,6 @@ bool UMissionSubsystem::Act(int32 Id, int32 Option, FMissionOutcome& Out, FStrin
 		}
 	}
 	OutReply = Out.Text;
-	Dirty(); bSaveWanted = true; SaveDelaySeconds = 2.f;
+	Dirty();
 	return true;
 }

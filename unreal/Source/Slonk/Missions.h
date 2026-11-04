@@ -138,6 +138,8 @@ public:
 	UPROPERTY() double NextEventHours = 0.0;
 	UPROPERTY() int32 Completed = 0;
 	UPROPERTY() int32 Failed = 0;
+	/** The day each station last posted its board. */
+	UPROPERTY() TMap<FString, int32> BoardDays;
 };
 
 /**
@@ -195,10 +197,12 @@ public:
 private:
 	void Load();
 	UCrewRosterSubsystem* Roster() const;
+	class AStarshipPawn* CrewedShip() const;
 	void Report(const FString& Text, const FLinearColor& Color = FLinearColor(0.75f, 0.9f, 1.f), ECrewDepartment From = ECrewDepartment::Command);
 	double Stardate() const;
 	double Hours() const;
-	void Dirty() { ++Revision; }
+	/** Any change: the panels refresh and a save follows in a couple of seconds. */
+	void Dirty() { ++Revision; bSaveWanted = true; SaveDelaySeconds = 2.f; }
 	// generation
 	FMission MakeMission(EMissionKind Kind, EMissionSource Source, FRandomStream& R);
 	bool PickTarget(FMission& M, FRandomStream& R);
@@ -221,6 +225,7 @@ private:
 	int32 Revision = 0;
 	FMissionShipState Last;
 	FString BoardPostedAt;
+	TMap<FString, int32> BoardDays;
 	UPROPERTY() TArray<FCrewReport> Reports;
 	FRandomStream Rng;
 	bool bSaveWanted = false;

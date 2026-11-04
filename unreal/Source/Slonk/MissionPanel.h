@@ -46,6 +46,6 @@ private:
 	int32 SelectedId = -1;
 	/** The inbox message selected while Show is the inbox. */
 	int32 SelectedMessage = -1;
-	int32 LastRevision = -1, LastShow = -1, LastSelected = -2, LastMessage = -2;
+	int32 LastRevision = -1, LastShow = -1, LastSelected = -2, LastMessage = -2, LastHere = -2;
 	FString LastFileKey;
 };

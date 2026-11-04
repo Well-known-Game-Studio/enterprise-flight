@@ -96,6 +96,19 @@ int32 UScienceLogSubsystem::Add(FScanRecord& Record)
 	return Record.Total();
 }
 
+int32 UScienceLogSubsystem::AddReward(const FString& Key, const FString& System, const FString& Label, int32 Points, const FString& Note)
+{
+	if (Points <= 0 || Find(Key)) { return 0; }
+	FScanRecord R;
+	R.Key = Key; R.System = System; R.Label = Label; R.Kind = EScanKind::Surface;
+	R.Points = Points; R.Discovery = Note;
+	R.When = FDateTime::UtcNow();
+	Records.Add(R);
+	Recount();
+	Save();
+	return Points;
+}
+
 int32 UScienceLogSubsystem::MarkSystemSurveyed(const FString& System)
 {
 	if (IsSystemSurveyed(System)) { return 0; }

@@ -93,9 +93,11 @@ void UMissionPanel::Refresh()
 	UMissionSubsystem* M = Missions();
 	if (!M) { return; }
 	if (ShowButton) { if (UTextBlock* T = Cast<UTextBlock>(ShowButton->GetChildAt(0))) { T->SetText(FText::FromString(Show == 0 ? TEXT("SHOW: BOARD") : Show == 1 ? TEXT("SHOW: INBOX") : TEXT("SHOW: LOG"))); } }
-	if (M->GetRevision() != LastRevision || Show != LastShow || SelectedId != LastSelected || SelectedMessage != LastMessage)
+	const FMission* Sel = M->Find(SelectedId);
+	const int32 Here = Sel ? (M->IsAtTarget(*Sel) ? 1 : 0) : -1;
+	if (M->GetRevision() != LastRevision || Show != LastShow || SelectedId != LastSelected || SelectedMessage != LastMessage || Here != LastHere)
 	{
-		LastRevision = M->GetRevision(); LastShow = Show; LastSelected = SelectedId; LastMessage = SelectedMessage;
+		LastRevision = M->GetRevision(); LastShow = Show; LastSelected = SelectedId; LastMessage = SelectedMessage; LastHere = Here;
 		FillList(); FillFile();
 	}
 }

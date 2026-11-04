@@ -14,11 +14,11 @@ A mission is one of three things, and the game says which it was.
   Letting one lapse or dropping one accepted costs standing; the crew notice too.
 - **A starbase's board** fills when the ship comes alongside a station (within resupply range): three postings for
   any ship that will take them, shorter deadlines, lesser regard, the station's own concerns (supplies for a colony,
-  a survey nobody got to, a dispute, a fever). Posted once per arrival.
+  a survey nobody got to, a dispute, a fever). Posted once per station per ship's day, whatever became of the last batch.
 - **What happens in space** happens on its own: a distress call, a dark hull across the course, an Orion freighter
   with her transponder off, a reading the sensors cannot classify, once in a while a ship of no known design. Rolled
-  every one to three ship's hours while under way, not alongside, not under fire, and not already in the middle of
-  one. These are *active* at once, with a day to deal with them, and the ones with a vessel spawn one a few hundred
+  every one to three ship's hours while under way at impulse, not alongside, not under fire, and not already in the
+  middle of one (warp encounters are for later). These are *active* at once, with a day to deal with them, and the ones with a vessel spawn one a few hundred
   kilometres off the bow (`ASpaceTraffic::SpawnNamedShip`), holding station: the freighter venting, the derelict,
   the stranger. There is no accepting; ignoring one lets it lapse and that is a choice the crew read too.
 
