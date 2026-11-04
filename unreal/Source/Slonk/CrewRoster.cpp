@@ -383,7 +383,7 @@ void UCrewRosterSubsystem::NewComplement(int32 InSeed, int32 Complement)
 	Seed = InSeed != 0 ? InSeed : (int32)(FDateTime::Now().GetTicks() % 1000003);
 	FRandomStream R(Seed);
 	Rng.Initialize(Seed);
-	Roster.Reset(); Lost.Reset(); Recruits.Reset(); NextId = 0; Hours = 0.0; HourAccumulator = 0.0;
+	Roster.Reset(); Lost.Reset(); Recruits.Reset(); NextId = 0; Hours = 0.0; HourAccumulator = 0.0; DeadBase = 0; MourningDays = 0;
 	// Department strengths for a refit's 502.
 	const int32 Sizes[(int32)ECrewDepartment::Count] = { 6, 24, 60, 150, 70, 30, 36, 60, 66 };
 	int32 Scale = FMath::Max(Complement, 20);
@@ -963,7 +963,7 @@ void UCrewRosterSubsystem::SyncCasualties(int32 Fit, int32 Injured, int32 Critic
 {
 	// Match the medical model's counts with people: the dead and the newly wounded from the compartment hit,
 	// the healed from those longest under treatment.
-	const int32 HaveDead = Lost.Num() - DeadBase, HaveCrit = CountCondition(ECrewCondition::Critical), HaveInj = CountCondition(ECrewCondition::Injured);
+	const int32 HaveDead = FMath::Max(Lost.Num() - DeadBase, 0), HaveCrit = CountCondition(ECrewCondition::Critical), HaveInj = CountCondition(ECrewCondition::Injured);
 	TArray<FString> Killed, Wounded, Healed;
 	TArray<int32> Pool = Candidates(LastHitCompartment);
 	const FString Where = LastHitCompartment.IsEmpty() ? TEXT("the ship") : LastHitCompartment;
