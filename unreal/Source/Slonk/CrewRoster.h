@@ -392,6 +392,8 @@ public:
 	void TieLost(int32 CrewId, const FString& Name, const FString& OtherShip);
 	/** Someone a crew member is tied to has just joined us: the tie becomes a bond aboard. */
 	void TieComesAboard(int32 CrewId, const FString& Name, const FString& Relation);
+	/** The person a tie named is no longer where the tie says (they came to us): the tie goes, no bond. */
+	void TieRemoved(int32 CrewId, const FString& Name);
 	bool Discharge(int32 Id, FString& OutReply);
 	/** A day of mourning: grief settles faster, the lost are named. */
 	FString Memorial();

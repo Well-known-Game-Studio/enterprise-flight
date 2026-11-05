@@ -353,7 +353,7 @@ void UCrewRosterSubsystem::RequestSave()
 
 void UCrewRosterSubsystem::Reset()
 {
-	UGameplayStatics::DeleteGameInSlot(SlotName, 0);
+	if (!bNoDisk) { UGameplayStatics::DeleteGameInSlot(SlotName, 0); }
 	Roster.Reset(); Lost.Reset(); Recruits.Reset(); Hours = 0.0; NextId = 0; MourningDays = 0;
 	NewComplement(0);
 }
@@ -1934,13 +1934,19 @@ FCrewMember UCrewRosterSubsystem::MakeOutsider(FRandomStream& R, ECrewDepartment
 {
 	const int32 SavedNext = NextId;
 	NextId = Id;
-	FCrewMember M = MakePerson(R, Dept, Rank, R.RandRange(0, 20));
-	NextId = SavedNext;
+	FCrewMember M;
 	if (!FullName.IsEmpty())
 	{
-		int32 Sp; if (FullName.FindChar(TEXT(' '), Sp)) { M.FirstName = FullName.Left(Sp); M.LastName = FullName.Mid(Sp + 1); } else { M.FirstName = FullName; M.LastName.Empty(); }
-		if (!Species.IsEmpty()) { M.Species = Species; }
+		// Through the named-person path, so their home and the facets of their species follow from who they are.
+		FString First = FullName, Last;
+		int32 Sp; if (FullName.FindChar(TEXT(' '), Sp)) { First = FullName.Left(Sp); Last = FullName.Mid(Sp + 1); }
+		const FString Sp2 = Species.IsEmpty() ? FString(TEXT("Human")) : Species;
+		const FString Pronoun = R.FRand() < 0.5f ? TEXT("she") : TEXT("he");
+		FCrewNamed N; N.Dept = Dept; N.First = *First; N.Last = *Last; N.Species = *Sp2; N.Pronoun = *Pronoun; N.Rank = Rank;
+		M = MakePerson(R, Dept, Rank, R.RandRange(0, 20), &N);
 	}
+	else { M = MakePerson(R, Dept, Rank, R.RandRange(0, 20)); }
+	NextId = SavedNext;
 	M.Ties.Reset(); M.Relationships.Reset(); M.History.Reset(); M.Memories.Reset(); M.Wants.Reset();
 	M.Where.Empty(); M.Activity = ECrewActivity::OnWatch;
 	return M;
@@ -1996,7 +2002,7 @@ void UCrewRosterSubsystem::NoteShipNews(const FString& OtherShip, const FString&
 		if (Weight < 0.f) { M.Stress = FMath::Min(1.f, M.Stress - Weight); }
 		++Heard;
 	}
-	if (Heard > 0) { Dirty(); }
+	if (Heard > 0) { Dirty(); RequestSave(); }
 }
 
 void UCrewRosterSubsystem::TieLost(int32 CrewId, const FString& Name, const FString& OtherShip)
@@ -2010,6 +2016,15 @@ void UCrewRosterSubsystem::TieLost(int32 CrewId, const FString& Name, const FStr
 	Record(*M, ECrewEventKind::Bereaved, FString::Printf(TEXT("Lost %s %s aboard the %s."), *Relation, *Name, *OtherShip), true);
 	Report(M->Department, FString::Printf(TEXT("%s has had word from the %s: %s %s is dead."), *M->Styled(), *OtherShip, *Relation, *Name), FLinearColor(1.f, 0.6f, 0.5f));
 	Dirty(); RequestSave();
+}
+
+void UCrewRosterSubsystem::TieRemoved(int32 CrewId, const FString& Name)
+{
+	FCrewMember* M = FindMutable(CrewId);
+	if (!M) { return; }
+	const int32 Before = M->Ties.Num();
+	for (int32 i = M->Ties.Num() - 1; i >= 0; --i) { if (M->Ties[i].Name == Name) { M->Ties.RemoveAt(i); } }
+	if (M->Ties.Num() != Before) { Dirty(); RequestSave(); }
 }
 
 void UCrewRosterSubsystem::TieComesAboard(int32 CrewId, const FString& Name, const FString& Relation)

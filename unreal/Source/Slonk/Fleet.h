@@ -116,6 +116,8 @@ struct FFleetRequest
 	FString MissionTitle;
 	EMissionKind TheirKind = EMissionKind::Patrol;
 	float HoursLeft = 24.f;
+	/** The hour the trouble began, to tell a call from a later trouble aboard the same ship. */
+	float TroubleHours = 0.f;
 };
 
 UCLASS()

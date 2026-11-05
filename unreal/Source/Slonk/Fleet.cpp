@@ -95,7 +95,7 @@ void UFleetSubsystem::Save()
 
 void UFleetSubsystem::Reset()
 {
-	UGameplayStatics::DeleteGameInSlot(SlotName, 0);
+	if (!bNoDisk) { UGameplayStatics::DeleteGameInSlot(SlotName, 0); }
 	for (FFleetShip& S : Ships) { DropBoardEntries(S); if (S.Actor.IsValid()) { SendActor(S, false); } }
 	Ships.Reset();
 	Dirty(); Save();
@@ -431,6 +431,7 @@ void UFleetSubsystem::SupportResolved(const FString& ShipName, bool bSuccess, bo
 		S->Relation = FMath::Min(1.f, S->Relation + 0.3f); S->Morale = FMath::Min(1.f, S->Morale + 0.1f);
 		M.Trouble = EFleetTrouble::None; M.SupportMissionId = -1; M.bAssisted = true;
 		Log(*S, TEXT("The trouble is over; the work goes on."));
+		if (Ros) { Ros->NoteShipNews(ShipName, FString::Printf(TEXT("%s is out of trouble, with our help"), *ShipName), 0.2f); }
 	}
 	else
 	{
@@ -439,6 +440,7 @@ void UFleetSubsystem::SupportResolved(const FString& ShipName, bool bSuccess, bo
 		for (int32 i = 0; i < 3; ++i) { Casualty(*S); }
 		if (bIgnored) { S->Relation = FMath::Max(-1.f, S->Relation - 0.25f); Log(*S, TEXT("No help came.")); if (Ros) { Ros->NoteShipNews(ShipName, FString::Printf(TEXT("%s called for help and we did not go"), *ShipName), -0.2f); } }
 		M.Trouble = EFleetTrouble::None;   // the board entry, if still open, closes through EndMission's FleetWorkOver
+		Requests.RemoveAll([&ShipName](const FFleetRequest& Q) { return Q.bSupport && Q.ShipName == ShipName; });
 		EndMission(*S, false, bIgnored ? TEXT("no help came") : TEXT("the help was not enough"));
 	}
 	Dirty();
@@ -449,6 +451,8 @@ void UFleetSubsystem::SelfResolved(FFleetShip& S)
 	FFleetMission& M = S.Mission;
 	if (M.SupportMissionId >= 0) { if (UMissionSubsystem* Mi = Missions()) { Mi->FleetWithdraw(M.SupportMissionId, FString::Printf(TEXT("the %s has her trouble in hand"), *S.Name)); } }
 	M.Trouble = EFleetTrouble::None; M.SupportMissionId = -1;
+	Requests.RemoveAll([&S](const FFleetRequest& Q) { return Q.bSupport && Q.ShipName == S.Name; });
+	if (UCrewRosterSubsystem* Ros = Roster()) { Ros->NoteShipNews(S.Name, FString::Printf(TEXT("%s has her trouble in hand"), *S.Name), 0.1f); }
 	Dirty();
 }
 
@@ -458,6 +462,7 @@ void UFleetSubsystem::DropBoardEntries(FFleetShip& S)
 	if (Mi && S.Mission.SupportMissionId >= 0) { Mi->FleetWithdraw(S.Mission.SupportMissionId, FString::Printf(TEXT("the %s is no longer asking"), *S.Name)); }
 	if (Mi && S.Mission.AssistMissionId >= 0) { Mi->FleetWithdraw(S.Mission.AssistMissionId, FString::Printf(TEXT("the %s's work is over"), *S.Name)); }
 	S.Mission.SupportMissionId = -1; S.Mission.AssistMissionId = -1;
+	Requests.RemoveAll([&S](const FFleetRequest& Q) { return Q.ShipName == S.Name; });
 }
 
 void UFleetSubsystem::AssistResolved(const FString& ShipName, bool bSuccess)
@@ -518,7 +523,7 @@ bool UFleetSubsystem::RequestPerson(const FString& ShipName, const FString& Pers
 	S->Notables.RemoveAt(Found);
 	FCrewMember M = P.Person;
 	if (!Ros->Join(M, FString::Printf(TEXT("Transferred from the %s%s."), *ShipName, bFamily ? TEXT(", to serve with family") : TEXT("")), OutReply)) { S->Notables.Insert(P, Found); return false; }
-	for (const FFleetTie& T : P.Ties) { const FCrewMember* C = Ros->Find(T.CrewId); if (C && C->IsAboard()) { Ros->TieComesAboard(T.CrewId, M.FullName(), T.Relation); } }
+	for (const FFleetTie& T : P.Ties) { const FCrewMember* C = Ros->Find(T.CrewId); if (C && C->IsAboard()) { Ros->TieComesAboard(T.CrewId, M.FullName(), T.Relation); } else { Ros->TieRemoved(T.CrewId, M.FullName()); } }
 	S->Complement = FMath::Max(0, S->Complement - 1);
 	S->Relation = FMath::Max(-1.f, S->Relation - (bFamily ? 0.02f : 0.1f));
 	Log(*S, FString::Printf(TEXT("%s transferred to the %s."), *P.Person.Styled(), *Ros->GetShipName()));
@@ -564,9 +569,9 @@ bool UFleetSubsystem::DevSummon(const FString& ShipName, FString& OutReply)
 	if (A->IsAway()) { A->SetAway(false); }
 	if (S->Mission.IsActive()) { DropBoardEntries(*S); S->Mission = FFleetMission(); S->NextMissionHours = Hours() + 3.0; Log(*S, TEXT("Recalled.")); }
 	const FVector Loc = Last.Location + FVector(1.f, 0.3f, 0.05f).GetSafeNormal() * 1.0e7;
-	A->bCanWarp = false; A->HomeLocation = Loc; A->PatrolRadiusCm = 0.5e7;
-	A->WarpTo(Loc);
-	OutReply = FString::Printf(TEXT("%s is coming alongside"), *ShipName);
+	A->bCanWarp = false;
+	if (A->IsInWarp()) { A->RecallTo(Loc, 0.5e7); OutReply = FString::Printf(TEXT("%s is alongside (her warp cut short)"), *ShipName); }
+	else { A->HomeLocation = Loc; A->PatrolRadiusCm = 0.5e7; A->WarpTo(Loc); OutReply = FString::Printf(TEXT("%s is coming alongside"), *ShipName); }
 	return true;
 }
 

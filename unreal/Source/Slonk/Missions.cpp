@@ -86,7 +86,7 @@ void UMissionSubsystem::Save()
 
 void UMissionSubsystem::Reset()
 {
-	UGameplayStatics::DeleteGameInSlot(SlotName, 0);
+	if (!bNoDisk) { UGameplayStatics::DeleteGameInSlot(SlotName, 0); }
 	// NextId runs on: the science log keeps mission/<id> keys.
 	Missions.Reset(); Inbox.Reset(); Standing = 0; Completed = 0; Failed = 0; NextOrdersHours = 0.0; NextEventHours = 0.0; BoardPostedAt.Empty(); BoardDays.Empty();
 	for (const TPair<int32, TWeakObjectPtr<ASpaceVessel>>& H : EventHulls) { if (H.Value.IsValid() && !H.Value->IsDying()) { H.Value->Destroy(); } }
@@ -481,7 +481,11 @@ void UMissionSubsystem::IssueFleetMission(const FFleetRequest& Q)
 	M.TargetKind = EMissionTarget::Vessel; M.TargetName = Q.ShipName; M.Group = TEXT("Federation"); M.From = Q.ShipName;
 	if (Q.bSupport)
 	{
-		M.Kind = EMissionKind::Support; M.Standing = 15; M.State = EMissionState::Active; M.DeadlineStardate = Stardate() + Q.HoursLeft / 24.0;
+		// Still in that trouble? A long jump of the clock can queue a call her own people have since answered.
+		const FFleetShip* FS = Fleet() ? Fleet()->Find(Q.ShipName) : nullptr;
+		if (!FS || FS->bLost || FS->Mission.Task != EFleetTask::OnStation || FS->Mission.Trouble != Q.Trouble) { return; }
+		const float Left = FMath::Max(1.f, 24.f - FS->Mission.TroubleHours);
+		M.Kind = EMissionKind::Support; M.Standing = 15; M.State = EMissionState::Active; M.DeadlineStardate = Stardate() + Left / 24.0;
 		M.Title = FString::Printf(TEXT("Support the %s"), *Q.ShipName);
 		M.Brief = FString::Printf(TEXT("The %s, on %s, signals that %s. She is asking for support from any ship that can reach her within the day."), *Q.ShipName, *Q.MissionTitle, *Q.Text);
 		FMissionStage S0 = Stage(TEXT("Alongside"), FString::Printf(TEXT("The %s is close enough to help. %s."), *Q.ShipName, *Q.Text));

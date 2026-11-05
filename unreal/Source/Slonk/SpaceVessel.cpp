@@ -952,6 +952,16 @@ bool AProceduralStarship::WarpToRandomStation()
 	return true;
 }
 
+void AProceduralStarship::RecallTo(const FVector& Loc, double Patrol)
+{
+	WarpPhase = EShipWarpPhase::None; ResetImages(); SetMainVisible(true);
+	Velocity = FVector::ZeroVector; bHasWaypoint = false;
+	HomeLocation = Loc; HomeUniverse = ToUniverse(Loc); PatrolRadiusCm = Patrol;
+	SetActorLocation(Loc);
+	if (Root) { Root->ComponentVelocity = FVector::ZeroVector; }
+	if (Hull) { Hull->ComponentVelocity = FVector::ZeroVector; }
+}
+
 void AProceduralStarship::SetAway(bool bAway)
 {
 	if (bAwayRun == bAway) { return; }

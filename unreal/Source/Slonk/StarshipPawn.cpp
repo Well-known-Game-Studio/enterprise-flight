@@ -3864,7 +3864,8 @@ void AStarshipPawn::HandleFleetCommand(const TArray<FString>& Args)
 	auto ShipNamed = [&](const FString& W) -> const FFleetShip*
 	{
 		// "Hood", "uss hood" or the full name; the first match by prefix or by containing.
-		FString Want = W.ToLower(); if (Want.StartsWith(TEXT("uss "))) { Want = Want.RightChop(4); }
+		FString Want = W.ToLower().TrimStartAndEnd(); if (Want.StartsWith(TEXT("uss "))) { Want = Want.RightChop(4); }
+		if (Want.IsEmpty()) { return nullptr; }
 		for (const FFleetShip& S : F->GetShips()) { if (S.Name.ToLower() == TEXT("uss ") + Want) { return &S; } }
 		for (const FFleetShip& S : F->GetShips()) { if (S.Name.ToLower().Contains(Want)) { return &S; } }
 		return nullptr;
@@ -3893,10 +3894,13 @@ void AStarshipPawn::HandleFleetCommand(const TArray<FString>& Args)
 	}
 	else if (What == TEXT("transfer"))
 	{
-		// transfer <name> <ship>: the last word is the ship, the rest the person.
+		// transfer <name> <ship>: the longest tail of the words that names a ship exactly is the ship, the rest the person.
 		if (!R || Args.Num() < 4) { Say(TEXT("transfer <name> <ship>"), FColor::Orange); return; }
-		const FFleetShip* S = ShipNamed(Args.Last());
-		FString Name; for (int32 i = 2; i < Args.Num() - 1; ++i) { Name += (Name.IsEmpty() ? TEXT("") : TEXT(" ")) + Args[i]; }
+		auto Join = [&](int32 From, int32 To) { FString J; for (int32 i = From; i < To; ++i) { J += (J.IsEmpty() ? TEXT("") : TEXT(" ")) + Args[i]; } return J; };
+		const FFleetShip* S = nullptr; int32 Split = Args.Num() - 1;
+		for (int32 k = Args.Num() - 3; k >= 3 && !S; --k) { const FFleetShip* C = ShipNamed(Join(k, Args.Num())); if (C && C->Name.Equals(Join(k, Args.Num()).StartsWith(TEXT("USS "), ESearchCase::IgnoreCase) ? Join(k, Args.Num()) : TEXT("USS ") + Join(k, Args.Num()), ESearchCase::IgnoreCase)) { S = C; Split = k; } }
+		if (!S) { S = ShipNamed(Args.Last()); Split = Args.Num() - 1; }
+		const FString Name = Join(2, Split);
 		const FCrewMember* M = Name.IsNumeric() ? R->Find(FCString::Atoi(*Name)) : R->FindByName(Name);
 		if (!S) { Say(FString::Printf(TEXT("No ship called %s in the fleet"), *Args.Last()), FColor::Orange); return; }
 		if (!M) { Say(FString::Printf(TEXT("No one called %s"), *Name), FColor::Orange); return; }
@@ -3904,9 +3908,12 @@ void AStarshipPawn::HandleFleetCommand(const TArray<FString>& Args)
 	}
 	else if (What == TEXT("request"))
 	{
-		// request <ship> <name>
-		const FFleetShip* S = ShipNamed(Word(2));
-		FString Name; for (int32 i = 3; i < Args.Num(); ++i) { Name += (Name.IsEmpty() ? TEXT("") : TEXT(" ")) + Args[i]; }
+		// request <ship> <name>: the longest head of the words that names a ship exactly is the ship, the rest the person.
+		auto Join = [&](int32 From, int32 To) { FString J; for (int32 i = From; i < To; ++i) { J += (J.IsEmpty() ? TEXT("") : TEXT(" ")) + Args[i]; } return J; };
+		const FFleetShip* S = nullptr; int32 Split = 3;
+		for (int32 k = Args.Num() - 1; k >= 3 && !S; --k) { const FString Cand = Join(2, k); const FFleetShip* C = ShipNamed(Cand); if (C && C->Name.Equals(Cand.StartsWith(TEXT("USS "), ESearchCase::IgnoreCase) ? Cand : TEXT("USS ") + Cand, ESearchCase::IgnoreCase)) { S = C; Split = k; } }
+		if (!S) { S = ShipNamed(Word(2)); Split = 3; }
+		const FString Name = Join(Split, Args.Num());
 		if (!S || Name.IsEmpty()) { Say(TEXT("request <ship> <name>"), FColor::Orange); return; }
 		const bool bOk = F->RequestPerson(S->Name, Name, Reply); Say(Reply, bOk ? FColor::Cyan : FColor::Orange, 12.f);
 	}

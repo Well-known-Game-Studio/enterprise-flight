@@ -240,6 +240,8 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Ship|Warp")
 	EShipWarpPhase GetWarpPhase() const { return WarpPhase; }
 
+	/** Cut whatever she is doing (a warp in progress included) and put her at Loc, patrolling about it. */
+	void RecallTo(const FVector& Loc, double Patrol);
 	/** Out of the system on a long run: hidden, unticked, back at home when it returns. */
 	void SetAway(bool bAway);
 	bool IsAway() const { return bAwayRun; }
