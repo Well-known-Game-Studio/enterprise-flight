@@ -20,15 +20,24 @@ enum class EFleetTask : uint8 { Idle = 0, UnderWay, OnStation, Returning, Count 
 UENUM(BlueprintType)
 enum class EFleetTrouble : uint8 { None = 0, Engineering, Medical, Hostiles, Boarding, Count UMETA(Hidden) };
 
-/** Someone aboard another ship: an officer, or a person with a tie to one of ours (family, a friend, a transfer). */
+/** One of ours who knows this person, and how ("sister", "oldest friend", "old shipmate"). */
+USTRUCT(BlueprintType)
+struct FFleetTie
+{
+	GENERATED_BODY()
+	UPROPERTY(BlueprintReadOnly) int32 CrewId = -1;
+	UPROPERTY(BlueprintReadOnly) FString Relation;
+};
+
+/** Someone aboard another ship: an officer, or a person with ties to ours (family, friends, a transfer). */
 USTRUCT(BlueprintType)
 struct FFleetPerson
 {
 	GENERATED_BODY()
 	UPROPERTY(BlueprintReadOnly) FCrewMember Person;
-	/** Our crew member this person is tied to, if any, and how ("sister", "oldest friend", "former shipmate"). */
-	UPROPERTY(BlueprintReadOnly) int32 TiedCrewId = -1;
-	UPROPERTY(BlueprintReadOnly) FString TiedRelation;
+	/** Everyone of ours who knows them: one record, however many know them. */
+	UPROPERTY(BlueprintReadOnly) TArray<FFleetTie> Ties;
+	bool TiedTo(int32 CrewId) const { for (const FFleetTie& T : Ties) { if (T.CrewId == CrewId) { return true; } } return false; }
 	/** Where they came from, for the file ("formerly of the Enterprise", "served under Captain Vashti"). */
 	UPROPERTY(BlueprintReadOnly) FString Origin;
 };
@@ -54,6 +63,8 @@ struct FFleetMission
 	UPROPERTY(BlueprintReadOnly) int32 SupportMissionId = -1;
 	UPROPERTY(BlueprintReadOnly) int32 AssistMissionId = -1;
 	UPROPERTY(BlueprintReadOnly) bool bAssisted = false;
+	/** A hand was offered this mission, whatever came of it: one offer per mission. */
+	UPROPERTY(BlueprintReadOnly) bool bAssistOffered = false;
 	bool IsActive() const { return Task != EFleetTask::Idle; }
 };
 
@@ -87,6 +98,8 @@ struct FFleetShip
 	UPROPERTY(BlueprintReadOnly) bool bLost = false;
 	/** The actor in the world, bound by name each scan; null while in another system or unspawned. */
 	TWeakObjectPtr<AProceduralStarship> Actor;
+	/** The hull has been put where the saved record says (away, at its target, or home) since this session's load. */
+	bool bReconciled = false;
 	FString TaskText() const;
 	const FFleetPerson* Head(ECrewDepartment Dept) const;
 	float Skill(ECrewSkill S) const;
@@ -153,7 +166,7 @@ public:
 	void SetSupportMission(const FString& ShipName, int32 MissionId);
 	void SetAssistMission(const FString& ShipName, int32 MissionId);
 	/** A ship at work, no trouble, nothing of ours on it yet: a hand to lend when we are near. */
-	bool WantsAssist(const FFleetShip& S) const { return !S.bLost && S.Mission.Task == EFleetTask::OnStation && S.Mission.Trouble == EFleetTrouble::None && S.Mission.AssistMissionId < 0 && !S.Mission.bAssisted; }
+	bool WantsAssist(const FFleetShip& S) const { return !S.bLost && S.Mission.Task == EFleetTask::OnStation && S.Mission.Trouble == EFleetTrouble::None && !S.Mission.bAssistOffered; }
 
 	// ---- people ----
 	/** One of ours goes to them (fit, not a head, the ship in range). */
@@ -171,9 +184,15 @@ public:
 	/** Dev: a mission in this system, at work now. */
 	bool DevWork(const FString& ShipName, FString& OutReply);
 	UFUNCTION(BlueprintCallable, Category = "Fleet") void Reset();
+	/** Tests: wired to these systems directly, no save slot, a fixed seed. */
+	void InitForTest(UCrewRosterSubsystem* InRoster, UMissionSubsystem* InMissions);
+	/** A ship by name without a hull (another system, a test). Returns false when the name is taken. */
+	bool RegisterShip(const FString& Name, const FString& ShipClass, const FString& Home, const FString& System);
 	void Save();
 
 	static FString TaskName(EFleetTask T);
+	/** "sister of our Lt. X; oldest friend of our Ensign Y", for the files. */
+	static FString TiesText(const FFleetPerson& P, const UCrewRosterSubsystem* R);
 	static FString TroubleName(EFleetTrouble T);
 	static bool ParseTrouble(const FString& Word, EFleetTrouble& Out);
 
@@ -197,6 +216,12 @@ private:
 	void Trouble(FFleetShip& S, EFleetTrouble Kind);
 	/** Someone aboard dies of the trouble; our crew tied to them hear of it. */
 	void Casualty(FFleetShip& S);
+	/** She got through her trouble herself: the request withdrawn, nothing owed either way. */
+	void SelfResolved(FFleetShip& S);
+	/** Whatever of ours was on her board entries is withdrawn (a loss, a reset, a recall). */
+	void DropBoardEntries(FFleetShip& S);
+	/** The hull put where the record says, once after a load. */
+	void Reconcile(FFleetShip& S);
 	FFleetShip* FindMutable(const FString& Name);
 	/** The actor goes to, or comes back from, its mission. */
 	void SendActor(FFleetShip& S, bool bOut);
@@ -211,8 +236,12 @@ private:
 	UPROPERTY() TArray<FCrewReport> Reports;
 	FRandomStream Rng;
 	double LastHour = -1.0;
+	TSet<FString> LastNear;
 	float ScanTimer = 0.f;
 	bool bSaveWanted = false;
+	bool bNoDisk = false;
+	TWeakObjectPtr<UCrewRosterSubsystem> RosterOverride;
+	TWeakObjectPtr<UMissionSubsystem> MissionsOverride;
 	float SaveDelaySeconds = 0.f;
 	static const TCHAR* SlotName;
 };

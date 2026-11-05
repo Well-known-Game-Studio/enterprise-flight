@@ -173,6 +173,8 @@ public:
 	int32 DevSpawn(EMissionKind Kind, EMissionSource Source);
 	/** The fleet ship's own work ended (done or failed): whatever of ours was on it closes. */
 	void FleetWorkOver(int32 MissionId, bool bTheirSuccess);
+	/** A fleet ship's request or offer is withdrawn (she managed, she is lost, she was recalled): closed, nothing owed. */
+	void FleetWithdraw(int32 MissionId, const FString& Why);
 
 	// ---- queries ----
 	const TArray<FMission>& GetMissions() const { return Missions; }
@@ -198,6 +200,8 @@ public:
 	static bool ParseKind(const FString& Word, EMissionKind& Out);
 
 	UFUNCTION(BlueprintCallable, Category = "Missions") void Reset();
+	/** Tests: wired to these systems directly, no save slot, a fixed seed. */
+	void InitForTest(UCrewRosterSubsystem* InRoster, UFleetSubsystem* InFleet);
 	void Save();
 
 private:
@@ -246,6 +250,9 @@ private:
 	/** A name no open or closed mission has used. */
 	FString UniqueName(FRandomStream& R, TFunction<FString()> Make) const;
 	bool bSaveWanted = false;
+	bool bNoDisk = false;
+	TWeakObjectPtr<UCrewRosterSubsystem> RosterOverride;
+	TWeakObjectPtr<UFleetSubsystem> FleetOverride;
 	float SaveDelaySeconds = 0.f;
 	static const TCHAR* SlotName;
 };

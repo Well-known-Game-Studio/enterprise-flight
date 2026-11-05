@@ -642,6 +642,7 @@ void AStarshipHUD::GatherNavObjects(bool bForce)
 	}
 	for (TActorIterator<AProceduralStarship> It(World); It; ++It)
 	{
+		if (It->IsAway()) { if (NavTarget.Get() == Cast<AActor>(*It)) { NavTarget = nullptr; } continue; }   // out of the system on a run
 		FNavObject O;
 		O.Actor = *It;
 		O.Label = It->GetDisplayName();

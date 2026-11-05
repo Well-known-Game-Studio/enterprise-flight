@@ -3887,7 +3887,7 @@ void AStarshipPawn::HandleFleetCommand(const TArray<FString>& Args)
 		Line(*S);
 		Say(FString::Printf(TEXT("Captain %s (%s), out of %s; %d aboard, %d lost, morale %d%%, condition %d%%"), *S->Captain.FullName(), *S->Captain.Species, *S->HomeStation, S->Complement, S->Lost, FMath::RoundToInt(S->Morale * 100.f), FMath::RoundToInt(S->Condition * 100.f)), FColor::White, 15.f);
 		for (const FFleetPerson& P : S->Officers) { Say(FString::Printf(TEXT("   %s, %s"), *P.Person.Styled(), *P.Person.Posting), FColor::White, 15.f); }
-		for (const FFleetPerson& P : S->Notables) { const FCrewMember* O = P.TiedCrewId >= 0 && R ? R->Find(P.TiedCrewId) : nullptr; Say(FString::Printf(TEXT("   %s, %s; %s%s"), *P.Person.Styled(), *UCrewRosterSubsystem::DepartmentName(P.Person.Department).ToLower(), *P.Origin, O ? *FString::Printf(TEXT(" (%s of our %s)"), *P.TiedRelation, *O->Styled()) : TEXT("")), FColor::White, 15.f); }
+		for (const FFleetPerson& P : S->Notables) { const FString Ties = UFleetSubsystem::TiesText(P, R); Say(FString::Printf(TEXT("   %s, %s; %s%s"), *P.Person.Styled(), *UCrewRosterSubsystem::DepartmentName(P.Person.Department).ToLower(), *P.Origin, Ties.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(" (%s)"), *Ties)), FColor::White, 15.f); }
 		if (S->Mission.Trouble != EFleetTrouble::None) { Say(FString::Printf(TEXT("In trouble: %s (%.0f h)"), *S->Mission.TroubleText, S->Mission.TroubleHours), FColor::Orange, 15.f); }
 		for (int32 i = FMath::Max(0, S->Log.Num() - 6); i < S->Log.Num(); ++i) { Say(S->Log[i], FColor::White, 15.f); }
 	}

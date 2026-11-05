@@ -103,9 +103,15 @@ FString ASpaceTraffic::NextShipName()
 		bool bUsed = false; for (const TObjectPtr<ASpaceVessel>& V : Spawned) { bUsed |= V && V->GetDisplayName() == N; }
 		if (!bUsed) { return N; }
 	}
-	static const TCHAR* Numerals[] = { TEXT("II"), TEXT("III"), TEXT("IV"), TEXT("V"), TEXT("VI") };
+	// The table is spent: the same names with a numeral, the first numeral no ship carries.
 	const int32 K = ShipIndex++;
-	return FString::Printf(TEXT("USS %s %s"), ShipNames[K % UE_ARRAY_COUNT(ShipNames)], Numerals[FMath::Clamp(K / (int32)UE_ARRAY_COUNT(ShipNames) - 1, 0, 4)]);
+	const TCHAR* Base = ShipNames[K % UE_ARRAY_COUNT(ShipNames)];
+	for (int32 Suffix = 2; ; ++Suffix)
+	{
+		const FString N = FString::Printf(TEXT("USS %s %d"), Base, Suffix);
+		bool bUsed = false; for (const TObjectPtr<ASpaceVessel>& V : Spawned) { bUsed |= V && V->GetDisplayName() == N; }
+		if (!bUsed) { return N; }
+	}
 }
 
 void ASpaceTraffic::SpawnPatrolShip(FRandomStream& Rng, const FVector& Loc, const FVector& Home, double Patrol)

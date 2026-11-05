@@ -76,6 +76,7 @@ void UMissionSubsystem::Load()
 
 void UMissionSubsystem::Save()
 {
+	if (bNoDisk) { bSaveWanted = false; return; }
 	USlonkMissionSaveGame* S = Cast<USlonkMissionSaveGame>(UGameplayStatics::CreateSaveGameObject(USlonkMissionSaveGame::StaticClass()));
 	if (!S) { return; }
 	S->Missions = Missions; S->Inbox = Inbox; S->Standing = Standing; S->NextId = NextId; S->NextOrdersHours = NextOrdersHours; S->NextEventHours = NextEventHours; S->Completed = Completed; S->Failed = Failed; S->BoardDays = BoardDays;
@@ -97,6 +98,7 @@ void UMissionSubsystem::Reset()
 AStarshipPawn* UMissionSubsystem::CrewedShip() const
 {
 	// The ship whose people these are, whether the player sits in her chair, flies her shuttle or walks a deck.
+	if (!GetWorld()) { return nullptr; }
 	APawn* PlayerPawn = UGameplayStatics::GetPlayerPawn(GetWorld(), 0);
 	AStarshipPawn* Craft = Cast<AStarshipPawn>(PlayerPawn);
 	if (!Craft) { if (const APersonPawn* P = Cast<APersonPawn>(PlayerPawn)) { Craft = P->Craft.Get(); } }
@@ -106,10 +108,17 @@ AStarshipPawn* UMissionSubsystem::CrewedShip() const
 	return nullptr;
 }
 
-UFleetSubsystem* UMissionSubsystem::Fleet() const { return GetGameInstance() ? GetGameInstance()->GetSubsystem<UFleetSubsystem>() : nullptr; }
+UFleetSubsystem* UMissionSubsystem::Fleet() const { if (FleetOverride.IsValid()) { return FleetOverride.Get(); } return GetGameInstance() ? GetGameInstance()->GetSubsystem<UFleetSubsystem>() : nullptr; }
+
+void UMissionSubsystem::InitForTest(UCrewRosterSubsystem* InRoster, UFleetSubsystem* InFleet)
+{
+	bNoDisk = true; RosterOverride = InRoster; FleetOverride = InFleet;
+	Rng.Initialize(11);
+}
 
 UCrewRosterSubsystem* UMissionSubsystem::Roster() const
 {
+	if (RosterOverride.IsValid()) { return RosterOverride.Get(); }
 	return GetGameInstance() ? GetGameInstance()->GetSubsystem<UCrewRosterSubsystem>() : nullptr;
 }
 double UMissionSubsystem::Stardate() const { const UCrewRosterSubsystem* R = Roster(); return R ? R->GetStardate() : 8305.0; }
@@ -225,6 +234,7 @@ bool UMissionSubsystem::PickTarget(FMission& M, FRandomStream& R)
 {
 	// The galaxy's own names: a world with a surface in another system for a survey or a plague, a station for a
 	// delivery or a parley, a system for a patrol; never where the ship is.
+	switch (M.Kind) { case EMissionKind::Survey: case EMissionKind::Medical: case EMissionKind::Delivery: case EMissionKind::Diplomacy: case EMissionKind::Patrol: break; default: return true; }   // the events bring their own target
 	UWorld* W = GetWorld();
 	if (!W) { return false; }
 	TArray<AStarSystem*> Systems; for (TActorIterator<AStarSystem> It(W); It; ++It) { Systems.Add(*It); }
@@ -431,6 +441,7 @@ void UMissionSubsystem::SpawnEventVessel(FMission& M, const FString& Name)
 {
 	// A hull a few hundred kilometres off the bow, holding station, named for the mission.
 	UWorld* W = GetWorld();
+	if (!W) { return; }
 	TActorIterator<ASpaceTraffic> It(W); ASpaceTraffic* Traffic = It ? *It : nullptr;
 	if (!Traffic) { return; }
 	const FVector Dir = FVector(Rng.FRandRange(0.6f, 1.f), Rng.FRandRange(-0.5f, 0.5f), Rng.FRandRange(-0.2f, 0.2f)).GetSafeNormal();
@@ -541,6 +552,16 @@ void UMissionSubsystem::FleetWorkOver(int32 MissionId, bool bTheirSuccess)
 		if (M.Id != MissionId || !M.IsOpen()) { continue; }
 		if (M.Kind == EMissionKind::Assist) { Close(M, EMissionState::Expired, bTheirSuccess ? TEXT("they finished without us") : TEXT("their work came to nothing before we lent a hand")); }
 		else { Close(M, EMissionState::Failed, TEXT("the ship could not wait")); Standing -= M.Standing / 2; ++Failed; Report(FString::Printf(TEXT("%s: too late; she has given up waiting for us."), *M.Title), FLinearColor(1.f, 0.6f, 0.5f)); }
+	}
+}
+
+void UMissionSubsystem::FleetWithdraw(int32 MissionId, const FString& Why)
+{
+	for (FMission& M : Missions)
+	{
+		if (M.Id != MissionId || !M.IsOpen()) { continue; }
+		Close(M, EMissionState::Expired, Why);
+		Report(FString::Printf(TEXT("%s: withdrawn; %s."), *M.Title, *Why), FLinearColor(0.75f, 0.9f, 1.f), ECrewDepartment::Operations);
 	}
 }
 
@@ -693,7 +714,6 @@ bool UMissionSubsystem::Act(int32 Id, int32 Option, FMissionOutcome& Out, FStrin
 	{
 		const bool bSucceeded = C.bSuccess || !O.bFailEndsMission;
 		Out.bMissionOver = true;
-		if (UFleetSubsystem* F = Fleet()) { if (M.Kind == EMissionKind::Support) { F->SupportResolved(M.TargetName, C.bSuccess, false); } else if (M.Kind == EMissionKind::Assist) { F->AssistResolved(M.TargetName, C.bSuccess); } }
 		if (bSucceeded)
 		{
 			Close(M, EMissionState::Completed, C.bSuccess ? TEXT("carried through") : TEXT("done, though not well"));
@@ -707,6 +727,8 @@ bool UMissionSubsystem::Act(int32 Id, int32 Option, FMissionOutcome& Out, FStrin
 			Standing -= M.Standing / 2; ++Failed;
 			Report(FString::Printf(TEXT("%s: failed. Starfleet's regard: %d."), *M.Title, -M.Standing / 2), FLinearColor(1.f, 0.6f, 0.5f));
 		}
+		// The fleet hears of it once our side is closed, so her own closing of the work finds nothing open.
+		if (UFleetSubsystem* F = Fleet()) { if (M.Kind == EMissionKind::Support) { F->SupportResolved(M.TargetName, C.bSuccess, false); } else if (M.Kind == EMissionKind::Assist) { F->AssistResolved(M.TargetName, C.bSuccess); } }
 	}
 	OutReply = Out.Text;
 	Dirty();

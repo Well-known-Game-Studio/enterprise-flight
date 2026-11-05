@@ -326,8 +326,16 @@ void UCrewRosterSubsystem::Validate()
 	}
 }
 
+void UCrewRosterSubsystem::InitForTest(int32 TestSeed)
+{
+	bNoDisk = true;
+	NewComplement(TestSeed);
+	Rng.Initialize(TestSeed);
+}
+
 void UCrewRosterSubsystem::Save()
 {
+	if (bNoDisk) { bSaveWanted = false; return; }
 	USlonkCrewSaveGame* Save = Cast<USlonkCrewSaveGame>(UGameplayStatics::CreateSaveGameObject(USlonkCrewSaveGame::StaticClass()));
 	if (!Save) { return; }
 	Save->Roster = Roster; Save->Lost = Lost; Save->Hours = Hours; Save->Seed = Seed; Save->NextId = NextId; Save->ShipName = ShipName;
@@ -1943,7 +1951,7 @@ bool UCrewRosterSubsystem::Join(FCrewMember M, const FString& Why, FString& OutR
 	M.Id = NextId++;
 	M.Service.JoinedStardate = GetStardate();
 	M.History.Reset(); M.bHead = false; M.bSecond = false; M.Condition = ECrewCondition::Fit; M.ConditionHours = 0.f;
-	M.Posting = DepartmentName(M.Department);
+	{ FRandomStream R(M.Id * 31 + Seed); M.Posting = PostingFor(R, M.Department, R.RandRange(0, 20)); }
 	Record(M, ECrewEventKind::Joined, Why, true);
 	Place(M);
 	Roster.Add(M);

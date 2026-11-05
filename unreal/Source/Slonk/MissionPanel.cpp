@@ -262,14 +262,14 @@ void UMissionPanel::FillFleetFile(const FFleetShip& S)
 	else { Line(FString::Printf(TEXT("Alongside %s; %d missions done, %d failed."), *S.HomeStation, S.Done, S.Failed), 13.f, FLinearColor::White); }
 	Heading(TEXT("Senior staff"));
 	Line(FString::Printf(TEXT("%s, commanding (%s)"), *S.Captain.Styled(), *S.Captain.Species), 13.f, Lcars::Peach);
-	for (const FFleetPerson& P : S.Officers) { Line(FString::Printf(TEXT("%s, %s%s"), *P.Person.Styled(), *P.Person.Posting, P.TiedCrewId >= 0 && R && R->Find(P.TiedCrewId) ? *FString::Printf(TEXT(" (%s of our %s)"), *P.TiedRelation, *R->Find(P.TiedCrewId)->Styled()) : TEXT("")), 13.f, FLinearColor::White); }
+	for (const FFleetPerson& P : S.Officers) { const FString Ties = UFleetSubsystem::TiesText(P, R); Line(FString::Printf(TEXT("%s, %s%s"), *P.Person.Styled(), *P.Person.Posting, Ties.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(" (%s)"), *Ties)), 13.f, FLinearColor::White); }
 	if (S.Notables.Num() > 0)
 	{
 		Heading(TEXT("People we know aboard"));
 		for (const FFleetPerson& P : S.Notables)
 		{
-			const FCrewMember* Ours = P.TiedCrewId >= 0 && R ? R->Find(P.TiedCrewId) : nullptr;
-			Line(FString::Printf(TEXT("%s, %s department; %s%s"), *P.Person.Styled(), *UCrewRosterSubsystem::DepartmentName(P.Person.Department).ToLower(), *P.Origin, Ours ? *FString::Printf(TEXT(" (%s of our %s)"), *P.TiedRelation, *Ours->Styled()) : TEXT("")), 13.f, FLinearColor::White);
+			const FString Ties = UFleetSubsystem::TiesText(P, R);
+			Line(FString::Printf(TEXT("%s, %s department; %s%s"), *P.Person.Styled(), *UCrewRosterSubsystem::DepartmentName(P.Person.Department).ToLower(), *P.Origin, Ties.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(" (%s)"), *Ties)), 13.f, FLinearColor::White);
 		}
 		Line(TEXT("ship fleet request <ship> <name> asks for one of them; ship fleet transfer <name> <ship> sends one of ours."), 12.f, Lcars::Dim, 4.f);
 	}

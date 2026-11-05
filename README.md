@@ -220,6 +220,13 @@ her is a bereavement by name. People transfer either way, one of ours to her wit
 when there is family aboard or her captain thinks well of us. Show: Fleet in the missions panel lists the ships
 and their files; `ship fleet ...` does the rest. The design is in `docs/fleet-design.md`.
 
+## Tests
+
+The crew roster, the missions and the fleet have headless automation tests (`unreal/Source/Slonk/Tests`, run with
+`tools/run_tests.sh`, no window or GPU, about half a minute) that build the three systems off the disk and drive
+them through their public API; the rounds are smoke-tested in play with scripts over the editor's MCP plugin. How
+and what is in `docs/testing.md`.
+
 ## The bridge and the rooms
 
 The Star Trek VI bridge is built from code in Blender (`blender/bridge-st6`) and imported as one mesh with its Okudagram screens bound to live readouts. From the captain's chair the viewscreen shows the real view ahead; the crew figures are placeholders for now. Main engineering, sickbay, the shuttle bay, the transporter room and the airlock's staging area are built the same way (`blender/rooms/build_rooms.py`, one mesh per room plus the parked shuttle), laid out after the sets of the first six films and walked on their own triangles; their slots bind to the Okudagram screens, the lit strips and panels, the glowing core and pad, and a glass material.

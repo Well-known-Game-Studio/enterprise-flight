@@ -442,6 +442,8 @@ public:
 	// ---- the whole ----
 	/** A fresh complement from a seed (0: from the clock). */
 	UFUNCTION(BlueprintCallable, Category = "Crew") void NewComplement(int32 Seed, int32 Complement = 502);
+	/** Tests: a complement from a seed, no save slot read or written. */
+	void InitForTest(int32 TestSeed);
 	UFUNCTION(BlueprintCallable, Category = "Crew") void Reset();
 	/** Dev: words across a grudge between these two, for the captain to answer. */
 	bool DevIncident(int32 Offender, int32 Victim);
@@ -454,6 +456,7 @@ public:
 private:
 	void Load();
 	bool bSaveWanted = false;
+	bool bNoDisk = false;
 	float SaveDelaySeconds = 0.f;
 	/** Per-department strengths this complement was generated with (recruits and replacements fill to them). */
 	TArray<int32> Targets;
