@@ -391,7 +391,8 @@ void UStarshipWeaponsComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	if (LockedTarget && !IsValid(LockedTarget))
+	// A lock does not outlive its target: gone, dying, or out of the system on a run (the tag goes with it).
+	if (LockedTarget && (!IsValid(LockedTarget) || !LockedTarget->ActorHasTag(ASpaceTarget::TargetableTag)))
 	{
 		LockedTarget = nullptr;
 	}

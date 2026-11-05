@@ -31,7 +31,8 @@ On the ship's clock each ship lives an hour at a time (the same clock as the cre
   subspace. She works at it herself too (a chance each hour by her own best hand at it), and after a day without
   help it is beyond her: the mission fails, the ship is hurt, people die, and she remembers that no help came.
 - When the work is done it comes off or not by her own people's skill, her condition and morale, and whether we
-  lent a hand; then she **returns** home.
+  lent a hand; then she **returns** home (a hull in her own system sets out for home at once, the countdown being the
+  trip; a hull away at another star reappears at home when it ends).
 
 ## 3. Our part
 

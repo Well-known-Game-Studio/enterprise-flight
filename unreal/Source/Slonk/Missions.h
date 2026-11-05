@@ -254,5 +254,7 @@ private:
 	TWeakObjectPtr<UCrewRosterSubsystem> RosterOverride;
 	TWeakObjectPtr<UFleetSubsystem> FleetOverride;
 	float SaveDelaySeconds = 0.f;
+	/** The clock's last reading, to notice it going back (a new complement starts it over). */
+	double LastClockHours = -1.0;
 	static const TCHAR* SlotName;
 };

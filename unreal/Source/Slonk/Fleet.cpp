@@ -119,8 +119,8 @@ bool UFleetSubsystem::RegisterShip(const FString& Name, const FString& ShipClass
 	Dirty();
 	return true;
 }
-double UFleetSubsystem::Hours() const { const UCrewRosterSubsystem* R = Roster(); return R ? R->GetHours() : 0.0; }
-double UFleetSubsystem::Stardate() const { const UCrewRosterSubsystem* R = Roster(); return R ? R->GetStardate() : 8305.0; }
+double UFleetSubsystem::Hours() const { if (SimHours >= 0.0) { return SimHours; } const UCrewRosterSubsystem* R = Roster(); return R ? R->GetHours() : 0.0; }
+double UFleetSubsystem::Stardate() const { const UCrewRosterSubsystem* R = Roster(); if (!R) { return 8305.0; } return R->GetStardate() - (R->GetHours() - Hours()) / 24.0; }
 FFleetShip* UFleetSubsystem::FindMutable(const FString& Name) { for (FFleetShip& S : Ships) { if (S.Name == Name) { return &S; } } return nullptr; }
 const FFleetShip* UFleetSubsystem::Find(const FString& Name) const { for (const FFleetShip& S : Ships) { if (S.Name == Name) { return &S; } } return nullptr; }
 bool UFleetSubsystem::InRange(const FFleetShip& S) const { return Last.Nearby.Contains(S.Name); }
@@ -244,11 +244,15 @@ void UFleetSubsystem::BindShipTies(FFleetShip& S, const TArray<TPair<const FCrew
 {
 	UCrewRosterSubsystem* Ros = Roster();
 	if (!Ros) { return; }
-	// Someone aboard her only because one of ours knew them, whom nobody aboard us knows any more (the knower dead
-	// or gone, or a record from before the names were kept straight), is no longer anyone to us.
-	TSet<FString> Known; for (const TPair<const FCrewMember*, const FCrewTie*>& Pair : Ties) { Known.Add(Pair.Value->Name); }
-	const int32 Dropped = S.Notables.RemoveAll([&Known](const FFleetPerson& P) { return P.Origin == TEXT("known to us") && !Known.Contains(P.Person.FullName()); });
-	bool bChanged = Dropped > 0;
+	// Only the ties the roster still has: a knower dead, transferred or replaced (a new complement reuses ids)
+	// takes their tie with them, and someone aboard her only because one of ours knew them goes when no one does.
+	TSet<FString> Keys; for (const TPair<const FCrewMember*, const FCrewTie*>& Pair : Ties) { Keys.Add(FString::Printf(TEXT("%d|%s"), Pair.Key->Id, *Pair.Value->Name)); }
+	int32 Pruned = 0;
+	auto PruneTies = [&Keys, &Pruned](FFleetPerson& P) { const FString Name = P.Person.FullName(); Pruned += P.Ties.RemoveAll([&Keys, &Name](const FFleetTie& T) { return !Keys.Contains(FString::Printf(TEXT("%d|%s"), T.CrewId, *Name)); }); };
+	for (FFleetPerson& P : S.Officers) { PruneTies(P); }
+	for (FFleetPerson& P : S.Notables) { PruneTies(P); }
+	const int32 Dropped = S.Notables.RemoveAll([](const FFleetPerson& P) { return P.Origin == TEXT("known to us") && P.Ties.Num() == 0; });
+	bool bChanged = Pruned > 0 || Dropped > 0;
 	if (Dropped > 0) { UE_LOG(LogTemp, Log, TEXT("Fleet: %s: %d people nobody aboard knows any more dropped from her file"), *S.Name, Dropped); }
 	for (const TPair<const FCrewMember*, const FCrewTie*>& Pair : Ties)
 	{
@@ -282,9 +286,13 @@ void UFleetSubsystem::AdvanceSeconds(float Seconds, const FMissionShipState& Shi
 	{ const UCrewRosterSubsystem* Ros = Roster(); const int32 Rev = Ros ? Ros->GetRevision() : 0; if (bBindWanted || Rev != TiesRevision) { TiesRevision = Rev; bBindWanted = false; BindTies(); } }
 	const double H = Hours();
 	if (LastHour < 0.0) { LastHour = FMath::Floor(H); }
-	// Whole hours, however many the clock jumped (dev time).
+	// The shared clock went back (a new complement starts it over): every schedule keeps its distance to now.
+	if (FMath::Floor(H) < LastHour) { const double Back = LastHour - FMath::Floor(H); for (FFleetShip& S : Ships) { S.NextMissionHours -= Back; } LastHour = FMath::Floor(H); }
+	// Whole hours, however many the clock jumped (dev time), each lived at its own hour: departures, schedules
+	// and log stamps read the hour being replayed, not the clock's final reading.
 	int32 Steps = 0;
-	while (FMath::Floor(H) > LastHour && Steps < 48) { LastHour += 1.0; ++Steps; for (FFleetShip& S : Ships) { if (!S.bLost) { LiveHour(S); } } }
+	while (FMath::Floor(H) > LastHour && Steps < 48) { LastHour += 1.0; ++Steps; SimHours = LastHour; for (FFleetShip& S : Ships) { if (!S.bLost) { LiveHour(S); } } }
+	SimHours = -1.0;
 	if (FMath::Floor(H) > LastHour) { LastHour = FMath::Floor(H); }
 	if (Steps > 0) { Dirty(); }   // countdowns, repairs, trouble hours: the files and the save see them
 	// Who is in range changed: the fleet view re-sorts, no save needed.
@@ -338,7 +346,7 @@ void UFleetSubsystem::LiveHour(FFleetShip& S)
 		if (M.HoursLeft <= 0.f)
 		{
 			M.Task = EFleetTask::Idle; S.NextMissionHours = Hours() + Rng.FRandRange(3.0, 10.0);
-			SendActor(S, false);
+			if (M.bFar) { SendActor(S, false); }   // back in sight at home; a local hull set out for home when the work ended
 			if (InRange(S)) { Report(FString::Printf(TEXT("%s is back alongside %s."), *S.Name, *S.HomeStation)); }
 			Dirty();
 		}
@@ -392,6 +400,7 @@ void UFleetSubsystem::EndMission(FFleetShip& S, bool bSuccess, const FString& Wh
 	if (M.bAssisted) { if (UCrewRosterSubsystem* Ros = Roster()) { Ros->NoteShipNews(S.Name, FString::Printf(TEXT("%s finished %s%s"), *S.Name, *M.Title, bSuccess ? TEXT(", with our help") : TEXT(", badly")), bSuccess ? 0.12f : -0.08f); } }
 	M.Task = EFleetTask::Returning; M.HoursLeft = M.bFar ? Rng.FRandRange(6.f, 14.f) : Rng.FRandRange(1.f, 3.f);
 	M.Trouble = EFleetTrouble::None; M.SupportMissionId = -1; M.AssistMissionId = -1; M.bHelpRefused = false;
+	if (!M.bFar) { SendActor(S, false); }   // her hull heads home now; the countdown is the trip. A far hull stays out of sight until it ends.
 	if (InRange(S)) { Report(FString::Printf(TEXT("%s reports %s %s; she is heading home."), *S.Name, *M.Title, bSuccess ? TEXT("done") : TEXT("a failure"))); }
 	Dirty();
 }
@@ -436,7 +445,9 @@ void UFleetSubsystem::SendActor(FFleetShip& S, bool bOut)
 	AProceduralStarship* A = S.Actor.Get();
 	if (!A) { return; }
 	if (bOut && S.Mission.bFar) { A->SetAway(true); return; }
-	if (!bOut) { if (A->IsAway()) { A->SetAway(false); } }
+	if (A->IsAway()) { A->SetAway(false); }   // back from a far run: at home, then on to wherever this is
+	// A warp in progress (the traffic's own, or the last leg) gives way to this one; WarpTo will not interrupt one.
+	if (A->IsInWarp()) { A->RecallTo(A->GetActorLocation(), A->PatrolRadiusCm); }
 	// A place in this system: warp there (or home) and patrol about it.
 	UWorld* W = GetWorld();
 	const FString& Want = bOut ? S.Mission.TargetName : S.HomeStation;
@@ -572,7 +583,7 @@ bool UFleetSubsystem::RequestPerson(const FString& ShipName, const FString& Pers
 	S->Notables.RemoveAt(Found);
 	FCrewMember M = P.Person;
 	if (!Ros->Join(M, FString::Printf(TEXT("Transferred from the %s%s."), *ShipName, bReunion ? TEXT(", to serve with their own") : TEXT("")), OutReply)) { S->Notables.Insert(P, Found); return false; }
-	for (const FFleetTie& T : P.Ties) { const FCrewMember* C = Ros->Find(T.CrewId); if (C && C->IsAboard()) { Ros->TieComesAboard(T.CrewId, M.FullName(), T.Relation); } else { Ros->TieRemoved(T.CrewId, M.FullName()); } }
+	for (const FFleetTie& T : P.Ties) { const FCrewMember* C = Ros->Find(T.CrewId); if (C && C->IsAboard()) { Ros->TieComesAboard(T.CrewId, M.FullName(), T.Relation, ShipName); } else { Ros->TieRemoved(T.CrewId, M.FullName(), ShipName); } }
 	S->Complement = FMath::Max(0, S->Complement - 1);
 	S->Relation = FMath::Max(-1.f, S->Relation - (bReunion ? 0.02f : 0.1f));
 	Log(*S, FString::Printf(TEXT("%s transferred to the %s."), *P.Person.Styled(), *Ros->GetShipName()));
@@ -642,8 +653,8 @@ bool UFleetSubsystem::DevMission(const FString& ShipName, FString& OutReply)
 {
 	FFleetShip* S = FindMutable(ShipName);
 	if (!S) { OutReply = TEXT("No such ship"); return false; }
-	if (S->Mission.IsActive()) { DropBoardEntries(*S); EndMission(*S, true, TEXT("cut short")); S->Mission.Task = EFleetTask::Idle; SendActor(*S, false); }
-	BeginMission(*S);
+	if (S->Mission.IsActive()) { DropBoardEntries(*S); EndMission(*S, true, TEXT("cut short")); S->Mission.Task = EFleetTask::Idle; }
+	BeginMission(*S);   // the new destination replaces whatever leg the hull was on
 	OutReply = FString::Printf(TEXT("%s: %s"), *ShipName, *S->TaskText());
 	return true;
 }

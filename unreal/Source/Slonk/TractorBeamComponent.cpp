@@ -157,7 +157,7 @@ void UTractorBeamComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 	{
 		return;
 	}
-	if (!IsValid(Target))
+	if (!IsValid(Target) || Target->IsHidden())   // gone, or out of the system on a run: nothing to hold
 	{
 		Release();
 		return;

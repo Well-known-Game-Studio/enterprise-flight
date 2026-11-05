@@ -171,6 +171,9 @@ void UMissionSubsystem::AdvanceSeconds(float Seconds, const FMissionShipState& S
 		OfferAssists();
 	}
 	const double H = Hours();
+	// The shared clock went back: the schedules keep their distance to now.
+	if (LastClockHours >= 0.0 && H < LastClockHours) { const double Back = LastClockHours - H; NextOrdersHours -= Back; NextEventHours -= Back; }
+	LastClockHours = H;
 	if (NextOrdersHours <= 0.0) { NextOrdersHours = H + Rng.FRandRange(2.0, 5.0); }
 	if (NextEventHours <= 0.0) { NextEventHours = H + Rng.FRandRange(0.5, 1.5); }
 	// Starfleet's orders come over subspace every several ship's hours while fewer than two of theirs are open.

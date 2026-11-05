@@ -244,6 +244,8 @@ private:
 	UPROPERTY() TArray<FCrewReport> Reports;
 	FRandomStream Rng;
 	double LastHour = -1.0;
+	/** While the hours are replayed, the hour being lived (Hours() and Stardate() read it); -1 otherwise. */
+	double SimHours = -1.0;
 	TSet<FString> LastNear;
 	/** The roster revision the ties were last bound at: they change only when the roster does, or a ship is new. */
 	int32 TiesRevision = -1;

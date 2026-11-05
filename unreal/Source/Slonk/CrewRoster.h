@@ -388,12 +388,15 @@ public:
 	bool TransferOut(int32 Id, const FString& OtherShip, FCrewMember& OutPerson, FString& OutReply);
 	/** News of a ship, for everyone with a tie aboard her. */
 	void NoteShipNews(const FString& OtherShip, const FString& Text, float Weight);
-	/** Someone a crew member is tied to was killed aboard another ship. */
+	/** Someone a crew member is tied to was killed aboard another ship: the tie to that name aboard that ship goes,
+	 *  a bereavement is recorded; a namesake elsewhere is untouched, and with no such tie nothing happens. */
 	void TieLost(int32 CrewId, const FString& Name, const FString& OtherShip);
-	/** Someone a crew member is tied to has just joined us: the tie becomes a bond aboard. */
-	void TieComesAboard(int32 CrewId, const FString& Name, const FString& Relation);
-	/** The person a tie named is no longer where the tie says (they came to us): the tie goes, no bond. */
-	void TieRemoved(int32 CrewId, const FString& Name);
+	/** Someone a crew member is tied to aboard that ship has just joined us: the tie becomes a bond aboard. */
+	void TieComesAboard(int32 CrewId, const FString& Name, const FString& Relation, const FString& OtherShip);
+	/** The person a tie named aboard that ship is no longer there (they came to us): the tie goes, no bond. */
+	void TieRemoved(int32 CrewId, const FString& Name, const FString& OtherShip);
+	/** The tie this crew member has to a named person aboard a ship, or none. */
+	static int32 FindShipTie(const FCrewMember& M, const FString& Name, const FString& OtherShip);
 	bool Discharge(int32 Id, FString& OutReply);
 	/** A day of mourning: grief settles faster, the lost are named. */
 	FString Memorial();

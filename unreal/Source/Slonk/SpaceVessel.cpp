@@ -92,11 +92,17 @@ ASpaceVessel::ASpaceVessel()
 void ASpaceVessel::SetBeyondHorizon(bool bBeyond)
 {
 	bBeyondHorizon = bBeyond;
-	SetActorHiddenInGame(bBeyond);
-	if (Hull) { Hull->SetVisibility(!bBeyond); }
-	if (Glow) { Glow->SetVisibility(!bBeyond); }
-	if (GlowWarm) { GlowWarm->SetVisibility(!bBeyond); }
-	if (RunningLights) { RunningLights->SetVisibility(!bBeyond, true); }
+	ApplyHidden();
+}
+
+void ASpaceVessel::ApplyHidden()
+{
+	const bool bHide = bBeyondHorizon || WantsHidden();
+	SetActorHiddenInGame(bHide);
+	if (Hull) { Hull->SetVisibility(!bHide); }
+	if (Glow) { Glow->SetVisibility(!bHide); }
+	if (GlowWarm) { GlowWarm->SetVisibility(!bHide); }
+	if (RunningLights) { RunningLights->SetVisibility(!bHide, true); }
 }
 
 FVector ASpaceVessel::ToUniverse(const FVector& World) const
@@ -967,9 +973,11 @@ void AProceduralStarship::SetAway(bool bAway)
 	if (bAwayRun == bAway) { return; }
 	bAwayRun = bAway;
 	if (bAway) { WarpPhase = EShipWarpPhase::None; ResetImages(); SetMainVisible(true); Velocity = FVector::ZeroVector; }
-	SetActorHiddenInGame(bAway);
+	ApplyHidden();
 	SetActorEnableCollision(!bAway);
 	SetActorTickEnabled(!bAway);
+	// Not a target while away: no lock finds her, and a lock held on her lets go.
+	if (bAway) { Tags.Remove(ASpaceTarget::TargetableTag); } else if (!bDying) { Tags.AddUnique(ASpaceTarget::TargetableTag); }
 	if (!bAway) { SetActorLocation(ToWorld(HomeUniverse)); bHasWaypoint = false; }
 }
 

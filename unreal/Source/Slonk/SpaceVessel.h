@@ -26,6 +26,9 @@ public:
 	// IFarBody
 	virtual void SetBeyondHorizon(bool bBeyond) override;
 	virtual bool IsBeyondHorizon() const override { return bBeyondHorizon; }
+	/** Hidden for the horizon, or for a reason of the subclass's own (a run out of the system): the two never undo each other. */
+	void ApplyHidden();
+	virtual bool WantsHidden() const { return false; }
 
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
@@ -291,6 +294,7 @@ private:
 	EStarshipClass BuiltClass = EStarshipClass::Constitution;
 	void PickWaypoint();
 	bool bAwayRun = false;
+	virtual bool WantsHidden() const override { return bAwayRun; }
 	/** Patrol centre and current waypoint in universe space (they survive floating-origin rebases). */
 	FVector HomeUniverse = FVector::ZeroVector;
 	FVector WaypointUniverse = FVector::ZeroVector;

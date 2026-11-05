@@ -310,6 +310,8 @@ void UCrewRosterSubsystem::Validate()
 		for (float& V : M.Needs) { V = FMath::Clamp(V, 0.f, 1.f); }
 		M.Mood = FMath::Clamp(M.Mood, 0.f, 1.f); M.Stress = FMath::Clamp(M.Stress, 0.f, 1.f);
 		if (M.Pronoun.IsEmpty()) { M.Pronoun = TEXT("they"); }
+		// Ship names are "USS X" everywhere now (the fleet keys its records by them); older saves wrote "U.S.S. X".
+		for (FCrewTie& T : M.Ties) { if (T.Kind == ECrewTiePlace::Ship && T.Place.StartsWith(TEXT("U.S.S. "))) { T.Place = TEXT("USS ") + T.Place.Mid(7); } }
 		if (!M.bOpinionsSeeded) { FRandomStream R(M.Id * 104729 + Seed); SeedOpinions(R, M); }
 		if (Seen.Contains(M.Id) || M.Id < 0) { const int32 Old = M.Id; M.Id = ++MaxId + 1000000; UE_LOG(LogTemp, Warning, TEXT("Crew: %s had id %d already in use; now %d (their bonds and others' point at the other holder)"), *M.FullName(), Old, M.Id); }
 		Seen.Add(M.Id); MaxId = FMath::Max(MaxId, M.Id);
@@ -2009,12 +2011,20 @@ void UCrewRosterSubsystem::NoteShipNews(const FString& OtherShip, const FString&
 	if (Heard > 0) { Dirty(); RequestSave(); }
 }
 
+int32 UCrewRosterSubsystem::FindShipTie(const FCrewMember& M, const FString& Name, const FString& OtherShip)
+{
+	for (int32 i = 0; i < M.Ties.Num(); ++i) { const FCrewTie& T = M.Ties[i]; if (T.Kind == ECrewTiePlace::Ship && T.Place == OtherShip && T.Name == Name) { return i; } }
+	return INDEX_NONE;
+}
+
 void UCrewRosterSubsystem::TieLost(int32 CrewId, const FString& Name, const FString& OtherShip)
 {
 	FCrewMember* M = FindMutable(CrewId);
 	if (!M) { return; }
-	FString Relation = TEXT("friend"); bool bFamily = false;
-	for (int32 i = M->Ties.Num() - 1; i >= 0; --i) { if (M->Ties[i].Name == Name) { Relation = M->Ties[i].Relation; bFamily = M->Ties[i].bFamily; M->Ties.RemoveAt(i); } }
+	const int32 i = FindShipTie(*M, Name, OtherShip);
+	if (i == INDEX_NONE) { return; }   // no one of that name aboard her in this person's life: nothing to mourn
+	const FString Relation = M->Ties[i].Relation; const bool bFamily = M->Ties[i].bFamily;
+	M->Ties.RemoveAt(i);
 	Remember(*M, FString::Printf(TEXT("%s is gone, lost aboard the %s"), *Name, *OtherShip), bFamily ? -0.6f : -0.4f, true);
 	M->Stress = FMath::Min(1.f, M->Stress + (bFamily ? 0.4f : 0.25f));
 	Record(*M, ECrewEventKind::Bereaved, FString::Printf(TEXT("Lost %s %s aboard the %s."), *Relation, *Name, *OtherShip), true);
@@ -2022,22 +2032,25 @@ void UCrewRosterSubsystem::TieLost(int32 CrewId, const FString& Name, const FStr
 	Dirty(); RequestSave();
 }
 
-void UCrewRosterSubsystem::TieRemoved(int32 CrewId, const FString& Name)
+void UCrewRosterSubsystem::TieRemoved(int32 CrewId, const FString& Name, const FString& OtherShip)
 {
 	FCrewMember* M = FindMutable(CrewId);
 	if (!M) { return; }
-	const int32 Before = M->Ties.Num();
-	for (int32 i = M->Ties.Num() - 1; i >= 0; --i) { if (M->Ties[i].Name == Name) { M->Ties.RemoveAt(i); } }
-	if (M->Ties.Num() != Before) { Dirty(); RequestSave(); }
+	const int32 i = FindShipTie(*M, Name, OtherShip);
+	if (i == INDEX_NONE) { return; }
+	M->Ties.RemoveAt(i);
+	Dirty(); RequestSave();
 }
 
-void UCrewRosterSubsystem::TieComesAboard(int32 CrewId, const FString& Name, const FString& Relation)
+void UCrewRosterSubsystem::TieComesAboard(int32 CrewId, const FString& Name, const FString& Relation, const FString& OtherShip)
 {
 	FCrewMember* M = FindMutable(CrewId);
 	FCrewMember* N = nullptr; for (FCrewMember& C : Roster) { if (C.IsAboard() && C.FullName() == Name) { N = &C; } }
-	if (!M || !N) { return; }
-	bool bFamily = false;
-	for (int32 i = M->Ties.Num() - 1; i >= 0; --i) { if (M->Ties[i].Name == Name) { bFamily = M->Ties[i].bFamily; M->Ties.RemoveAt(i); } }
+	if (!M || !N || M == N) { return; }
+	const int32 i = FindShipTie(*M, Name, OtherShip);
+	if (i == INDEX_NONE) { return; }   // a namesake, not the one they knew
+	const bool bFamily = M->Ties[i].bFamily;
+	M->Ties.RemoveAt(i);
 	Bond(*M, *N, 0.8f, bFamily ? ECrewRelation::Family : ECrewRelation::CloseFriend);
 	Remember(*M, FString::Printf(TEXT("%s is aboard with me now"), *Name), 0.4f, true);
 	Remember(*N, FString::Printf(TEXT("Serving with %s at last"), *M->FullName()), 0.4f, true);
