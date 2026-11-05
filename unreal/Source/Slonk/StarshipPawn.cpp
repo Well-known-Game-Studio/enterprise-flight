@@ -28,6 +28,8 @@
 #include "StarshipPlayerController.h"
 #include "SlonkUIRoot.h"
 #include "LcarsPanel.h"
+#include "MissionPanel.h"
+#include "Missions.h"
 #include "LcarsPanels.h"
 #include "CrewPanel.h"
 #include "CrewRoster.h"
@@ -2257,6 +2259,10 @@ void AStarshipPawn::ProcessDebugCommand()
 	{
 		HandleCrewCommand(Args);
 	}
+	else if (Op == TEXT("mission") || Op == TEXT("missions"))
+	{
+		HandleMissionCommand(Args);
+	}
 	else if (Op == TEXT("science"))
 	{
 		// science [reset]: list the log on screen, or wipe it (testing).
@@ -2292,6 +2298,7 @@ void AStarshipPawn::ProcessDebugCommand()
 		else if (What == TEXT("tactical") || What == TEXT("tac")) { UI->TogglePanel(UTacticalPanel::StaticClass()); }
 		else if (What == TEXT("medical") || What == TEXT("sickbay")) { UI->TogglePanel(UMedicalPanel::StaticClass()); }
 		else if (What == TEXT("crew") || What == TEXT("roster")) { UI->TogglePanel(UCrewPanel::StaticClass()); }
+		else if (What == TEXT("missions") || What == TEXT("mission")) { UI->TogglePanel(UMissionPanel::StaticClass()); }
 		else if (What == TEXT("msd") || What == TEXT("systems") || What == TEXT("damage")) { UI->TogglePanel(UMsdPanel::StaticClass()); }
 		else if (What == TEXT("lift") || What == TEXT("turbolift")) { UI->TogglePanel(UTurboliftPanel::StaticClass()); }
 		else if (What == TEXT("close")) { UI->CloseAll(); }
@@ -3742,4 +3749,89 @@ void AStarshipPawn::DumpHullMesh() const
 	const FString Path = FPaths::ProjectSavedDir() / TEXT("meshdump.csv");
 	FFileHelper::SaveStringToFile(Out, *Path);
 	UE_LOG(LogTemp, Log, TEXT("meshdump: %u vertices -> %s"), PB.GetNumVertices(), *Path);
+}
+
+void AStarshipPawn::HandleMissionCommand(const TArray<FString>& Args)
+{
+	UMissionSubsystem* M = GetGameInstance() ? GetGameInstance()->GetSubsystem<UMissionSubsystem>() : nullptr;
+	UCrewRosterSubsystem* R = GetGameInstance() ? GetGameInstance()->GetSubsystem<UCrewRosterSubsystem>() : nullptr;
+	if (!M) { ScreenMessage(TEXT("No mission system"), FColor::Orange); return; }
+	auto Word = [&](int32 i) { return Args.IsValidIndex(i) ? Args[i] : FString(); };
+	const FString What = Word(1).ToLower();
+	auto Say = [&](const FString& T, FColor C = FColor::Cyan, float Secs = 10.f) { ScreenMessage(T, C, Secs); UE_LOG(LogTemp, Log, TEXT("Missions: %s"), *T); };
+	auto Id = [&](int32 i) { return Word(i).IsNumeric() ? FCString::Atoi(*Word(i)) : (M->Objective() ? M->Objective()->Id : -1); };
+	auto Line = [&](const FMission& Ms)
+	{
+		Say(FString::Printf(TEXT("   #%d %-9s %-9s %s%s  due %.1f"), Ms.Id, *UMissionSubsystem::StateName(Ms.State), *UMissionSubsystem::SourceName(Ms.Source), *Ms.Title, Ms.TargetName.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(" @ %s%s"), *Ms.TargetName, M->IsAtTarget(Ms) ? TEXT(" (here)") : TEXT("")), Ms.DeadlineStardate), Ms.State == EMissionState::Active ? FColor::Yellow : FColor::White, 15.f);
+	};
+	FString Reply;
+	if (What.IsEmpty() || What == TEXT("list") || What == TEXT("board"))
+	{
+		for (const FMission* Ms : M->Open()) { Line(*Ms); }
+		Say(FString::Printf(TEXT("Missions: %d open, %d done, %d failed; Starfleet's regard %+d (%s); %d unread"), M->Open().Num(), M->GetCompleted(), M->GetFailed(), M->GetStanding(), *M->StandingTitle(), M->Unread()), FColor::Cyan, 15.f);
+	}
+	else if (What == TEXT("log")) { for (const FMission& Ms : M->GetMissions()) { if (!Ms.IsOpen()) { Line(Ms); } } }
+	else if (What == TEXT("inbox"))
+	{
+		const TArray<FStarfleetMessage>& In = M->GetInbox();
+		for (int32 i = 0; i < In.Num(); ++i) { Say(FString::Printf(TEXT("   %s %d  %.1f  %s: %s (mission #%d)"), In[i].bRead ? TEXT(" ") : TEXT("*"), i, In[i].Stardate, *In[i].From, *In[i].Subject, In[i].MissionId), FColor::White, 15.f); }
+		Say(FString::Printf(TEXT("Inbox: %d, %d unread (ship mission read <n>)"), In.Num(), M->Unread()));
+	}
+	else if (What == TEXT("read"))
+	{
+		const int32 i = FCString::Atoi(*Word(2));
+		if (!M->GetInbox().IsValidIndex(i)) { Say(TEXT("read <n>: no such message"), FColor::Orange); return; }
+		const FStarfleetMessage& Msg = M->GetInbox()[i]; M->MarkRead(i);
+		Say(FString::Printf(TEXT("From %s, stardate %.1f: %s"), *Msg.From, Msg.Stardate, *Msg.Subject), FColor::Cyan, 15.f);
+		Say(Msg.Text, FColor::White, 20.f);
+	}
+	else if (What == TEXT("show"))
+	{
+		const FMission* Ms = M->Find(Id(2));
+		if (!Ms) { Say(TEXT("show <id>"), FColor::Orange); return; }
+		Line(*Ms); Say(Ms->Brief, FColor::White, 20.f);
+		if (Ms->State == EMissionState::Active) { if (const FMissionStage* St = Ms->Current()) { Say(FString::Printf(TEXT("%s: %s"), *St->Title, *St->Text), FColor::Yellow, 20.f); for (int32 i = 0; i < St->Options.Num(); ++i) { const FMissionOption& O = St->Options[i]; Say(FString::Printf(TEXT("   %d. %s  [%s %s %.0f%s]"), i, *O.Text, *UCrewRosterSubsystem::DepartmentName(O.Party), *UCrewRosterSubsystem::SkillName(O.Skill).ToLower(), O.Difficulty, O.Risk > 0.f ? TEXT(", risk") : TEXT("")), FColor::White, 20.f); } } }
+		for (const FString& L : Ms->Log) { Say(L, FColor::White, 20.f); }
+	}
+	else if (What == TEXT("accept")) { const bool bOk = M->Accept(Id(2), Reply); Say(Reply, bOk ? FColor::Cyan : FColor::Orange); }
+	else if (What == TEXT("abandon")) { const bool bOk = M->Abandon(Id(2), Reply); Say(Reply, bOk ? FColor::Cyan : FColor::Orange); }
+	else if (What == TEXT("act"))
+	{
+		// act <id> <option>, or act <option> for the mission to steer by.
+		int32 MId, Opt;
+		if (Word(2).IsNumeric() && Word(3).IsNumeric()) { MId = FCString::Atoi(*Word(2)); Opt = FCString::Atoi(*Word(3)); }
+		else if (Word(2).IsNumeric() && Word(3).IsEmpty()) { MId = Id(-1); Opt = FCString::Atoi(*Word(2)); }
+		else { Say(TEXT("act <id> <option>, or act <option> for the mission on the HUD"), FColor::Orange); return; }
+		FMissionOutcome Out;
+		if (!M->Act(MId, Opt, Out, Reply)) { Say(Reply, FColor::Orange); return; }
+		Say(Out.CheckSummary, Out.bSuccess ? FColor::Green : FColor::Orange, 15.f);
+		Say(Out.Text, FColor::White, 15.f);
+		if (Out.bMissionOver) { if (const FMission* Ms = M->Find(MId)) { Say(FString::Printf(TEXT("%s: %s"), *Ms->Title, *UMissionSubsystem::StateName(Ms->State).ToLower()), FColor::Cyan, 15.f); } }
+	}
+	else if (What == TEXT("party"))
+	{
+		if (!R) { return; }
+		const int32 MId = FCString::Atoi(*Word(2));
+		TArray<int32> Ids;
+		for (int32 i = 3; i < Args.Num(); ++i)
+		{
+			const FCrewMember* C = Args[i].IsNumeric() ? R->Find(FCString::Atoi(*Args[i])) : R->FindByName(Args[i]);
+			if (!C) { Say(FString::Printf(TEXT("No one called %s; the party is unchanged"), *Args[i]), FColor::Orange); return; }
+			Ids.AddUnique(C->Id);
+		}
+		const bool bOk = M->SetParty(MId, Ids, Reply); Say(Reply, bOk ? FColor::Cyan : FColor::Orange);
+	}
+	else if (What == TEXT("here")) { const FMission* Ms = M->Find(Id(2)); if (Ms) { Say(FString::Printf(TEXT("%s: %s %s"), *Ms->Title, *Ms->TargetName, M->IsAtTarget(*Ms) ? TEXT("in range") : TEXT("not in range")), FColor::Cyan); } }
+	else if (What == TEXT("dev"))
+	{
+		// dev <kind> [orders|board|event]: one of that kind now, as the given source (events are active at once).
+		EMissionKind K;
+		if (!UMissionSubsystem::ParseKind(Word(2), K)) { Say(TEXT("dev <survey|rescue|diplomacy|delivery|anomaly|medical|patrol|contact|derelict|smuggler> [orders|board|event]"), FColor::Orange); return; }
+		const FString Src = Word(3).ToLower();
+		const EMissionSource S = Src.StartsWith(TEXT("ev")) ? EMissionSource::Event : Src.StartsWith(TEXT("b")) || Src.StartsWith(TEXT("st")) ? EMissionSource::Starbase : (K == EMissionKind::Rescue || K == EMissionKind::Anomaly || K == EMissionKind::Contact || K == EMissionKind::Derelict || K == EMissionKind::Smuggler) && Src.IsEmpty() ? EMissionSource::Event : EMissionSource::Starfleet;
+		const int32 NewId = M->DevSpawn(K, S);
+		if (const FMission* Ms = M->Find(NewId)) { Line(*Ms); } else if (NewId == -2) { Say(TEXT("That kind brings its own hull: it only happens as an event"), FColor::Orange); } else { Say(TEXT("Nothing to make it from (no target in reach)"), FColor::Orange); }
+	}
+	else if (What == TEXT("reset")) { M->Reset(); Say(TEXT("Missions reset"), FColor::Orange); }
+	else { Say(TEXT("ship mission list | log | inbox | read <n> | show <id> | accept <id> | act [<id>] <option> | party <id> <names> | abandon <id> | here [id] | dev <kind> [orders|board|event] | reset"), FColor::Orange, 12.f); }
 }

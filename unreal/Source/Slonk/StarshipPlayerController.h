@@ -115,6 +115,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_Medical;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_Crew;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_Msd;
+	/** - : the missions board. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_Missions;
 	/** 5 6 7: condition green, yellow alert, red alert. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_AlertGreen;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Actions") TObjectPtr<UInputAction> IA_AlertYellow;
@@ -195,6 +197,7 @@ protected:
 	void OnMedical();
 	void OnCrew();
 	void OnMsd();
+	void OnMissions();
 	void OnAlertGreen();
 	void OnAlertYellow();
 	void OnAlertRed();

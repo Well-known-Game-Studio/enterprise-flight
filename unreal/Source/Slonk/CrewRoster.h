@@ -345,6 +345,9 @@ public:
 	void NoteHeadHurt(ECrewDepartment Dept, bool bLost, float Seconds);
 	/** The ship's recovery timer has run: the head is fit again (true if they were under treatment). */
 	bool HealHead(ECrewDepartment Dept);
+	/** One person wounded or killed by name, away from the ship (a mission's party). The ship's counts must move
+	 *  with it (UShipSystemsComponent::HurtCrewMember) or the next reconciliation undoes it. */
+	bool WoundMember(int32 Id, bool bCritical, bool bKilled, const FString& Where);
 	/** Engineers repaired something; the science watch finished a scan; something worth seeing passed. */
 	void NoteRepair(const FString& SystemName, bool bUnderFire);
 	void NoteScan(const FString& Label, int32 Points, bool bDiscovery);

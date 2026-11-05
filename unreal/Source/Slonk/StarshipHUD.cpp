@@ -1,4 +1,5 @@
 #include "StarshipHUD.h"
+#include "Missions.h"
 #include "SlonkLoadSubsystem.h"
 
 #include "Engine/Canvas.h"
@@ -283,6 +284,21 @@ void AStarshipHUD::DrawHUD()
 					if (Ship->Systems->IsResupplying()) { T += FString::Printf(TEXT("   RESUPPLYING %.0f s"), Ship->Systems->ResupplySecondsLeft()); }
 					DrawText(T, Air < 0.6f ? FLinearColor(1.f, 0.3f, 0.25f) : Warning, X, Y, Font, UIScale); Y += Line;
 				}
+			}
+			if (const UMissionSubsystem* Mis = Ship->GetGameInstance() ? Ship->GetGameInstance()->GetSubsystem<UMissionSubsystem>() : nullptr)
+			{
+				// The mission to steer by, and what is waiting on the board.
+				const FMission* Obj = Mis->Objective();
+				const int32 Offers = Mis->Open().Num() - Mis->Active().Num();
+				if (Obj)
+				{
+					FString T = FString::Printf(TEXT("MISSION  %s"), *Obj->Title.ToUpper());
+					if (!Obj->TargetName.IsEmpty() && Obj->TargetKind != EMissionTarget::None) { T += Mis->IsAtTarget(*Obj) ? TEXT("   IN RANGE") : FString::Printf(TEXT("   AT %s"), *Obj->TargetName.ToUpper()); }
+					if (Mis->Active().Num() > 1) { T += FString::Printf(TEXT("   +%d MORE"), Mis->Active().Num() - 1); }
+					if (Offers > 0 || Mis->Unread() > 0) { T += FString::Printf(TEXT("   (%d offered, %d unread)"), Offers, Mis->Unread()); }
+					DrawText(T, Mis->IsAtTarget(*Obj) ? FLinearColor(1.f, 0.85f, 0.45f) : Accent, X, Y, Font, UIScale); Y += Line;
+				}
+				else if (Offers > 0 || Mis->Unread() > 0) { DrawText(FString::Printf(TEXT("MISSIONS  %d offered, %d unread   (- opens the board)"), Offers, Mis->Unread()), Dim, X, Y, Font, UIScale); Y += Line; }
 			}
 			if (Ship->TractorBeam && Ship->TractorBeam->IsBeamActive() && Ship->TractorBeam->Target)
 			{

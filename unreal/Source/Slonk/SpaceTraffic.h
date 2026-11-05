@@ -25,6 +25,9 @@ public:
 	/** The home system's deep-space stations (K-7, Regula, Epsilon IX, Vanguard): out on their own beyond
 	 *  MinDeepSpaceAu, beside a nebula where one lies that far out. Called once the nebulae exist. */
 	void SpawnDeepSpaceStations();
+	/** One ship by name at Loc, holding station there (no warp, no patrol): a mission's freighter, derelict or
+	 *  stranger. A civilian hull is a Miranda in merchant colours. Returns it, or null. */
+	ASpaceVessel* SpawnNamedShip(const FString& Name, const FVector& Loc, bool bCivilian);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic") int32 Seed = 11;
 	/** One station orbits each non-moon planet at this many radii. */

@@ -189,7 +189,22 @@ civilians lost, a promise kept or broken, the captain's fairness, all land as th
 trust in the captain and their dispositions toward peoples and powers; grudges slow friendships and start
 incidents the captain is asked to answer, and count against a parley with that people. The crew panel (`=`) lists the roster by department with a personnel file for each, and the captain's hand is the
 sidebar: commend, reprimand, promote, leave, a word. `ship crew ...` does the same from the console, with
-`check <skill> <difficulty>` for the mission checks to come. The design is in `docs/crew-design.md`.
+`check <skill> <difficulty>` for the mission checks. The design is in `docs/crew-design.md`.
+
+## Missions
+
+Missions come three ways. Starfleet's orders arrive over subspace as messages in the inbox every several ship's
+hours (surveys, parleys, outbreaks, patrols, supply runs, each with an admiral's name and a deadline in stardates);
+a starbase posts its own board when the ship comes alongside; and space brings the rest unasked while under way: a
+distress call, a derelict across the course, an Orion freighter with her transponder dark, a reading the sensors
+cannot place, now and then a ship of no known design, the ones with a hull spawning one off the bow. Each mission
+points at a real place in the galaxy and runs through one to three situations with two or three options; an option
+is a check on the crew (the captain's named party or the department's head, second and best hands), read through
+their skills, mood and biases toward the people concerned, and either way the crew live the outcome as their own
+experience, a failed risky option may wound or kill someone of the party by name, science points pay into the
+science log, and Starfleet's regard rises or falls. `-` opens the board (the open missions, the inbox, the log, the
+selected mission's options as buttons, Set Course to its target); the HUD shows the mission to steer by; `ship
+mission ...` does it all from the console. The design is in `docs/missions-design.md`.
 
 ## The bridge and the rooms
 
@@ -226,6 +241,7 @@ Mouse or the left stick steers; H opens the controls panel with the full key lis
 | M | stellar cartography: the full star chart, course setting and autopilot (1, 2, 3 pick Sector, System or Local) |
 | / | science log: every scan on record, points, rating and the system survey |
 | , . ; ' | engineering board (power, repairs, stores), tactical board (alert, weapons, facings, contacts), sickbay (crew, air, supplies, triage), master systems display (the cutaway) |
+| = - | the crew panel (the roster, a personnel file, the captain's hand); the mission board (offers, the inbox, the log, the options) |
 | 5 6 7 | condition green, yellow alert, red alert |
 | H | controls panel |
 | T, Y | lock / clear a weapons target; left mouse phasers, Space or G torpedo, B tractor beam |

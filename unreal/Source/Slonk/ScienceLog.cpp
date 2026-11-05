@@ -40,6 +40,7 @@ const TCHAR* UScienceLogSubsystem::KindName(EScanKind Kind)
 	case EScanKind::Belt: return TEXT("Belt");
 	case EScanKind::Nebula: return TEXT("Nebula");
 	case EScanKind::Surface: return TEXT("Surface");
+	case EScanKind::Reward: return TEXT("Mission");
 	}
 	return TEXT("?");
 }
@@ -57,6 +58,7 @@ int32 UScienceLogSubsystem::BasePoints(EScanKind Kind)
 	case EScanKind::Belt: return 90;
 	case EScanKind::Nebula: return 200;
 	case EScanKind::Surface: return 180;
+	case EScanKind::Reward: return 0;
 	}
 	return 0;
 }
@@ -94,6 +96,19 @@ int32 UScienceLogSubsystem::Add(FScanRecord& Record)
 	Recount();
 	Save();
 	return Record.Total();
+}
+
+int32 UScienceLogSubsystem::AddReward(const FString& Key, const FString& System, const FString& Label, int32 Points, const FString& Note)
+{
+	if (Points <= 0 || Find(Key)) { return 0; }
+	FScanRecord R;
+	R.Key = Key; R.System = System; R.Label = Label; R.Kind = EScanKind::Reward;
+	R.Points = Points; R.Discovery = Note;
+	R.When = FDateTime::UtcNow();
+	Records.Add(R);
+	Recount();
+	Save();
+	return Points;
 }
 
 int32 UScienceLogSubsystem::MarkSystemSurveyed(const FString& System)

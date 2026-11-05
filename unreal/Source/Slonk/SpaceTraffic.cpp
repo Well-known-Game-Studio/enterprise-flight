@@ -117,6 +117,29 @@ void ASpaceTraffic::SpawnPatrolShip(FRandomStream& Rng, const FVector& Loc, cons
 	Spawned.Add(Ship);
 }
 
+ASpaceVessel* ASpaceTraffic::SpawnNamedShip(const FString& Name, const FVector& Loc, bool bCivilian)
+{
+	UWorld* World = GetWorld();
+	if (!World) { return nullptr; }
+	FRandomStream Rng(GetTypeHash(Name));
+	const FTransform Xf(FRotator(0.f, Rng.FRandRange(0.f, 360.f), 0.f), Loc);
+	AProceduralStarship* Ship = World->SpawnActorDeferred<AProceduralStarship>(AProceduralStarship::StaticClass(), Xf, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (!Ship) { return nullptr; }
+	Ship->Seed = Rng.RandRange(1, 1 << 20);
+	Ship->ShipClass = bCivilian ? EStarshipClass::Miranda : EStarshipClass::Excelsior;
+	Ship->SizeCm = SizeForClass(Ship->ShipClass, Rng);
+	Ship->VesselName = Name;
+	if (bCivilian) { const float T = Rng.FRandRange(0.4f, 0.55f); Ship->HullColor = FLinearColor(T * 1.1f, T, T * 0.85f); Ship->GlowColor = FLinearColor(1.0f, 0.6f, 0.25f); }
+	else { Ship->HullColor = FLinearColor(0.3f, 0.32f, 0.38f); Ship->GlowColor = FLinearColor(0.4f, 1.0f, 0.6f); }
+	Ship->HomeLocation = Loc;
+	Ship->PatrolRadiusCm = 0.0;
+	Ship->CruiseSpeed = 0.0;
+	Ship->bCanWarp = false;
+	Ship->FinishSpawning(Xf);
+	Spawned.Add(Ship);
+	return Ship;
+}
+
 ASpaceStation* ASpaceTraffic::SpawnStationAt(const FString& Name, const FString& StyleName, const FVector& Loc, FRandomStream& Rng)
 {
 	UWorld* World = GetWorld();

@@ -1463,6 +1463,15 @@ void UCrewRosterSubsystem::Wound(FCrewMember& M, bool bCritical, const FString& 
 	Place(M);
 }
 
+bool UCrewRosterSubsystem::WoundMember(int32 Id, bool bCritical, bool bKilled, const FString& Where)
+{
+	FCrewMember* M = FindMutable(Id);
+	if (!M || !M->IsFit()) { return false; }
+	if (bKilled) { Kill(*M, Where); } else { Wound(*M, bCritical, Where); }
+	Dirty(); RequestSave();
+	return true;
+}
+
 void UCrewRosterSubsystem::Kill(FCrewMember& M, const FString& Where)
 {
 	M.Condition = ECrewCondition::Dead;

@@ -10,6 +10,7 @@
 #include "StarshipPawn.h"
 #include "StarshipWeaponsComponent.h"
 #include "WarpDriveComponent.h"
+#include "Missions.h"
 
 UShipSystemsComponent::UShipSystemsComponent()
 {
@@ -217,6 +218,42 @@ void UShipSystemsComponent::TickRoster(float DeltaTime)
 		else { ReportAs(UCrewRosterSubsystem::DepartmentName(C.From), C.Text, C.Color); }
 	}
 	if (R->GetRevision() != RosterRevisionSeen) { SyncOfficersFromRoster(); }
+	TickMissions(DeltaTime, NearbyNames, State.bAlongside, State.StationName);
+}
+
+void UShipSystemsComponent::TickMissions(float DeltaTime, const TArray<FString>& Nearby, bool bAlongside, const FString& StationName)
+{
+	AStarshipPawn* S = Ship();
+	UMissionSubsystem* M = S && S->GetGameInstance() ? S->GetGameInstance()->GetSubsystem<UMissionSubsystem>() : nullptr;
+	if (!M) { return; }
+	FMissionShipState St;
+	St.Location = S->GetActorLocation();
+	St.SystemName = UScienceScannerComponent::SystemNameAt(GetWorld(), St.Location);
+	St.Nearby = Nearby;
+	St.bAlongside = bAlongside; St.StationName = StationName;
+	St.bAtWarp = S->WarpDrive && S->WarpDrive->IsWarpEngaged();
+	St.bUnderFire = IsUnderFire();
+	M->AdvanceSeconds(DeltaTime, St);
+	TArray<FCrewReport> Said;
+	M->DrainReports(Said);
+	UCrewRosterSubsystem* R = Roster.Get();
+	for (const FCrewReport& C : Said)
+	{
+		const EStation Stn = UCrewRosterSubsystem::StationOf(C.From);
+		if (Stn != EStation::Count) { Report(Stn, C.Text, C.Color); }
+		else if (R) { if (const FCrewMember* H = R->Head(C.From)) { ReportAs(H->Styled(), C.Text, C.Color); } else { ReportAs(UCrewRosterSubsystem::DepartmentName(C.From), C.Text, C.Color); } }
+		else { ReportAs(TEXT("Operations"), C.Text, C.Color); }
+	}
+}
+
+bool UShipSystemsComponent::HurtCrewMember(int32 Id, bool bKilled, bool bCritical, const FString& Where)
+{
+	UCrewRosterSubsystem* R = Roster.Get();
+	if (!R || !bCrewModel || Crew.Fit < 1.f) { return false; }
+	if (!R->WoundMember(Id, bCritical, bKilled, Where)) { return false; }
+	Crew.Fit -= 1.f;
+	if (bKilled) { Crew.Dead += 1.f; } else if (bCritical) { Crew.Critical += 1.f; } else { Crew.Injured += 1.f; }
+	return true;
 }
 
 void UShipSystemsComponent::BeginPlay()
