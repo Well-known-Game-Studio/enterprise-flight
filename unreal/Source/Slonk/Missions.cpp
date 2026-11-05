@@ -87,6 +87,9 @@ void UMissionSubsystem::Reset()
 	UGameplayStatics::DeleteGameInSlot(SlotName, 0);
 	// NextId runs on: the science log keeps mission/<id> keys.
 	Missions.Reset(); Inbox.Reset(); Standing = 0; Completed = 0; Failed = 0; NextOrdersHours = 0.0; NextEventHours = 0.0; BoardPostedAt.Empty(); BoardDays.Empty();
+	for (const TPair<int32, TWeakObjectPtr<ASpaceVessel>>& H : EventHulls) { if (H.Value.IsValid() && !H.Value->IsDying()) { H.Value->Destroy(); } }
+	for (const TWeakObjectPtr<ASpaceVessel>& H : RetiredHulls) { if (H.IsValid() && !H->IsDying()) { H->Destroy(); } }
+	EventHulls.Empty(); RetiredHulls.Empty();
 	Dirty(); Save();
 }
 
@@ -453,6 +456,7 @@ int32 UMissionSubsystem::DevSpawn(EMissionKind Kind, EMissionSource Source)
 	FRandomStream R(Rng.RandRange(1, 1 << 20));
 	FMission M = MakeMission(Kind, Source, R);
 	if (M.Id < 0) { return -1; }
+	if (M.TargetKind == EMissionTarget::Vessel && Source != EMissionSource::Event) { return -2; }   // its hull only exists as an encounter
 	if (Source == EMissionSource::Event)
 	{
 		M.State = EMissionState::Active; M.DeadlineStardate = Stardate() + 1.0;

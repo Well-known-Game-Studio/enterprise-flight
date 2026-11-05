@@ -3813,7 +3813,12 @@ void AStarshipPawn::HandleMissionCommand(const TArray<FString>& Args)
 		if (!R) { return; }
 		const int32 MId = FCString::Atoi(*Word(2));
 		TArray<int32> Ids;
-		for (int32 i = 3; i < Args.Num(); ++i) { if (Args[i].IsNumeric()) { if (R->Find(FCString::Atoi(*Args[i]))) { Ids.Add(FCString::Atoi(*Args[i])); } } else if (const FCrewMember* C = R->FindByName(Args[i])) { Ids.AddUnique(C->Id); } }
+		for (int32 i = 3; i < Args.Num(); ++i)
+		{
+			const FCrewMember* C = Args[i].IsNumeric() ? R->Find(FCString::Atoi(*Args[i])) : R->FindByName(Args[i]);
+			if (!C) { Say(FString::Printf(TEXT("No one called %s; the party is unchanged"), *Args[i]), FColor::Orange); return; }
+			Ids.AddUnique(C->Id);
+		}
 		const bool bOk = M->SetParty(MId, Ids, Reply); Say(Reply, bOk ? FColor::Cyan : FColor::Orange);
 	}
 	else if (What == TEXT("here")) { const FMission* Ms = M->Find(Id(2)); if (Ms) { Say(FString::Printf(TEXT("%s: %s %s"), *Ms->Title, *Ms->TargetName, M->IsAtTarget(*Ms) ? TEXT("in range") : TEXT("not in range")), FColor::Cyan); } }
@@ -3825,7 +3830,7 @@ void AStarshipPawn::HandleMissionCommand(const TArray<FString>& Args)
 		const FString Src = Word(3).ToLower();
 		const EMissionSource S = Src.StartsWith(TEXT("ev")) ? EMissionSource::Event : Src.StartsWith(TEXT("b")) || Src.StartsWith(TEXT("st")) ? EMissionSource::Starbase : (K == EMissionKind::Rescue || K == EMissionKind::Anomaly || K == EMissionKind::Contact || K == EMissionKind::Derelict || K == EMissionKind::Smuggler) && Src.IsEmpty() ? EMissionSource::Event : EMissionSource::Starfleet;
 		const int32 NewId = M->DevSpawn(K, S);
-		if (const FMission* Ms = M->Find(NewId)) { Line(*Ms); } else { Say(TEXT("Nothing to make it from (no target in reach)"), FColor::Orange); }
+		if (const FMission* Ms = M->Find(NewId)) { Line(*Ms); } else if (NewId == -2) { Say(TEXT("That kind brings its own hull: it only happens as an event"), FColor::Orange); } else { Say(TEXT("Nothing to make it from (no target in reach)"), FColor::Orange); }
 	}
 	else if (What == TEXT("reset")) { M->Reset(); Say(TEXT("Missions reset"), FColor::Orange); }
 	else { Say(TEXT("ship mission list | log | inbox | read <n> | show <id> | accept <id> | act [<id>] <option> | party <id> <names> | abandon <id> | here [id] | dev <kind> [orders|board|event] | reset"), FColor::Orange, 12.f); }

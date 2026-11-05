@@ -93,6 +93,7 @@ void UMissionPanel::Refresh()
 	UMissionSubsystem* M = Missions();
 	if (!M) { return; }
 	if (ShowButton) { if (UTextBlock* T = Cast<UTextBlock>(ShowButton->GetChildAt(0))) { T->SetText(FText::FromString(Show == 0 ? TEXT("SHOW: BOARD") : Show == 1 ? TEXT("SHOW: INBOX") : TEXT("SHOW: LOG"))); } }
+	if (Show == 1 && Show != LastShow && M->GetInbox().IsValidIndex(SelectedMessage)) { SelectedId = M->GetInbox()[SelectedMessage].MissionId; }   // the pane and the sidebar act on the same mission
 	const FMission* Sel = M->Find(SelectedId);
 	const int32 Here = Sel ? (M->IsAtTarget(*Sel) ? 1 : 0) : -1;
 	if (M->GetRevision() != LastRevision || Show != LastShow || SelectedId != LastSelected || SelectedMessage != LastMessage || Here != LastHere)

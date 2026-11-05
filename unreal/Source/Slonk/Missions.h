@@ -166,6 +166,7 @@ public:
 	/** The ship is at the mission's target now (by the last state's neighbourhood). */
 	bool IsAtTarget(const FMission& M) const;
 	/** Dev: an order, a posting or an event of this kind, now. */
+	/** Returns the new id; -1 when nothing could be made (no target in reach), -2 when the kind brings its own hull and so only happens as an event. */
 	int32 DevSpawn(EMissionKind Kind, EMissionSource Source);
 
 	// ---- queries ----
