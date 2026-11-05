@@ -3799,7 +3799,9 @@ void AStarshipPawn::HandleMissionCommand(const TArray<FString>& Args)
 	{
 		// act <id> <option>, or act <option> for the mission to steer by.
 		int32 MId, Opt;
-		if (Word(3).IsNumeric()) { MId = FCString::Atoi(*Word(2)); Opt = FCString::Atoi(*Word(3)); } else { MId = Id(-1); Opt = FCString::Atoi(*Word(2)); }
+		if (Word(2).IsNumeric() && Word(3).IsNumeric()) { MId = FCString::Atoi(*Word(2)); Opt = FCString::Atoi(*Word(3)); }
+		else if (Word(2).IsNumeric() && Word(3).IsEmpty()) { MId = Id(-1); Opt = FCString::Atoi(*Word(2)); }
+		else { Say(TEXT("act <id> <option>, or act <option> for the mission on the HUD"), FColor::Orange); return; }
 		FMissionOutcome Out;
 		if (!M->Act(MId, Opt, Out, Reply)) { Say(Reply, FColor::Orange); return; }
 		Say(Out.CheckSummary, Out.bSuccess ? FColor::Green : FColor::Orange, 15.f);

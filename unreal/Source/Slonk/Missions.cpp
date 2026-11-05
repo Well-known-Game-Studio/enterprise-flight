@@ -19,6 +19,7 @@ const TCHAR* UMissionSubsystem::SlotName = TEXT("Missions");
 namespace
 {
 	const TCHAR* CivilianShips[] = { TEXT("Calypso"), TEXT("Meridian"), TEXT("Brightwater"), TEXT("Alderaan Dawn"), TEXT("Kestrel"), TEXT("Halcyon"), TEXT("Tanager"), TEXT("Sable Coast"), TEXT("Wayfarer"), TEXT("Elan"), TEXT("Marigold"), TEXT("Tycho's Hope") };
+	const TCHAR* OrionShips[] = { TEXT("Vashti"), TEXT("Kessa"), TEXT("Zhalan"), TEXT("Oreth"), TEXT("Tamuro"), TEXT("Belisk"), TEXT("Narava"), TEXT("Qel-Dorn") };
 	const TCHAR* Admirals[] = { TEXT("Admiral Nogura"), TEXT("Commodore Mendez"), TEXT("Admiral Morrow"), TEXT("Commodore Probert"), TEXT("Admiral Cartwright") };
 	const TCHAR* Powers[] = { TEXT("Klingon"), TEXT("Orion"), TEXT("Romulan"), TEXT("Tholian"), TEXT("Gorn") };
 	const TCHAR* Peoples[] = { TEXT("Tellarite"), TEXT("Andorian"), TEXT("Vulcan"), TEXT("Human"), TEXT("Bolian"), TEXT("Caitian") };
@@ -63,7 +64,8 @@ void UMissionSubsystem::Load()
 			Missions = S->Missions; Inbox = S->Inbox; Standing = S->Standing; NextId = S->NextId; NextOrdersHours = S->NextOrdersHours; NextEventHours = S->NextEventHours; Completed = S->Completed; Failed = S->Failed; BoardDays = S->BoardDays;
 			for (FMission& M : Missions)
 			{
-				if (M.IsOpen() && M.Source == EMissionSource::Event && M.TargetKind == EMissionTarget::Vessel) { M.State = EMissionState::Expired; M.ClosedStardate = M.DeadlineStardate; M.Log.Add(TEXT("      Contact lost between sessions.")); bSaveWanted = true; SaveDelaySeconds = 2.f; }
+				bool bNeedsHull = false; for (int32 i = M.Stage; i < M.Stages.Num(); ++i) { bNeedsHull |= M.Stages[i].bAtTarget; }
+				if (M.IsOpen() && M.Source == EMissionSource::Event && M.TargetKind == EMissionTarget::Vessel && bNeedsHull) { M.State = EMissionState::Expired; M.ClosedStardate = M.DeadlineStardate; M.Log.Add(TEXT("      Contact lost between sessions.")); bSaveWanted = true; SaveDelaySeconds = 2.f; }
 			}
 			UE_LOG(LogTemp, Log, TEXT("Missions: loaded %d (%d open), standing %d"), Missions.Num(), Open().Num(), Standing);
 		}
@@ -83,7 +85,8 @@ void UMissionSubsystem::Save()
 void UMissionSubsystem::Reset()
 {
 	UGameplayStatics::DeleteGameInSlot(SlotName, 0);
-	Missions.Reset(); Inbox.Reset(); Standing = 0; NextId = 1; Completed = 0; Failed = 0; NextOrdersHours = 0.0; NextEventHours = 0.0; BoardPostedAt.Empty(); BoardDays.Empty();
+	// NextId runs on: the science log keeps mission/<id> keys.
+	Missions.Reset(); Inbox.Reset(); Standing = 0; Completed = 0; Failed = 0; NextOrdersHours = 0.0; NextEventHours = 0.0; BoardPostedAt.Empty(); BoardDays.Empty();
 	Dirty(); Save();
 }
 
@@ -192,6 +195,7 @@ void UMissionSubsystem::Close(FMission& M, EMissionState State, const FString& W
 {
 	M.State = State; M.ClosedStardate = Stardate();
 	M.Log.Add(FString::Printf(TEXT("%.1f  %s: %s."), Stardate(), *StateName(State), *Why));
+	if (M.Source == EMissionSource::Event && M.TargetKind == EMissionTarget::Vessel) { RetireHull(M.Id); }
 	Dirty();
 }
 
@@ -199,7 +203,7 @@ void UMissionSubsystem::Close(FMission& M, EMissionState State, const FString& W
 
 FString UMissionSubsystem::CivilianName(FRandomStream& R) const
 {
-	return FString::Printf(TEXT("S.S. %s"), Pick(R, CivilianShips));
+	return UniqueName(R, [&R]() { return FString::Printf(TEXT("S.S. %s"), Pick(R, CivilianShips)); });
 }
 
 bool UMissionSubsystem::PickTarget(FMission& M, FRandomStream& R)
@@ -328,7 +332,7 @@ FMission UMissionSubsystem::MakeMission(EMissionKind Kind, EMissionSource Source
 	}
 	case EMissionKind::Contact:
 	{
-		M.Title = TEXT("An unknown vessel"); M.Standing = 25; M.TargetKind = EMissionTarget::Vessel; M.TargetName = TEXT("Unknown vessel"); M.Group = TEXT("Unknown");
+		M.Title = TEXT("An unknown vessel"); M.Standing = 25; M.TargetKind = EMissionTarget::Vessel; M.TargetName = FString::Printf(TEXT("Unknown contact %d"), M.Id); M.Group = TEXT("Unknown");
 		M.Brief = TEXT("A ship of no known design holds station off the bow. It is not hailing, not fleeing, not firing. Nobody has seen its like.");
 		FMissionStage S0 = Stage(TEXT("First contact"), TEXT("It waits. Whatever happens in the next hour will be in the histories."));
 		S0.Options.Add(Opt(TEXT("Hail on all frequencies, every protocol"), S::Diplomacy, 60.f, D::Command, TEXT("Contact.First"), TEXT("Contact.Hostile"), TEXT("A reply: mathematics, then a greeting. First contact, and it holds."), TEXT("No reply they understand; it leaves, and the chance with it."), -1, -1, true, 0.f, 300));
@@ -347,7 +351,7 @@ FMission UMissionSubsystem::MakeMission(EMissionKind Kind, EMissionSource Source
 	}
 	case EMissionKind::Smuggler:
 	{
-		M.Title = TEXT("An Orion freighter"); M.Standing = 8; M.TargetKind = EMissionTarget::Vessel; M.TargetName = TEXT("Orion freighter"); M.Group = TEXT("Orion");
+		M.Title = TEXT("An Orion freighter"); M.Standing = 8; M.TargetKind = EMissionTarget::Vessel; M.TargetName = UniqueName(R, [&R]() { return FString::Printf(TEXT("Orion freighter %s"), Pick(R, OrionShips)); }); M.Group = TEXT("Orion");
 		M.Brief = TEXT("An Orion freighter crosses the course with her transponder dark and her cargo manifest a work of fiction. She is within the ship's right to inspect.");
 		FMissionStage S0 = Stage(TEXT("Inspection"), TEXT("She heaves to, slowly, and her master invites the ship aboard with a smile that means nothing."));
 		S0.Options.Add(Opt(TEXT("Board and inspect her holds"), S::Security, 52.f, D::Security, TEXT("Contact.Hostile"), TEXT("Away.Danger"), TEXT("Contraband, impounded; her master, charming to the last, is handed to the next starbase."), TEXT("The holds are clean and the party is kept waiting an hour for the pleasure of it."), -1, -1, false, 0.25f));
@@ -416,7 +420,32 @@ void UMissionSubsystem::SpawnEventVessel(FMission& M, const FString& Name)
 	if (!Traffic) { return; }
 	const FVector Dir = FVector(Rng.FRandRange(0.6f, 1.f), Rng.FRandRange(-0.5f, 0.5f), Rng.FRandRange(-0.2f, 0.2f)).GetSafeNormal();
 	const FVector Loc = Last.Location + Dir * Rng.FRandRange(0.8e7, 1.8e7);   // within the 300 km the ship counts as nearby
-	Traffic->SpawnNamedShip(Name, Loc, M.Kind != EMissionKind::Contact);
+	if (ASpaceVessel* V = Traffic->SpawnNamedShip(Name, Loc, M.Kind != EMissionKind::Contact)) { EventHulls.Add(M.Id, V); }
+}
+
+void UMissionSubsystem::RetireHull(int32 MissionId)
+{
+	// A closed encounter's hull stays a while (the freighter limping, the derelict drifting); the oldest beyond
+	// three leave the world, so the encounters do not pile up hulls for the rest of the session.
+	TWeakObjectPtr<ASpaceVessel> V;
+	if (EventHulls.RemoveAndCopyValue(MissionId, V) && V.IsValid()) { RetiredHulls.Add(V); }
+	while (RetiredHulls.Num() > 3)
+	{
+		TWeakObjectPtr<ASpaceVessel> Old = RetiredHulls[0]; RetiredHulls.RemoveAt(0);
+		if (Old.IsValid() && !Old->IsDying()) { Old->Destroy(); }
+	}
+}
+
+FString UMissionSubsystem::UniqueName(FRandomStream& R, TFunction<FString()> Make) const
+{
+	FString N;
+	for (int32 Try = 0; Try < 24; ++Try)
+	{
+		N = Make();
+		bool bUsed = false; for (const FMission& M : Missions) { bUsed |= M.TargetName == N; }
+		if (!bUsed) { return N; }
+	}
+	return FString::Printf(TEXT("%s (%d)"), *N, NextId);
 }
 
 int32 UMissionSubsystem::DevSpawn(EMissionKind Kind, EMissionSource Source)
@@ -503,7 +532,7 @@ TArray<int32> UMissionSubsystem::PartyFor(const FMission& M, const FMissionOptio
 	if (!R) { return {}; }
 	TArray<int32> Out;
 	for (int32 Id : M.Party) { const FCrewMember* C = R->Find(Id); if (C && C->IsFit() && C->IsAboard()) { Out.AddUnique(Id); } }
-	if (Out.Num() > 0) { return Out; }
+	if (M.Party.Num() > 0) { return Out; }   // the captain named them: nobody else goes in their place, even if none can
 	if (const FCrewMember* H = R->Head(O.Party)) { if (H->IsFit()) { Out.Add(H->Id); } }
 	if (const FCrewMember* S = R->Second(O.Party)) { if (S->IsFit()) { Out.Add(S->Id); } }
 	TArray<TPair<float, int32>> Best;
@@ -542,6 +571,7 @@ bool UMissionSubsystem::Act(int32 Id, int32 Option, FMissionOutcome& Out, FStrin
 	if (!R) { OutReply = TEXT("No crew"); return false; }
 	const FMissionOption O = St->Options[Option];
 	const TArray<int32> Party = PartyFor(M, O);
+	if (Party.Num() == 0) { OutReply = M.Party.Num() > 0 ? TEXT("None of the named party is fit and aboard; name another (ship mission party <id> <names>)") : TEXT("Nobody fit to send"); return false; }
 	const FCrewCheck C = R->Check(O.Skill, O.Difficulty, Party, 0.f, M.Group);
 	Out.bSuccess = C.bSuccess; Out.CheckSummary = C.Summary; Out.Text = C.bSuccess ? O.SuccessText : O.FailText;
 	M.Log.Add(FString::Printf(TEXT("%.1f  %s: %s %s"), Stardate(), *St->Title, *O.Text, C.bSuccess ? TEXT("- carried.") : TEXT("- failed.")));

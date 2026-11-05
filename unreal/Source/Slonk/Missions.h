@@ -228,6 +228,13 @@ private:
 	TMap<FString, int32> BoardDays;
 	UPROPERTY() TArray<FCrewReport> Reports;
 	FRandomStream Rng;
+	/** The hull each open encounter spawned, by mission id; retired when the mission closes. Not saved. */
+	TMap<int32, TWeakObjectPtr<class ASpaceVessel>> EventHulls;
+	/** Hulls of closed encounters, oldest first; beyond a few the oldest is removed from the world. */
+	TArray<TWeakObjectPtr<class ASpaceVessel>> RetiredHulls;
+	void RetireHull(int32 MissionId);
+	/** A name no open or closed mission has used. */
+	FString UniqueName(FRandomStream& R, TFunction<FString()> Make) const;
 	bool bSaveWanted = false;
 	float SaveDelaySeconds = 0.f;
 	static const TCHAR* SlotName;

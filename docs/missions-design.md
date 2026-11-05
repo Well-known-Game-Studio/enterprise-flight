@@ -20,7 +20,10 @@ A mission is one of three things, and the game says which it was.
   every one to three ship's hours while under way at impulse, not alongside, not under fire, and not already in the
   middle of one (warp encounters are for later). These are *active* at once, with a day to deal with them, and the ones with a vessel spawn one a few hundred
   kilometres off the bow (`ASpaceTraffic::SpawnNamedShip`), holding station: the freighter venting, the derelict,
-  the stranger. There is no accepting; ignoring one lets it lapse and that is a choice the crew read too.
+  the stranger. Each hull is named uniquely (the freighters from a list, Orion freighters by name, an unknown contact by
+  its number) so range checks and Set Course find the right one; when the mission closes the hull is retired, and
+  beyond three retired hulls the oldest leaves the world. There is no accepting; ignoring one lets it lapse and that
+  is a choice the crew read too.
 
 ## 2. The shape of a mission
 
@@ -40,7 +43,8 @@ ship's neighbourhood (the same nearby list the crew's ties use) or the ship bein
 
 An option is taken from the panel (a button per option) or `ship mission act <id> <option>`. The stage must be at
 the target if it says so. The **party** is the captain's named one for the mission (`ship mission party <id>
-<names>`), else the option's department: its head and second if fit, then the two best aboard at the skill. The
+<names>`; if none of them is fit and aboard the option is refused rather than sent with others), else the option's
+department: its head and second if fit, then the two best aboard at the skill. The
 check is the roster's (`UCrewRosterSubsystem::Check`) with the mission's group, so the party's skills, mood,
 stress, facets and their biases toward the people concerned all count, and the summary names who carried it or let
 it slip. Then:

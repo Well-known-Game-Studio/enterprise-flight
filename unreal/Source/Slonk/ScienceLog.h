@@ -19,7 +19,9 @@ enum class EScanKind : uint8
 	Hostile,
 	Belt,
 	Nebula,
-	Surface
+	Surface,
+	/** Points from elsewhere (a mission's findings): never a first-of-kind, worth what they say. */
+	Reward
 };
 
 /** One completed scan. Key is "<system>/<label>" (plus "/surface" for a landed survey), stable across sessions

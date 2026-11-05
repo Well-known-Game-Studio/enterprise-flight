@@ -337,6 +337,7 @@ void UScienceLogPanel::FillRecords()
 		case EScanKind::Belt: KindColor = Lcars::Tan; break;
 		case EScanKind::Nebula: KindColor = Lcars::Lavender; break;
 		case EScanKind::Surface: KindColor = Lcars::Orange; break;
+		case EScanKind::Reward: KindColor = Lcars::Gold; break;
 		}
 		USizeBox* KindBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
 		KindBox->SetWidthOverride(92.f);
