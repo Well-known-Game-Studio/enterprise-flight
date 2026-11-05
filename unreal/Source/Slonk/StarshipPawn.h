@@ -657,6 +657,8 @@ protected:
 	void HandleCrewCommand(const TArray<FString>& Args);
 	/** ship mission ...: the board, the inbox, accept/act/abandon, parties, dev spawning. */
 	void HandleMissionCommand(const TArray<FString>& Args);
+	/** ship fleet ...: the other ships, their missions and people; transfers either way; dev trouble. */
+	void HandleFleetCommand(const TArray<FString>& Args);
 
 private:
 	void ApplyHullDimensions();

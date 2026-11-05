@@ -13,6 +13,7 @@
 #include "ShuttlecraftPawn.h"
 #include "PersonPawn.h"
 #include "ScienceLog.h"
+#include "Fleet.h"
 
 const TCHAR* UMissionSubsystem::SlotName = TEXT("Missions");
 
@@ -33,10 +34,10 @@ namespace
 
 FString UMissionSubsystem::KindName(EMissionKind K)
 {
-	static const TCHAR* N[] = { TEXT("Survey"), TEXT("Rescue"), TEXT("Diplomacy"), TEXT("Delivery"), TEXT("Anomaly"), TEXT("Medical"), TEXT("Patrol"), TEXT("Contact"), TEXT("Derelict"), TEXT("Smuggler") };
+	static const TCHAR* N[] = { TEXT("Survey"), TEXT("Rescue"), TEXT("Diplomacy"), TEXT("Delivery"), TEXT("Anomaly"), TEXT("Medical"), TEXT("Patrol"), TEXT("Contact"), TEXT("Derelict"), TEXT("Smuggler"), TEXT("Support"), TEXT("Assist") };
 	return (int32)K < (int32)EMissionKind::Count ? N[(int32)K] : TEXT("-");
 }
-FString UMissionSubsystem::SourceName(EMissionSource S) { static const TCHAR* N[] = { TEXT("Starfleet"), TEXT("Starbase"), TEXT("Event") }; return (int32)S < 3 ? N[(int32)S] : TEXT("-"); }
+FString UMissionSubsystem::SourceName(EMissionSource S) { static const TCHAR* N[] = { TEXT("Starfleet"), TEXT("Starbase"), TEXT("Event"), TEXT("Fleet") }; return (int32)S < 4 ? N[(int32)S] : TEXT("-"); }
 FString UMissionSubsystem::StateName(EMissionState S) { static const TCHAR* N[] = { TEXT("Offered"), TEXT("Active"), TEXT("Completed"), TEXT("Failed"), TEXT("Abandoned"), TEXT("Expired") }; return (int32)S < 6 ? N[(int32)S] : TEXT("-"); }
 bool UMissionSubsystem::ParseKind(const FString& Word, EMissionKind& Out)
 {
@@ -105,6 +106,8 @@ AStarshipPawn* UMissionSubsystem::CrewedShip() const
 	return nullptr;
 }
 
+UFleetSubsystem* UMissionSubsystem::Fleet() const { return GetGameInstance() ? GetGameInstance()->GetSubsystem<UFleetSubsystem>() : nullptr; }
+
 UCrewRosterSubsystem* UMissionSubsystem::Roster() const
 {
 	return GetGameInstance() ? GetGameInstance()->GetSubsystem<UCrewRosterSubsystem>() : nullptr;
@@ -149,6 +152,14 @@ const FMission* UMissionSubsystem::Objective() const
 void UMissionSubsystem::AdvanceSeconds(float Seconds, const FMissionShipState& Ship)
 {
 	Last = Ship;
+	if (UFleetSubsystem* F = Fleet())
+	{
+		F->AdvanceSeconds(Seconds, Ship);
+		TArray<FFleetRequest> Q; F->DrainRequests(Q);
+		for (const FFleetRequest& R : Q) { int32 Calls = 0; for (const FMission& M : Missions) { if (M.IsOpen() && M.Kind == EMissionKind::Support) { ++Calls; } } if (Calls < 2) { IssueFleetMission(R); } }
+		TArray<FCrewReport> Rep; F->DrainReports(Rep); Reports.Append(Rep);
+		OfferAssists();
+	}
 	const double H = Hours();
 	if (NextOrdersHours <= 0.0) { NextOrdersHours = H + Rng.FRandRange(2.0, 5.0); }
 	if (NextEventHours <= 0.0) { NextEventHours = H + Rng.FRandRange(0.5, 1.5); }
@@ -179,15 +190,16 @@ void UMissionSubsystem::Expire()
 	for (FMission& M : Missions)
 	{
 		if (!M.IsOpen() || M.DeadlineStardate <= 0.0 || SD <= M.DeadlineStardate) { continue; }
-		if (M.State == EMissionState::Offered)
+		if (M.State == EMissionState::Offered || M.Kind == EMissionKind::Assist)
 		{
-			Close(M, EMissionState::Expired, TEXT("the offer lapsed"));
+			Close(M, EMissionState::Expired, M.Kind == EMissionKind::Assist ? TEXT("their work went on without us") : TEXT("the offer lapsed"));
 			if (M.Source == EMissionSource::Starfleet) { Standing -= M.Standing / 4; Report(FString::Printf(TEXT("%s: Starfleet's orders went unanswered. Noted at Command."), *M.Title), FLinearColor(1.f, 0.75f, 0.5f), ECrewDepartment::Operations); }
 		}
 		else
 		{
 			Close(M, EMissionState::Failed, TEXT("the deadline passed"));
 			Standing -= M.Standing / 2; ++Failed;
+			if (M.Kind == EMissionKind::Support) { if (UFleetSubsystem* F = Fleet()) { F->SupportResolved(M.TargetName, false, true); } }
 			Report(FString::Printf(TEXT("%s: the deadline has passed. Starfleet will want to know why."), *M.Title), FLinearColor(1.f, 0.6f, 0.5f));
 			if (UCrewRosterSubsystem* R = Roster()) { FCrewExperience E; E.Tag = M.Kind == EMissionKind::Rescue || M.Kind == EMissionKind::Medical ? TEXT("Loss.Civilians") : TEXT("Order.Refused"); E.Intensity = 0.5f; E.Place = M.TargetName; E.Group = M.Group; E.Text = FString::Printf(TEXT("%s left undone"), *M.Title); E.bCaptainsChoice = true; R->Experience(E); }
 		}
@@ -451,9 +463,91 @@ FString UMissionSubsystem::UniqueName(FRandomStream& R, TFunction<FString()> Mak
 	return FString::Printf(TEXT("%s (%d)"), *N, NextId);
 }
 
+void UMissionSubsystem::IssueFleetMission(const FFleetRequest& Q)
+{
+	using S = ECrewSkill; using D = ECrewDepartment;
+	FMission M; M.Id = NextId++; M.Source = EMissionSource::Fleet; M.OfferedStardate = Stardate();
+	M.TargetKind = EMissionTarget::Vessel; M.TargetName = Q.ShipName; M.Group = TEXT("Federation"); M.From = Q.ShipName;
+	if (Q.bSupport)
+	{
+		M.Kind = EMissionKind::Support; M.Standing = 15; M.State = EMissionState::Active; M.DeadlineStardate = Stardate() + Q.HoursLeft / 24.0;
+		M.Title = FString::Printf(TEXT("Support the %s"), *Q.ShipName);
+		M.Brief = FString::Printf(TEXT("The %s, on %s, signals that %s. She is asking for support from any ship that can reach her within the day."), *Q.ShipName, *Q.MissionTitle, *Q.Text);
+		FMissionStage S0 = Stage(TEXT("Alongside"), FString::Printf(TEXT("The %s is close enough to help. %s."), *Q.ShipName, *Q.Text));
+		switch (Q.Trouble)
+		{
+		case EFleetTrouble::Engineering:
+			S0.Options.Add(Opt(TEXT("Send a damage-control party across"), S::Engineering, 55.f, D::Engineering, TEXT("Rescue"), TEXT("Away.Danger"), TEXT("Our engineers have her core stable and her lights back; her captain sends his thanks."), TEXT("The party cannot get at it in time and comes back burned."), -1, -1, true, 0.3f));
+			S0.Options.Add(Opt(TEXT("Tractor her clear and feed her power"), S::Helm, 48.f, D::Helm, TEXT("Rescue"), TEXT(""), TEXT("Towed clear with a power lead across, she has time to put it right herself."), TEXT("The tow parts and the lead with it; she is no better off."), -1, -1, true, 0.f));
+			break;
+		case EFleetTrouble::Medical:
+			S0.Options.Add(Opt(TEXT("Send the medical staff across"), S::Medicine, 55.f, D::Medical, TEXT("Rescue"), TEXT("Loss.Civilians"), TEXT("Our doctors turn her sickbay around; the worst of it is over by the next watch."), TEXT("It is beyond our people too; they come back having buried some of hers."), -1, -1, true, 0.2f));
+			S0.Options.Add(Opt(TEXT("Supplies and protocols by transporter"), S::Medicine, 45.f, D::Medical, TEXT("Rescue"), TEXT("Loss.Civilians"), TEXT("With our stores and a protocol that works, her own surgeon gets ahead of it."), TEXT("Not enough, not in time."), -1, -1, true, 0.f));
+			break;
+		case EFleetTrouble::Hostiles:
+			S0.Options.Add(Opt(TEXT("Close and drive them off"), S::Tactical, 55.f, D::Tactical, TEXT("Rescue"), TEXT("Combat.FriendlyLost"), TEXT("Two Starfleet ships are more than they bargained for; they break off and run."), TEXT("They do not run; the exchange costs both ships before they go."), -1, -1, true, 0.2f));
+			S0.Options.Add(Opt(TEXT("Hail them and talk them down"), S::Diplomacy, 55.f, D::Command, TEXT("Parley.Held"), TEXT("Parley.Failed"), TEXT("Talked out of it, with a face-saving line about salvage law."), TEXT("They are not in a talking mood, and she takes another hit while we try."), -1, -1, true, 0.f));
+			break;
+		default:
+			S0.Options.Add(Opt(TEXT("Beam a security party across"), S::Security, 55.f, D::Security, TEXT("Rescue"), TEXT("Away.Danger"), TEXT("Our people reach hers and bring everyone out together."), TEXT("The party is caught in the same trap and gets out by the skin of its teeth."), -1, -1, true, 0.4f));
+			S0.Options.Add(Opt(TEXT("Lock on through the interference and beam her people out"), S::Operations, 52.f, D::Operations, TEXT("Rescue"), TEXT("Loss.Civilians"), TEXT("The transporter chief finds them where hers could not; every one comes through."), TEXT("The lock will not hold; not all of them make it."), -1, -1, true, 0.1f));
+			break;
+		}
+		M.Stages = { S0 };
+		M.Log.Add(FString::Printf(TEXT("%.1f  %s"), Stardate(), *M.Brief));
+		if (UFleetSubsystem* F = Fleet()) { F->SetSupportMission(Q.ShipName, M.Id); }
+	}
+	else
+	{
+		M.Kind = EMissionKind::Assist; M.Standing = 6; M.State = EMissionState::Offered; M.DeadlineStardate = Stardate() + FMath::Max(1.f, Q.HoursLeft) / 24.0;
+		M.Title = FString::Printf(TEXT("Lend a hand: the %s"), *Q.ShipName);
+		M.Brief = FString::Printf(TEXT("The %s is at work nearby, %s. We are close enough to share it; her captain would not say no."), *Q.ShipName, *Q.MissionTitle);
+		FMissionStage S0 = Stage(TEXT("Alongside"), FString::Printf(TEXT("The %s has her hands full with %s."), *Q.ShipName, *Q.MissionTitle));
+		switch (Q.TheirKind)
+		{
+		case EMissionKind::Survey: S0.Options.Add(Opt(TEXT("Put the science watch on it with hers"), S::Science, 45.f, D::Science, TEXT("Contact.Friendly"), TEXT(""), TEXT("Two ships' sensors finish the chart in half the time."), TEXT("Our data does not match hers and costs her a day."), -1, -1, false, 0.f, 60)); break;
+		case EMissionKind::Diplomacy: S0.Options.Add(Opt(TEXT("Sit in on the talks"), S::Diplomacy, 50.f, D::Command, TEXT("Contact.Friendly"), TEXT("Parley.Failed"), TEXT("A second captain at the table changes the room."), TEXT("Two captains at the table and the other side plays them off each other."), -1, -1, false, 0.f)); break;
+		case EMissionKind::Medical: S0.Options.Add(Opt(TEXT("Send doctors across"), S::Medicine, 50.f, D::Medical, TEXT("Contact.Friendly"), TEXT(""), TEXT("Two sickbays' worth of hands; the colony is through the worst."), TEXT("Our doctors are a day behind hers and little use."), -1, -1, false, 0.1f)); break;
+		case EMissionKind::Patrol: S0.Options.Add(Opt(TEXT("Sweep the system together"), S::Tactical, 45.f, D::Tactical, TEXT("Contact.Friendly"), TEXT(""), TEXT("Two ships sweep what one could not; the flag is well shown."), TEXT("We get in each other's way."), -1, -1, false, 0.f)); break;
+		case EMissionKind::Rescue: S0.Options.Add(Opt(TEXT("Take a share of the survivors"), S::Operations, 48.f, D::Operations, TEXT("Rescue"), TEXT("Loss.Civilians"), TEXT("Her sickbay and ours between them have room for everyone."), TEXT("A transporter fault on our side loses time she did not have."), -1, -1, false, 0.1f)); break;
+		default: S0.Options.Add(Opt(TEXT("Transfer stores across"), S::Operations, 40.f, D::Operations, TEXT("Contact.Friendly"), TEXT(""), TEXT("Our stores make up what she was short of."), TEXT("A pad fault spoils half of it."), -1, -1, false, 0.f)); break;
+		}
+		S0.Options.Add(Opt(TEXT("Hail and exchange officers for the day"), S::Command, 40.f, D::Command, TEXT("Contact.Friendly"), TEXT(""), TEXT("Officers dine across; the work goes on with two ships' worth of ideas."), TEXT("A pleasant evening, and nothing done."), -1, -1, false, 0.f));
+		M.Stages = { S0 };
+		if (UFleetSubsystem* F = Fleet()) { F->SetAssistMission(Q.ShipName, M.Id); }
+	}
+	Missions.Add(M);
+	if (Q.bSupport) { Report(FString::Printf(TEXT("%s's call for support is on the mission board, Captain; she has a day."), *Q.ShipName), FLinearColor(1.f, 0.85f, 0.5f), ECrewDepartment::Operations); }
+	else { Report(FString::Printf(TEXT("The %s is at work close by (%s); the board has a way to lend a hand."), *Q.ShipName, *Q.MissionTitle), FLinearColor(0.75f, 0.9f, 1.f), ECrewDepartment::Operations); }
+	Dirty();
+}
+
+void UMissionSubsystem::OfferAssists()
+{
+	UFleetSubsystem* F = Fleet();
+	if (!F) { return; }
+	for (const FFleetShip* S : F->Nearby())
+	{
+		if (!F->WantsAssist(*S)) { continue; }
+		FFleetRequest Q; Q.ShipName = S->Name; Q.bSupport = false; Q.MissionTitle = S->Mission.Title; Q.TheirKind = S->Mission.Kind; Q.HoursLeft = S->Mission.HoursLeft;
+		IssueFleetMission(Q);
+	}
+}
+
+void UMissionSubsystem::FleetWorkOver(int32 MissionId, bool bTheirSuccess)
+{
+	for (FMission& M : Missions)
+	{
+		if (M.Id != MissionId || !M.IsOpen()) { continue; }
+		if (M.Kind == EMissionKind::Assist) { Close(M, EMissionState::Expired, bTheirSuccess ? TEXT("they finished without us") : TEXT("their work came to nothing before we lent a hand")); }
+		else { Close(M, EMissionState::Failed, TEXT("the ship could not wait")); Standing -= M.Standing / 2; ++Failed; Report(FString::Printf(TEXT("%s: too late; she has given up waiting for us."), *M.Title), FLinearColor(1.f, 0.6f, 0.5f)); }
+	}
+}
+
 int32 UMissionSubsystem::DevSpawn(EMissionKind Kind, EMissionSource Source)
 {
 	FRandomStream R(Rng.RandRange(1, 1 << 20));
+	if (Kind == EMissionKind::Support || Kind == EMissionKind::Assist) { return -2; }   // the fleet raises these (ship fleet trouble / mission)
 	FMission M = MakeMission(Kind, Source, R);
 	if (M.Id < 0) { return -1; }
 	if (M.TargetKind == EMissionTarget::Vessel && Source != EMissionSource::Event) { return -2; }   // its hull only exists as an encounter
@@ -501,6 +595,8 @@ bool UMissionSubsystem::Abandon(int32 Id, FString& OutReply)
 		const bool bWasActive = M.State == EMissionState::Active;
 		Close(M, EMissionState::Abandoned, TEXT("by the captain's decision"));
 		if (bWasActive && M.Source != EMissionSource::Event) { Standing -= M.Standing / 2; ++Failed; }
+		if (M.Kind == EMissionKind::Support) { if (UFleetSubsystem* F = Fleet()) { F->SupportResolved(M.TargetName, false, true); } }
+		if (M.Kind == EMissionKind::Assist) { if (UFleetSubsystem* F = Fleet()) { F->SetAssistMission(M.TargetName, -1); } }
 		if (bWasActive) { if (UCrewRosterSubsystem* R = Roster()) { FCrewExperience E; E.Tag = M.Kind == EMissionKind::Rescue || M.Kind == EMissionKind::Medical ? TEXT("Loss.Civilians") : TEXT("Order.Refused"); E.Intensity = M.Kind == EMissionKind::Rescue ? 0.7f : 0.3f; E.Place = M.TargetName; E.Group = M.Group; E.Text = FString::Printf(TEXT("%s abandoned"), *M.Title); E.bCaptainsChoice = true; R->Experience(E); } }
 		OutReply = FString::Printf(TEXT("%s abandoned"), *M.Title);
 		return true;
@@ -597,6 +693,7 @@ bool UMissionSubsystem::Act(int32 Id, int32 Option, FMissionOutcome& Out, FStrin
 	{
 		const bool bSucceeded = C.bSuccess || !O.bFailEndsMission;
 		Out.bMissionOver = true;
+		if (UFleetSubsystem* F = Fleet()) { if (M.Kind == EMissionKind::Support) { F->SupportResolved(M.TargetName, C.bSuccess, false); } else if (M.Kind == EMissionKind::Assist) { F->AssistResolved(M.TargetName, C.bSuccess); } }
 		if (bSucceeded)
 		{
 			Close(M, EMissionState::Completed, C.bSuccess ? TEXT("carried through") : TEXT("done, though not well"));

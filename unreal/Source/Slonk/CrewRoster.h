@@ -379,6 +379,19 @@ public:
 	/** A word with them: "listen", "encourage", "order" or "promise". */
 	bool Talk(int32 Id, const FString& How, FString& OutReply);
 	bool SignOn(int32 RecruitIndex, FString& OutReply);
+	// ---- the fleet's people ----
+	/** A person for another ship, from the same pools as ours: a given name and species when a tie names them. */
+	FCrewMember MakeOutsider(FRandomStream& R, ECrewDepartment Dept, ECrewRank Rank, int32 Id, const FString& FullName = FString(), const FString& Species = FString());
+	/** Someone joins from another ship (a transfer): a new id, a first history line, a place aboard. */
+	bool Join(FCrewMember M, const FString& Why, FString& OutReply);
+	/** One of ours goes to another ship: the record stays as Transferred, their close friends keep a tie to them there. */
+	bool TransferOut(int32 Id, const FString& OtherShip, FCrewMember& OutPerson, FString& OutReply);
+	/** News of a ship, for everyone with a tie aboard her. */
+	void NoteShipNews(const FString& OtherShip, const FString& Text, float Weight);
+	/** Someone a crew member is tied to was killed aboard another ship. */
+	void TieLost(int32 CrewId, const FString& Name, const FString& OtherShip);
+	/** Someone a crew member is tied to has just joined us: the tie becomes a bond aboard. */
+	void TieComesAboard(int32 CrewId, const FString& Name, const FString& Relation);
 	bool Discharge(int32 Id, FString& OutReply);
 	/** A day of mourning: grief settles faster, the lost are named. */
 	FString Memorial();

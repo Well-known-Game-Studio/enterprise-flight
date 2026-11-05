@@ -509,7 +509,7 @@ void UCrewRosterSubsystem::MakeTies(FRandomStream& R, FCrewMember& M)
 		FCrewTie T; T.Name = NameLike(M); T.Relation = Pick(R, FriendRelations); T.Affinity = R.FRandRange(0.3f, 0.8f);
 		const float P = R.FRand();
 		T.Kind = P < 0.45f ? ECrewTiePlace::Ship : P < 0.75f ? ECrewTiePlace::Station : ECrewTiePlace::World;
-		if (T.Relation.Contains(TEXT("Lexington"))) { T.Kind = ECrewTiePlace::Ship; T.Place = TEXT("U.S.S. Lexington"); }
+		if (T.Relation.Contains(TEXT("Lexington"))) { T.Kind = ECrewTiePlace::Ship; T.Place = TEXT("USS Lexington"); }
 		M.Ties.Add(T);
 	}
 }
@@ -1920,6 +1920,102 @@ bool UCrewRosterSubsystem::Talk(int32 Id, const FString& How, FString& OutReply)
 	UpdateMood(*M);
 	Dirty(); RequestSave();
 	return true;
+}
+
+FCrewMember UCrewRosterSubsystem::MakeOutsider(FRandomStream& R, ECrewDepartment Dept, ECrewRank Rank, int32 Id, const FString& FullName, const FString& Species)
+{
+	const int32 SavedNext = NextId;
+	NextId = Id;
+	FCrewMember M = MakePerson(R, Dept, Rank, R.RandRange(0, 20));
+	NextId = SavedNext;
+	if (!FullName.IsEmpty())
+	{
+		int32 Sp; if (FullName.FindChar(TEXT(' '), Sp)) { M.FirstName = FullName.Left(Sp); M.LastName = FullName.Mid(Sp + 1); } else { M.FirstName = FullName; M.LastName.Empty(); }
+		if (!Species.IsEmpty()) { M.Species = Species; }
+	}
+	M.Ties.Reset(); M.Relationships.Reset(); M.History.Reset(); M.Memories.Reset(); M.Wants.Reset();
+	M.Where.Empty(); M.Activity = ECrewActivity::OnWatch;
+	return M;
+}
+
+bool UCrewRosterSubsystem::Join(FCrewMember M, const FString& Why, FString& OutReply)
+{
+	M.Id = NextId++;
+	M.Service.JoinedStardate = GetStardate();
+	M.History.Reset(); M.bHead = false; M.bSecond = false; M.Condition = ECrewCondition::Fit; M.ConditionHours = 0.f;
+	M.Posting = DepartmentName(M.Department);
+	Record(M, ECrewEventKind::Joined, Why, true);
+	Place(M);
+	Roster.Add(M);
+	OutReply = FString::Printf(TEXT("%s has come aboard, %s department"), *M.Styled(), *DepartmentName(M.Department).ToLower());
+	Dirty(); RequestSave();
+	return true;
+}
+
+bool UCrewRosterSubsystem::TransferOut(int32 Id, const FString& OtherShip, FCrewMember& OutPerson, FString& OutReply)
+{
+	FCrewMember* M = FindMutable(Id);
+	if (!M) { OutReply = TEXT("No such crew member"); return false; }
+	if (M->bHead) { OutReply = TEXT("Promote a successor before transferring a department head"); return false; }
+	if (M->Condition != ECrewCondition::Fit) { OutReply = FString::Printf(TEXT("%s is %s; not a transfer"), *M->Styled(), *ConditionName(M->Condition).ToLower()); return false; }
+	OutPerson = *M;
+	M->Condition = ECrewCondition::Transferred;
+	Record(*M, ECrewEventKind::Transfer, FString::Printf(TEXT("Transferred to the %s."), *OtherShip), true);
+	if (M->bSecond) { M->bSecond = false; EnsureSecond(M->Department); }
+	for (const FCrewRelationship& R : M->Relationships)
+	{
+		if (R.Affinity <= 0.4f) { continue; }
+		FCrewMember* F = FindMutable(R.Other); if (!F) { continue; }
+		Remember(*F, FString::Printf(TEXT("%s transferred to the %s"), *M->FullName(), *OtherShip), -0.1f);
+		FCrewTie T; T.Name = M->FullName(); T.Relation = TEXT("old shipmate"); T.Kind = ECrewTiePlace::Ship; T.Place = OtherShip; T.Affinity = R.Affinity; T.LastContactDay = GetDay();
+		F->Ties.Add(T);
+	}
+	OutReply = FString::Printf(TEXT("%s transferred to the %s"), *M->Styled(), *OtherShip);
+	Place(*M);
+	Dirty(); RequestSave();
+	return true;
+}
+
+void UCrewRosterSubsystem::NoteShipNews(const FString& OtherShip, const FString& Text, float Weight)
+{
+	int32 Heard = 0;
+	for (FCrewMember& M : Roster)
+	{
+		if (!M.IsAboard()) { continue; }
+		bool bTied = false; for (const FCrewTie& T : M.Ties) { bTied |= T.Kind == ECrewTiePlace::Ship && T.Place == OtherShip; }
+		if (!bTied) { continue; }
+		Remember(M, Text, Weight);
+		if (Weight < 0.f) { M.Stress = FMath::Min(1.f, M.Stress - Weight); }
+		++Heard;
+	}
+	if (Heard > 0) { Dirty(); }
+}
+
+void UCrewRosterSubsystem::TieLost(int32 CrewId, const FString& Name, const FString& OtherShip)
+{
+	FCrewMember* M = FindMutable(CrewId);
+	if (!M) { return; }
+	FString Relation = TEXT("friend"); bool bFamily = false;
+	for (int32 i = M->Ties.Num() - 1; i >= 0; --i) { if (M->Ties[i].Name == Name) { Relation = M->Ties[i].Relation; bFamily = M->Ties[i].bFamily; M->Ties.RemoveAt(i); } }
+	Remember(*M, FString::Printf(TEXT("%s is gone, lost aboard the %s"), *Name, *OtherShip), bFamily ? -0.6f : -0.4f, true);
+	M->Stress = FMath::Min(1.f, M->Stress + (bFamily ? 0.4f : 0.25f));
+	Record(*M, ECrewEventKind::Bereaved, FString::Printf(TEXT("Lost %s %s aboard the %s."), *Relation, *Name, *OtherShip), true);
+	Report(M->Department, FString::Printf(TEXT("%s has had word from the %s: %s %s is dead."), *M->Styled(), *OtherShip, *Relation, *Name), FLinearColor(1.f, 0.6f, 0.5f));
+	Dirty(); RequestSave();
+}
+
+void UCrewRosterSubsystem::TieComesAboard(int32 CrewId, const FString& Name, const FString& Relation)
+{
+	FCrewMember* M = FindMutable(CrewId);
+	FCrewMember* N = nullptr; for (FCrewMember& C : Roster) { if (C.IsAboard() && C.FullName() == Name) { N = &C; } }
+	if (!M || !N) { return; }
+	bool bFamily = false;
+	for (int32 i = M->Ties.Num() - 1; i >= 0; --i) { if (M->Ties[i].Name == Name) { bFamily = M->Ties[i].bFamily; M->Ties.RemoveAt(i); } }
+	Bond(*M, *N, 0.8f, bFamily ? ECrewRelation::Family : ECrewRelation::CloseFriend);
+	Remember(*M, FString::Printf(TEXT("%s is aboard with me now"), *Name), 0.4f, true);
+	Remember(*N, FString::Printf(TEXT("Serving with %s at last"), *M->FullName()), 0.4f, true);
+	Record(*M, ECrewEventKind::Moment, FString::Printf(TEXT("%s %s came aboard to serve with them."), *Relation, *Name), true);
+	Dirty(); RequestSave();
 }
 
 bool UCrewRosterSubsystem::SignOn(int32 RecruitIndex, FString& OutReply)

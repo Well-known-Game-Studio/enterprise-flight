@@ -6,6 +6,7 @@
 #include "CoreMinimal.h"
 #include "LcarsPanel.h"
 #include "Missions.h"
+#include "Fleet.h"
 #include "MissionPanel.generated.h"
 
 class UScrollBox;
@@ -41,11 +42,15 @@ private:
 	UPROPERTY() TObjectPtr<UButton> ShowButton;
 	UPROPERTY() TArray<TObjectPtr<UButton>> RowButtons;
 	UPROPERTY() TArray<TObjectPtr<UButton>> OptionButtons;
-	/** 0: the board (open missions), 1: the inbox, 2: the log (closed missions). */
+	/** 0: the board (open missions), 1: the inbox, 2: the log (closed missions), 3: the fleet. */
 	int32 Show = 0;
 	int32 SelectedId = -1;
 	/** The inbox message selected while Show is the inbox. */
 	int32 SelectedMessage = -1;
-	int32 LastRevision = -1, LastShow = -1, LastSelected = -2, LastMessage = -2, LastHere = -2;
+	int32 LastRevision = -1, LastShow = -1, LastSelected = -2, LastMessage = -2, LastHere = -2, LastFleetRevision = -1;
 	FString LastFileKey;
+	/** The ship selected while Show is the fleet. */
+	FString SelectedShip, LastShip;
+	UFleetSubsystem* Fleet() const;
+	void FillFleetFile(const FFleetShip& S);
 };

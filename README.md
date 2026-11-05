@@ -206,6 +206,20 @@ science log, and Starfleet's regard rises or falls. `-` opens the board (the ope
 selected mission's options as buttons, Set Course to its target); the HUD shows the mission to steer by; `ship
 mission ...` does it all from the console. The design is in `docs/missions-design.md`.
 
+## The fleet
+
+The other Starfleet ships are crewed ships with lives of their own. Each USS gets a record the first time it is
+seen: a captain and senior staff from the same name pools as our crew, a home station, morale, condition and a
+regard for us; on the ship's clock she takes missions of her own (a survey, a supply run, talks, a patrol, a
+distress call) at the worlds and stations of her system, warping there and patrolling about the place, or out of
+sight to another star for the long runs. At work she can run into trouble, an engineering failure, a medical
+crisis, hostiles, a party pinned down, and sends a request for support over subspace that lands on our board with
+a day to answer; when we are in range of a ship at work the board offers a way to lend a hand. Our crew's family
+and friends aboard these ships are named people in their records; news of the ship reaches them, a loss aboard
+her is a bereavement by name. People transfer either way, one of ours to her with her thanks, one of hers to us
+when there is family aboard or her captain thinks well of us. Show: Fleet in the missions panel lists the ships
+and their files; `ship fleet ...` does the rest. The design is in `docs/fleet-design.md`.
+
 ## The bridge and the rooms
 
 The Star Trek VI bridge is built from code in Blender (`blender/bridge-st6`) and imported as one mesh with its Okudagram screens bound to live readouts. From the captain's chair the viewscreen shows the real view ahead; the crew figures are placeholders for now. Main engineering, sickbay, the shuttle bay, the transporter room and the airlock's staging area are built the same way (`blender/rooms/build_rooms.py`, one mesh per room plus the parked shuttle), laid out after the sets of the first six films and walked on their own triangles; their slots bind to the Okudagram screens, the lit strips and panels, the glowing core and pad, and a glass material.

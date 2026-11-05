@@ -51,6 +51,8 @@ private:
 	void SpawnPatrolShip(FRandomStream& Rng, const FVector& Loc, const FVector& Home, double Patrol);
 	bool bDeepSpaceSpawned = false;
 	int32 ShipIndex = 0;
+	/** The next name from the table that no spawned ship carries (the fleet keys its records by name). */
+	FString NextShipName();
 	int32 StationIndex = 0;
 	/** Ships and the Borg cube near the player's start; re-queues itself until the player pawn exists. */
 	void SpawnStartShips();

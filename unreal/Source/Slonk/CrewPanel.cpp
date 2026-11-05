@@ -6,6 +6,7 @@
 #include "SlonkUIRoot.h"
 #include "StarshipPawn.h"
 #include "ShipSystemsComponent.h"
+#include "Fleet.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/ScrollBox.h"
 #include "Components/ScrollBoxSlot.h"
@@ -216,6 +217,13 @@ void UCrewPanel::FillFile()
 		{
 			const int32 Since = R->GetDay() - T.LastContactDay;
 			Line(FString::Printf(TEXT("%s%s, %s %s%s"), T.bFamily ? TEXT("") : TEXT("friend: "), *T.Name, *T.Relation, *T.Where(), Since < 60 ? *FString::Printf(TEXT("; last word %d day%s ago"), Since, Since == 1 ? TEXT("") : TEXT("s")) : TEXT("")), 13.f, T.bFamily ? FLinearColor::White : Lcars::Dim);
+			if (T.Kind == ECrewTiePlace::Ship)
+			{
+				if (UFleetSubsystem* F = GetWorld() && GetWorld()->GetGameInstance() ? GetWorld()->GetGameInstance()->GetSubsystem<UFleetSubsystem>() : nullptr)
+				{
+					for (const FFleetPerson* P : F->TiedTo(T.Place, M->Id)) { if (P->Person.FullName() == T.Name) { const FFleetShip* S = F->Find(T.Place); Line(FString::Printf(TEXT("      serving as %s, %s%s"), *P->Person.Styled(), *P->Person.Posting, S ? *FString::Printf(TEXT("; the ship is %s"), *S->TaskText()) : TEXT("")), 12.f, Lcars::Dim); } }
+				}
+			}
 		}
 	}
 	if (M->Relationships.Num() > 0)

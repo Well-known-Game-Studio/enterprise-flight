@@ -30,6 +30,7 @@
 #include "LcarsPanel.h"
 #include "MissionPanel.h"
 #include "Missions.h"
+#include "Fleet.h"
 #include "LcarsPanels.h"
 #include "CrewPanel.h"
 #include "CrewRoster.h"
@@ -2263,6 +2264,10 @@ void AStarshipPawn::ProcessDebugCommand()
 	{
 		HandleMissionCommand(Args);
 	}
+	else if (Op == TEXT("fleet"))
+	{
+		HandleFleetCommand(Args);
+	}
 	else if (Op == TEXT("science"))
 	{
 		// science [reset]: list the log on screen, or wipe it (testing).
@@ -2297,7 +2302,18 @@ void AStarshipPawn::ProcessDebugCommand()
 		else if (What == TEXT("engineering") || What == TEXT("eng")) { UI->TogglePanel(UEngineeringPanel::StaticClass()); }
 		else if (What == TEXT("tactical") || What == TEXT("tac")) { UI->TogglePanel(UTacticalPanel::StaticClass()); }
 		else if (What == TEXT("medical") || What == TEXT("sickbay")) { UI->TogglePanel(UMedicalPanel::StaticClass()); }
-		else if (What == TEXT("crew") || What == TEXT("roster")) { UI->TogglePanel(UCrewPanel::StaticClass()); }
+		else if (What == TEXT("crew") || What == TEXT("roster"))
+		{
+			// ui crew [name]: the panel, opened on a person when one is named.
+			if (Args.Num() > 2)
+			{
+				UCrewRosterSubsystem* Ros = GetGameInstance() ? GetGameInstance()->GetSubsystem<UCrewRosterSubsystem>() : nullptr;
+				FString Name; for (int32 i = 2; i < Args.Num(); ++i) { Name += (Name.IsEmpty() ? TEXT("") : TEXT(" ")) + Args[i]; }
+				const FCrewMember* M = Ros ? Ros->FindByName(Name) : nullptr;
+				if (UCrewPanel* P = UI->PushMenu<UCrewPanel>()) { if (M) { P->Select(M->Id); } }
+			}
+			else { UI->TogglePanel(UCrewPanel::StaticClass()); }
+		}
 		else if (What == TEXT("missions") || What == TEXT("mission")) { UI->TogglePanel(UMissionPanel::StaticClass()); }
 		else if (What == TEXT("msd") || What == TEXT("systems") || What == TEXT("damage")) { UI->TogglePanel(UMsdPanel::StaticClass()); }
 		else if (What == TEXT("lift") || What == TEXT("turbolift")) { UI->TogglePanel(UTurboliftPanel::StaticClass()); }
@@ -3306,6 +3322,7 @@ void AStarshipPawn::HandleCrewCommand(const TArray<FString>& Args)
 		Say(FString::Printf(TEXT("Recruits at %s; ship crew signon <n>"), *R->GetRecruitStation()));
 	}
 	else if (What == TEXT("signon")) { if (!Word(2).IsNumeric()) { Say(TEXT("signon <n> (ship crew recruits lists them)"), FColor::Orange); return; } const bool bOk = R->SignOn(FCString::Atoi(*Word(2)), Reply); Say(Reply, bOk ? FColor::Cyan : FColor::Orange); }
+	else if (What == TEXT("transfer")) { TArray<FString> A2 = Args; A2[1] = TEXT("transfer"); HandleFleetCommand(A2); }
 	else if (What == TEXT("memorial")) { Say(R->Memorial(), FColor::Cyan, 12.f); if (Systems) { Systems->ReportAs(TEXT("The captain"), TEXT("All hands: a memorial for those we have lost."), FLinearColor(0.8f, 0.8f, 1.f)); } }
 	else if (What == TEXT("check"))
 	{
@@ -3327,7 +3344,7 @@ void AStarshipPawn::HandleCrewCommand(const TArray<FString>& Args)
 	else if (What == TEXT("stardate")) { Say(FString::Printf(TEXT("Stardate %s, %02d:00, %s watch, day %d aboard"), *R->StardateText(), R->GetHourOfDay(), *UCrewRosterSubsystem::WatchName(R->WatchOnDuty()), R->GetDay())); }
 	else if (What == TEXT("reset")) { R->NewComplement(Word(2).IsNumeric() ? FCString::Atoi(*Word(2)) : 0); if (Systems) { Systems->ResetCountsFromRoster(); } Say(FString::Printf(TEXT("New complement of %d"), R->GetRoster().Num()), FColor::Orange); }
 	else if (What == TEXT("lost")) { for (const FCrewMember& L : R->GetLost()) { Say(FString::Printf(TEXT("   %s, %s"), *L.Styled(), L.History.Num() ? *L.History.Last().Text : TEXT("")), FColor::White, 15.f); } Say(FString::Printf(TEXT("%d lost"), R->GetLost().Num())); }
-	else { Say(TEXT("ship crew list [dept] | show <name> | trouble | promote|demote|commend|reprimand <name> | watch <name> a|b|g | post <name> <dept> | leave <name> [days] | talk <name> listen|encourage|order|promise | recruits | signon <n> | discharge <name> | memorial | lost | check <skill> <difficulty> [names] | time <hours> | stardate | reset [seed]"), FColor::Orange, 12.f); }
+	else { Say(TEXT("ship crew list [dept] | show <name> | trouble | promote|demote|commend|reprimand <name> | watch <name> a|b|g | post <name> <dept> | leave <name> [days] | talk <name> listen|encourage|order|promise | recruits | signon <n> | discharge <name> | transfer <name> <ship> | memorial | lost | check <skill> <difficulty> [names] | time <hours> | stardate | reset [seed]"), FColor::Orange, 12.f); }
 }
 
 void AStarshipPawn::MarkFarShadowCasters()
@@ -3834,4 +3851,90 @@ void AStarshipPawn::HandleMissionCommand(const TArray<FString>& Args)
 	}
 	else if (What == TEXT("reset")) { M->Reset(); Say(TEXT("Missions reset"), FColor::Orange); }
 	else { Say(TEXT("ship mission list | log | inbox | read <n> | show <id> | accept <id> | act [<id>] <option> | party <id> <names> | abandon <id> | here [id] | dev <kind> [orders|board|event] | reset"), FColor::Orange, 12.f); }
+}
+
+void AStarshipPawn::HandleFleetCommand(const TArray<FString>& Args)
+{
+	UFleetSubsystem* F = GetGameInstance() ? GetGameInstance()->GetSubsystem<UFleetSubsystem>() : nullptr;
+	UCrewRosterSubsystem* R = GetGameInstance() ? GetGameInstance()->GetSubsystem<UCrewRosterSubsystem>() : nullptr;
+	if (!F) { ScreenMessage(TEXT("No fleet"), FColor::Orange); return; }
+	auto Word = [&](int32 i) { return Args.IsValidIndex(i) ? Args[i] : FString(); };
+	const FString What = Word(1).ToLower();
+	auto Say = [&](const FString& T, FColor C = FColor::Cyan, float Secs = 10.f) { ScreenMessage(T, C, Secs); UE_LOG(LogTemp, Log, TEXT("Fleet: %s"), *T); };
+	auto ShipNamed = [&](const FString& W) -> const FFleetShip*
+	{
+		// "Hood", "uss hood" or the full name; the first match by prefix or by containing.
+		FString Want = W.ToLower(); if (Want.StartsWith(TEXT("uss "))) { Want = Want.RightChop(4); }
+		for (const FFleetShip& S : F->GetShips()) { if (S.Name.ToLower() == TEXT("uss ") + Want) { return &S; } }
+		for (const FFleetShip& S : F->GetShips()) { if (S.Name.ToLower().Contains(Want)) { return &S; } }
+		return nullptr;
+	};
+	auto Line = [&](const FFleetShip& S)
+	{
+		const bool bNear = F->Nearby().Contains(&S);
+		Say(FString::Printf(TEXT("   %-18s %-13s %s%s  regard %+.0f%s"), *S.Name, *S.ShipClass, *S.TaskText(), bNear ? TEXT(" (in range)") : TEXT(""), S.Relation * 100.f, S.Mission.Trouble != EFleetTrouble::None ? TEXT("  IN TROUBLE") : TEXT("")), S.Mission.Trouble != EFleetTrouble::None ? FColor::Orange : bNear ? FColor::Yellow : FColor::White, 15.f);
+	};
+	FString Reply;
+	if (What.IsEmpty() || What == TEXT("list"))
+	{
+		for (const FFleetShip& S : F->GetShips()) { if (!S.bLost) { Line(S); } }
+		Say(FString::Printf(TEXT("The fleet: %d ships, %d in range"), F->GetShips().Num(), F->Nearby().Num()), FColor::Cyan, 15.f);
+	}
+	else if (What == TEXT("show"))
+	{
+		const FFleetShip* S = ShipNamed(Word(2));
+		if (!S) { Say(TEXT("show <ship>"), FColor::Orange); return; }
+		Line(*S);
+		Say(FString::Printf(TEXT("Captain %s (%s), out of %s; %d aboard, %d lost, morale %d%%, condition %d%%"), *S->Captain.FullName(), *S->Captain.Species, *S->HomeStation, S->Complement, S->Lost, FMath::RoundToInt(S->Morale * 100.f), FMath::RoundToInt(S->Condition * 100.f)), FColor::White, 15.f);
+		for (const FFleetPerson& P : S->Officers) { Say(FString::Printf(TEXT("   %s, %s"), *P.Person.Styled(), *P.Person.Posting), FColor::White, 15.f); }
+		for (const FFleetPerson& P : S->Notables) { const FCrewMember* O = P.TiedCrewId >= 0 && R ? R->Find(P.TiedCrewId) : nullptr; Say(FString::Printf(TEXT("   %s, %s; %s%s"), *P.Person.Styled(), *UCrewRosterSubsystem::DepartmentName(P.Person.Department).ToLower(), *P.Origin, O ? *FString::Printf(TEXT(" (%s of our %s)"), *P.TiedRelation, *O->Styled()) : TEXT("")), FColor::White, 15.f); }
+		if (S->Mission.Trouble != EFleetTrouble::None) { Say(FString::Printf(TEXT("In trouble: %s (%.0f h)"), *S->Mission.TroubleText, S->Mission.TroubleHours), FColor::Orange, 15.f); }
+		for (int32 i = FMath::Max(0, S->Log.Num() - 6); i < S->Log.Num(); ++i) { Say(S->Log[i], FColor::White, 15.f); }
+	}
+	else if (What == TEXT("transfer"))
+	{
+		// transfer <name> <ship>: the last word is the ship, the rest the person.
+		if (!R || Args.Num() < 4) { Say(TEXT("transfer <name> <ship>"), FColor::Orange); return; }
+		const FFleetShip* S = ShipNamed(Args.Last());
+		FString Name; for (int32 i = 2; i < Args.Num() - 1; ++i) { Name += (Name.IsEmpty() ? TEXT("") : TEXT(" ")) + Args[i]; }
+		const FCrewMember* M = Name.IsNumeric() ? R->Find(FCString::Atoi(*Name)) : R->FindByName(Name);
+		if (!S) { Say(FString::Printf(TEXT("No ship called %s in the fleet"), *Args.Last()), FColor::Orange); return; }
+		if (!M) { Say(FString::Printf(TEXT("No one called %s"), *Name), FColor::Orange); return; }
+		const bool bOk = F->TransferTo(S->Name, M->Id, Reply); Say(Reply, bOk ? FColor::Cyan : FColor::Orange, 12.f);
+	}
+	else if (What == TEXT("request"))
+	{
+		// request <ship> <name>
+		const FFleetShip* S = ShipNamed(Word(2));
+		FString Name; for (int32 i = 3; i < Args.Num(); ++i) { Name += (Name.IsEmpty() ? TEXT("") : TEXT(" ")) + Args[i]; }
+		if (!S || Name.IsEmpty()) { Say(TEXT("request <ship> <name>"), FColor::Orange); return; }
+		const bool bOk = F->RequestPerson(S->Name, Name, Reply); Say(Reply, bOk ? FColor::Cyan : FColor::Orange, 12.f);
+	}
+	else if (What == TEXT("trouble"))
+	{
+		const FFleetShip* S = ShipNamed(Word(2)); EFleetTrouble K = EFleetTrouble::Engineering;
+		if (!S) { Say(TEXT("trouble <ship> [engineering|medical|hostiles|boarding]"), FColor::Orange); return; }
+		if (!Word(3).IsEmpty() && !UFleetSubsystem::ParseTrouble(Word(3), K)) { Say(TEXT("trouble <ship> [engineering|medical|hostiles|boarding]"), FColor::Orange); return; }
+		const bool bOk = F->DevTrouble(S->Name, K, Reply); Say(Reply, bOk ? FColor::Cyan : FColor::Orange, 12.f);
+	}
+	else if (What == TEXT("work"))
+	{
+		const FFleetShip* S = ShipNamed(Word(2));
+		if (!S) { Say(TEXT("work <ship>"), FColor::Orange); return; }
+		const bool bOk = F->DevWork(S->Name, Reply); Say(Reply, bOk ? FColor::Cyan : FColor::Orange, 12.f);
+	}
+	else if (What == TEXT("summon"))
+	{
+		const FFleetShip* S = ShipNamed(Word(2));
+		if (!S) { Say(TEXT("summon <ship>"), FColor::Orange); return; }
+		const bool bOk = F->DevSummon(S->Name, Reply); Say(Reply, bOk ? FColor::Cyan : FColor::Orange, 12.f);
+	}
+	else if (What == TEXT("mission"))
+	{
+		const FFleetShip* S = ShipNamed(Word(2));
+		if (!S) { Say(TEXT("mission <ship>"), FColor::Orange); return; }
+		const bool bOk = F->DevMission(S->Name, Reply); Say(Reply, bOk ? FColor::Cyan : FColor::Orange, 12.f);
+	}
+	else if (What == TEXT("reset")) { F->Reset(); Say(TEXT("Fleet reset; the ships register again as they are seen"), FColor::Orange); }
+	else { Say(TEXT("ship fleet list | show <ship> | transfer <name> <ship> | request <ship> <name> | trouble <ship> [kind] | mission <ship> | work <ship> | summon <ship> | reset"), FColor::Orange, 12.f); }
 }

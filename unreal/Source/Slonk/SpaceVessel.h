@@ -240,6 +240,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Ship|Warp")
 	EShipWarpPhase GetWarpPhase() const { return WarpPhase; }
 
+	/** Out of the system on a long run: hidden, unticked, back at home when it returns. */
+	void SetAway(bool bAway);
+	bool IsAway() const { return bAwayRun; }
 	/** Ships warp between stations on their own; off for a ship that should stay put. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ship|Warp")
 	bool bCanWarp = true;
@@ -285,6 +288,7 @@ protected:
 private:
 	EStarshipClass BuiltClass = EStarshipClass::Constitution;
 	void PickWaypoint();
+	bool bAwayRun = false;
 	/** Patrol centre and current waypoint in universe space (they survive floating-origin rebases). */
 	FVector HomeUniverse = FVector::ZeroVector;
 	FVector WaypointUniverse = FVector::ZeroVector;

@@ -5,6 +5,7 @@
 #include "ShipSystemsComponent.h"
 #include "PersonPawn.h"
 #include "CrewRoster.h"
+#include "Fleet.h"
 
 #include "Components/DynamicMeshComponent.h"
 #include "ExplosionEffect.h"
@@ -310,6 +311,7 @@ void ASpaceVessel::BeginDying()
 	// The ship's people live it: an enemy destroyed, or a friend lost, and by whose hand.
 	if (UWorld* W = GetWorld())
 	{
+		if (IsA<AProceduralStarship>()) { if (UFleetSubsystem* F = W->GetGameInstance() ? W->GetGameInstance()->GetSubsystem<UFleetSubsystem>() : nullptr) { const AActor* C = LastDamageCauser.Get(); F->NoteLost(GetDisplayName(), C ? (C->IsA<ABorgCube>() ? TEXT("to the Borg") : TEXT("under fire")) : FString()); } }
 		APawn* PlayerPawn = UGameplayStatics::GetPlayerPawn(W, 0);
 		AStarshipPawn* Craft = Cast<AStarshipPawn>(PlayerPawn);
 		if (!Craft) { if (const APersonPawn* P = Cast<APersonPawn>(PlayerPawn)) { Craft = P->Craft.Get(); } }
@@ -948,6 +950,17 @@ bool AProceduralStarship::WarpToRandomStation()
 	HomeUniverse = ToUniverse(HomeLocation);
 	WarpTo(Dest->GetActorLocation() + Offset);
 	return true;
+}
+
+void AProceduralStarship::SetAway(bool bAway)
+{
+	if (bAwayRun == bAway) { return; }
+	bAwayRun = bAway;
+	if (bAway) { WarpPhase = EShipWarpPhase::None; ResetImages(); SetMainVisible(true); Velocity = FVector::ZeroVector; }
+	SetActorHiddenInGame(bAway);
+	SetActorEnableCollision(!bAway);
+	SetActorTickEnabled(!bAway);
+	if (!bAway) { SetActorLocation(ToWorld(HomeUniverse)); bHasWaypoint = false; }
 }
 
 void AProceduralStarship::WarpTo(const FVector& DestinationWorld)

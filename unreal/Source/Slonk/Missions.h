@@ -11,10 +11,10 @@
 #include "Missions.generated.h"
 
 UENUM(BlueprintType)
-enum class EMissionKind : uint8 { Survey = 0, Rescue, Diplomacy, Delivery, Anomaly, Medical, Patrol, Contact, Derelict, Smuggler, Count UMETA(Hidden) };
+enum class EMissionKind : uint8 { Survey = 0, Rescue, Diplomacy, Delivery, Anomaly, Medical, Patrol, Contact, Derelict, Smuggler, Support, Assist, Count UMETA(Hidden) };
 
 UENUM(BlueprintType)
-enum class EMissionSource : uint8 { Starfleet = 0, Starbase, Event, Count UMETA(Hidden) };
+enum class EMissionSource : uint8 { Starfleet = 0, Starbase, Event, Fleet, Count UMETA(Hidden) };
 
 UENUM(BlueprintType)
 enum class EMissionState : uint8 { Offered = 0, Active, Completed, Failed, Abandoned, Expired, Count UMETA(Hidden) };
@@ -125,6 +125,9 @@ struct FMissionOutcome
 	UPROPERTY(BlueprintReadOnly) bool bMissionOver = false;
 };
 
+struct FFleetRequest;
+class UFleetSubsystem;
+
 UCLASS()
 class SLONK_API USlonkMissionSaveGame : public USaveGame
 {
@@ -168,6 +171,8 @@ public:
 	/** Dev: an order, a posting or an event of this kind, now. */
 	/** Returns the new id; -1 when nothing could be made (no target in reach), -2 when the kind brings its own hull and so only happens as an event. */
 	int32 DevSpawn(EMissionKind Kind, EMissionSource Source);
+	/** The fleet ship's own work ended (done or failed): whatever of ours was on it closes. */
+	void FleetWorkOver(int32 MissionId, bool bTheirSuccess);
 
 	// ---- queries ----
 	const TArray<FMission>& GetMissions() const { return Missions; }
@@ -198,6 +203,10 @@ public:
 private:
 	void Load();
 	UCrewRosterSubsystem* Roster() const;
+	UFleetSubsystem* Fleet() const;
+	/** A fleet ship's request for support, or its work nearby, becomes a mission on the board. */
+	void IssueFleetMission(const FFleetRequest& Q);
+	void OfferAssists();
 	class AStarshipPawn* CrewedShip() const;
 	void Report(const FString& Text, const FLinearColor& Color = FLinearColor(0.75f, 0.9f, 1.f), ECrewDepartment From = ECrewDepartment::Command);
 	double Stardate() const;
