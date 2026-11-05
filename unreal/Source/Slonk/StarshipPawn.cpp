@@ -3870,9 +3870,10 @@ void AStarshipPawn::HandleFleetCommand(const TArray<FString>& Args)
 		for (const FFleetShip& S : F->GetShips()) { if (S.Name.ToLower().Contains(Want)) { return &S; } }
 		return nullptr;
 	};
+	const TArray<const FFleetShip*> Near = F->Nearby();
 	auto Line = [&](const FFleetShip& S)
 	{
-		const bool bNear = F->Nearby().Contains(&S);
+		const bool bNear = Near.Contains(&S);
 		Say(FString::Printf(TEXT("   %-18s %-13s %s%s  regard %+.0f%s"), *S.Name, *S.ShipClass, *S.TaskText(), bNear ? TEXT(" (in range)") : TEXT(""), S.Relation * 100.f, S.Mission.Trouble != EFleetTrouble::None ? TEXT("  IN TROUBLE") : TEXT("")), S.Mission.Trouble != EFleetTrouble::None ? FColor::Orange : bNear ? FColor::Yellow : FColor::White, 15.f);
 	};
 	FString Reply;
@@ -3894,11 +3895,12 @@ void AStarshipPawn::HandleFleetCommand(const TArray<FString>& Args)
 	}
 	else if (What == TEXT("transfer"))
 	{
-		// transfer <name> <ship>: the longest tail of the words that names a ship exactly is the ship, the rest the person.
+		// transfer <name> <ship>: the shortest tail of two or more words that names a ship exactly is the ship ("Thomas
+		// Paine", "Tecumseh II"), else the last word; the rest is the person.
 		if (!R || Args.Num() < 4) { Say(TEXT("transfer <name> <ship>"), FColor::Orange); return; }
 		auto Join = [&](int32 From, int32 To) { FString J; for (int32 i = From; i < To; ++i) { J += (J.IsEmpty() ? TEXT("") : TEXT(" ")) + Args[i]; } return J; };
 		const FFleetShip* S = nullptr; int32 Split = Args.Num() - 1;
-		for (int32 k = Args.Num() - 3; k >= 3 && !S; --k) { const FFleetShip* C = ShipNamed(Join(k, Args.Num())); if (C && C->Name.Equals(Join(k, Args.Num()).StartsWith(TEXT("USS "), ESearchCase::IgnoreCase) ? Join(k, Args.Num()) : TEXT("USS ") + Join(k, Args.Num()), ESearchCase::IgnoreCase)) { S = C; Split = k; } }
+		for (int32 k = Args.Num() - 2; k >= 3 && !S; --k) { const FFleetShip* C = ShipNamed(Join(k, Args.Num())); if (C && C->Name.Equals(Join(k, Args.Num()).StartsWith(TEXT("USS "), ESearchCase::IgnoreCase) ? Join(k, Args.Num()) : TEXT("USS ") + Join(k, Args.Num()), ESearchCase::IgnoreCase)) { S = C; Split = k; } }
 		if (!S) { S = ShipNamed(Args.Last()); Split = Args.Num() - 1; }
 		const FString Name = Join(2, Split);
 		const FCrewMember* M = Name.IsNumeric() ? R->Find(FCString::Atoi(*Name)) : R->FindByName(Name);

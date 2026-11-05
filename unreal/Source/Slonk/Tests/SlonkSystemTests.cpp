@@ -203,6 +203,96 @@ bool FSlonkFleetTransferTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFleetTiesTest, "Slonk.Fleet.Ties", SLONK_TEST_FLAGS)
+bool FSlonkFleetTiesTest::RunTest(const FString& Parameters)
+{
+	// The crew's ties aboard a ship become named people aboard her, each name once, under the name the tie gives
+	// (whoever aboard us shares it); binding again, when the roster changes, adds nobody.
+	FSystems S;
+	TSet<FString> Pairs, Names;   // (who, whom) once: a person's two ties to the same name are one tie aboard her
+	for (const FCrewMember& M : S.Roster->GetRoster()) { for (const FCrewTie& T : M.Ties) { if (T.Kind == ECrewTiePlace::Ship && T.Place == TEXT("USS Lexington")) { Pairs.Add(FString::Printf(TEXT("%d|%s"), M.Id, *T.Name)); Names.Add(T.Name); } } }
+	const int32 Expected = Pairs.Num();
+	if (!TestTrue(TEXT("the roster pins ties to the Lexington"), Expected > 10)) { return false; }
+	S.Fleet->RegisterShip(TEXT("USS Lexington"), TEXT("Excelsior"), TEXT("Starbase 11"), TEXT("Sol"));
+	const FFleetShip* L = S.Fleet->Find(TEXT("USS Lexington"));
+	int32 Bound = 0; TSet<FString> Aboard;
+	for (const FFleetPerson& P : L->Officers) { Bound += P.Ties.Num(); }
+	for (const FFleetPerson& P : L->Notables) { Bound += P.Ties.Num(); TestFalse(*FString::Printf(TEXT("%s once"), *P.Person.FullName()), Aboard.Contains(P.Person.FullName())); Aboard.Add(P.Person.FullName()); TestTrue(*FString::Printf(TEXT("%s is a name a tie gave"), *P.Person.FullName()), Names.Contains(P.Person.FullName())); }
+	TestEqual(TEXT("every tie bound once"), Bound, Expected);
+	TestEqual(TEXT("one person per name"), L->Notables.Num(), Aboard.Num());
+	// The roster changes (an experience bumps its revision); the fleet binds again and finds nothing new.
+	const int32 Before = L->Notables.Num();
+	FCrewExperience E; E.Tag = TEXT("Combat.ShipSpared"); E.Intensity = 0.5f; E.Group = TEXT("Klingon"); E.bCaptainsChoice = true; E.Text = TEXT("spared");
+	S.Roster->Experience(E);
+	S.Missions->AdvanceSeconds(1.f, S.Ship());
+	S.Missions->AdvanceSeconds(1.f, S.Ship());
+	TestEqual(TEXT("binding is idempotent"), L->Notables.Num(), Before);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFleetDeclinedTest, "Slonk.Fleet.Declined", SLONK_TEST_FLAGS)
+bool FSlonkFleetDeclinedTest::RunTest(const FString& Parameters)
+{
+	// Abandoning her call tells her no help is coming: she carries on alone, thinks less of us, and her trouble
+	// runs its own course; it is not failed on the spot.
+	FSystems S;
+	S.Fleet->RegisterShip(TEXT("USS Hood"), TEXT("Excelsior"), TEXT("Starbase 11"), TEXT("Sol"));
+	const FFleetShip* H = S.Fleet->Find(TEXT("USS Hood"));
+	S.Missions->AdvanceSeconds(1.f, S.Ship(TEXT("Sol"), { TEXT("USS Hood") }));
+	FString Reply;
+	TestTrue(TEXT("trouble"), S.Fleet->DevTrouble(TEXT("USS Hood"), EFleetTrouble::Medical, Reply));
+	S.Missions->AdvanceSeconds(1.f, S.Ship(TEXT("Sol"), { TEXT("USS Hood") }));
+	int32 SupId = -1; for (const FMission& M : S.Missions->GetMissions()) { if (M.Kind == EMissionKind::Support && M.IsOpen()) { SupId = M.Id; } }
+	if (!TestTrue(TEXT("support on the board"), SupId >= 0)) { return false; }
+	TestEqual(TEXT("her record points at it"), H->Mission.SupportMissionId, SupId);
+	const float RegardBefore = H->Relation;
+	TestTrue(TEXT("abandoned"), S.Missions->Abandon(SupId, Reply));
+	TestEqual(TEXT("ours is abandoned"), (int32)S.Missions->Find(SupId)->State, (int32)EMissionState::Abandoned);
+	TestTrue(TEXT("she is still in trouble"), H->Mission.Trouble != EFleetTrouble::None && H->Mission.Task == EFleetTask::OnStation);
+	TestTrue(TEXT("told"), H->Mission.bHelpRefused);
+	TestTrue(TEXT("no stale id"), H->Mission.SupportMissionId < 0);
+	TestTrue(TEXT("regard fell"), H->Relation < RegardBefore);
+	TestEqual(TEXT("one failure of ours"), S.Missions->GetFailed(), 1);
+	// Her day runs out one way or the other: through it on her own, or beyond her.
+	FCrewShipState Clock;
+	S.Roster->DevAdvanceHours(30, Clock);
+	S.Missions->AdvanceSeconds(1.f, S.Ship(TEXT("Sol"), { TEXT("USS Hood") }));
+	TestEqual(TEXT("trouble over"), (int32)H->Mission.Trouble, (int32)EFleetTrouble::None);
+	TestTrue(TEXT("the mission ended"), H->Done + H->Failed == 1);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFleetAssistLapseTest, "Slonk.Fleet.AssistLapse", SLONK_TEST_FLAGS)
+bool FSlonkFleetAssistLapseTest::RunTest(const FString& Parameters)
+{
+	// A ship at work in range: one offer to lend a hand, which lapses with her work and leaves no stale id; and
+	// a wiped board leaves nothing of ours on any record.
+	FSystems S;
+	S.Fleet->RegisterShip(TEXT("USS Hood"), TEXT("Excelsior"), TEXT("Starbase 11"), TEXT("Sol"));
+	const FFleetShip* H = S.Fleet->Find(TEXT("USS Hood"));
+	FString Reply;
+	TestTrue(TEXT("at work"), S.Fleet->DevWork(TEXT("USS Hood"), Reply));
+	S.Missions->AdvanceSeconds(1.f, S.Ship(TEXT("Sol"), { TEXT("USS Hood") }));
+	S.Missions->AdvanceSeconds(1.f, S.Ship(TEXT("Sol"), { TEXT("USS Hood") }));   // a second tick offers nothing more
+	int32 Offers = 0, AssistId = -1; for (const FMission& M : S.Missions->GetMissions()) { if (M.Kind == EMissionKind::Assist) { ++Offers; AssistId = M.Id; } }
+	TestEqual(TEXT("one offer"), Offers, 1);
+	if (!TestTrue(TEXT("offered"), AssistId >= 0)) { return false; }
+	TestEqual(TEXT("offered, not ordered"), (int32)S.Missions->Find(AssistId)->State, (int32)EMissionState::Offered);
+	TestEqual(TEXT("her record points at it"), H->Mission.AssistMissionId, AssistId);
+	TestTrue(TEXT("one offer per mission"), H->Mission.bAssistOffered);
+	// Two days on, her work (and whatever followed it) is long over.
+	FCrewShipState Clock;
+	S.Roster->DevAdvanceHours(48, Clock);
+	S.Missions->AdvanceSeconds(1.f, S.Ship(TEXT("Sol"), { TEXT("USS Hood") }));
+	TestFalse(TEXT("the offer lapsed"), S.Missions->Find(AssistId)->IsOpen());
+	TestNotEqual(TEXT("her record no longer points at it"), H->Mission.AssistMissionId, AssistId);
+	TestEqual(TEXT("no standing lost"), S.Missions->GetFailed(), 0);
+	// The board wiped: nothing of ours on her record.
+	S.Missions->Reset();
+	TestTrue(TEXT("cleared"), H->Mission.AssistMissionId < 0 && H->Mission.SupportMissionId < 0 && !H->Mission.bAssistOffered);
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFleetLossTest, "Slonk.Fleet.Loss", SLONK_TEST_FLAGS)
 bool FSlonkFleetLossTest::RunTest(const FString& Parameters)
 {

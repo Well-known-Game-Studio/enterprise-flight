@@ -89,6 +89,7 @@ void UMissionSubsystem::Reset()
 	if (!bNoDisk) { UGameplayStatics::DeleteGameInSlot(SlotName, 0); }
 	// NextId runs on: the science log keeps mission/<id> keys.
 	Missions.Reset(); Inbox.Reset(); Standing = 0; Completed = 0; Failed = 0; NextOrdersHours = 0.0; NextEventHours = 0.0; BoardPostedAt.Empty(); BoardDays.Empty();
+	if (UFleetSubsystem* F = Fleet()) { F->BoardCleared(); }   // no ship's record points at a mission that is gone
 	for (const TPair<int32, TWeakObjectPtr<ASpaceVessel>>& H : EventHulls) { if (H.Value.IsValid() && !H.Value->IsDying()) { H.Value->Destroy(); } }
 	for (const TWeakObjectPtr<ASpaceVessel>& H : RetiredHulls) { if (H.IsValid() && !H->IsDying()) { H->Destroy(); } }
 	EventHulls.Empty(); RetiredHulls.Empty();
@@ -202,6 +203,7 @@ void UMissionSubsystem::Expire()
 		if (M.State == EMissionState::Offered || M.Kind == EMissionKind::Assist)
 		{
 			Close(M, EMissionState::Expired, M.Kind == EMissionKind::Assist ? TEXT("their work went on without us") : TEXT("the offer lapsed"));
+			if (M.Kind == EMissionKind::Assist) { if (UFleetSubsystem* F = Fleet()) { F->SetAssistMission(M.TargetName, -1); } }   // her file no longer points at it
 			if (M.Source == EMissionSource::Starfleet) { Standing -= M.Standing / 4; Report(FString::Printf(TEXT("%s: Starfleet's orders went unanswered. Noted at Command."), *M.Title), FLinearColor(1.f, 0.75f, 0.5f), ECrewDepartment::Operations); }
 		}
 		else
@@ -483,7 +485,7 @@ void UMissionSubsystem::IssueFleetMission(const FFleetRequest& Q)
 	{
 		// Still in that trouble? A long jump of the clock can queue a call her own people have since answered.
 		const FFleetShip* FS = Fleet() ? Fleet()->Find(Q.ShipName) : nullptr;
-		if (!FS || FS->bLost || FS->Mission.Task != EFleetTask::OnStation || FS->Mission.Trouble != Q.Trouble) { return; }
+		if (!FS || FS->bLost || FS->Mission.Task != EFleetTask::OnStation || FS->Mission.Trouble != Q.Trouble || FS->Mission.TroubleText != Q.Text) { return; }
 		const float Left = FMath::Max(1.f, 24.f - FS->Mission.TroubleHours);
 		M.Kind = EMissionKind::Support; M.Standing = 15; M.State = EMissionState::Active; M.DeadlineStardate = Stardate() + Left / 24.0;
 		M.Title = FString::Printf(TEXT("Support the %s"), *Q.ShipName);
@@ -620,7 +622,8 @@ bool UMissionSubsystem::Abandon(int32 Id, FString& OutReply)
 		const bool bWasActive = M.State == EMissionState::Active;
 		Close(M, EMissionState::Abandoned, TEXT("by the captain's decision"));
 		if (bWasActive && M.Source != EMissionSource::Event) { Standing -= M.Standing / 2; ++Failed; }
-		if (M.Kind == EMissionKind::Support) { if (UFleetSubsystem* F = Fleet()) { F->SupportResolved(M.TargetName, false, true); } }
+		// She is told no help is coming and goes on alone with the day she has left; only its end counts as no help came.
+		if (M.Kind == EMissionKind::Support) { if (UFleetSubsystem* F = Fleet()) { F->SupportDeclined(M.TargetName); } }
 		if (M.Kind == EMissionKind::Assist) { if (UFleetSubsystem* F = Fleet()) { F->SetAssistMission(M.TargetName, -1); } }
 		if (bWasActive) { if (UCrewRosterSubsystem* R = Roster()) { FCrewExperience E; E.Tag = M.Kind == EMissionKind::Rescue || M.Kind == EMissionKind::Medical ? TEXT("Loss.Civilians") : TEXT("Order.Refused"); E.Intensity = M.Kind == EMissionKind::Rescue ? 0.7f : 0.3f; E.Place = M.TargetName; E.Group = M.Group; E.Text = FString::Printf(TEXT("%s abandoned"), *M.Title); E.bCaptainsChoice = true; R->Experience(E); } }
 		OutReply = FString::Printf(TEXT("%s abandoned"), *M.Title);

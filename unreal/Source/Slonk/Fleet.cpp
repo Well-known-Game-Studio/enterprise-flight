@@ -115,7 +115,7 @@ bool UFleetSubsystem::RegisterShip(const FString& Name, const FString& ShipClass
 	if (Find(Name)) { return false; }
 	Ships.Add(MakeShip(Name, ShipClass, Home, System));
 	Ships.Last().bReconciled = true;
-	BindTies(Ships.Last());
+	BindTies();
 	Dirty();
 	return true;
 }
@@ -163,6 +163,14 @@ void UFleetSubsystem::ScanShips()
 		const FString N = It->GetDisplayName();
 		if (!N.StartsWith(TEXT("USS ")) || It->IsDying()) { continue; }
 		FFleetShip* S = FindMutable(N);
+		if (S && S->bLost)
+		{
+			// A hull bearing a lost ship's name: Starfleet has given the name again. The lost record keeps her
+			// history under a marked name; the new ship starts fresh (every tie to the lost people is long dropped).
+			FString Kept = N + TEXT(" (lost)"); for (int32 k = 2; Find(Kept); ++k) { Kept = FString::Printf(TEXT("%s (lost %d)"), *N, k); }
+			Log(*S, FString::Printf(TEXT("A new ship bears the name %s."), *N));
+			S->Name = Kept; S = nullptr;
+		}
 		if (!S)
 		{
 			// Her home is the nearest station; her system the sky she sails under.
@@ -176,19 +184,17 @@ void UFleetSubsystem::ScanShips()
 		if (!S->Actor.IsValid()) { S->Actor = *It; }
 		if (!S->bReconciled) { Reconcile(*S); }
 	}
-	if (New > 0) { UE_LOG(LogTemp, Log, TEXT("Fleet: %d ships registered (%d in all)"), New, Ships.Num()); Dirty(); }
-	// Ties from our crew to any ship become people aboard, whenever either side is new.
-	for (FFleetShip& S : Ships) { BindTies(S); }
+	if (New > 0) { UE_LOG(LogTemp, Log, TEXT("Fleet: %d ships registered (%d in all)"), New, Ships.Num()); bBindWanted = true; Dirty(); }
 }
 
 void UFleetSubsystem::Reconcile(FFleetShip& S)
 {
-	// A saved record meets its hull again: a lost ship's hull has no business in the world; a ship on a far run
-	// is out of sight; one on a near mission goes where the record says; the rest are home.
+	// A saved record meets its hull again: a ship on a far run is out of sight; one on a near mission goes where
+	// the record says; the rest are home. (A lost record never binds a hull: the scan makes a new ship of the name.)
 	AProceduralStarship* A = S.Actor.Get();
 	if (!A) { return; }
 	S.bReconciled = true;
-	if (S.bLost) { S.Actor = nullptr; if (!A->IsDying()) { A->Destroy(); } return; }
+	if (S.bLost) { S.Actor = nullptr; return; }
 	if (!S.Mission.IsActive()) { if (A->IsAway()) { A->SetAway(false); } return; }
 	if (S.Mission.bFar) { if (S.Mission.Task == EFleetTask::Returning && S.Mission.HoursLeft < 1.f) { SendActor(S, false); } else { A->SetAway(true); } return; }
 	SendActor(S, S.Mission.Task != EFleetTask::Returning);
@@ -219,30 +225,47 @@ FFleetShip UFleetSubsystem::MakeShip(const FString& Name, const FString& ShipCla
 	return S;
 }
 
-void UFleetSubsystem::BindTies(FFleetShip& S)
+void UFleetSubsystem::BindTies()
 {
 	UCrewRosterSubsystem* Ros = Roster();
 	if (!Ros) { return; }
-	bool bChanged = false;
+	// The roster's ties by ship, in one pass; the dead and the transferred leave no one behind to know anybody.
+	TMap<FString, TArray<TPair<const FCrewMember*, const FCrewTie*>>> ByShip;
 	for (const FCrewMember& M : Ros->GetRoster())
 	{
-		for (const FCrewTie& T : M.Ties)
-		{
-			if (T.Kind != ECrewTiePlace::Ship || T.Place != S.Name) { continue; }
-			// One record per name aboard her; a second of ours who knows them adds a tie, not a person.
-			FFleetPerson* Have = nullptr;
-			for (FFleetPerson& P : S.Officers) { if (P.Person.FullName() == T.Name) { Have = &P; } }
-			for (FFleetPerson& P : S.Notables) { if (P.Person.FullName() == T.Name) { Have = &P; } }
-			if (Have) { if (!Have->TiedTo(M.Id)) { FFleetTie Tie; Tie.CrewId = M.Id; Tie.Relation = T.Relation; Have->Ties.Add(Tie); bChanged = true; } continue; }
-			FRandomStream R(GetTypeHash(T.Name) ^ S.Seed);
-			FFleetPerson P;
-			const ECrewDepartment D = (ECrewDepartment)R.RandRange(1, (int32)ECrewDepartment::Count - 1);
-			const bool bSenior = T.Relation.Contains(TEXT("captain")) || T.Relation.Contains(TEXT("chief")) || T.Relation.Contains(TEXT("mentor"));
-			P.Person = Ros->MakeOutsider(R, D, bSenior ? ECrewRank::Commander : (ECrewRank)R.RandRange((int32)ECrewRank::AbleCrewman, (int32)ECrewRank::Lieutenant), NextPersonId++, T.Name, M.Species);
-			{ FFleetTie Tie; Tie.CrewId = M.Id; Tie.Relation = T.Relation; P.Ties.Add(Tie); }
-			P.Origin = TEXT("known to us");
-			S.Notables.Add(P); bChanged = true;
-		}
+		if (M.Condition == ECrewCondition::Dead || M.Condition == ECrewCondition::Transferred) { continue; }
+		for (const FCrewTie& T : M.Ties) { if (T.Kind == ECrewTiePlace::Ship && !T.Place.IsEmpty()) { ByShip.FindOrAdd(T.Place).Emplace(&M, &T); } }
+	}
+	static const TArray<TPair<const FCrewMember*, const FCrewTie*>> None;
+	for (FFleetShip& S : Ships) { if (!S.bLost) { const TArray<TPair<const FCrewMember*, const FCrewTie*>>* L = ByShip.Find(S.Name); BindShipTies(S, L ? *L : None); } }
+}
+
+void UFleetSubsystem::BindShipTies(FFleetShip& S, const TArray<TPair<const FCrewMember*, const FCrewTie*>>& Ties)
+{
+	UCrewRosterSubsystem* Ros = Roster();
+	if (!Ros) { return; }
+	// Someone aboard her only because one of ours knew them, whom nobody aboard us knows any more (the knower dead
+	// or gone, or a record from before the names were kept straight), is no longer anyone to us.
+	TSet<FString> Known; for (const TPair<const FCrewMember*, const FCrewTie*>& Pair : Ties) { Known.Add(Pair.Value->Name); }
+	const int32 Dropped = S.Notables.RemoveAll([&Known](const FFleetPerson& P) { return P.Origin == TEXT("known to us") && !Known.Contains(P.Person.FullName()); });
+	bool bChanged = Dropped > 0;
+	if (Dropped > 0) { UE_LOG(LogTemp, Log, TEXT("Fleet: %s: %d people nobody aboard knows any more dropped from her file"), *S.Name, Dropped); }
+	for (const TPair<const FCrewMember*, const FCrewTie*>& Pair : Ties)
+	{
+		const FCrewMember& M = *Pair.Key; const FCrewTie& T = *Pair.Value;
+		// One record per name aboard her; a second of ours who knows them adds a tie, not a person.
+		FFleetPerson* Have = nullptr;
+		for (FFleetPerson& P : S.Officers) { if (P.Person.FullName() == T.Name) { Have = &P; } }
+		for (FFleetPerson& P : S.Notables) { if (P.Person.FullName() == T.Name) { Have = &P; } }
+		if (Have) { if (!Have->TiedTo(M.Id)) { FFleetTie Tie; Tie.CrewId = M.Id; Tie.Relation = T.Relation; Have->Ties.Add(Tie); bChanged = true; } continue; }
+		FRandomStream R(GetTypeHash(T.Name) ^ S.Seed);
+		FFleetPerson P;
+		const ECrewDepartment D = (ECrewDepartment)R.RandRange(1, (int32)ECrewDepartment::Count - 1);
+		const bool bSenior = T.Relation.Contains(TEXT("captain")) || T.Relation.Contains(TEXT("chief")) || T.Relation.Contains(TEXT("mentor"));
+		P.Person = Ros->MakeOutsider(R, D, bSenior ? ECrewRank::Commander : (ECrewRank)R.RandRange((int32)ECrewRank::AbleCrewman, (int32)ECrewRank::Lieutenant), NextPersonId++, T.Name, M.Species);
+		{ FFleetTie Tie; Tie.CrewId = M.Id; Tie.Relation = T.Relation; P.Ties.Add(Tie); }
+		P.Origin = TEXT("known to us");
+		S.Notables.Add(P); bChanged = true;
 	}
 	if (bChanged) { UE_LOG(LogTemp, Log, TEXT("Fleet: %s now carries %d people our crew know"), *S.Name, S.Notables.Num()); Dirty(); }
 }
@@ -254,6 +277,9 @@ void UFleetSubsystem::AdvanceSeconds(float Seconds, const FMissionShipState& Shi
 	Last = Ship;
 	ScanTimer -= Seconds;
 	if (ScanTimer <= 0.f) { ScanTimer = 5.f; ScanShips(); }
+	// Ties from our crew become people aboard whenever either side is new: the roster's ties change only with
+	// the roster (a new complement, a transfer, a join), the ships when one is first seen.
+	{ const UCrewRosterSubsystem* Ros = Roster(); const int32 Rev = Ros ? Ros->GetRevision() : 0; if (bBindWanted || Rev != TiesRevision) { TiesRevision = Rev; bBindWanted = false; BindTies(); } }
 	const double H = Hours();
 	if (LastHour < 0.0) { LastHour = FMath::Floor(H); }
 	// Whole hours, however many the clock jumped (dev time).
@@ -289,7 +315,7 @@ void UFleetSubsystem::LiveHour(FFleetShip& S)
 			const float Own = S.Skill(M.Trouble == EFleetTrouble::Engineering ? ECrewSkill::Engineering : M.Trouble == EFleetTrouble::Medical ? ECrewSkill::Medicine : M.Trouble == EFleetTrouble::Hostiles ? ECrewSkill::Tactical : ECrewSkill::Security);
 			if (Rng.FRand() < 0.04f + Own / 2000.f) { SelfResolved(S); Log(S, TEXT("They got through it on their own.")); if (InRange(S)) { Report(FString::Printf(TEXT("%s reports she has her trouble in hand."), *S.Name)); } break; }
 			if (Rng.FRand() < 0.25f) { Casualty(S); }
-			if (M.TroubleHours >= 24.f) { SupportResolved(S.Name, false, M.SupportMissionId >= 0); }
+			if (M.TroubleHours >= 24.f) { SupportResolved(S.Name, false, M.SupportMissionId >= 0 || M.bHelpRefused); }
 			break;
 		}
 		M.HoursLeft -= 1.f;
@@ -365,7 +391,7 @@ void UFleetSubsystem::EndMission(FFleetShip& S, bool bSuccess, const FString& Wh
 	if (M.SupportMissionId >= 0) { if (UMissionSubsystem* Mi = Missions()) { Mi->FleetWorkOver(M.SupportMissionId, false); } }
 	if (M.bAssisted) { if (UCrewRosterSubsystem* Ros = Roster()) { Ros->NoteShipNews(S.Name, FString::Printf(TEXT("%s finished %s%s"), *S.Name, *M.Title, bSuccess ? TEXT(", with our help") : TEXT(", badly")), bSuccess ? 0.12f : -0.08f); } }
 	M.Task = EFleetTask::Returning; M.HoursLeft = M.bFar ? Rng.FRandRange(6.f, 14.f) : Rng.FRandRange(1.f, 3.f);
-	M.Trouble = EFleetTrouble::None; M.SupportMissionId = -1; M.AssistMissionId = -1;
+	M.Trouble = EFleetTrouble::None; M.SupportMissionId = -1; M.AssistMissionId = -1; M.bHelpRefused = false;
 	if (InRange(S)) { Report(FString::Printf(TEXT("%s reports %s %s; she is heading home."), *S.Name, *M.Title, bSuccess ? TEXT("done") : TEXT("a failure"))); }
 	Dirty();
 }
@@ -446,6 +472,29 @@ void UFleetSubsystem::SupportResolved(const FString& ShipName, bool bSuccess, bo
 	Dirty();
 }
 
+void UFleetSubsystem::SupportDeclined(const FString& ShipName)
+{
+	FFleetShip* S = FindMutable(ShipName);
+	if (!S) { return; }
+	FFleetMission& M = S->Mission;
+	M.SupportMissionId = -1;
+	if (M.Trouble == EFleetTrouble::None) { Dirty(); return; }   // she managed in the meantime; nothing to tell her
+	// She is told, and goes on alone with what is left of her day; her people remember who turned away.
+	M.bHelpRefused = true;
+	S->Relation = FMath::Max(-1.f, S->Relation - 0.15f);
+	Log(*S, TEXT("Told no help is coming; they carry on alone."));
+	if (UCrewRosterSubsystem* Ros = Roster()) { Ros->NoteShipNews(ShipName, FString::Printf(TEXT("%s asked us for help and we turned away"), *ShipName), -0.15f); }
+	Report(FString::Printf(TEXT("%s acknowledges. Captain %s says she will manage without us."), *ShipName, *S->Captain.LastName), FLinearColor(1.f, 0.75f, 0.5f));
+	Dirty();
+}
+
+void UFleetSubsystem::BoardCleared()
+{
+	for (FFleetShip& S : Ships) { S.Mission.SupportMissionId = -1; S.Mission.AssistMissionId = -1; S.Mission.bAssistOffered = false; }
+	Requests.Reset();
+	Dirty();
+}
+
 void UFleetSubsystem::SelfResolved(FFleetShip& S)
 {
 	FFleetMission& M = S.Mission;
@@ -517,15 +566,15 @@ bool UFleetSubsystem::RequestPerson(const FString& ShipName, const FString& Pers
 		OutReply = FString::Printf(TEXT("Nobody called %s aboard the %s that we know of"), *PersonName, *ShipName); return false;
 	}
 	const FFleetPerson P = S->Notables[Found];
-	// Family or a friend aboard us now, or a captain who thinks well of us; otherwise a polite no.
-	bool bFamily = false; for (const FFleetTie& T : P.Ties) { const FCrewMember* C = Ros->Find(T.CrewId); bFamily |= C && C->IsAboard(); }
-	if (!bFamily && S->Relation < 0.2f) { OutReply = FString::Printf(TEXT("Captain %s declines: the %s cannot spare %s (their regard for us is %+.0f)"), *S->Captain.LastName, *ShipName, *P.Person.FullName(), S->Relation * 100.f); return false; }
+	// Family or a friend aboard us now (a reunion), or a captain who thinks well of us; otherwise a polite no.
+	bool bReunion = false; for (const FFleetTie& T : P.Ties) { const FCrewMember* C = Ros->Find(T.CrewId); bReunion |= C && C->IsAboard(); }
+	if (!bReunion && S->Relation < 0.2f) { OutReply = FString::Printf(TEXT("Captain %s declines: the %s cannot spare %s (their regard for us is %+.0f)"), *S->Captain.LastName, *ShipName, *P.Person.FullName(), S->Relation * 100.f); return false; }
 	S->Notables.RemoveAt(Found);
 	FCrewMember M = P.Person;
-	if (!Ros->Join(M, FString::Printf(TEXT("Transferred from the %s%s."), *ShipName, bFamily ? TEXT(", to serve with family") : TEXT("")), OutReply)) { S->Notables.Insert(P, Found); return false; }
+	if (!Ros->Join(M, FString::Printf(TEXT("Transferred from the %s%s."), *ShipName, bReunion ? TEXT(", to serve with their own") : TEXT("")), OutReply)) { S->Notables.Insert(P, Found); return false; }
 	for (const FFleetTie& T : P.Ties) { const FCrewMember* C = Ros->Find(T.CrewId); if (C && C->IsAboard()) { Ros->TieComesAboard(T.CrewId, M.FullName(), T.Relation); } else { Ros->TieRemoved(T.CrewId, M.FullName()); } }
 	S->Complement = FMath::Max(0, S->Complement - 1);
-	S->Relation = FMath::Max(-1.f, S->Relation - (bFamily ? 0.02f : 0.1f));
+	S->Relation = FMath::Max(-1.f, S->Relation - (bReunion ? 0.02f : 0.1f));
 	Log(*S, FString::Printf(TEXT("%s transferred to the %s."), *P.Person.Styled(), *Ros->GetShipName()));
 	Dirty();
 	return true;

@@ -12,7 +12,8 @@ Every `USS` in the world gets a record the first time it is seen (a scan every f
 actors): name, class, home station (the nearest), star system, a captain and seven heads of department made from
 the same name pools as our crew (`UCrewRosterSubsystem::MakeOutsider`), a complement, morale, condition, and their
 regard for us. Records live in the "Fleet" save slot; the actor is only a pointer bound by name, so a ship in a
-system we have left still has her record and her clock. Ship names are now unique across the galaxy (a longer
+system we have left still has her record and her clock. A hull that turns up bearing a lost ship's name is a new
+ship of the name (Starfleet gives names again): the lost record keeps her history under "USS Hood (lost)". Ship names are now unique across the galaxy (a longer
 table and a check against the spawned ships), since the name is the key everywhere.
 
 ## 2. Their missions
@@ -39,7 +40,10 @@ On the ship's clock each ship lives an hour at a time (the same clock as the cre
   options by the kind of trouble: a damage-control party or a tow and a power lead; the medical staff across or
   supplies and protocols; drive the hostiles off or talk them down; a security party across or a transporter lock
   through the interference. A success ends her trouble, raises her regard for us a good deal and counts as a hand
-  lent; a failure, an abandonment or a lapse means no help came.
+  lent; a failure means the help was not enough and her mission is lost; a lapse (her day runs out with the call
+  still on the board) means no help came. Abandoning the call tells her no help is coming: her regard falls at once
+  and she goes on alone with what is left of her day, which she may yet get through herself; if she does not, that
+  too counts as no help came.
 - **Lending a hand** (`EMissionKind::Assist`): when we are in hailing range of a ship at work with no trouble, an
   offer appears on the board (once per mission of hers): a share of her work by its kind (the science watch, the
   doctors, a joint sweep, a seat at the talks, a share of the survivors, stores across), or an exchange of

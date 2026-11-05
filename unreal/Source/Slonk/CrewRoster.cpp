@@ -400,7 +400,7 @@ namespace
 	}
 }
 
-FCrewMember UCrewRosterSubsystem::MakePerson(FRandomStream& R, ECrewDepartment Dept, ECrewRank Rank, int32 Index, const FCrewNamed* Named)
+FCrewMember UCrewRosterSubsystem::MakePerson(FRandomStream& R, ECrewDepartment Dept, ECrewRank Rank, int32 Index, const FCrewNamed* Named, bool bOutsider)
 {
 	FCrewMember M;
 	M.Id = NextId++;
@@ -419,13 +419,17 @@ FCrewMember UCrewRosterSubsystem::MakePerson(FRandomStream& R, ECrewDepartment D
 	else if (S < 0.985f) { MakeNamed(R, M, Pick(R, BetazoidNames), TEXT(""), TEXT("Betazoid"), bShe ? TEXT("she") : TEXT("he")); }
 	else if (S < 0.995f) { MakeNamed(R, M, Pick(R, RigelianNames), TEXT(""), TEXT("Rigelian"), TEXT("they")); }
 	else { MakeNamed(R, M, Pick(R, SaurianNames), TEXT(""), TEXT("Saurian"), TEXT("they")); }
-	// No two aboard alike: re-draw a human, coin a name for the single-name peoples.
-	for (int32 Try = 0; Try < 24 && UsedNames.Contains(M.FullName()); ++Try)
+	// No two aboard alike: re-draw a human, coin a name for the single-name peoples. A named outsider is who the
+	// tie says they are, whoever aboard shares the name; outsiders never take a name off our own table.
+	if (!(bOutsider && Named))
 	{
-		if (M.Species == TEXT("Human")) { M.FirstName = Pick(R, HumanFirst); if (Try > 6) { M.LastName = Pick(R, HumanLast); } }
-		else { M.FirstName = CoinName(R, M.Species); }
+		for (int32 Try = 0; Try < 24 && UsedNames.Contains(M.FullName()); ++Try)
+		{
+			if (M.Species == TEXT("Human")) { M.FirstName = Pick(R, HumanFirst); if (Try > 6) { M.LastName = Pick(R, HumanLast); } }
+			else { M.FirstName = CoinName(R, M.Species); }
+		}
 	}
-	UsedNames.Add(M.FullName());
+	if (!bOutsider) { UsedNames.Add(M.FullName()); }
 	M.Rank = Rank;
 	M.Department = Dept;
 	M.Age = (int32)FMath::Clamp(22 + (int32)Rank * 3 + R.RandRange(-3, 9), 19, 64);
@@ -1943,9 +1947,9 @@ FCrewMember UCrewRosterSubsystem::MakeOutsider(FRandomStream& R, ECrewDepartment
 		const FString Sp2 = Species.IsEmpty() ? FString(TEXT("Human")) : Species;
 		const FString Pronoun = R.FRand() < 0.5f ? TEXT("she") : TEXT("he");
 		FCrewNamed N; N.Dept = Dept; N.First = *First; N.Last = *Last; N.Species = *Sp2; N.Pronoun = *Pronoun; N.Rank = Rank;
-		M = MakePerson(R, Dept, Rank, R.RandRange(0, 20), &N);
+		M = MakePerson(R, Dept, Rank, R.RandRange(0, 20), &N, true);
 	}
-	else { M = MakePerson(R, Dept, Rank, R.RandRange(0, 20)); }
+	else { M = MakePerson(R, Dept, Rank, R.RandRange(0, 20), nullptr, true); }
 	NextId = SavedNext;
 	M.Ties.Reset(); M.Relationships.Reset(); M.History.Reset(); M.Memories.Reset(); M.Wants.Reset();
 	M.Where.Empty(); M.Activity = ECrewActivity::OnWatch;

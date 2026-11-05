@@ -487,7 +487,8 @@ private:
 	bool Report(ECrewDepartment From, const FString& Text, const FLinearColor& Color = FLinearColor(0.75f, 0.9f, 1.f), bool bAlways = false);
 	int32 RequestsToday = 0;
 	struct FCrewNamed { ECrewDepartment Dept; const TCHAR* First; const TCHAR* Last; const TCHAR* Species; const TCHAR* Pronoun; ECrewRank Rank; };
-	FCrewMember MakePerson(FRandomStream& R, ECrewDepartment Dept, ECrewRank Rank, int32 Index, const FCrewNamed* Named = nullptr);
+	/** bOutsider: someone for another ship; a named one keeps the name given (a tie's), and none of them joins UsedNames. */
+	FCrewMember MakePerson(FRandomStream& R, ECrewDepartment Dept, ECrewRank Rank, int32 Index, const FCrewNamed* Named = nullptr, bool bOutsider = false);
 	void MakeNamed(FRandomStream& R, FCrewMember& M, const TCHAR* First, const TCHAR* Last, const TCHAR* Species, const TCHAR* Pronoun);
 	void MakeRecruits(const FString& StationName);
 	void MakeTies(FRandomStream& R, FCrewMember& M);

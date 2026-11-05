@@ -65,6 +65,8 @@ struct FFleetMission
 	UPROPERTY(BlueprintReadOnly) bool bAssisted = false;
 	/** A hand was offered this mission, whatever came of it: one offer per mission. */
 	UPROPERTY(BlueprintReadOnly) bool bAssistOffered = false;
+	/** We told her no help was coming (the support mission abandoned); she carries on alone and remembers it. */
+	UPROPERTY(BlueprintReadOnly) bool bHelpRefused = false;
 	bool IsActive() const { return Task != EFleetTask::Idle; }
 };
 
@@ -116,8 +118,6 @@ struct FFleetRequest
 	FString MissionTitle;
 	EMissionKind TheirKind = EMissionKind::Patrol;
 	float HoursLeft = 24.f;
-	/** The hour the trouble began, to tell a call from a later trouble aboard the same ship. */
-	float TroubleHours = 0.f;
 };
 
 UCLASS()
@@ -161,8 +161,12 @@ public:
 	// ---- the mission system's answers ----
 	/** Our support mission came to an end: the trouble is over (success), or it is not (failure or expiry). */
 	void SupportResolved(const FString& ShipName, bool bSuccess, bool bIgnored);
+	/** The captain abandoned her call: she is told no help is coming and works at it alone, with the day she has left. */
+	void SupportDeclined(const FString& ShipName);
 	/** A hand lent to their ordinary work. */
 	void AssistResolved(const FString& ShipName, bool bSuccess);
+	/** The mission board was wiped (a reset): nothing of ours is on any ship's record any more. */
+	void BoardCleared();
 
 	/** The mission system raised one of ours for their trouble, or for their work. */
 	void SetSupportMission(const FString& ShipName, int32 MissionId);
@@ -209,8 +213,10 @@ private:
 	/** Every USS in the world: a record for each new name, the actor bound for each known one. */
 	void ScanShips();
 	FFleetShip MakeShip(const FString& Name, const FString& ShipClass, const FString& Home, const FString& System);
-	/** Our crew's ties aboard this ship become people aboard it. */
-	void BindTies(FFleetShip& S);
+	/** Our crew's ties aboard the fleet's ships become people aboard them: one pass over the roster, grouped by ship. */
+	void BindTies();
+	/** This ship's share of the ties (crew member, tie), one record per name aboard her. */
+	void BindShipTies(FFleetShip& S, const TArray<TPair<const FCrewMember*, const FCrewTie*>>& Ties);
 	/** One ship's hour: take a mission, travel, work, trouble, return. */
 	void LiveHour(FFleetShip& S);
 	void BeginMission(FFleetShip& S, bool bForceNear = false, bool bMoveActor = true);
@@ -239,6 +245,9 @@ private:
 	FRandomStream Rng;
 	double LastHour = -1.0;
 	TSet<FString> LastNear;
+	/** The roster revision the ties were last bound at: they change only when the roster does, or a ship is new. */
+	int32 TiesRevision = -1;
+	bool bBindWanted = false;
 	float ScanTimer = 0.f;
 	bool bSaveWanted = false;
 	bool bNoDisk = false;

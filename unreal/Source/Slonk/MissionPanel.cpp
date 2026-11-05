@@ -133,12 +133,13 @@ void UMissionPanel::FillList()
 	{
 		UFleetSubsystem* F = Fleet();
 		TArray<const FFleetShip*> Ships; if (F) { for (const FFleetShip& S : F->GetShips()) { Ships.Add(&S); } }
-		Ships.Sort([&](const FFleetShip& A, const FFleetShip& B) { const bool NA = F && F->Nearby().Contains(&A), NB = F && F->Nearby().Contains(&B); return NA != NB ? NA : A.Name < B.Name; });
+		TSet<const FFleetShip*> Near; if (F) { Near.Append(F->Nearby()); }
+		Ships.Sort([&](const FFleetShip& A, const FFleetShip& B) { const bool NA = Near.Contains(&A), NB = Near.Contains(&B); return NA != NB ? NA : A.Name < B.Name; });
 		Head(FString::Printf(TEXT("The fleet: %d ships"), Ships.Num()));
 		if (Ships.Num() == 0) { ListBox->AddChild(Lcars::MakeText(WidgetTree, TEXT("No other ships known yet."), 13.f, Lcars::Dim, false, false)); }
 		for (const FFleetShip* S : Ships)
 		{
-			const bool bNear = F && F->Nearby().Contains(S);
+			const bool bNear = Near.Contains(S);
 			const FString T = FString::Printf(TEXT("%s  %s  %s%s  regard %+.0f"), *S->Name, *S->ShipClass, *S->TaskText(), bNear ? TEXT("  (in range)") : TEXT(""), S->Relation * 100.f);
 			const FLinearColor Col = S->bLost ? Lcars::Salmon : S->Mission.Trouble != EFleetTrouble::None ? Lcars::Orange : bNear ? Lcars::Gold : S->Mission.IsActive() ? Lcars::Sky : Lcars::Lavender;
 			const FString Name = S->Name;

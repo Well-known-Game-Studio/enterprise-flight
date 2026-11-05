@@ -26,7 +26,9 @@ What is covered now: the complement (502 named people, every department with a h
 check that cannot fail and one that cannot pass, an experience moving trust, a transfer out and a join back (the
 friend's tie, the posting, the new id), an event mission acted through to its end and one failed by its deadline,
 a fleet ship's trouble becoming a support mission answered in range (her trouble over, her regard up, no stale
-ids), a transfer each way with the complements kept, a request refused for an officer, a ship lost with all hands.
+ids), the crew's ties aboard a ship bound to named people once each and never twice, a call abandoned (she is told, fights on alone, her day runs its course), an offer to lend a hand made once
+and lapsing with her work (no stale id, no standing lost) and the board wiped clean of her record, a transfer each
+way with the complements kept, a request refused for an officer, a ship lost with all hands.
 
 Writing one: make an `FSystems` (a roster seed gives the same people every time), drive the subsystems through
 their public API, assert with `TestEqual`/`TestTrue`. For anything that depends on the world (targets picked from
