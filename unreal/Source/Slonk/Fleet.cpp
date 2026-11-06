@@ -12,7 +12,7 @@ const TCHAR* UFleetSubsystem::SlotName = TEXT("Fleet");
 
 namespace
 {
-	template <int N> const TCHAR* Pick(FRandomStream& R, const TCHAR* const (&T)[N]) { return T[R.RandRange(0, N - 1)]; }
+	template <int N> const TCHAR* PickLine(FRandomStream& R, const TCHAR* const (&T)[N]) { return T[R.RandRange(0, N - 1)]; }
 	const TCHAR* EngineeringTroubles[] = { TEXT("a coolant leak has the warp core offline and the reactor on a timer"), TEXT("a plasma fire has taken the port nacelle and main power with it"), TEXT("the deflector has failed in a dust lane and the hull is taking a beating") };
 	const TCHAR* MedicalTroubles[] = { TEXT("a fever is moving through the ship faster than sickbay can treat it"), TEXT("a radiation leak has forty in sickbay and the surgeon down with them"), TEXT("an away team has brought something back and the ward is full") };
 	const TCHAR* HostileTroubles[] = { TEXT("Orion raiders have her boxed in and are not answering hails"), TEXT("a Klingon cruiser has her under its guns and is talking about salvage rights"), TEXT("two unidentified ships are circling her with weapons hot") };
@@ -410,7 +410,7 @@ void UFleetSubsystem::Trouble(FFleetShip& S, EFleetTrouble Kind)
 	FFleetMission& M = S.Mission;
 	FRandomStream R(Rng.RandRange(1, 1 << 20));
 	M.Trouble = Kind; M.TroubleHours = 0.f;
-	M.TroubleText = Kind == EFleetTrouble::Engineering ? Pick(R, EngineeringTroubles) : Kind == EFleetTrouble::Medical ? Pick(R, MedicalTroubles) : Kind == EFleetTrouble::Hostiles ? Pick(R, HostileTroubles) : Pick(R, BoardingTroubles);
+	M.TroubleText = Kind == EFleetTrouble::Engineering ? PickLine(R, EngineeringTroubles) : Kind == EFleetTrouble::Medical ? PickLine(R, MedicalTroubles) : Kind == EFleetTrouble::Hostiles ? PickLine(R, HostileTroubles) : PickLine(R, BoardingTroubles);
 	Log(S, FString::Printf(TEXT("Trouble: %s."), *M.TroubleText));
 	// The request goes out on subspace to whoever is in range of it: us, when she is in our star system and not
 	// out of sight on a far run; the mission system takes at most a couple at a time. Other ships' troubles are

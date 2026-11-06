@@ -123,9 +123,14 @@ bool FSlonkCrewTieMatchTest::RunTest(const FString& Parameters)
 	S.Roster->TieLost(Friend, Gone.FullName(), TEXT("USS Lexington"));
 	TestEqual(TEXT("a namesake elsewhere: no tie lost"), F->Ties.Num(), TiesBefore);
 	TestEqual(TEXT("nothing to mourn"), F->History.Num(), EventsBefore);
+	// Two ties to the same name aboard her (a sister who is also an old shipmate) go together, mourned once.
+	{ FCrewTie T; T.Name = Gone.FullName(); T.Relation = TEXT("sister"); T.bFamily = true; T.Kind = ECrewTiePlace::Ship; T.Place = TEXT("USS Hood"); S.Roster->FindMutable(Friend)->Ties.Add(T); }
 	S.Roster->TieLost(Friend, Gone.FullName(), TEXT("USS Hood"));
-	TestEqual(TEXT("the tie gone"), F->Ties.Num(), TiesBefore - 1);
-	TestTrue(TEXT("bereaved"), F->History.Num() > EventsBefore && F->History.Last().Kind == ECrewEventKind::Bereaved);
+	TestEqual(TEXT("both ties gone"), F->Ties.Num(), TiesBefore - 1);
+	TestTrue(TEXT("no tie to the Hood left"), UCrewRosterSubsystem::FindShipTie(*F, Gone.FullName(), TEXT("USS Hood")) == INDEX_NONE);
+	int32 Bereaved = 0; for (const FCrewEvent& E : F->History) { Bereaved += E.Kind == ECrewEventKind::Bereaved; }
+	TestEqual(TEXT("bereaved once"), Bereaved, 1);
+	TestTrue(TEXT("as family"), F->History.Last().Kind == ECrewEventKind::Bereaved && F->History.Last().Text.Contains(TEXT("sister")));
 	return true;
 }
 

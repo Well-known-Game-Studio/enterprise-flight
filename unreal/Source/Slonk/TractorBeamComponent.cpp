@@ -94,6 +94,11 @@ bool UTractorBeamComponent::Engage(AActor* NewTarget)
 	{
 		return false;
 	}
+	// Not a hull away on a run (hidden, untargetable at its frozen place) or anything else out of sight.
+	if (NewTarget->IsHidden() || !NewTarget->ActorHasTag(ASpaceTarget::TargetableTag))
+	{
+		return false;
+	}
 	if (FVector::Dist(NewTarget->GetActorLocation(), Owner->GetActorLocation()) > MaxRangeCm)
 	{
 		return false;

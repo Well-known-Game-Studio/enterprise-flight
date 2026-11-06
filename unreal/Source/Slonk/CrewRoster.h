@@ -397,6 +397,9 @@ public:
 	void TieRemoved(int32 CrewId, const FString& Name, const FString& OtherShip);
 	/** The tie this crew member has to a named person aboard a ship, or none. */
 	static int32 FindShipTie(const FCrewMember& M, const FString& Name, const FString& OtherShip);
+	/** Removes every tie this crew member has to that name aboard that ship (the fleet knows them as one person);
+	 *  OutFirst is the family tie among them if any, else the first. Returns how many went. */
+	static int32 RemoveShipTies(FCrewMember& M, const FString& Name, const FString& OtherShip, FCrewTie& OutFirst);
 	bool Discharge(int32 Id, FString& OutReply);
 	/** A day of mourning: grief settles faster, the lost are named. */
 	FString Memorial();

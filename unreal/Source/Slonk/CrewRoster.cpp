@@ -2017,14 +2017,25 @@ int32 UCrewRosterSubsystem::FindShipTie(const FCrewMember& M, const FString& Nam
 	return INDEX_NONE;
 }
 
+int32 UCrewRosterSubsystem::RemoveShipTies(FCrewMember& M, const FString& Name, const FString& OtherShip, FCrewTie& OutFirst)
+{
+	// Every tie to that name aboard her: a crew member may hold more than one (a sister who is also an old
+	// shipmate), and the fleet knows them as one person, so one call must take them all. A family tie names
+	// the relation when there is one (a sister lost, not a shipmate), else the first.
+	const int32 i = FindShipTie(M, Name, OtherShip);
+	if (i == INDEX_NONE) { return 0; }
+	OutFirst = M.Ties[i];
+	for (const FCrewTie& T : M.Ties) { if (T.Kind == ECrewTiePlace::Ship && T.Place == OtherShip && T.Name == Name && T.bFamily && !OutFirst.bFamily) { OutFirst = T; } }
+	return M.Ties.RemoveAll([&Name, &OtherShip](const FCrewTie& T) { return T.Kind == ECrewTiePlace::Ship && T.Place == OtherShip && T.Name == Name; });
+}
+
 void UCrewRosterSubsystem::TieLost(int32 CrewId, const FString& Name, const FString& OtherShip)
 {
 	FCrewMember* M = FindMutable(CrewId);
 	if (!M) { return; }
-	const int32 i = FindShipTie(*M, Name, OtherShip);
-	if (i == INDEX_NONE) { return; }   // no one of that name aboard her in this person's life: nothing to mourn
-	const FString Relation = M->Ties[i].Relation; const bool bFamily = M->Ties[i].bFamily;
-	M->Ties.RemoveAt(i);
+	FCrewTie Tie;
+	if (RemoveShipTies(*M, Name, OtherShip, Tie) == 0) { return; }   // no one of that name aboard her in this person's life: nothing to mourn
+	const FString Relation = Tie.Relation; const bool bFamily = Tie.bFamily;
 	Remember(*M, FString::Printf(TEXT("%s is gone, lost aboard the %s"), *Name, *OtherShip), bFamily ? -0.6f : -0.4f, true);
 	M->Stress = FMath::Min(1.f, M->Stress + (bFamily ? 0.4f : 0.25f));
 	Record(*M, ECrewEventKind::Bereaved, FString::Printf(TEXT("Lost %s %s aboard the %s."), *Relation, *Name, *OtherShip), true);
@@ -2036,9 +2047,8 @@ void UCrewRosterSubsystem::TieRemoved(int32 CrewId, const FString& Name, const F
 {
 	FCrewMember* M = FindMutable(CrewId);
 	if (!M) { return; }
-	const int32 i = FindShipTie(*M, Name, OtherShip);
-	if (i == INDEX_NONE) { return; }
-	M->Ties.RemoveAt(i);
+	FCrewTie Tie;
+	if (RemoveShipTies(*M, Name, OtherShip, Tie) == 0) { return; }
 	Dirty(); RequestSave();
 }
 
@@ -2047,10 +2057,9 @@ void UCrewRosterSubsystem::TieComesAboard(int32 CrewId, const FString& Name, con
 	FCrewMember* M = FindMutable(CrewId);
 	FCrewMember* N = nullptr; for (FCrewMember& C : Roster) { if (C.IsAboard() && C.FullName() == Name) { N = &C; } }
 	if (!M || !N || M == N) { return; }
-	const int32 i = FindShipTie(*M, Name, OtherShip);
-	if (i == INDEX_NONE) { return; }   // a namesake, not the one they knew
-	const bool bFamily = M->Ties[i].bFamily;
-	M->Ties.RemoveAt(i);
+	FCrewTie Tie;
+	if (RemoveShipTies(*M, Name, OtherShip, Tie) == 0) { return; }   // a namesake, not the one they knew
+	const bool bFamily = Tie.bFamily;
 	Bond(*M, *N, 0.8f, bFamily ? ECrewRelation::Family : ECrewRelation::CloseFriend);
 	Remember(*M, FString::Printf(TEXT("%s is aboard with me now"), *Name), 0.4f, true);
 	Remember(*N, FString::Printf(TEXT("Serving with %s at last"), *M->FullName()), 0.4f, true);

@@ -62,7 +62,9 @@ On the ship's clock each ship lives an hour at a time (the same clock as the cre
   ("People we know aboard").
 - **News travels.** Trouble aboard a ship, its end, its loss, all reach everyone with a tie aboard her as memories
   and stress (`NoteShipNews`); a notable killed in her trouble, or the whole ship lost with all hands, is a
-  bereavement by name (`TieLost`), reported on the bridge.
+  bereavement by name (`TieLost`), reported on the bridge. A name aboard a ship is one person however many ties a
+  crew member holds to it (a sister who is also an old shipmate): a loss, a reunion or a departure takes every
+  tie to that name aboard her at once, mourned or bonded once, the family tie naming the relation.
 - **Transfers out** (`ship fleet transfer <name> <ship>`, or `ship crew transfer`): one of ours, fit and not a
   head, with the ship in hailing range, goes to her: the record stays Transferred, their close friends keep a tie
   to them aboard her, the ship's record gains them as a notable "formerly of the Enterprise", and her regard
