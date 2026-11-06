@@ -1,6 +1,7 @@
 #include "StarSystem.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "SpaceVessel.h"
 #include "StarBody.h"
 #include "PlanetBody.h"
 #include "BeltField.h"
@@ -25,6 +26,15 @@ FVector AStarSystem::DirectionFromSky(float RightAscensionHours, float Declinati
 FVector AStarSystem::GetStarLocation() const
 {
 	return Star ? Star->GetActorLocation() : GetActorLocation();
+}
+
+bool AStarSystem::FindNamedLocation(UWorld* World, const FString& Name, FVector& OutLocation)
+{
+	if (!World || Name.IsEmpty()) { return false; }
+	for (TActorIterator<AStarSystem> It(World); It; ++It) { if (It->SystemName == Name) { OutLocation = It->GetStarLocation(); return true; } }
+	for (TActorIterator<APlanetBody> It(World); It; ++It) { if (It->GetDisplayName() == Name) { OutLocation = It->GetActorLocation(); return true; } }
+	for (TActorIterator<ASpaceVessel> It(World); It; ++It) { if (It->GetDisplayName() == Name) { OutLocation = It->GetActorLocation(); return true; } }
+	return false;
 }
 
 AStarSystem* AStarSystem::Nearest(UWorld* World, const FVector& Location)

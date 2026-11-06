@@ -1,5 +1,7 @@
 #include "StarshipHUD.h"
 #include "Missions.h"
+#include "GameClock.h"
+#include "CrewRoster.h"
 #include "SlonkLoadSubsystem.h"
 
 #include "Engine/Canvas.h"
@@ -258,6 +260,17 @@ void AStarshipHUD::DrawHUD()
 				if (Hi - Lo > 0.02f || (Ship->Systems && Ship->Systems->GetReinforcedFacing() >= 0)) { Facings = FString::Printf(TEXT("  F%d A%d P%d S%d"), Pct[0], Pct[1], Pct[2], Pct[3]); }
 			}
 			DrawText(FString::Printf(TEXT("SHIELDS %3.0f%%%s%s   HULL %3.0f%%%s"), SF * 100.f, SF <= 0.f ? TEXT(" DOWN") : TEXT(""), *Facings, Ship->GetHullFraction() * 100.f, *Alert), ShieldColor, X, Y, Font, UIScale); Y += Line;
+			if (UGameClockSubsystem* Clock = UGameClockSubsystem::Get(this))
+			{
+				// The game clock: the scale in effect, what holds it below the request, and the ship's own time.
+				const float Sc = Clock->GetScale();
+				const FString Hold = Clock->HoldReason();
+				FString T = FString::Printf(TEXT("TIME %s"), *UGameClockSubsystem::Format(Sc));
+				if (!Hold.IsEmpty()) { T += FString::Printf(TEXT("   held: %s (%s asked)"), *Hold, *UGameClockSubsystem::Format(Clock->GetRequested())); }
+				else if (Clock->IsDriven()) { T += TEXT("   autopilot"); }
+				if (const UCrewRosterSubsystem* R = GetGameInstance() ? GetGameInstance()->GetSubsystem<UCrewRosterSubsystem>() : nullptr) { T += FString::Printf(TEXT("   stardate %s  %02d:00"), *R->StardateText(), R->GetHourOfDay()); }
+				DrawText(T, Sc > 1.5f ? Accent : Dim, X, Y, Font, UIScale); Y += Line;
+			}
 			if (Ship->Systems && !Ship->Systems->CaptainHasConn())
 			{
 				DrawText(FString::Printf(TEXT("CONN     %s has the conn"), *Ship->Systems->ConnName()), Accent, X, Y, Font, UIScale); Y += Line;
@@ -1017,8 +1030,11 @@ void AStarshipHUD::DrawNavMarkers(const AActor* Ship, float UIScale)
 			FString Eta = TEXT("--");
 			if (Speed > 1.0)
 			{
+				// The ship's time, and the real time after it when the clock runs faster.
+				auto Span = [](double S) { return S < 90.0 ? FString::Printf(TEXT("%.0f s"), S) : S < 5400.0 ? FString::Printf(TEXT("%.1f min"), S / 60.0) : S < 72.0 * 3600.0 ? FString::Printf(TEXT("%.1f h"), S / 3600.0) : FString::Printf(TEXT("%.1f d"), S / 86400.0); };
 				const double Seconds = Dist / Speed;
-				Eta = Seconds < 90.0 ? FString::Printf(TEXT("%.0f s"), Seconds) : Seconds < 5400.0 ? FString::Printf(TEXT("%.1f min"), Seconds / 60.0) : FString::Printf(TEXT("%.1f h"), Seconds / 3600.0);
+				const float Sc = UGameClockSubsystem::ScaleOf(this);
+				Eta = Sc > 1.05f ? FString::Printf(TEXT("%s (%s real)"), *Span(Seconds), *Span(Seconds / Sc)) : Span(Seconds);
 			}
 			const AStarshipPawn* ShipPawn = Cast<AStarshipPawn>(Ship);
 			const TCHAR* Auto = ShipPawn && ShipPawn->AutopilotState == 1 ? TEXT("   AUTOPILOT WARP") : ShipPawn && ShipPawn->AutopilotState == 2 ? TEXT("   AUTOPILOT IMPULSE") : TEXT("");

@@ -1,5 +1,6 @@
 #include "PlanetBody.h"
 #include "PlanetTerrainComponent.h"
+#include "GameClock.h"
 #include "PlanetWeather.h"
 #include "PlanetCities.h"
 #include "BuildingMeshes.h"
@@ -1491,8 +1492,9 @@ void APlanetBody::Tick(float DeltaTime)
 	}
 	if (!FMath::IsNearlyZero(SpinDegPerSec))
 	{
-		AddActorLocalRotation(FRotator(0.f, SpinDegPerSec * DeltaTime, 0.f));
-		SpinAccumDeg = FMath::Fmod(SpinAccumDeg + SpinDegPerSec * DeltaTime, 360.f);
+		const float SpinDt = UGameClockSubsystem::Sim(this, DeltaTime);
+		AddActorLocalRotation(FRotator(0.f, SpinDegPerSec * SpinDt, 0.f));
+		SpinAccumDeg = FMath::Fmod(SpinAccumDeg + SpinDegPerSec * SpinDt, 360.f);
 		if (RingFrame)
 		{
 			RingFrame->SetRelativeRotation(FRotator(0.f, -SpinAccumDeg * (1.f - RingOrbitRateScale), 0.f));

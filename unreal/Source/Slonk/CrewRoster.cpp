@@ -934,11 +934,12 @@ void UCrewRosterSubsystem::Place(FCrewMember& M)
 
 // ---- the ship's day ----
 
-void UCrewRosterSubsystem::AdvanceSeconds(float Seconds, const FCrewShipState& Ship)
+void UCrewRosterSubsystem::AdvanceSeconds(float Seconds, const FCrewShipState& Ship, float RealSeconds)
 {
-	ReportCooldownSeconds = FMath::Max(ReportCooldownSeconds - Seconds, 0.f);
+	if (RealSeconds < 0.f) { RealSeconds = Seconds; }
+	ReportCooldownSeconds = FMath::Max(ReportCooldownSeconds - RealSeconds, 0.f);
 	bAlongside = Ship.bAlongside; AlongsideStation = Ship.StationName;
-	if (bSaveWanted) { SaveDelaySeconds -= Seconds; if (SaveDelaySeconds <= 0.f) { Save(); } }
+	if (bSaveWanted) { SaveDelaySeconds -= RealSeconds; if (SaveDelaySeconds <= 0.f) { Save(); } }
 	HourAccumulator += Seconds / FMath::Max(SecondsPerShipHour, 1.f);
 	int32 Guard = 0;
 	while (HourAccumulator >= 1.0 && Guard++ < 48)

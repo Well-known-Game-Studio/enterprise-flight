@@ -1,5 +1,6 @@
 #include "StarBody.h"
 #include "SlonkTiming.h"
+#include "GameClock.h"
 
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -147,7 +148,7 @@ void AStarBody::Tick(float DeltaTime)
 	}
 	if (!FMath::IsNearlyZero(SpinDegPerSec))
 	{
-		AddActorLocalRotation(FRotator(0.f, SpinDegPerSec * DeltaTime, 0.f));
+		AddActorLocalRotation(FRotator(0.f, SpinDegPerSec * UGameClockSubsystem::Sim(this, DeltaTime), 0.f));
 	}
 	// Beyond the GPU precision horizon the player's distant-star sprite stands in for the mesh.
 	SetBeyondHorizon(IsLocationBeyondHorizon(GetActorLocation()));

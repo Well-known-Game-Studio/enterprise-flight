@@ -3,6 +3,7 @@
 #include "Fleet.h"
 #include "Kismet/GameplayStatics.h"
 #include "EngineUtils.h"
+#include "WarpDriveComponent.h"
 #include "SpaceVessel.h"
 #include "StarSystem.h"
 #include "PlanetBody.h"
@@ -276,10 +277,11 @@ void UFleetSubsystem::BindShipTies(FFleetShip& S, const TArray<TPair<const FCrew
 
 // ---- the ship's clock ----
 
-void UFleetSubsystem::AdvanceSeconds(float Seconds, const FMissionShipState& Ship)
+void UFleetSubsystem::AdvanceSeconds(float Seconds, const FMissionShipState& Ship, float RealSeconds)
 {
+	if (RealSeconds < 0.f) { RealSeconds = Seconds; }
 	Last = Ship;
-	ScanTimer -= Seconds;
+	ScanTimer -= RealSeconds;
 	if (ScanTimer <= 0.f) { ScanTimer = 5.f; ScanShips(); }
 	// Ties from our crew become people aboard whenever either side is new: the roster's ties change only with
 	// the roster (a new complement, a transfer, a join), the ships when one is first seen.
@@ -298,7 +300,7 @@ void UFleetSubsystem::AdvanceSeconds(float Seconds, const FMissionShipState& Shi
 	// Who is in range changed: the fleet view re-sorts, no save needed.
 	TSet<FString> Near; for (const FFleetShip& S : Ships) { if (!S.bLost && InRange(S)) { Near.Add(S.Name); } }
 	if (Near.Num() != LastNear.Num() || !Near.Includes(LastNear)) { LastNear = MoveTemp(Near); ++Revision; }
-	if (bSaveWanted) { SaveDelaySeconds -= Seconds; if (SaveDelaySeconds <= 0.f) { Save(); } }
+	if (bSaveWanted) { SaveDelaySeconds -= RealSeconds; if (SaveDelaySeconds <= 0.f) { Save(); } }
 }
 
 void UFleetSubsystem::LiveHour(FFleetShip& S)
@@ -381,13 +383,31 @@ void UFleetSubsystem::BeginMission(FFleetShip& S, bool bForceNear, bool bMoveAct
 	else { M.TargetName = S.HomeStation; }   // no galaxy to pick from (a test): exercises off her own station
 	const TCHAR* Work = M.Kind == EMissionKind::Survey ? TEXT("charting") : M.Kind == EMissionKind::Delivery ? TEXT("a supply run to") : M.Kind == EMissionKind::Diplomacy ? TEXT("talks at") : M.Kind == EMissionKind::Medical ? TEXT("a medical call at") : M.Kind == EMissionKind::Patrol ? TEXT("a patrol of") : TEXT("a distress call near");
 	M.Title = FString::Printf(TEXT("%s %s"), Work, *M.TargetName);
-	M.Task = EFleetTask::UnderWay; M.HoursLeft = M.bFar ? R.FRandRange(6.f, 14.f) : R.FRandRange(1.f, 3.f);
+	M.TravelHours = (float)LegHours(S, M.TargetName, M.bFar);
+	M.Task = EFleetTask::UnderWay; M.HoursLeft = M.TravelHours;
 	M.WorkHours = R.FRandRange(3.f, 10.f); M.StartedStardate = Stardate();
-	Log(S, FString::Printf(TEXT("Under way: %s."), *M.Title));
+	Log(S, FString::Printf(TEXT("Under way: %s, %.0f h out."), *M.Title, M.TravelHours));
 	if (bMoveActor) { SendActor(S, true); }
 	if (InRange(S)) { Report(FString::Printf(TEXT("%s signals she is under way: %s."), *S.Name, *M.Title)); }
 	// A ship near us at work is something to lend a hand with; the mission system puts it on the board when we come near.
 	Dirty();
+}
+
+float UFleetSubsystem::CruiseFactor(const FString& ShipClass)
+{
+	return ShipClass == TEXT("Excelsior") ? 8.f : ShipClass == TEXT("Miranda") ? 6.f : 7.f;
+}
+
+double UFleetSubsystem::LegHours(const FFleetShip& S, const FString& Target, bool bFar) const
+{
+	UWorld* W = GetWorld();
+	FVector From, To;
+	const AProceduralStarship* A = S.Actor.Get();
+	const bool bFrom = A ? (From = A->GetActorLocation(), true) : AStarSystem::FindNamedLocation(W, S.HomeStation, From);
+	if (!bFrom || !AStarSystem::FindNamedLocation(W, Target, To)) { return bFar ? 24.0 : 1.0; }
+	// A far leg is measured from her own star: her hull may be hidden at its last place in this system.
+	if (bFar) { FVector Own; if (AStarSystem::FindNamedLocation(W, S.SystemName, Own)) { From = Own; } }
+	return FMath::Max(1.0, FMath::CeilToDouble(UWarpDriveComponent::HoursFor(FVector::Dist(From, To), CruiseFactor(S.ShipClass))));
 }
 
 void UFleetSubsystem::EndMission(FFleetShip& S, bool bSuccess, const FString& Why)
@@ -398,7 +418,7 @@ void UFleetSubsystem::EndMission(FFleetShip& S, bool bSuccess, const FString& Wh
 	if (M.AssistMissionId >= 0) { if (UMissionSubsystem* Mi = Missions()) { Mi->FleetWorkOver(M.AssistMissionId, bSuccess); } }
 	if (M.SupportMissionId >= 0) { if (UMissionSubsystem* Mi = Missions()) { Mi->FleetWorkOver(M.SupportMissionId, false); } }
 	if (M.bAssisted) { if (UCrewRosterSubsystem* Ros = Roster()) { Ros->NoteShipNews(S.Name, FString::Printf(TEXT("%s finished %s%s"), *S.Name, *M.Title, bSuccess ? TEXT(", with our help") : TEXT(", badly")), bSuccess ? 0.12f : -0.08f); } }
-	M.Task = EFleetTask::Returning; M.HoursLeft = M.bFar ? Rng.FRandRange(6.f, 14.f) : Rng.FRandRange(1.f, 3.f);
+	M.Task = EFleetTask::Returning; M.HoursLeft = FMath::Max(M.TravelHours, 1.f);
 	M.Trouble = EFleetTrouble::None; M.SupportMissionId = -1; M.AssistMissionId = -1; M.bHelpRefused = false;
 	if (!M.bFar) { SendActor(S, false); }   // her hull heads home now; the countdown is the trip. A far hull stays out of sight until it ends.
 	if (InRange(S)) { Report(FString::Printf(TEXT("%s reports %s %s; she is heading home."), *S.Name, *M.Title, bSuccess ? TEXT("done") : TEXT("a failure"))); }

@@ -20,9 +20,12 @@ table and a check against the spawned ships), since the name is the key everywhe
 
 On the ship's clock each ship lives an hour at a time (the same clock as the crew, so dev time moves them too):
 
-- **On station** at home, repairing and resting, until her next mission comes up (three to ten hours).
+- **On station** at home, repairing and resting, until her next mission comes up (three to ten hours). All of it in
+  the ship's hours of the shared game clock (docs/time-design.md): real time at ×1, faster as the player asks.
 - **Under way**: a survey, a supply run, talks, a medical call, a patrol or a distress call, at a planet or
-  station of her own system (one to three hours out) or, one time in four, at another star (six to fourteen hours).
+  station of her own system or, one time in four, at another star. The leg is the distance at her class's cruise
+  (Excelsior 8, Constitution 7, Miranda 6, the stock warp curve), whole hours, one at least; her hull flies the
+  same leg by the same law, so the record and the ship agree. A far run is days or weeks of ship's time.
   In her own system the actor actually warps to the place and patrols about it; for another star she goes out of
   sight (`AProceduralStarship::SetAway`) and reappears at home when she is back. A ship away is not "nearby".
 - **At work** for three to ten hours. Each hour there is a small chance of **trouble**, more on patrols and

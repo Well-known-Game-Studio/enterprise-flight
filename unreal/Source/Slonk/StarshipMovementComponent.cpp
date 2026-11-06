@@ -1,6 +1,7 @@
 #include "StarshipMovementComponent.h"
 
 #include "EngineUtils.h"
+#include "GameClock.h"
 #include "PlanetBody.h"
 #include "PlanetTerrainComponent.h"
 #include "StarBody.h"
@@ -69,6 +70,9 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 
 	// Clamp huge hitches so a frame spike never flings the ship across the system.
 	DeltaTime = FMath::Min(DeltaTime, 0.1f);
+	// The world's seconds this frame: translation, speed and the orbit run on them; attitude and the inputs keep the
+	// frame's own, so the ship steers the same at x3600 as at x1 (docs/time-design.md).
+	const float SimDt = UGameClockSubsystem::Sim(this, DeltaTime);
 
 	if (bLanded)
 	{
@@ -127,10 +131,10 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 			// Ease toward the wanted range (a few seconds) instead of snapping.
 			OrbitRadius = FMath::Max(FMath::Lerp(OrbitRadius, OrbitRadiusTarget, 1.0 - FMath::Exp(-1.2 * DeltaTime)), MinRadius);
 			const double Speed = GetOrbitSpeed();
-			const double Angle = Speed * DeltaTime / FMath::Max(OrbitRadius, 1.0);
+			const double Angle = Speed * SimDt / FMath::Max(OrbitRadius, 1.0);
 			const FVector NewRadial = Radial.RotateAngleAxisRad(Angle, OrbitAxis).GetSafeNormal();
 			const FVector NewPos = Center + NewRadial * OrbitRadius;
-			Velocity = (NewPos - Here) / DeltaTime;
+			Velocity = (NewPos - Here) / FMath::Max(SimDt, 1e-6f);
 			FQuat OrbitQuat = NewQuat;
 			if (bOrbitFaceBody && SteeringInput.IsNearlyZero(0.02))
 			{
@@ -172,10 +176,10 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 		const FVector DeltaV = TargetVelocity - Velocity;
 		// Acceleration-limited, and with a response time also a fraction of the gap each tick: the shuttle at
 		// 2 g took four minutes to stop from 5 km/s, and a tap of the throttle took seconds to show.
-		double MaxDeltaV = ImpulseAcceleration * DeltaTime;
+		double MaxDeltaV = ImpulseAcceleration * SimDt;
 		if (SpeedResponseSeconds > 0.f)
 		{
-			MaxDeltaV = FMath::Max(MaxDeltaV, DeltaV.Size() * (1.0 - FMath::Exp(-DeltaTime / SpeedResponseSeconds)));
+			MaxDeltaV = FMath::Max(MaxDeltaV, DeltaV.Size() * (1.0 - FMath::Exp(-SimDt / SpeedResponseSeconds)));
 		}
 		Velocity += DeltaV.GetClampedToMaxSize(MaxDeltaV);
 	}
@@ -195,7 +199,7 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 		}
 	}
 
-	const FVector Delta = Velocity * DeltaTime;
+	const FVector Delta = Velocity * SimDt;
 
 	if (bWarpActive)
 	{

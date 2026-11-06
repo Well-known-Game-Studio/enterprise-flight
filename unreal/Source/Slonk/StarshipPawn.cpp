@@ -59,6 +59,7 @@
 #include "TimerManager.h"
 #include "DistantStarsComponent.h"
 #include "WarpViewComponent.h"
+#include "GameClock.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 
@@ -1465,10 +1466,12 @@ void AStarshipPawn::Tick(float DeltaTime)
 	FSlonkScopeTimer SlonkTimer_(TEXT("Tick StarshipPawn"));
 	Super::Tick(DeltaTime);
 	ProcessDebugCommand();
-	ShieldRechargeTimer -= DeltaTime;
+	TickClock(DeltaTime);
+	const float SimDt = UGameClockSubsystem::Sim(this, DeltaTime);
+	ShieldRechargeTimer -= SimDt;
 	if (ShieldRechargeTimer <= 0.f)
 	{
-		for (int32 i = 0; i < 4; ++i) { ShieldFacing[i] = FMath::Min(ShieldFacing[i] + ShieldRechargePerSecond * DeltaTime, ShieldFacingMax[i]); }
+		for (int32 i = 0; i < 4; ++i) { ShieldFacing[i] = FMath::Min(ShieldFacing[i] + ShieldRechargePerSecond * SimDt, ShieldFacingMax[i]); }
 	}
 	for (int32 i = 0; i < 4; ++i) { ShieldFacing[i] = FMath::Min(ShieldFacing[i], ShieldFacingMax[i]); }
 	ShieldStrength = (ShieldFacing[0] + ShieldFacing[1] + ShieldFacing[2] + ShieldFacing[3]) * 0.25f;
@@ -1481,7 +1484,7 @@ void AStarshipPawn::Tick(float DeltaTime)
 			const float Bar = P->PressureBarAt(Movement->AltitudeAGLCm);
 			if (Bar > 3.f)
 			{
-				TakeDamage((Bar - 3.f) * 1.5f * DeltaTime, FDamageEvent(), nullptr, nullptr);
+				TakeDamage((Bar - 3.f) * 1.5f * SimDt, FDamageEvent(), nullptr, nullptr);
 				CrushWarnTimer -= DeltaTime;
 				if (CrushWarnTimer <= 0.f)
 				{
@@ -2268,6 +2271,25 @@ void AStarshipPawn::ProcessDebugCommand()
 	{
 		HandleFleetCommand(Args);
 	}
+	else if (Op == TEXT("clock") || Op == TEXT("time"))
+	{
+		// clock [<scale>|up|down|status]: the game clock's scale (1..3600) and what holds it.
+		UGameClockSubsystem* Clock = UGameClockSubsystem::Get(this);
+		auto Say = [&](const FString& T, FColor C = FColor::Cyan) { ScreenMessage(T, C); UE_LOG(LogTemp, Log, TEXT("Clock: %s"), *T); };
+		if (!Clock) { Say(TEXT("No clock"), FColor::Orange); }
+		else
+		{
+			const FString A1 = ArgStr(1);
+			if (A1 == TEXT("up")) { StepTimeScale(1); }
+			else if (A1 == TEXT("down")) { StepTimeScale(-1); }
+			else if (A1.IsNumeric()) { Clock->SetRequested(FCString::Atof(*A1)); StepTimeScale(0); }
+			else
+			{
+				const FString Hold = Clock->HoldReason();
+				Say(FString::Printf(TEXT("TIME %s in effect, %s asked%s%s; %.0f s of the world lived"), *UGameClockSubsystem::Format(Clock->GetScale()), *UGameClockSubsystem::Format(Clock->GetRequested()), Hold.IsEmpty() ? TEXT("") : TEXT(", held: "), *Hold, Clock->GetSeconds()), FColor::Cyan);
+			}
+		}
+	}
 	else if (Op == TEXT("science"))
 	{
 		// science [reset]: list the log on screen, or wipe it (testing).
@@ -2388,6 +2410,7 @@ void AStarshipPawn::ProcessDebugCommand()
 			TEXT("ship nav target <name> | nav next | nav clear | nav filter [all|stars|worlds|moons|stations|ships|nebulae] | nav markers | nav map"),
 			TEXT("ship autopilot [warp|impulse|off] [standoff km] [seconds]      ship jump  (to the nav target, dev)"),
 			TEXT("ship warp [on|off] | warpfactor <f> | impulse <1-4> | throttle <0-1> | stop | orbit [on|off]"),
+			TEXT("ship clock [<scale 1-3600>|up|down]  (the game clock; 8 and 9 step it; held at x1 in a fight, near a body, in a warp transition)"),
 			TEXT("ship camera [chase|bridge|cinematic|front|port|starboard|top|bottom] | zoom <x> | look <yaw> <pitch> [s]"),
 			TEXT("ship warpvis [classic|real] | cscale <0..1> | systems | shipwarp [km] [far]"),
 			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mountain|coast|river|linea|land> <alt m> [across|sun|away|along|giant]"),
@@ -3436,11 +3459,65 @@ void AStarshipPawn::ToggleAutopilot()
 	if (Dist > WarpStandoffCm * 2.0 && WarpDrive)
 	{
 		SetAutopilot(1, WarpStandoffCm / 1.0e5, 1.f);
+		ScreenMessage(FString::Printf(TEXT("AUTOPILOT  warp %.1f to %s, about %.0f s"), AutopilotCruiseFactor, *O.Label, FMath::Max(AutopilotRealSeconds, (float)(Dist / WarpDrive->GetWarpSpeedForFactor(AutopilotCruiseFactor) / (UGameClockSubsystem::Get(this) ? UGameClockSubsystem::Get(this)->MaxScale : 1.f)))), FColor::Cyan);
 	}
 	else
 	{
 		SetAutopilot(2, FMath::Max(5.0e5, O.RadiusCm * 2.0) / 1.0e5, 0.5f);
 	}
+}
+
+void AStarshipPawn::TickClock(float DeltaTime)
+{
+	UGameClockSubsystem* Clock = UGameClockSubsystem::Get(this);
+	if (!Clock || !IsPlayerControlled()) { return; }   // nobody speaking for the clock (on foot, the shuttle): x1
+	float Cap = Clock->MaxScale; FString Why;
+	auto Low = [&Cap, &Why](float C, const FString& W) { if (C < Cap) { Cap = C; Why = W; } };
+	if (Systems && Systems->GetAlert() == EAlertState::Red) { Low(1.f, TEXT("red alert")); }
+	if (Systems && Systems->IsUnderFire()) { Low(1.f, TEXT("under fire")); }
+	if (Weapons && Weapons->IsFiringPhasers()) { Low(1.f, TEXT("phasers")); }
+	if (WarpDrive && WarpDrive->IsWarpEngaged() && WarpDrive->GetState() != EWarpState::AtWarp) { Low(1.f, TEXT("warp transition")); }
+	if (Movement && Movement->bLanded) { Low(1.f, TEXT("landed")); }
+	else if (Movement && Movement->AltitudeAGLCm >= 0.0 && Movement->AltitudeAGLCm < 2.0e7) { Low(1.f, TEXT("in atmosphere")); }
+	if (TractorBeam && TractorBeam->IsBeamActive()) { Low(1.f, TEXT("tractor beam")); }
+	// Anything we are closing on: a body ten real seconds away at the closing rate holds x1, a hundred seconds away
+	// x100, the square of the ratio. The hold tightens late, so an approach takes seconds and not the long tail a
+	// hold proportional to the distance would give (the scale keeps the ship from carrying through a world or past
+	// a station in one dilated frame; the autopilot's own schedule runs inside it).
+	if (Movement)
+	{
+		ClockScanTimer -= DeltaTime;
+		if (ClockScanTimer <= 0.f)
+		{
+			ClockScanTimer = 0.5f; ClockBodies.Reset();
+			for (TActorIterator<APlanetBody> It(GetWorld()); It; ++It) { ClockBodies.Add({ *It, It->GetRadiusCm(), It->GetDisplayName() }); }
+			for (TActorIterator<AStarBody> It(GetWorld()); It; ++It) { ClockBodies.Add({ *It, It->GetRadiusCm(), It->StarName.IsEmpty() ? It->GetActorNameOrLabel() : It->StarName }); }
+			for (TActorIterator<ASpaceStation> It(GetWorld()); It; ++It) { ClockBodies.Add({ *It, (double)It->SizeCm * 4.0, It->GetDisplayName() }); }
+		}
+		const FVector Here = GetActorLocation();
+		for (const FClockBody& B : ClockBodies)
+		{
+			const AActor* A = B.Actor.Get(); if (!A) { continue; }
+			const FVector To = A->GetActorLocation() - Here; const double Dist = To.Size();
+			if (Dist < 1.0) { continue; }
+			const double Closing = FVector::DotProduct(Movement->Velocity, To / Dist);
+			if (Closing <= 1.0) { continue; }
+			const double Seconds = FMath::Max(Dist - B.RadiusCm, 0.0) / Closing;
+			Low((float)FMath::Max(1.0, FMath::Square(Seconds / 10.0)), FString::Printf(TEXT("closing on %s"), *B.Name));
+		}
+	}
+	Clock->Allow(Cap, Why);
+}
+
+void AStarshipPawn::StepTimeScale(int32 Direction)
+{
+	UGameClockSubsystem* Clock = UGameClockSubsystem::Get(this);
+	if (!Clock) { return; }
+	if (Direction != 0) { Clock->StepRequested(Direction); }
+	const FString Hold = Clock->HoldReason();
+	const FString T = Hold.IsEmpty() ? FString::Printf(TEXT("TIME %s"), *UGameClockSubsystem::Format(Clock->GetRequested())) : FString::Printf(TEXT("TIME %s asked; held at %s: %s"), *UGameClockSubsystem::Format(Clock->GetRequested()), *UGameClockSubsystem::Format(Clock->GetScale()), *Hold);
+	ScreenMessage(T, FColor::Cyan, 3.f);
+	UE_LOG(LogTemp, Log, TEXT("Clock: %s"), *T);
 }
 
 void AStarshipPawn::SetAutopilot(int32 Mode, double StandoffKm, float Seconds)
@@ -3449,6 +3526,18 @@ void AStarshipPawn::SetAutopilot(int32 Mode, double StandoffKm, float Seconds)
 	AutopilotStandoffCm = StandoffKm * 1.0e5;
 	AutopilotSeconds = FMath::Max(Seconds, 0.5f);
 	bAutopilotWarpEngaged = false;
+	AutopilotCruiseFactor = 0.f; AutopilotScale0 = 0.f;
+	if (Mode == 1 && WarpDrive)
+	{
+		// The leg's cruise: the drive's setting, raised until the leg fits about a minute of real time at the
+		// clock's top scale, and never past 9.9 unless the player already asked for transwarp.
+		AStarshipHUD* H = PlayerHUD(); FNavObject O;
+		const double Dist = H && H->GetNavTargetInfo(O) ? FMath::Max(FVector::Dist(O.Location, GetActorLocation()) - AutopilotStandoffCm, 1.0) : 1.0;
+		const UGameClockSubsystem* C = UGameClockSubsystem::Get(this);
+		const double Need = WarpDrive->GetFactorForSpeed(Dist / (AutopilotRealSeconds * (C ? C->MaxScale : 1.f)));
+		const float Cap = WarpDrive->WarpFactor > WarpDrive->TranswarpStart ? WarpDrive->WarpFactor : WarpDrive->TranswarpStart;
+		AutopilotCruiseFactor = FMath::Clamp((float)FMath::Max((double)WarpDrive->WarpFactor, Need), WarpDrive->MinWarpFactor, FMath::Min(Cap, WarpDrive->MaxWarpFactor));
+	}
 	if (Mode == 0 && Movement) { Movement->SetSteeringInput(0.f, 0.f, 0.f); }
 	if (Mode == 0 && WarpDrive) { WarpDrive->CruiseSpeedResponse = 1.5f; }
 	UE_LOG(LogTemp, Log, TEXT("autopilot %d standoff %.0f km over %.1f s"), Mode, StandoffKm, Seconds);
@@ -3539,7 +3628,8 @@ void AStarshipPawn::TickAutopilot(float DeltaTime)
 			if (bAligned)
 			{
 				Movement->SetThrottle(0.0);
-				WarpDrive->SetWarpFactor((float)FMath::Clamp(WarpDrive->GetFactorForSpeed((Dist - AutopilotStandoffCm) / AutopilotSeconds), 1.0, (double)WarpDrive->MaxWarpFactor));
+				const double Cruise = AutopilotCruiseFactor > 0.f ? AutopilotCruiseFactor : WarpDrive->MaxWarpFactor;
+				WarpDrive->SetWarpFactor((float)FMath::Clamp(FMath::Min(Cruise, WarpDrive->GetFactorForSpeed((Dist - AutopilotStandoffCm) / AutopilotSeconds)), 1.0, (double)WarpDrive->MaxWarpFactor));
 				// The cruise speed follows the factor with a lag; at the drive's 1.5 it trails the deceleration so
 				// far that the drop fires at hundreds of c and lands tens of millions of km short. 4 tracks it.
 				WarpDrive->CruiseSpeedResponse = 4.f;
@@ -3548,14 +3638,35 @@ void AStarshipPawn::TickAutopilot(float DeltaTime)
 			}
 			return;
 		}
-		// At warp: the factor keeps the time to target at AutopilotSeconds, so the ship decelerates as it closes.
-		WarpDrive->SetWarpFactor((float)FMath::Clamp(WarpDrive->GetFactorForSpeed(FMath::Max(Dist - AutopilotStandoffCm, 1.0) / AutopilotSeconds), 1.0, (double)WarpDrive->MaxWarpFactor));
+		// At warp: the cruise factor, and the clock driven so the remaining leg is about a minute of real time; as
+		// the ship closes the scale falls to x1, and over the last stretch the factor keeps the time to target at
+		// AutopilotSeconds, so the ship decelerates as it closes (docs/time-design.md).
+		const double Remaining = FMath::Max(Dist - AutopilotStandoffCm, 1.0);
+		const double Cruise = AutopilotCruiseFactor > 0.f ? AutopilotCruiseFactor : WarpDrive->MaxWarpFactor;
+		WarpDrive->SetWarpFactor((float)FMath::Clamp(FMath::Min(Cruise, WarpDrive->GetFactorForSpeed(Remaining / AutopilotSeconds)), 1.0, (double)WarpDrive->MaxWarpFactor));
+		if (UGameClockSubsystem* Clock = UGameClockSubsystem::Get(this))
+		{
+			// The leg's plan, made at the first frame at warp: the scale that makes the whole leg about a minute of
+			// real time, held until the last stretch, then brought down to x1 over the ten real seconds before the
+			// final ten seconds of cruise. A scale proportional to the remaining distance never arrives (the
+			// approach goes exponential), so the ramp is by the square root: late and finite.
+			const double Speed = FMath::Max(WarpDrive->GetWarpSpeedForFactor((float)Cruise), 1.0);
+			if (AutopilotScale0 <= 0.f)
+			{
+				AutopilotScale0 = (float)FMath::Clamp(Remaining / (Speed * AutopilotRealSeconds), 1.0, (double)Clock->MaxScale);
+				AutopilotOneCm = Speed * 10.0;
+				AutopilotRampCm = AutopilotOneCm + Speed * AutopilotScale0 * 10.0;
+				UE_LOG(LogTemp, Log, TEXT("autopilot leg: %.0f km at warp %.2f, clock x%.0f, ramp from %.0f km"), Remaining / 1.0e5, Cruise, AutopilotScale0, AutopilotRampCm / 1.0e5);
+			}
+			const double X = FMath::Clamp((Remaining - AutopilotOneCm) / FMath::Max(AutopilotRampCm - AutopilotOneCm, 1.0), 0.0, 1.0);
+			Clock->Drive(1.f + (AutopilotScale0 - 1.f) * (float)FMath::Sqrt(X));
+		}
 		// Drop out where the drop itself (1.2 s easing out from the speed we are actually doing) plus two frames
 		// of travel would land on the standoff: at the capture's fixed 24 fps step a warp 9.9 frame is twenty
 		// million km, so a fixed window is never hit and the ship overshoots and turns round at warp. And if the
-		// target is behind us we have passed it: drop at once.
+		// target is behind us we have passed it: drop at once. The frames are the world's seconds long.
 		const double Speed = FMath::Max(WarpDrive->GetCurrentWarpSpeed(), C);
-		const double DropAt = FMath::Max(C * 0.45, Speed * 1.2 * 0.3 + Speed * DeltaTime * 2.0);
+		const double DropAt = FMath::Max(C * 0.45, Speed * 1.2 * 0.3 + Speed * UGameClockSubsystem::Sim(this, DeltaTime) * 2.0);
 		if (Dist < AutopilotStandoffCm + DropAt || FMath::Abs(Yaw) > 90.0) { WarpDrive->DisengageWarp(); WarpDrive->CruiseSpeedResponse = 1.5f; }
 		return;
 	}

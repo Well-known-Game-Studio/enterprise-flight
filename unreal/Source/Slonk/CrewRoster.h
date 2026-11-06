@@ -318,7 +318,8 @@ public:
 
 	// ---- the clock ----
 	/** A ship's hour passes in this many real seconds (60: a day aboard is 24 minutes of play). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crew") float SecondsPerShipHour = 60.f;
+	/** Simulation seconds in a ship's hour: real time at x1; the game clock's scale is how the day passes faster. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crew") float SecondsPerShipHour = 3600.f;
 	UFUNCTION(BlueprintPure, Category = "Crew") double GetStardate() const { return StardateBase + Hours / 24.0; }
 	UFUNCTION(BlueprintPure, Category = "Crew") int32 GetDay() const { return (int32)(Hours / 24.0); }
 	UFUNCTION(BlueprintPure, Category = "Crew") int32 GetHourOfDay() const { return (int32)Hours % 24; }
@@ -329,7 +330,9 @@ public:
 
 	// ---- driven by the ship ----
 	/** Real seconds pass: the clock advances, and every full ship's hour the crew live an hour. */
-	void AdvanceSeconds(float Seconds, const FCrewShipState& Ship);
+	/** Seconds are the world's (scaled); RealSeconds the frame's, for the save delay and the report cooldown (the
+	 *  same as Seconds when left out). */
+	void AdvanceSeconds(float Seconds, const FCrewShipState& Ship, float RealSeconds = -1.f);
 	void NoteAlert(EAlertState NewAlert);
 	/** A hit landed in this compartment: the next casualties come from the people in it. */
 	void NoteHitCompartment(const FString& Compartment);

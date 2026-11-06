@@ -31,6 +31,9 @@ namespace
 		return EStarshipClass::Constitution;
 	}
 
+	/** The factor a class cruises at on her legs (the same table as the fleet's records). */
+	float CruiseFor(EStarshipClass C) { return C == EStarshipClass::Excelsior ? 8.f : C == EStarshipClass::Miranda ? 6.f : 7.f; }
+
 	/** Lengths in cm: Constitution refit 305 m, Miranda 243 m, Excelsior 467 m, with some spread. */
 	float SizeForClass(EStarshipClass C, FRandomStream& Rng)
 	{
@@ -125,6 +128,7 @@ void ASpaceTraffic::SpawnPatrolShip(FRandomStream& Rng, const FVector& Loc, cons
 	Ship->Seed = Rng.RandRange(1, 1 << 20);
 	const FString Name = NextShipName();
 	Ship->ShipClass = ClassForName(*Name.RightChop(4));
+	Ship->CruiseWarpFactor = CruiseFor(Ship->ShipClass);
 	Ship->SizeCm = SizeForClass(Ship->ShipClass, Rng);
 	Ship->VesselName = Name;
 	const float Tint = Rng.FRandRange(0.55f, 0.72f);
@@ -147,6 +151,7 @@ ASpaceVessel* ASpaceTraffic::SpawnNamedShip(const FString& Name, const FVector& 
 	if (!Ship) { return nullptr; }
 	Ship->Seed = Rng.RandRange(1, 1 << 20);
 	Ship->ShipClass = bCivilian ? EStarshipClass::Miranda : EStarshipClass::Excelsior;
+	Ship->CruiseWarpFactor = CruiseFor(Ship->ShipClass);
 	Ship->SizeCm = SizeForClass(Ship->ShipClass, Rng);
 	Ship->VesselName = Name;
 	if (bCivilian) { const float T = Rng.FRandRange(0.4f, 0.55f); Ship->HullColor = FLinearColor(T * 1.1f, T, T * 0.85f); Ship->GlowColor = FLinearColor(1.0f, 0.6f, 0.25f); }
@@ -282,6 +287,7 @@ void ASpaceTraffic::SpawnStartShips()
 		Ship->Seed = Rng.RandRange(1, 1 << 20);
 		const FString Name = NextShipName();
 		Ship->ShipClass = ClassForName(*Name.RightChop(4));
+		Ship->CruiseWarpFactor = CruiseFor(Ship->ShipClass);
 		Ship->SizeCm = SizeForClass(Ship->ShipClass, Rng);
 		Ship->VesselName = Name;
 		Ship->GlowColor = FLinearColor(0.35f, 0.6f, 1.0f);

@@ -158,7 +158,10 @@ public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 
 	/** Driven by the ship each tick; the clock is the crew roster's. */
-	void AdvanceSeconds(float Seconds, const FMissionShipState& Ship);
+	/** Seconds are the world's (scaled); RealSeconds the frame's, for the save delay (Seconds when left out). */
+	void AdvanceSeconds(float Seconds, const FMissionShipState& Ship, float RealSeconds = -1.f);
+	/** Days a ship at warp 7 needs from where we are to the mission's target (0 for one with no place to go). */
+	double TravelDays(const FMission& M) const;
 
 	// ---- the captain ----
 	bool Accept(int32 Id, FString& OutReply);

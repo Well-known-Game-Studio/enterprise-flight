@@ -6,6 +6,8 @@
 #include "../CrewRoster.h"
 #include "../Missions.h"
 #include "../Fleet.h"
+#include "../GameClock.h"
+#include "../WarpDriveComponent.h"
 #include "Engine/GameInstance.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -131,6 +133,55 @@ bool FSlonkCrewTieMatchTest::RunTest(const FString& Parameters)
 	int32 Bereaved = 0; for (const FCrewEvent& E : F->History) { Bereaved += E.Kind == ECrewEventKind::Bereaved; }
 	TestEqual(TEXT("bereaved once"), Bereaved, 1);
 	TestTrue(TEXT("as family"), F->History.Last().Kind == ECrewEventKind::Bereaved && F->History.Last().Text.Contains(TEXT("sister")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkClockScaleTest, "Slonk.Clock.Scale", SLONK_TEST_FLAGS)
+bool FSlonkClockScaleTest::RunTest(const FString& Parameters)
+{
+	// The presets step both ways and stop at the ends.
+	TestEqual(TEXT("up from 1"), UGameClockSubsystem::Step(1.f, 1), 10.f);
+	TestEqual(TEXT("up from 60"), UGameClockSubsystem::Step(60.f, 1), 600.f);
+	TestEqual(TEXT("top stays"), UGameClockSubsystem::Step(3600.f, 1), 3600.f);
+	TestEqual(TEXT("down from 600"), UGameClockSubsystem::Step(600.f, -1), 60.f);
+	TestEqual(TEXT("down from between"), UGameClockSubsystem::Step(100.f, -1), 60.f);
+	TestEqual(TEXT("bottom stays"), UGameClockSubsystem::Step(1.f, -1), 1.f);
+	// The ramp climbs through log space and comes down faster than it went up; it lands exactly.
+	float S = 1.f; int32 Up = 0; while (S < 3600.f - 0.01f && Up < 1000) { S = UGameClockSubsystem::Ramp(S, 3600.f, 1.f / 60.f); ++Up; }
+	TestTrue(TEXT("reaches the top within a few seconds"), Up > 30 && Up < 240);
+	TestEqual(TEXT("lands on the target"), S, 3600.f);
+	int32 Down = 0; while (S > 1.f + 0.01f && Down < 1000) { S = UGameClockSubsystem::Ramp(S, 1.f, 1.f / 60.f); ++Down; }
+	TestTrue(TEXT("comes down faster"), Down < Up);
+	TestEqual(TEXT("lands on x1"), S, 1.f);
+	// The stock warp law: warp 1 is c, warp 9 about 1516 c, and four light-years at warp 7 is a little over two days.
+	const double C = 2.99792458e10;
+	TestTrue(TEXT("warp 1 is c"), FMath::IsNearlyEqual(UWarpDriveComponent::SpeedForFactor(1.0) / C, 1.0, 1e-6));
+	TestTrue(TEXT("warp 9"), FMath::IsNearlyEqual(UWarpDriveComponent::SpeedForFactor(9.0) / C, 1516.4, 1.0));
+	const double Hours = UWarpDriveComponent::HoursFor(4.0 * 9.4607e17, 7.0);
+	TestTrue(*FString::Printf(TEXT("4 ly at warp 7 is about 53 h (%.1f)"), Hours), FMath::IsNearlyEqual(Hours, 53.4, 0.5));
+	TestTrue(TEXT("transwarp climbs"), UWarpDriveComponent::SpeedForFactor(9.99) > UWarpDriveComponent::SpeedForFactor(9.9) * 900.0);
+	// The fleet's cruise table.
+	TestEqual(TEXT("Excelsior cruise"), UFleetSubsystem::CruiseFactor(TEXT("Excelsior")), 8.f);
+	TestEqual(TEXT("Miranda cruise"), UFleetSubsystem::CruiseFactor(TEXT("Miranda")), 6.f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFleetLegTest, "Slonk.Fleet.Leg", SLONK_TEST_FLAGS)
+bool FSlonkFleetLegTest::RunTest(const FString& Parameters)
+{
+	// Without a world the places are unknown: a near leg is an hour, a far one a day; the record carries the leg
+	// out and uses it again for the way home.
+	FSystems S;
+	S.Fleet->RegisterShip(TEXT("USS Hood"), TEXT("Excelsior"), TEXT("Starbase 11"), TEXT("Sol"));
+	const FFleetShip* H = S.Fleet->Find(TEXT("USS Hood"));
+	if (!TestNotNull(TEXT("registered"), H)) { return false; }
+	TestEqual(TEXT("a near leg"), S.Fleet->LegHours(*H, TEXT("Sirius III"), false), 1.0);
+	TestEqual(TEXT("a far leg"), S.Fleet->LegHours(*H, TEXT("Sirius"), true), 24.0);
+	FString Reply; TestTrue(TEXT("sent out"), S.Fleet->DevMission(TEXT("USS Hood"), Reply));
+	H = S.Fleet->Find(TEXT("USS Hood"));
+	TestTrue(TEXT("under way"), H->Mission.Task == EFleetTask::UnderWay);
+	TestEqual(TEXT("the leg is the countdown"), H->Mission.HoursLeft, H->Mission.TravelHours);
+	TestTrue(TEXT("at least an hour"), H->Mission.TravelHours >= 1.f);
 	return true;
 }
 

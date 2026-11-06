@@ -119,6 +119,10 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Starship|Warp")
 	double GetWarpSpeedForFactor(float Factor) const;
+	/** The same curve with the stock numbers (c, 10/3, transwarp from 9.9), for ships without a drive component. */
+	static double SpeedForFactor(double Factor);
+	/** Hours a leg of DistanceCm takes at a factor, by the stock curve. */
+	static double HoursFor(double DistanceCm, double Factor) { return DistanceCm / FMath::Max(SpeedForFactor(Factor), 1.0) / 3600.0; }
 
 	/** Speed the drive is currently commanding (cm/s), 0 when idle. */
 	UFUNCTION(BlueprintPure, Category = "Starship|Warp")

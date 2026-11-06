@@ -1,5 +1,6 @@
 #include "ShipSystemsComponent.h"
 #include "CrewRoster.h"
+#include "GameClock.h"
 #include "PlanetBody.h"
 #include "EngineUtils.h"
 #include "ShipCompartments.h"
@@ -138,7 +139,7 @@ void UShipSystemsComponent::SyncOfficersFromRoster()
 	RosterRevisionSeen = R->GetRevision();
 }
 
-void UShipSystemsComponent::TickRoster(float DeltaTime)
+void UShipSystemsComponent::TickRoster(float DeltaTime, float RealDeltaTime)
 {
 	UCrewRosterSubsystem* R = Roster.Get();
 	AStarshipPawn* S = Ship();
@@ -161,7 +162,7 @@ void UShipSystemsComponent::TickRoster(float DeltaTime)
 	State.SickbayBeds = Crew.SickbayBeds;
 	// Who and what is within hailing distance, looked up every few seconds; the galaxy's names for the crew's ties
 	// elsewhere, once the systems have spawned.
-	NearbyTimer -= DeltaTime;
+	NearbyTimer -= RealDeltaTime;
 	if (NearbyTimer <= 0.f)
 	{
 		NearbyTimer = 4.f;
@@ -188,14 +189,14 @@ void UShipSystemsComponent::TickRoster(float DeltaTime)
 		if (bBind && (Worlds.Num() + Stations.Num() + Ships.Num()) > 0) { R->BindPlaces(Worlds, Stations, Ships); }
 	}
 	State.Nearby = NearbyNames;
-	R->AdvanceSeconds(DeltaTime, State);
+	R->AdvanceSeconds(DeltaTime, State, RealDeltaTime);
 	// The counts the medical model keeps become people.
 	TArray<FString> Lines;
 	R->SyncCasualties(Crew.Injured, Crew.Critical, Crew.Dead, Lines);
 	if (R->GetRevision() != RosterRevisionSeen) { SyncOfficersFromRoster(); }   // a successor speaks, not the one just lost
 	// The dead are named at once; the wounded a few seconds apart, under steady fire the names would come every tick.
 	for (const FString& L : Lines) { if (L.StartsWith(TEXT("Lost"))) { Report(EStation::Medical, L, FLinearColor(1.f, 0.6f, 0.5f)); } else { HeldLines.Add(L); } }
-	HeldLineCooldown = FMath::Max(HeldLineCooldown - DeltaTime, 0.f);
+	HeldLineCooldown = FMath::Max(HeldLineCooldown - RealDeltaTime, 0.f);
 	if (HeldLines.Num() > 0 && HeldLineCooldown <= 0.f)
 	{
 		HeldLineCooldown = 6.f;
@@ -219,10 +220,10 @@ void UShipSystemsComponent::TickRoster(float DeltaTime)
 		else { ReportAs(UCrewRosterSubsystem::DepartmentName(C.From), C.Text, C.Color); }
 	}
 	if (R->GetRevision() != RosterRevisionSeen) { SyncOfficersFromRoster(); }
-	TickMissions(DeltaTime, NearbyNames, State.bAlongside, State.StationName);
+	TickMissions(DeltaTime, NearbyNames, State.bAlongside, State.StationName, RealDeltaTime);
 }
 
-void UShipSystemsComponent::TickMissions(float DeltaTime, const TArray<FString>& Nearby, bool bAlongside, const FString& StationName)
+void UShipSystemsComponent::TickMissions(float DeltaTime, const TArray<FString>& Nearby, bool bAlongside, const FString& StationName, float RealDeltaTime)
 {
 	AStarshipPawn* S = Ship();
 	UMissionSubsystem* M = S && S->GetGameInstance() ? S->GetGameInstance()->GetSubsystem<UMissionSubsystem>() : nullptr;
@@ -234,7 +235,7 @@ void UShipSystemsComponent::TickMissions(float DeltaTime, const TArray<FString>&
 	St.bAlongside = bAlongside; St.StationName = StationName;
 	St.bAtWarp = S->WarpDrive && S->WarpDrive->IsWarpEngaged();
 	St.bUnderFire = IsUnderFire();
-	M->AdvanceSeconds(DeltaTime, St);
+	M->AdvanceSeconds(DeltaTime, St, RealDeltaTime);
 	TArray<FCrewReport> Said;
 	M->DrainReports(Said);
 	UCrewRosterSubsystem* R = Roster.Get();
@@ -349,9 +350,12 @@ void UShipSystemsComponent::ApplyEffects()
 void UShipSystemsComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
-	TickRepairs(DeltaTime);
-	if (bCrewModel) { TickLifeSupport(DeltaTime); TickCrew(DeltaTime); TickRoster(DeltaTime); }
-	TickResupply(DeltaTime);
+	// The ship's model lives in the world's seconds (repairs, air, sickbay, the yard, the crew's day); the report
+	// cooldowns below are the player's and keep the frame's.
+	const float Sim = UGameClockSubsystem::Sim(this, DeltaTime);
+	TickRepairs(Sim);
+	if (bCrewModel) { TickLifeSupport(Sim); TickCrew(Sim); TickRoster(Sim, DeltaTime); }
+	TickResupply(Sim);
 	ApplyEffects();
 	for (float& C : ReportCooldown) { C = FMath::Max(0.f, C - DeltaTime); }
 	MedicalReportCooldown = FMath::Max(0.f, MedicalReportCooldown - DeltaTime);
