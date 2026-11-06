@@ -379,6 +379,27 @@ public:
 	/** A word with them: "listen", "encourage", "order" or "promise". */
 	bool Talk(int32 Id, const FString& How, FString& OutReply);
 	bool SignOn(int32 RecruitIndex, FString& OutReply);
+	// ---- the fleet's people ----
+	/** A person for another ship, from the same pools as ours: a given name and species when a tie names them. */
+	FCrewMember MakeOutsider(FRandomStream& R, ECrewDepartment Dept, ECrewRank Rank, int32 Id, const FString& FullName = FString(), const FString& Species = FString());
+	/** Someone joins from another ship (a transfer): a new id, a first history line, a place aboard. */
+	bool Join(FCrewMember M, const FString& Why, FString& OutReply);
+	/** One of ours goes to another ship: the record stays as Transferred, their close friends keep a tie to them there. */
+	bool TransferOut(int32 Id, const FString& OtherShip, FCrewMember& OutPerson, FString& OutReply);
+	/** News of a ship, for everyone with a tie aboard her. */
+	void NoteShipNews(const FString& OtherShip, const FString& Text, float Weight);
+	/** Someone a crew member is tied to was killed aboard another ship: the tie to that name aboard that ship goes,
+	 *  a bereavement is recorded; a namesake elsewhere is untouched, and with no such tie nothing happens. */
+	void TieLost(int32 CrewId, const FString& Name, const FString& OtherShip);
+	/** Someone a crew member is tied to aboard that ship has just joined us: the tie becomes a bond aboard. */
+	void TieComesAboard(int32 CrewId, const FString& Name, const FString& Relation, const FString& OtherShip);
+	/** The person a tie named aboard that ship is no longer there (they came to us): the tie goes, no bond. */
+	void TieRemoved(int32 CrewId, const FString& Name, const FString& OtherShip);
+	/** The tie this crew member has to a named person aboard a ship, or none. */
+	static int32 FindShipTie(const FCrewMember& M, const FString& Name, const FString& OtherShip);
+	/** Removes every tie this crew member has to that name aboard that ship (the fleet knows them as one person);
+	 *  OutFirst is the family tie among them if any, else the first. Returns how many went. */
+	static int32 RemoveShipTies(FCrewMember& M, const FString& Name, const FString& OtherShip, FCrewTie& OutFirst);
 	bool Discharge(int32 Id, FString& OutReply);
 	/** A day of mourning: grief settles faster, the lost are named. */
 	FString Memorial();
@@ -429,6 +450,8 @@ public:
 	// ---- the whole ----
 	/** A fresh complement from a seed (0: from the clock). */
 	UFUNCTION(BlueprintCallable, Category = "Crew") void NewComplement(int32 Seed, int32 Complement = 502);
+	/** Tests: a complement from a seed, no save slot read or written. */
+	void InitForTest(int32 TestSeed);
 	UFUNCTION(BlueprintCallable, Category = "Crew") void Reset();
 	/** Dev: words across a grudge between these two, for the captain to answer. */
 	bool DevIncident(int32 Offender, int32 Victim);
@@ -441,6 +464,7 @@ public:
 private:
 	void Load();
 	bool bSaveWanted = false;
+	bool bNoDisk = false;
 	float SaveDelaySeconds = 0.f;
 	/** Per-department strengths this complement was generated with (recruits and replacements fill to them). */
 	TArray<int32> Targets;
@@ -469,7 +493,8 @@ private:
 	bool Report(ECrewDepartment From, const FString& Text, const FLinearColor& Color = FLinearColor(0.75f, 0.9f, 1.f), bool bAlways = false);
 	int32 RequestsToday = 0;
 	struct FCrewNamed { ECrewDepartment Dept; const TCHAR* First; const TCHAR* Last; const TCHAR* Species; const TCHAR* Pronoun; ECrewRank Rank; };
-	FCrewMember MakePerson(FRandomStream& R, ECrewDepartment Dept, ECrewRank Rank, int32 Index, const FCrewNamed* Named = nullptr);
+	/** bOutsider: someone for another ship; a named one keeps the name given (a tie's), and none of them joins UsedNames. */
+	FCrewMember MakePerson(FRandomStream& R, ECrewDepartment Dept, ECrewRank Rank, int32 Index, const FCrewNamed* Named = nullptr, bool bOutsider = false);
 	void MakeNamed(FRandomStream& R, FCrewMember& M, const TCHAR* First, const TCHAR* Last, const TCHAR* Species, const TCHAR* Pronoun);
 	void MakeRecruits(const FString& StationName);
 	void MakeTies(FRandomStream& R, FCrewMember& M);

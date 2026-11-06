@@ -15,7 +15,7 @@
 
 namespace
 {
-	const TCHAR* ShipNames[] = { TEXT("Farragut"), TEXT("Lexington"), TEXT("Potemkin"), TEXT("Hood"), TEXT("Excalibur"), TEXT("Yorktown"), TEXT("Exeter"), TEXT("Constellation"), TEXT("Defiant"), TEXT("Intrepid"), TEXT("Kongo"), TEXT("Republic"), TEXT("Valiant"), TEXT("Endeavour"), TEXT("Saratoga"), TEXT("Reliant") };
+	const TCHAR* ShipNames[] = { TEXT("Farragut"), TEXT("Lexington"), TEXT("Potemkin"), TEXT("Hood"), TEXT("Excalibur"), TEXT("Yorktown"), TEXT("Exeter"), TEXT("Constellation"), TEXT("Defiant"), TEXT("Intrepid"), TEXT("Kongo"), TEXT("Republic"), TEXT("Valiant"), TEXT("Endeavour"), TEXT("Saratoga"), TEXT("Reliant"), TEXT("Eagle"), TEXT("Essex"), TEXT("Hornet"), TEXT("Bozeman"), TEXT("Grissom"), TEXT("Stargazer"), TEXT("Ajax"), TEXT("Antares"), TEXT("Carolina"), TEXT("Hathaway"), TEXT("Lantree"), TEXT("Merrimac"), TEXT("Monitor"), TEXT("Sutherland"), TEXT("Tecumseh"), TEXT("Zhukov"), TEXT("Nautilus"), TEXT("Shenandoah"), TEXT("Trieste"), TEXT("Tsiolkovsky"), TEXT("Yamato"), TEXT("Brattain"), TEXT("Pegasus"), TEXT("Victory"), TEXT("Repulse"), TEXT("Drake"), TEXT("Odyssey"), TEXT("Kyushu"), TEXT("Melbourne"), TEXT("Rutledge"), TEXT("Gage"), TEXT("Bellerophon"), TEXT("Clement"), TEXT("Ahwahnee"), TEXT("Berlin"), TEXT("Thomas Paine"), TEXT("Fearless"), TEXT("Concord"), TEXT("Malinche"), TEXT("Prometheus"), TEXT("Venture"), TEXT("Akagi"), TEXT("Crockett"), TEXT("Firebrand"), TEXT("Magellan"), TEXT("Ulysses"), TEXT("Budapest"), TEXT("Cairo"), TEXT("Charleston"), TEXT("Denver"), TEXT("Hera"), TEXT("Horatio"), TEXT("Jenolan"), TEXT("Kearsarge"), TEXT("Lalo"), TEXT("Nobel"), TEXT("Okinawa"), TEXT("Renegade"), TEXT("Sarek"), TEXT("Tian An Men"), TEXT("Wellington"), TEXT("Zapata"), TEXT("Al-Batani"), TEXT("Honshu"), TEXT("Lakota"), TEXT("Leeds"), TEXT("Majestic"), TEXT("Nash"), TEXT("Orinoco"), TEXT("Sitak"), TEXT("Tecumseh II") };
 	// Starbases orbit the home planets; the deep-space stations sit out beyond the planets, beside the nebulae.
 	const TCHAR* StationNames[] = { TEXT("Starbase 11"), TEXT("Starbase 6"), TEXT("Starbase 47"), TEXT("Starbase 24"), TEXT("Starbase 12"), TEXT("Starbase 74"), TEXT("Starbase 375"), TEXT("Starbase 234") };
 	const TCHAR* DeepSpaceNames[] = { TEXT("Deep Space Station K-7"), TEXT("Regula Station"), TEXT("Epsilon IX"), TEXT("Vanguard") };
@@ -26,7 +26,8 @@ namespace
 	{
 		const FString N(Name);
 		if (N == TEXT("Reliant") || N == TEXT("Saratoga") || N == TEXT("Valiant")) { return EStarshipClass::Miranda; }
-		if (N == TEXT("Hood") || N == TEXT("Potemkin") || N == TEXT("Lexington") || N == TEXT("Farragut")) { return EStarshipClass::Excelsior; }
+		if (N == TEXT("Hood") || N == TEXT("Potemkin") || N == TEXT("Lexington") || N == TEXT("Farragut") || N == TEXT("Melbourne") || N == TEXT("Repulse") || N == TEXT("Gage") || N == TEXT("Fearless") || N == TEXT("Berlin")) { return EStarshipClass::Excelsior; }
+		if (N == TEXT("Lantree") || N == TEXT("Brattain") || N == TEXT("Tecumseh") || N == TEXT("Shenandoah")) { return EStarshipClass::Miranda; }
 		return EStarshipClass::Constitution;
 	}
 
@@ -94,6 +95,25 @@ void ASpaceTraffic::PopulatePlanets(const TArray<TObjectPtr<APlanetBody>>& Plane
 	PopulateWith(List, Rng, true);
 }
 
+FString ASpaceTraffic::NextShipName()
+{
+	for (int32 Try = 0; Try < (int32)UE_ARRAY_COUNT(ShipNames); ++Try)
+	{
+		const FString N = FString::Printf(TEXT("USS %s"), ShipNames[ShipIndex++ % UE_ARRAY_COUNT(ShipNames)]);
+		bool bUsed = false; for (const TObjectPtr<ASpaceVessel>& V : Spawned) { bUsed |= V && V->GetDisplayName() == N; }
+		if (!bUsed) { return N; }
+	}
+	// The table is spent: the same names with a numeral, the first numeral no ship carries.
+	const int32 K = ShipIndex++;
+	const TCHAR* Base = ShipNames[K % UE_ARRAY_COUNT(ShipNames)];
+	for (int32 Suffix = 2; ; ++Suffix)
+	{
+		const FString N = FString::Printf(TEXT("USS %s %d"), Base, Suffix);
+		bool bUsed = false; for (const TObjectPtr<ASpaceVessel>& V : Spawned) { bUsed |= V && V->GetDisplayName() == N; }
+		if (!bUsed) { return N; }
+	}
+}
+
 void ASpaceTraffic::SpawnPatrolShip(FRandomStream& Rng, const FVector& Loc, const FVector& Home, double Patrol)
 {
 	UWorld* World = GetWorld();
@@ -103,10 +123,10 @@ void ASpaceTraffic::SpawnPatrolShip(FRandomStream& Rng, const FVector& Loc, cons
 	AProceduralStarship* Ship = World->SpawnActorDeferred<AProceduralStarship>(AProceduralStarship::StaticClass(), Xf, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
 	if (!Ship) { return; }
 	Ship->Seed = Rng.RandRange(1, 1 << 20);
-	const TCHAR* Name = ShipNames[ShipIndex++ % UE_ARRAY_COUNT(ShipNames)];
-	Ship->ShipClass = ClassForName(Name);
+	const FString Name = NextShipName();
+	Ship->ShipClass = ClassForName(*Name.RightChop(4));
 	Ship->SizeCm = SizeForClass(Ship->ShipClass, Rng);
-	Ship->VesselName = FString::Printf(TEXT("USS %s"), Name);
+	Ship->VesselName = Name;
 	const float Tint = Rng.FRandRange(0.55f, 0.72f);
 	Ship->HullColor = FLinearColor(Tint, Tint * Rng.FRandRange(0.98f, 1.04f), Tint * Rng.FRandRange(1.0f, 1.1f));
 	Ship->GlowColor = Rng.FRand() < 0.75f ? FLinearColor(0.35f, 0.6f, 1.0f) : FLinearColor(1.0f, 0.35f, 0.15f);
@@ -260,10 +280,10 @@ void ASpaceTraffic::SpawnStartShips()
 		AProceduralStarship* Ship = World->SpawnActorDeferred<AProceduralStarship>(AProceduralStarship::StaticClass(), Xf, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
 		if (!Ship) { continue; }
 		Ship->Seed = Rng.RandRange(1, 1 << 20);
-		const TCHAR* Name = ShipNames[(i + 9) % UE_ARRAY_COUNT(ShipNames)];
-		Ship->ShipClass = ClassForName(Name);
+		const FString Name = NextShipName();
+		Ship->ShipClass = ClassForName(*Name.RightChop(4));
 		Ship->SizeCm = SizeForClass(Ship->ShipClass, Rng);
-		Ship->VesselName = FString::Printf(TEXT("USS %s"), Name);
+		Ship->VesselName = Name;
 		Ship->GlowColor = FLinearColor(0.35f, 0.6f, 1.0f);
 		Ship->HomeLocation = Base;
 		Ship->PatrolRadiusCm = StartSpreadCm * 1.5;

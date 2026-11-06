@@ -173,6 +173,7 @@ void UShipSystemsComponent::TickRoster(float DeltaTime)
 		for (TActorIterator<ASpaceVessel> It(GetWorld()); It; ++It)
 		{
 			if (Cast<AActor>(*It) == Cast<AActor>(S)) { continue; }
+			if (const AProceduralStarship* PS = Cast<AProceduralStarship>(*It)) { if (PS->IsAway()) { continue; } }
 			const FString N = It->GetDisplayName();
 			if (FVector::Dist(It->GetActorLocation(), Here) < 3.0e7) { NearbyNames.AddUnique(N); }
 			if (bBind) { (Cast<ASpaceStation>(*It) ? Stations : Ships).Add(N); }

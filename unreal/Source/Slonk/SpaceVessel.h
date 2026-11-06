@@ -26,6 +26,9 @@ public:
 	// IFarBody
 	virtual void SetBeyondHorizon(bool bBeyond) override;
 	virtual bool IsBeyondHorizon() const override { return bBeyondHorizon; }
+	/** Hidden for the horizon, or for a reason of the subclass's own (a run out of the system): the two never undo each other. */
+	void ApplyHidden();
+	virtual bool WantsHidden() const { return false; }
 
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
@@ -240,6 +243,11 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Ship|Warp")
 	EShipWarpPhase GetWarpPhase() const { return WarpPhase; }
 
+	/** Cut whatever she is doing (a warp in progress included) and put her at Loc, patrolling about it. */
+	void RecallTo(const FVector& Loc, double Patrol);
+	/** Out of the system on a long run: hidden, unticked, back at home when it returns. */
+	void SetAway(bool bAway);
+	bool IsAway() const { return bAwayRun; }
 	/** Ships warp between stations on their own; off for a ship that should stay put. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ship|Warp")
 	bool bCanWarp = true;
@@ -285,6 +293,8 @@ protected:
 private:
 	EStarshipClass BuiltClass = EStarshipClass::Constitution;
 	void PickWaypoint();
+	bool bAwayRun = false;
+	virtual bool WantsHidden() const override { return bAwayRun; }
 	/** Patrol centre and current waypoint in universe space (they survive floating-origin rebases). */
 	FVector HomeUniverse = FVector::ZeroVector;
 	FVector WaypointUniverse = FVector::ZeroVector;

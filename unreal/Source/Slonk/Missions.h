@@ -11,10 +11,10 @@
 #include "Missions.generated.h"
 
 UENUM(BlueprintType)
-enum class EMissionKind : uint8 { Survey = 0, Rescue, Diplomacy, Delivery, Anomaly, Medical, Patrol, Contact, Derelict, Smuggler, Count UMETA(Hidden) };
+enum class EMissionKind : uint8 { Survey = 0, Rescue, Diplomacy, Delivery, Anomaly, Medical, Patrol, Contact, Derelict, Smuggler, Support, Assist, Count UMETA(Hidden) };
 
 UENUM(BlueprintType)
-enum class EMissionSource : uint8 { Starfleet = 0, Starbase, Event, Count UMETA(Hidden) };
+enum class EMissionSource : uint8 { Starfleet = 0, Starbase, Event, Fleet, Count UMETA(Hidden) };
 
 UENUM(BlueprintType)
 enum class EMissionState : uint8 { Offered = 0, Active, Completed, Failed, Abandoned, Expired, Count UMETA(Hidden) };
@@ -125,6 +125,9 @@ struct FMissionOutcome
 	UPROPERTY(BlueprintReadOnly) bool bMissionOver = false;
 };
 
+struct FFleetRequest;
+class UFleetSubsystem;
+
 UCLASS()
 class SLONK_API USlonkMissionSaveGame : public USaveGame
 {
@@ -168,6 +171,10 @@ public:
 	/** Dev: an order, a posting or an event of this kind, now. */
 	/** Returns the new id; -1 when nothing could be made (no target in reach), -2 when the kind brings its own hull and so only happens as an event. */
 	int32 DevSpawn(EMissionKind Kind, EMissionSource Source);
+	/** The fleet ship's own work ended (done or failed): whatever of ours was on it closes. */
+	void FleetWorkOver(int32 MissionId, bool bTheirSuccess);
+	/** A fleet ship's request or offer is withdrawn (she managed, she is lost, she was recalled): closed, nothing owed. */
+	void FleetWithdraw(int32 MissionId, const FString& Why);
 
 	// ---- queries ----
 	const TArray<FMission>& GetMissions() const { return Missions; }
@@ -193,11 +200,17 @@ public:
 	static bool ParseKind(const FString& Word, EMissionKind& Out);
 
 	UFUNCTION(BlueprintCallable, Category = "Missions") void Reset();
+	/** Tests: wired to these systems directly, no save slot, a fixed seed. */
+	void InitForTest(UCrewRosterSubsystem* InRoster, UFleetSubsystem* InFleet);
 	void Save();
 
 private:
 	void Load();
 	UCrewRosterSubsystem* Roster() const;
+	UFleetSubsystem* Fleet() const;
+	/** A fleet ship's request for support, or its work nearby, becomes a mission on the board. */
+	void IssueFleetMission(const FFleetRequest& Q);
+	void OfferAssists();
 	class AStarshipPawn* CrewedShip() const;
 	void Report(const FString& Text, const FLinearColor& Color = FLinearColor(0.75f, 0.9f, 1.f), ECrewDepartment From = ECrewDepartment::Command);
 	double Stardate() const;
@@ -237,6 +250,11 @@ private:
 	/** A name no open or closed mission has used. */
 	FString UniqueName(FRandomStream& R, TFunction<FString()> Make) const;
 	bool bSaveWanted = false;
+	bool bNoDisk = false;
+	TWeakObjectPtr<UCrewRosterSubsystem> RosterOverride;
+	TWeakObjectPtr<UFleetSubsystem> FleetOverride;
 	float SaveDelaySeconds = 0.f;
+	/** The clock's last reading, to notice it going back (a new complement starts it over). */
+	double LastClockHours = -1.0;
 	static const TCHAR* SlotName;
 };

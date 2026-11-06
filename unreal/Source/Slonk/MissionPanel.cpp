@@ -20,6 +20,12 @@
 #include "Components/Button.h"
 #include "Engine/GameInstance.h"
 
+UFleetSubsystem* UMissionPanel::Fleet() const
+{
+	const UWorld* W = GetWorld();
+	return W && W->GetGameInstance() ? W->GetGameInstance()->GetSubsystem<UFleetSubsystem>() : nullptr;
+}
+
 UMissionSubsystem* UMissionPanel::Missions() const
 {
 	const UWorld* W = GetWorld();
@@ -34,7 +40,7 @@ void UMissionPanel::Say(const FString& Text, bool bGood, float Seconds) const
 void UMissionPanel::BuildContent()
 {
 	AddSidebarButton(TEXT("Close"), Lcars::Orange, [this]() { Close(); });
-	ShowButton = AddSidebarButton(TEXT("Show: Board"), Lcars::Gold, [this]() { Show = (Show + 1) % 3; });
+	ShowButton = AddSidebarButton(TEXT("Show: Board"), Lcars::Gold, [this]() { Show = (Show + 1) % 4; });
 	AddSidebarButton(TEXT("Accept"), Lcars::Peach, [this]()
 	{
 		UMissionSubsystem* M = Missions(); if (!M) { return; }
@@ -55,8 +61,11 @@ void UMissionPanel::BuildContent()
 	AddSidebarButton(TEXT("Set Course"), Lcars::Sky, [this]()
 	{
 		UMissionSubsystem* M = Missions(); const FMission* Sel = M ? M->Find(SelectedId) : nullptr;
-		if (!Sel || Sel->TargetName.IsEmpty() || Sel->TargetKind == EMissionTarget::None) { Say(TEXT("No destination for that one"), false); return; }
-		if (AStarshipHUD* H = GetHUD()) { Say(H->SetNavTargetByName(Sel->TargetName) ? FString::Printf(TEXT("Nav target: %s"), *Sel->TargetName) : FString::Printf(TEXT("%s is not on the chart yet"), *Sel->TargetName), true); }
+		FString Dest;
+		if (Show == 3) { Dest = SelectedShip; }
+		else if (Sel && !Sel->TargetName.IsEmpty() && Sel->TargetKind != EMissionTarget::None) { Dest = Sel->TargetName; }
+		if (Dest.IsEmpty()) { Say(TEXT("No destination for that one"), false); return; }
+		if (AStarshipHUD* H = GetHUD()) { Say(H->SetNavTargetByName(Dest) ? FString::Printf(TEXT("Nav target: %s"), *Dest) : FString::Printf(TEXT("%s is not on the chart (out of the system, or away)"), *Dest), true); }
 	});
 	AddSidebarButton(TEXT("Crew"), Lcars::Tan, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UCrewPanel>(); } });
 	AddSidebarButton(TEXT("Main Menu"), Lcars::Lavender, [this]() { if (USlonkUIRoot* UI = GetUIRoot()) { Close(); UI->PushMenu<UMainMenuPanel>(); } });
@@ -92,13 +101,14 @@ void UMissionPanel::Refresh()
 {
 	UMissionSubsystem* M = Missions();
 	if (!M) { return; }
-	if (ShowButton) { if (UTextBlock* T = Cast<UTextBlock>(ShowButton->GetChildAt(0))) { T->SetText(FText::FromString(Show == 0 ? TEXT("SHOW: BOARD") : Show == 1 ? TEXT("SHOW: INBOX") : TEXT("SHOW: LOG"))); } }
+	if (ShowButton) { if (UTextBlock* T = Cast<UTextBlock>(ShowButton->GetChildAt(0))) { T->SetText(FText::FromString(Show == 0 ? TEXT("SHOW: BOARD") : Show == 1 ? TEXT("SHOW: INBOX") : Show == 2 ? TEXT("SHOW: LOG") : TEXT("SHOW: FLEET"))); } }
 	if (Show == 1 && Show != LastShow && M->GetInbox().IsValidIndex(SelectedMessage)) { SelectedId = M->GetInbox()[SelectedMessage].MissionId; }   // the pane and the sidebar act on the same mission
 	const FMission* Sel = M->Find(SelectedId);
 	const int32 Here = Sel ? (M->IsAtTarget(*Sel) ? 1 : 0) : -1;
-	if (M->GetRevision() != LastRevision || Show != LastShow || SelectedId != LastSelected || SelectedMessage != LastMessage || Here != LastHere)
+	const int32 FleetRev = Fleet() ? Fleet()->GetRevision() : -1;
+	if (M->GetRevision() != LastRevision || Show != LastShow || SelectedId != LastSelected || SelectedMessage != LastMessage || Here != LastHere || FleetRev != LastFleetRevision || SelectedShip != LastShip)
 	{
-		LastRevision = M->GetRevision(); LastShow = Show; LastSelected = SelectedId; LastMessage = SelectedMessage; LastHere = Here;
+		LastRevision = M->GetRevision(); LastShow = Show; LastSelected = SelectedId; LastMessage = SelectedMessage; LastHere = Here; LastFleetRevision = FleetRev; LastShip = SelectedShip;
 		FillList(); FillFile();
 	}
 }
@@ -119,6 +129,24 @@ void UMissionPanel::FillList()
 		RowButtons.Add(B);
 		if (UScrollBoxSlot* Sl = Cast<UScrollBoxSlot>(ListBox->AddChild(B))) { Sl->SetPadding(FMargin(0.f, 1.f, 0.f, 1.f)); }
 	};
+	if (Show == 3)
+	{
+		UFleetSubsystem* F = Fleet();
+		TArray<const FFleetShip*> Ships; if (F) { for (const FFleetShip& S : F->GetShips()) { Ships.Add(&S); } }
+		TSet<const FFleetShip*> Near; if (F) { Near.Append(F->Nearby()); }
+		Ships.Sort([&](const FFleetShip& A, const FFleetShip& B) { const bool NA = Near.Contains(&A), NB = Near.Contains(&B); return NA != NB ? NA : A.Name < B.Name; });
+		Head(FString::Printf(TEXT("The fleet: %d ships"), Ships.Num()));
+		if (Ships.Num() == 0) { ListBox->AddChild(Lcars::MakeText(WidgetTree, TEXT("No other ships known yet."), 13.f, Lcars::Dim, false, false)); }
+		for (const FFleetShip* S : Ships)
+		{
+			const bool bNear = Near.Contains(S);
+			const FString T = FString::Printf(TEXT("%s  %s  %s%s  regard %+.0f"), *S->Name, *S->ShipClass, *S->TaskText(), bNear ? TEXT("  (in range)") : TEXT(""), S->Relation * 100.f);
+			const FLinearColor Col = S->bLost ? Lcars::Salmon : S->Mission.Trouble != EFleetTrouble::None ? Lcars::Orange : bNear ? Lcars::Gold : S->Mission.IsActive() ? Lcars::Sky : Lcars::Lavender;
+			const FString Name = S->Name;
+			Row(T, Col, Name == SelectedShip, [this, Name]() { SelectedShip = Name; });
+		}
+		return;
+	}
 	if (Show == 1)
 	{
 		const TArray<FStarfleetMessage>& Inbox = M->GetInbox();
@@ -157,6 +185,12 @@ void UMissionPanel::FillFile()
 	if (!M) { return; }
 	auto Line = [&](const FString& T, float Size = 13.f, const FLinearColor& C = FLinearColor::White, float Pad = 0.f) { UTextBlock* B = AddLine(FileBox, T, Size, C, false, false, Pad); if (B) { B->SetAutoWrapText(true); } };
 	auto Heading = [&](const FString& T) { AddLine(FileBox, T, 13.f, Lcars::Peach, true, true, 10.f); };
+	if (Show == 3)
+	{
+		UFleetSubsystem* F = Fleet(); const FFleetShip* S = F ? F->Find(SelectedShip) : nullptr;
+		if (!S) { Line(TEXT("Select a ship."), 14.f, Lcars::Dim); } else { FillFleetFile(*S); }
+		return;
+	}
 	if (Show == 1 && M->GetInbox().IsValidIndex(SelectedMessage))
 	{
 		const FStarfleetMessage& Msg = M->GetInbox()[SelectedMessage];
@@ -207,4 +241,38 @@ void UMissionPanel::FillFile()
 	else if (Ms->State == EMissionState::Offered) { Line(Ms->Source == EMissionSource::Starbase ? FString::Printf(TEXT("Posted at %s. Accept takes it on."), *Ms->PostedAt) : TEXT("Starfleet's orders. Accept takes them on; leaving them to lapse is noticed."), 13.f, Lcars::Gold, 8.f); }
 	if (Ms->ScienceEarned > 0) { Line(FString::Printf(TEXT("Science earned: %d points."), Ms->ScienceEarned), 13.f, Lcars::Gold, 4.f); }
 	if (Ms->Log.Num() > 0) { Heading(TEXT("Log")); for (const FString& L : Ms->Log) { Line(L, 13.f, L.StartsWith(TEXT("      ")) ? Lcars::Dim : FLinearColor::White); } }
+}
+
+void UMissionPanel::FillFleetFile(const FFleetShip& S)
+{
+	UFleetSubsystem* F = Fleet();
+	UCrewRosterSubsystem* R = GetWorld() && GetWorld()->GetGameInstance() ? GetWorld()->GetGameInstance()->GetSubsystem<UCrewRosterSubsystem>() : nullptr;
+	auto Line = [&](const FString& T, float Size = 13.f, const FLinearColor& C = FLinearColor::White, float Pad = 0.f) { UTextBlock* B = AddLine(FileBox, T, Size, C, false, false, Pad); if (B) { B->SetAutoWrapText(true); } };
+	auto Heading = [&](const FString& T) { AddLine(FileBox, T, 13.f, Lcars::Peach, true, true, 10.f); };
+	AddLine(FileBox, S.Name, 20.f, Lcars::Peach, true, false);
+	Line(FString::Printf(TEXT("%s class, out of %s, %s. Captain %s commanding. %d aboard, %d lost; morale %d%%, condition %d%%. Their regard for us: %+.0f."), *S.ShipClass, *S.HomeStation, *S.SystemName, *S.Captain.FullName(), S.Complement, S.Lost, FMath::RoundToInt(S.Morale * 100.f), FMath::RoundToInt(S.Condition * 100.f), S.Relation * 100.f), 13.f, Lcars::Dim);
+	if (S.bLost) { Line(TEXT("Lost with all hands."), 14.f, Lcars::Salmon, 6.f); }
+	Heading(S.Mission.IsActive() ? TEXT("Mission") : TEXT("On station"));
+	if (S.Mission.IsActive())
+	{
+		Line(FString::Printf(TEXT("%s: %s%s."), *S.Mission.Title, *S.TaskText(), S.Mission.bFar ? TEXT(" (out of the system)") : TEXT("")), 14.f, FLinearColor::White);
+		if (S.Mission.Trouble != EFleetTrouble::None) { Line(FString::Printf(TEXT("In trouble for %.0f h: %s. %s"), S.Mission.TroubleHours, *S.Mission.TroubleText, S.Mission.SupportMissionId >= 0 ? TEXT("Her call for support is on the board.") : TEXT("")), 13.f, Lcars::Orange, 4.f); }
+		else if (S.Mission.AssistMissionId >= 0) { Line(TEXT("A way to lend a hand is on the board."), 13.f, Lcars::Gold, 4.f); }
+		else if (S.Mission.bAssisted) { Line(TEXT("We lent a hand."), 13.f, Lcars::Gold, 4.f); }
+	}
+	else { Line(FString::Printf(TEXT("Alongside %s; %d missions done, %d failed."), *S.HomeStation, S.Done, S.Failed), 13.f, FLinearColor::White); }
+	Heading(TEXT("Senior staff"));
+	Line(FString::Printf(TEXT("%s, commanding (%s)"), *S.Captain.Styled(), *S.Captain.Species), 13.f, Lcars::Peach);
+	for (const FFleetPerson& P : S.Officers) { const FString Ties = UFleetSubsystem::TiesText(P, R); Line(FString::Printf(TEXT("%s, %s%s"), *P.Person.Styled(), *P.Person.Posting, Ties.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(" (%s)"), *Ties)), 13.f, FLinearColor::White); }
+	if (S.Notables.Num() > 0)
+	{
+		Heading(TEXT("People we know aboard"));
+		for (const FFleetPerson& P : S.Notables)
+		{
+			const FString Ties = UFleetSubsystem::TiesText(P, R);
+			Line(FString::Printf(TEXT("%s, %s department; %s%s"), *P.Person.Styled(), *UCrewRosterSubsystem::DepartmentName(P.Person.Department).ToLower(), *P.Origin, Ties.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(" (%s)"), *Ties)), 13.f, FLinearColor::White);
+		}
+		Line(TEXT("ship fleet request <ship> <name> asks for one of them; ship fleet transfer <name> <ship> sends one of ours."), 12.f, Lcars::Dim, 4.f);
+	}
+	if (S.Log.Num() > 0) { Heading(TEXT("Log")); for (int32 i = FMath::Max(0, S.Log.Num() - 12); i < S.Log.Num(); ++i) { Line(S.Log[i], 13.f, Lcars::Dim); } }
 }
