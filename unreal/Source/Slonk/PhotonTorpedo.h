@@ -22,7 +22,11 @@ public:
 	APhotonTorpedo();
 
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
 	virtual void Tick(float DeltaTime) override;
+
+	/** Torpedoes in flight anywhere (anyone's): they fly in real seconds, so the clock holds x1 while any is out. */
+	static int32 NumInFlight() { return InFlight; }
 
 	/**
 	 * Launch along the tube's direction. The torpedo runs straight for StraightRunSeconds, then turns toward the
@@ -96,6 +100,7 @@ protected:
 private:
 	float Age = 0.f;
 	bool bDetonated = false;
+	static int32 InFlight;
 	TWeakObjectPtr<AActor> SeekTarget;
 	FVector SeekDirection = FVector::ZeroVector;
 	bool bSeeking = false;

@@ -3478,6 +3478,9 @@ void AStarshipPawn::TickClock(float DeltaTime)
 	if (Systems && Systems->GetAlert() == EAlertState::Red) { Low(1.f, TEXT("red alert")); }
 	if (Systems && Systems->IsUnderFire()) { Low(1.f, TEXT("under fire")); }
 	if (Weapons && Weapons->IsFiringPhasers()) { Low(1.f, TEXT("phasers")); }
+	// A torpedo flies in real seconds (the projectile movement, the seek, the fuse): at x60 the ship would overrun
+	// her own shot and a target would outrun it, so any torpedo out, anyone's, holds the clock.
+	if (APhotonTorpedo::NumInFlight() > 0) { Low(1.f, TEXT("torpedoes in flight")); }
 	if (WarpDrive && WarpDrive->IsWarpEngaged() && WarpDrive->GetState() != EWarpState::AtWarp) { Low(1.f, TEXT("warp transition")); }
 	if (Movement && Movement->bLanded) { Low(1.f, TEXT("landed")); }
 	else if (Movement && Movement->AltitudeAGLCm >= 0.0 && Movement->AltitudeAGLCm < 2.0e7) { Low(1.f, TEXT("in atmosphere")); }

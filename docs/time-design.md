@@ -30,8 +30,8 @@ distances involved.
   it would speed the presentation too, and the movement component caps a frame at 0.1 s so a dilated frame has to
   be integrated as one long simulation step anyway.
 - **Holds.** The possessed pawn reports each frame what the situation allows (`Allow(Cap, Why)`): red alert,
-  under fire, phasers firing, the tractor beam, a warp charge, jump or drop in progress, landed or in atmosphere
-  all hold ×1; a body or station the ship is closing on holds the scale to the square of its time away at the
+  under fire, phasers firing, any torpedo in flight (they fly in real seconds, and at ×60 the ship would overrun
+  her own shot), the tractor beam, a warp charge, jump or drop in progress, landed or in atmosphere all hold ×1; a body or station the ship is closing on holds the scale to the square of its time away at the
   closing rate over ten seconds (ten real seconds away holds ×1, a hundred ×100). The square matters: a hold
   proportional to the distance makes every approach an exponential tail that never arrives, while the square
   tightens late and an approach takes seconds. The shuttle holds ×1 (her launch, dock and landing are real
