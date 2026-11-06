@@ -1009,6 +1009,7 @@ void AProceduralStarship::WarpTo(const FVector& DestinationWorld)
 	// Her cruise, by the stock curve: the trip takes the time the distance says, in the world's seconds, which is
 	// what the fleet's record counts and what the player's dilation makes watchable.
 	WarpSpeed = UWarpDriveComponent::SpeedForFactor(CruiseWarpFactor);
+	// Provisional: the spool is the stretch's real seconds, and BeginTravel stamps the leg when it actually starts.
 	WarpDepartTime = SimNow() + StretchSeconds;
 	WarpArriveTime = WarpDepartTime + Dist / WarpSpeed;
 	WarpPhase = EShipWarpPhase::Spooling;
@@ -1036,6 +1037,10 @@ bool AProceduralStarship::IsRelativisticView() const
 
 void AProceduralStarship::BeginTravel()
 {
+	// The leg runs in the world's seconds from now: the spool before it was the stretch's real time, which at x60
+	// would otherwise have been over before the stretch played.
+	WarpDepartTime = SimNow();
+	WarpArriveTime = WarpDepartTime + FVector::Dist(WarpStartUniverse, WarpEndUniverse) / FMath::Max(WarpSpeed, 1.0);
 	WarpPhase = EShipWarpPhase::Travelling;
 	PhaseTimer = 0.f;
 	SetMainStretch(1.f, 1.f);
@@ -1081,7 +1086,8 @@ void AProceduralStarship::TickWarp(float DeltaTime)
 	switch (WarpPhase)
 	{
 	case EShipWarpPhase::Spooling:
-		if (Now >= WarpDepartTime)
+		// The stretch animates on PhaseTimer (real seconds, like every presentation): wait for it, not the clock.
+		if (PhaseTimer >= StretchSeconds || IsRelativisticView())
 		{
 			BeginTravel();
 		}

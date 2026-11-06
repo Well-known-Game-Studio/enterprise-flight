@@ -3470,7 +3470,9 @@ void AStarshipPawn::ToggleAutopilot()
 void AStarshipPawn::TickClock(float DeltaTime)
 {
 	UGameClockSubsystem* Clock = UGameClockSubsystem::Get(this);
-	if (!Clock || !IsPlayerControlled()) { return; }   // nobody speaking for the clock (on foot, the shuttle): x1
+	if (!Clock || !IsPlayerControlled()) { return; }   // nobody speaking for the clock (on foot): x1
+	// The shuttle is flown in real time: her launch and dock sequences, the ground and the pads are real seconds.
+	if (IsShuttle()) { Clock->Allow(1.f, TEXT("aboard the shuttle")); return; }
 	float Cap = Clock->MaxScale; FString Why;
 	auto Low = [&Cap, &Why](float C, const FString& W) { if (C < Cap) { Cap = C; Why = W; } };
 	if (Systems && Systems->GetAlert() == EAlertState::Red) { Low(1.f, TEXT("red alert")); }

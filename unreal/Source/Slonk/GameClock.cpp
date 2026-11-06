@@ -16,7 +16,7 @@ UGameClockSubsystem* UGameClockSubsystem::Get(const UObject* WorldContext)
 float UGameClockSubsystem::Sim(const UObject* WorldContext, float RealSeconds)
 {
 	UGameClockSubsystem* C = Get(WorldContext);
-	return C ? RealSeconds * C->GetScale() : RealSeconds;
+	return C ? FMath::Min(RealSeconds, MaxFrameSeconds) * C->GetScale() : RealSeconds;
 }
 
 float UGameClockSubsystem::ScaleOf(const UObject* WorldContext)
@@ -43,7 +43,8 @@ float UGameClockSubsystem::Ramp(float Current, float Target, float RealSeconds)
 {
 	Current = FMath::Max(Current, 1.f); Target = FMath::Max(Target, 1.f);
 	if (FMath::IsNearlyEqual(Current, Target, 1e-3f)) { return Target; }
-	// Log space, so x1 to x10 takes as long as x60 to x600; down is quick, a hold is there for a reason.
+	// Log space, so x1 to x10 takes as long as x60 to x600; down is quick (a hold does not come through here at
+	// all: Frame() clamps the scale to it the frame it is said).
 	const float Rate = Target < Current ? 5.f : 2.f;   // decades per second
 	const float L = FMath::Log2(Current) / FMath::Log2(10.f), T = FMath::Log2(Target) / FMath::Log2(10.f);
 	const float Next = FMath::FInterpConstantTo(L, T, RealSeconds, Rate);
@@ -106,10 +107,12 @@ void UGameClockSubsystem::Frame()
 	if (LastFrame == GFrameCounter) { return; }
 	LastFrame = GFrameCounter;
 	const UWorld* W = GetWorld();
-	const float Dt = W ? FMath::Min(W->GetDeltaSeconds(), 0.1f) : 0.f;
+	const float Dt = W ? FMath::Min(W->GetDeltaSeconds(), MaxFrameSeconds) : 0.f;
 	// Holds and drives are said during a frame's ticks and govern the next: with nobody speaking, x1.
-	const float Hold = CapFrame + 1 >= GFrameCounter ? Cap : 1.f;
+	const float Hold = FMath::Clamp(CapFrame + 1 >= GFrameCounter ? Cap : 1.f, 1.f, MaxScale);
 	const float Want = IsDriven() ? Driven : Requested;
-	Effective = Ramp(Effective, FMath::Clamp(FMath::Min(Want, Hold), 1.f, MaxScale), Dt);
+	// The request and the drive are ramped toward; the hold clamps at once. A ramp down from x3600 toward a x1 hold
+	// would still run the next frame at x2971, fifty cruise seconds in one step past a station ten seconds away.
+	Effective = FMath::Min(Ramp(Effective, FMath::Clamp(FMath::Min(Want, Hold), 1.f, MaxScale), Dt), Hold);
 	SimSeconds += Dt * Effective;
 }

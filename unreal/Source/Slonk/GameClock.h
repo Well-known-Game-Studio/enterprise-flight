@@ -7,7 +7,8 @@
 
 /** Simulation time. At x1 a ship's second is a real second; the player asks for a scale (8 and 9, `ship clock`),
  *  the possessed pawn says each frame what the situation allows (a fight, a body close, a warp transition hold x1),
- *  and the autopilot can drive the scale for a leg. Everything that models the world asks this for its seconds;
+ *  and the autopilot can drive the scale for a leg. The request and the drive are ramped toward; a hold applies at
+ *  once, the scale in effect never exceeds it. Everything that models the world asks this for its seconds;
  *  everything presentational keeps the frame's own. */
 UCLASS()
 class SLONK_API UGameClockSubsystem : public UWorldSubsystem
@@ -18,8 +19,11 @@ public:
 	virtual bool DoesSupportWorldType(const EWorldType::Type WorldType) const override;
 
 	static UGameClockSubsystem* Get(const UObject* WorldContext);
-	/** This frame's simulation seconds for RealSeconds of frame time (RealSeconds back when there is no clock). */
+	/** This frame's simulation seconds for RealSeconds of frame time, the frame clamped to MaxFrameSeconds as the
+	 *  clock's own advance is, so a hitch moves every consumer by the same world time (unscaled when there is no clock). */
 	static float Sim(const UObject* WorldContext, float RealSeconds);
+	/** The longest frame the clock advances by: a hitch is one long step of this much, never a fling. */
+	static constexpr float MaxFrameSeconds = 0.1f;
 	/** The scale in effect this frame (ramped toward the smaller of the request or drive and the hold). */
 	static float ScaleOf(const UObject* WorldContext);
 
@@ -43,7 +47,8 @@ public:
 	static const TArray<float>& Presets();
 	/** The next step through the presets from a scale (pure, for the tests). */
 	static float Step(float From, int32 Direction);
-	/** One frame of the ramp: through log space, a decade in about half a second up, a fifth of one down (pure). */
+	/** One frame of the ramp toward a request or drive: through log space, a decade in about half a second up, a
+	 *  fifth of one down (pure). A hold is not ramped to, it clamps. */
 	static float Ramp(float Current, float Target, float RealSeconds);
 	static FString Format(float Scale);
 

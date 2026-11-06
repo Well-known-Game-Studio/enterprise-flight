@@ -16,7 +16,11 @@ distances involved.
 - **One simulation clock.** `UGameClockSubsystem` (a world subsystem) owns a time scale and hands out simulation
   seconds. At ×1 a ship's second is a real second: the roster's hour is 3600 simulation seconds, and a day aboard
   is a day. The scale the player asks for (`Requested`) is clamped to [1, `MaxScale`] (3600); the effective scale
-  ramps toward its target through log space, a decade in about half a second going up and faster coming down.
+  ramps toward the request or the autopilot's drive through log space, a decade in about half a second going up
+  and faster coming down, and a hold clamps it at once: a ramp down from ×3600 toward a ×1 hold would still run
+  the next frame at ×2971, fifty cruise seconds in one step past a station ten seconds away. `Sim()` clamps the
+  frame it scales to the same tenth of a second as the clock's own advance, so a hitch moves every consumer by the
+  same world time.
 - **Two kinds of consumer.** Everything that models the world takes simulation seconds (`Clock->Sim(RealDt)`):
   the hull's translation (impulse and warp), the orbit hold, the autopilot's distances, the traffic's own
   movement and warp legs, the fleet hulls, repairs, shields, life support, sickbay, resupply, the roster, the
@@ -30,9 +34,9 @@ distances involved.
   all hold ×1; a body or station the ship is closing on holds the scale to the square of its time away at the
   closing rate over ten seconds (ten real seconds away holds ×1, a hundred ×100). The square matters: a hold
   proportional to the distance makes every approach an exponential tail that never arrives, while the square
-  tightens late and an approach takes seconds. With nobody allowing anything (on foot, aboard the shuttle) the
-  clock holds ×1. The effective scale is the smaller of the request and the hold, so a request survives a fight
-  and returns after it.
+  tightens late and an approach takes seconds. The shuttle holds ×1 (her launch, dock and landing are real
+  seconds), and with nobody allowing anything (on foot) the clock holds ×1. The effective scale is the smaller of
+  the request and the hold, so a request survives a fight and returns after it.
 - **The autopilot drives the scale.** On a warp leg it picks a cruise factor (the drive's setting, raised if the
   leg would otherwise take more than a minute of real time at the maximum scale, and never past 9.9 unless the
   player already set transwarp). At its first frame at warp it plans the leg: the scale that makes the whole leg
@@ -68,6 +72,12 @@ holds take it to ×1 whenever something is happening. ×1 is a setting away for 
   us" as well as "within the drop window", and the drop window scales with the simulation step. Doubles and the
   floating origin carry the magnitude.
 - A hold set during one frame's ticks applies from the next frame: the pawn ticks after the movement component.
+  So the movement's proximity governor protects the frame itself: its approach interval is at least two simulation
+  steps (a dilated frame covers at most half the distance left to a body) and the unswept warp move is bounded by
+  that distance, whatever the floor speed times the step comes to.
+- The traffic's spool before a leg is the stretch's real seconds (`PhaseTimer`); the leg's depart and arrive
+  timestamps are set in the world's seconds when travel begins, not when the leg is ordered, or at ×60 the hull is
+  hidden before the stretch plays.
 - The roster's `SecondsPerShipHour` is 3600; the one formula that converts seconds to hours (a head of department
   hurt in a hit) reads it.
 - Saves and the headless tests work in hours and never saw the scale.

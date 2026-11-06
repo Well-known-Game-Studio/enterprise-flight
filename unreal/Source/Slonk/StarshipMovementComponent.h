@@ -243,7 +243,10 @@ public:
 
 	/**
 	 * Near a planet or star, closing speed is capped so the body fills the view over seconds instead of
-	 * being crossed in a frame: cap = max(distance to surface / ApproachSeconds, MinApproachSpeed).
+	 * being crossed in a frame: cap = max(distance to surface / ApproachSeconds, MinApproachSpeed). The divisor is
+	 * at least two simulation steps, so a dilated frame (ten seconds of the world at x600) covers at most half the
+	 * distance left, and the unswept warp move is bounded by that distance besides: the clock's own hold for a body
+	 * is said by the pawn and applies from the next frame, so this frame has to protect itself.
 	 * At warp the cap slows the ship; once it falls below full impulse the warp drive drops out.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Proximity")
@@ -267,6 +270,8 @@ public:
 	/** Current closing-speed cap toward the nearest body (cm/s), or 0 when no body is near. */
 	UPROPERTY(BlueprintReadOnly, Category = "Proximity")
 	double ProximityCap = 0.0;
+	/** Distance from the hull to that body's surface this frame (0 when none, or inside it). */
+	double ProximitySurface = 0.0;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Proximity")
 	FString ProximityBodyName;
@@ -332,7 +337,7 @@ public:
 private:
 	double GroundVerticalRate(double AltitudeCm) const;
 	/** Evaluate every body against the heading; returns the unit direction to the governing body (zero if none threatens). */
-	FVector UpdateProximity(const FVector& Here, const FVector& Dir);
+	FVector UpdateProximity(const FVector& Here, const FVector& Dir, float SimDt);
 	void ApplyTerrainFloor(float DeltaTime);
 	/** Settle on the ground under the craft: skids on the slope, heading kept, position remembered in the planet's frame. */
 	void Land(class APlanetBody* Body, const FVector& Centre, const FVector& Radial, double SurfR);

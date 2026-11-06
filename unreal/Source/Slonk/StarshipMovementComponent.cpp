@@ -187,7 +187,7 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 	// closing rate never exceeds the cap (scaling keeps the heading; clamping one axis bled thrust sideways).
 	{
 		const FVector Dir = Velocity.GetSafeNormal();
-		const FVector ToBody = UpdateProximity(Here, Dir);
+		const FVector ToBody = UpdateProximity(Here, Dir, SimDt);
 		if (!ToBody.IsNearlyZero())
 		{
 			const double Closing = FVector::DotProduct(Velocity, ToBody);
@@ -195,6 +195,17 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 			{
 				Velocity *= ProximityCap / Closing;
 				bProximityLimited = true;
+			}
+			// The unswept warp move never reaches the surface in one step, whatever the step: the floor speed times
+			// a dilated frame can be more than what is left (the sweep and the terrain floor stop the impulse move).
+			if (bWarpActive && ProximitySurface > 0.0)
+			{
+				const double Step = FVector::DotProduct(Velocity, ToBody) * SimDt;
+				if (Step > ProximitySurface * 0.5)
+				{
+					Velocity *= ProximitySurface * 0.5 / Step;
+					bProximityLimited = true;
+				}
 			}
 		}
 	}
@@ -419,10 +430,11 @@ void UStarshipMovementComponent::ClearOrbitHold()
 	OrbitBodyName.Empty();
 }
 
-FVector UStarshipMovementComponent::UpdateProximity(const FVector& Here, const FVector& Dir)
+FVector UStarshipMovementComponent::UpdateProximity(const FVector& Here, const FVector& Dir, float SimDt)
 {
 	ProximityBody = nullptr;
 	ProximityCap = 0.0;
+	ProximitySurface = 0.0;
 	ProximityBodyName.Empty();
 	if (!bProximityGovernor)
 	{
@@ -441,8 +453,11 @@ FVector UStarshipMovementComponent::UpdateProximity(const FVector& Here, const F
 	}
 	// Among the bodies our straight-line path would pass through (within ThreatRadii), keep the tightest cap.
 	FVector BestDir = FVector::ZeroVector;
-	double BestCap = TNumericLimits<double>::Max();
+	double BestCap = TNumericLimits<double>::Max(), BestSurface = 0.0;
 	AActor* BestBody = nullptr;
+	// The approach interval is at least two steps of the world's time, so one dilated frame covers at most half of
+	// what is left; at x1 a frame is a sixtieth and the three seconds govern as before.
+	const double Approach = FMath::Max((double)FMath::Max(ApproachSeconds, 0.5f), 2.0 * SimDt);
 	for (const FProximityCandidate& C : ProximityCandidates)
 	{
 		AActor* Body = C.Body.Get();
@@ -472,10 +487,11 @@ FVector UStarshipMovementComponent::UpdateProximity(const FVector& Here, const F
 				continue; // the path misses it
 			}
 		}
-		const double Cap = FMath::Max(Surface / FMath::Max(ApproachSeconds, 0.5f), MinApproachSpeed);
+		const double Cap = FMath::Max(Surface / Approach, MinApproachSpeed);
 		if (Cap < BestCap)
 		{
 			BestCap = Cap;
+			BestSurface = Surface;
 			BestBody = Body;
 			BestDir = ToDir;
 		}
@@ -486,6 +502,7 @@ FVector UStarshipMovementComponent::UpdateProximity(const FVector& Here, const F
 	}
 	ProximityBody = BestBody;
 	ProximityCap = BestCap;
+	ProximitySurface = BestSurface;
 	ProximityBodyName = BestBody->GetActorNameOrLabel();
 	if (const APlanetBody* Planet = Cast<APlanetBody>(BestBody)) { if (!Planet->PlanetName.IsEmpty()) { ProximityBodyName = Planet->PlanetName; } }
 	if (const AStarBody* Star = Cast<AStarBody>(BestBody)) { if (!Star->StarName.IsEmpty()) { ProximityBodyName = Star->StarName; } }
