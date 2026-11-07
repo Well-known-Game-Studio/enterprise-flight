@@ -12,6 +12,7 @@
 #include "StarshipWeaponsComponent.h"
 #include "WarpDriveComponent.h"
 #include "Missions.h"
+#include "Exploration.h"
 
 UShipSystemsComponent::UShipSystemsComponent()
 {
@@ -238,6 +239,13 @@ void UShipSystemsComponent::TickMissions(float DeltaTime, const TArray<FString>&
 	M->AdvanceSeconds(DeltaTime, St, RealDeltaTime);
 	TArray<FCrewReport> Said;
 	M->DrainReports(Said);
+	// New space: the catalogue's stars revealed on the approach and charted on arrival; its events go through M.
+	if (UExplorationSubsystem* X = S->GetGameInstance()->GetSubsystem<UExplorationSubsystem>())
+	{
+		X->AdvanceSeconds(RealDeltaTime, St);
+		TArray<FCrewReport> Theirs; X->DrainReports(Theirs); Said.Append(Theirs);
+		M->DrainReports(Theirs); Said.Append(Theirs);   // an event raised by the arrival
+	}
 	UCrewRosterSubsystem* R = Roster.Get();
 	for (const FCrewReport& C : Said)
 	{

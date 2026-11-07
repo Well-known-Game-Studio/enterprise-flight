@@ -1,5 +1,6 @@
 #include "SlonkGameMode.h"
 #include "StarSystem.h"
+#include "Exploration.h"
 #include "Kismet/GameplayStatics.h"
 #include "StarshipPawn.h"
 #include "SlonkTiming.h"
@@ -94,6 +95,8 @@ void ASlonkGameMode::SpawnStarSystems()
 	{
 		AStarSystem::Generate(World, Spec, HomeStar);
 	}
+	// The catalogue's uncharted stars: in the sky from the start, their worlds when the ship goes there.
+	if (UExplorationSubsystem* X = UExplorationSubsystem::Get(this)) { X->SpawnStars(World, HomeStar); }
 }
 
 void ASlonkGameMode::SpawnHomeGiant(AStarSystem* Home)
@@ -130,6 +133,13 @@ void ASlonkGameMode::SpawnShowcaseMoons()
 	{
 		if ((It->Style.bRings || It->bShowcaseMoons) && It->IsGiant()) { Giants.Add(*It); }
 	}
+	SpawnShowcaseMoonsFor(Giants);
+}
+
+void ASlonkGameMode::SpawnShowcaseMoonsFor(const TArray<APlanetBody*>& Giants)
+{
+	UWorld* World = GetWorld();
+	if (!World) { return; }
 	int32 N = 0;
 	for (APlanetBody* G : Giants)
 	{
@@ -162,12 +172,26 @@ void ASlonkGameMode::SpawnNebulae()
 	// its moons sit between; the first is the pink-and-blue emission cloud, the second cooler and greener.
 	UWorld* World = GetWorld();
 	if (!World) { return; }
-	int32 N = 0;
+	TArray<APlanetBody*> Giants;
 	for (TActorIterator<APlanetBody> It(World); It; ++It)
 	{
-		if (!It->Style.bRings || !(It->ResolvedArchetype == EPlanetArchetype::GasGiant || It->ResolvedArchetype == EPlanetArchetype::IceGiant)) { continue; }
+		if (It->Style.bRings && (It->ResolvedArchetype == EPlanetArchetype::GasGiant || It->ResolvedArchetype == EPlanetArchetype::IceGiant)) { Giants.Add(*It); }
+	}
+	SpawnNebulaeFor(Giants);
+}
+
+void ASlonkGameMode::SpawnNebulaeFor(const TArray<APlanetBody*>& Giants)
+{
+	UWorld* World = GetWorld();
+	if (!World) { return; }
+	int32 N = 0;
+	for (APlanetBody* It : Giants)
+	{
+		if (!It) { continue; }
 		const FVector Centre = It->GetActorLocation();
-		const FVector Away = (Centre - FVector::ZeroVector).GetSafeNormal();
+		// Away from the giant's own sun (the home star sits at the origin; another system's does not).
+		const AStarSystem* Sys = AStarSystem::Nearest(World, Centre);
+		const FVector Away = (Centre - (Sys ? Sys->GetStarLocation() : FVector::ZeroVector)).GetSafeNormal();
 		const double RadiusCm = 1.5e10;
 		const FVector Loc = Centre + Away * (RadiusCm * 2.5) + It->GetActorRightVector() * (RadiusCm * 0.8);
 		FActorSpawnParameters SP; SP.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
@@ -182,6 +206,22 @@ void ASlonkGameMode::SpawnNebulae()
 		++N;
 	}
 	UE_LOG(LogTemp, Log, TEXT("Nebulae: %d"), N);
+}
+
+void ASlonkGameMode::DressSystem(AStarSystem* System)
+{
+	UWorld* World = GetWorld();
+	if (!World || !System || !bShowcaseMoonsSpawned) { return; }   // the start passes have not run yet: they will cover it
+	TArray<APlanetBody*> Moons, Clouds;
+	for (APlanetBody* P : System->Planets)
+	{
+		if (!P || !P->IsGiant()) { continue; }
+		if (P->Style.bRings || P->bShowcaseMoons) { Moons.Add(P); }
+		if (P->Style.bRings) { Clouds.Add(P); }
+	}
+	if (bSpawnShowcaseMoons && Moons.Num() > 0) { SpawnShowcaseMoonsFor(Moons); }
+	if (bSpawnNebulae && Clouds.Num() > 0) { SpawnNebulaeFor(Clouds); }
+	System->AdoptLoose();
 }
 
 void ASlonkGameMode::SpawnTestTargets()
