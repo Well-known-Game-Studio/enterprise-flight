@@ -151,7 +151,7 @@ double AStarSystem::LuminosityScale(EStarClass Class)
 	}
 }
 
-void AStarSystem::SpawnPlanets(UWorld* World, FRandomStream& Rng, const FVector& Centre, const FString& Prefix, EStarClass Class, int32 Count, double MaxAu, TArray<APlanetBody*>& Out)
+void AStarSystem::SpawnPlanets(UWorld* World, FRandomStream& Rng, const FVector& Centre, const FString& Prefix, EStarClass Class, int32 Count, double MaxAu, const FVector& SeedShift, TArray<APlanetBody*>& Out)
 {
 	// Orbits spaced geometrically outward from a few tenths of an AU, scaled by the star's luminosity so the
 	// temperate band sits where a world can keep water. Kinds by temperature band.
@@ -192,7 +192,7 @@ void AStarSystem::SpawnPlanets(UWorld* World, FRandomStream& Rng, const FVector&
 		{
 			P->Archetype = Kind; P->RadiusKm = RadiusKm;
 			P->PlanetName = FString::Printf(TEXT("%s %s"), *Prefix, Numeral(i));
-			P->SeedLocation = PLoc; P->bSeedLocationSet = true;
+			P->SeedLocation = PLoc + SeedShift; P->bSeedLocationSet = true;   // where it would be had nothing moved
 			P->FinishSpawning(FTransform(PLoc));
 			Adopt(P);
 			Planets.Add(P);
@@ -243,6 +243,7 @@ AStarSystem* AStarSystem::Generate(UWorld* World, const FStarSystemSpec& Spec, c
 
 	Sys->Spec = Spec;
 	Sys->RevealSeed = Rng.GetCurrentSeed();
+	Sys->SeedOrigin = Loc;
 	if (!Spec.bStarOnly) { Sys->Reveal(); }
 	else { UE_LOG(LogTemp, Log, TEXT("Star system %s: class %d star%s, uncharted, %.2f ly at RA %.1fh Dec %.0f"), *Spec.Name, (int32)Spec.StarClass, bBinary ? TEXT(" with a companion") : TEXT(""), Spec.DistanceLy, Spec.RightAscensionHours, Spec.DeclinationDeg); }
 	return Sys;
@@ -260,14 +261,16 @@ void AStarSystem::Reveal()
 	AStarSystem* Sys = this;
 	AStarBody* S = Star;
 	FRandomStream Rng; Rng.Initialize(RevealSeed);
+	// The world may have been rebased since the star was spawned; the seed coordinates are taken as of then.
+	const FVector SeedShift = SeedOrigin - Loc;
 	// Planets: the primary's inside a third of the separation (a binary's stable zone), then a few of the
 	// companion's own.
 	TArray<APlanetBody*> Primary, Secondary;
 	const double MaxPrimaryAu = bBinary ? (double)Spec.CompanionSeparationAU * 0.3 : 1.0e9;
-	Sys->SpawnPlanets(World, Rng, Loc, Spec.Name, Spec.StarClass, Rng.RandRange(4, 7), MaxPrimaryAu, Primary);
+	Sys->SpawnPlanets(World, Rng, Loc, Spec.Name, Spec.StarClass, Rng.RandRange(4, 7), MaxPrimaryAu, SeedShift, Primary);
 	if (bBinary && Sys->Companion)
 	{
-		Sys->SpawnPlanets(World, Rng, CLoc, Spec.Name + TEXT(" B"), Spec.CompanionClass, Rng.RandRange(1, 3), (double)Spec.CompanionSeparationAU * 0.3, Secondary);
+		Sys->SpawnPlanets(World, Rng, CLoc, Spec.Name + TEXT(" B"), Spec.CompanionClass, Rng.RandRange(1, 3), (double)Spec.CompanionSeparationAU * 0.3, SeedShift, Secondary);
 	}
 
 	// A belt in the first gap past the temperate band, two systems in three.

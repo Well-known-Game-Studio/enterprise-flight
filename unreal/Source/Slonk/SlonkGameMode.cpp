@@ -158,7 +158,7 @@ void ASlonkGameMode::SpawnShowcaseMoonsFor(const TArray<APlanetBody*>& Giants)
 			P->Archetype = EPlanetArchetype::Moon; P->RadiusKm = M.RadiusKm;
 			P->bForceMoonKind = true; P->ForcedMoonKind = M.Kind; P->bForceHazy = M.bHazy;
 			P->PlanetName = AStarSystem::MoonDesignation(World, G);   // the next free numeral after any moon the level gave it
-			P->SeedLocation = Loc; P->bSeedLocationSet = true;
+			P->SeedLocation = (G->bSeedLocationSet ? G->SeedLocation : Centre) + (Loc - Centre); P->bSeedLocationSet = true;   // stable under rebasing, like the giant's
 			P->FinishSpawning(FTransform(Loc));
 			++N;
 		}

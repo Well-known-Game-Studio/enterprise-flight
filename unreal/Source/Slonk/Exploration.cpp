@@ -233,7 +233,13 @@ void UExplorationSubsystem::AdvanceSeconds(float RealSeconds, const FMissionShip
 	if (FCatalogueEntry* E = FindMutable(Ship.SystemName))
 	{
 		if (E->State == EChartState::Unknown) { Chart(E->Designation, false); }
-		if (!Ship.bAtWarp && (!E->bContactRolled || !E->bPreWarpRaised || (!E->bBeaconRaised && E->bHasBeacon))) { RollEvents(*E); }
+		// The science log's survey of the system, by whatever name it carries, completes the chart.
+		if (E->State == EChartState::Charted)
+		{
+			const UScienceLogSubsystem* L = GetGameInstance() ? GetGameInstance()->GetSubsystem<UScienceLogSubsystem>() : nullptr;
+			if (L && L->IsSystemSurveyed(E->Name())) { MarkSurveyed(E->Designation); }
+		}
+		if (!Ship.bAtWarp && HasPendingEvents(*E)) { RollEvents(*E); }
 	}
 }
 
@@ -244,6 +250,8 @@ bool UExplorationSubsystem::Chart(const FString& NameOrDesignation, bool bRollEv
 	Reveal(E->Designation);
 	if (AStarSystem* S = SystemOf(*E)) { S->bCharted = true; }
 	UMissionSubsystem* M = Missions();
+	// The first chart of the game carries the first contact, however long the roll waits for her to drop out of warp.
+	E->bContactGuaranteed = CountCharted() == 0;
 	E->State = EChartState::Charted;
 	E->ChartedStardate = M ? M->Stardate() : 0.0;
 	const FString StarWord = E->Spec.StarClass == EStarClass::M ? TEXT("a red dwarf") : E->Spec.StarClass == EStarClass::K ? TEXT("an orange star") : E->Spec.StarClass == EStarClass::G ? TEXT("a yellow star") : E->Spec.StarClass == EStarClass::F ? TEXT("a yellow-white star") : TEXT("a white star");
@@ -273,8 +281,7 @@ void UExplorationSubsystem::RollEvents(FCatalogueEntry& E)
 	if (!E.bContactRolled)
 	{
 		E.bContactRolled = true;
-		const bool bFirst = CountCharted() <= 1;
-		if (bFirst || Rng.FRand() < 0.5f)
+		if (E.bContactGuaranteed || Rng.FRand() < 0.5f)
 		{
 			if (M->RaiseEvent(EMissionKind::FirstContact) >= 0) { Save(); return; }
 		}
@@ -289,6 +296,7 @@ void UExplorationSubsystem::RollEvents(FCatalogueEntry& E)
 		E.bBeaconRaised = true;
 		if (M->RaiseEvent(EMissionKind::Beacon) >= 0) { Save(); return; }
 	}
+	// Something was rolled and nothing raised: the flags are still worth keeping.
 	Save();
 }
 
@@ -300,16 +308,36 @@ bool UExplorationSubsystem::Name(const FString& NameOrDesignation, const FString
 	FString Want = NewName.TrimStartAndEnd();
 	if (Want.IsEmpty()) { Want = E->ProperName; }
 	if (Want.Len() > 24) { OutReply = TEXT("A name of twenty-four letters at most"); return false; }
-	for (const FCatalogueEntry& O : Catalogue) { if (&O != E && (O.Designation == Want || O.GivenName == Want)) { OutReply = FString::Printf(TEXT("%s is taken"), *Want); return false; } }
+	if (!IsNameFree(*E, Want)) { OutReply = FString::Printf(TEXT("%s is taken"), *Want); return false; }
 	const FString Old = E->Name();
 	E->GivenName = Want;
 	if (AStarSystem* S = SystemOf(*E)) { S->RenameSystem(Want); }
+	// The lit world the sensors noted carries the system's name too.
+	if (E->PreWarpWorld.StartsWith(Old + TEXT(" "))) { E->PreWarpWorld = Want + E->PreWarpWorld.RightChop(Old.Len()); }
 	if (UScienceLogSubsystem* L = GetGameInstance() ? GetGameInstance()->GetSubsystem<UScienceLogSubsystem>() : nullptr) { L->RenameSystem(Old, Want); }
 	if (UMissionSubsystem* M = Missions()) { M->RenameTarget(Old, Want); }
 	for (FContactRecord& C : Contacts) { if (C.System == Old) { C.System = Want; } }
 	Report(FString::Printf(TEXT("%s is entered in the chart as %s."), *E->Designation, *Want), FLinearColor(0.7f, 1.f, 0.8f), ECrewDepartment::Operations);
 	OutReply = FString::Printf(TEXT("%s is now %s"), *E->Designation, *Want);
 	Save();
+	return true;
+}
+
+bool UExplorationSubsystem::IsNameFree(const FCatalogueEntry& E, const FString& Want) const
+{
+	// Not the scanner's word for nowhere, not another entry's, not a system already in the sky by any name.
+	if (Want.Equals(TEXT("Deep space"), ESearchCase::IgnoreCase)) { return false; }
+	for (const FCatalogueEntry& O : Catalogue) { if (&O != &E && (O.Designation.Equals(Want, ESearchCase::IgnoreCase) || O.GivenName.Equals(Want, ESearchCase::IgnoreCase))) { return false; } }
+	if (UWorld* W = GetWorld())
+	{
+		const AStarSystem* Mine = SystemOf(E);
+		for (TActorIterator<AStarSystem> It(W); It; ++It)
+		{
+			if (*It == Mine) { continue; }
+			if (It->SystemName.Equals(Want, ESearchCase::IgnoreCase)) { return false; }
+			if (It->Star && It->Star->StarName.Equals(Want, ESearchCase::IgnoreCase)) { return false; }
+		}
+	}
 	return true;
 }
 

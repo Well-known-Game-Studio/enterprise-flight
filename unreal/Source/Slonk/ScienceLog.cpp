@@ -149,8 +149,13 @@ void UScienceLogSubsystem::RenameSystem(const FString& OldName, const FString& N
 	for (FScanRecord& R : Records)
 	{
 		if (R.System != OldName) { continue; }
-		R.System = NewName;
-		if (R.Key.StartsWith(OldName + TEXT("/"))) { R.Key = NewName + R.Key.RightChop(OldName.Len()); }
+		// The star carries the system's name, its companion and its worlds the name with a suffix: all follow, and
+		// a scan's key (system/label) with them, so the survey still counts them. A reward's own key stays.
+		FString Label = R.Label;
+		if (Label == OldName) { Label = NewName; }
+		else if (Label.StartsWith(OldName + TEXT(" "))) { Label = NewName + Label.RightChop(OldName.Len()); }
+		if (R.Key == MakeKey(OldName, R.Label)) { R.Key = MakeKey(NewName, Label); }
+		R.System = NewName; R.Label = Label;
 		++N;
 	}
 	if (N > 0) { Save(); }

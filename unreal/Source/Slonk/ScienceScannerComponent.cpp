@@ -5,6 +5,7 @@
 #include "PlanetBody.h"
 #include "StarBody.h"
 #include "StarSystem.h"
+#include "Exploration.h"
 #include "BeltField.h"
 #include "Nebula.h"
 #include "SpaceVessel.h"
@@ -327,6 +328,8 @@ void UScienceScannerComponent::Complete()
 	if (Keys.Num() > 0 && !Log->IsSystemSurveyed(System) && Log->CountScanned(Keys) == Keys.Num())
 	{
 		SurveyBonus = Log->MarkSystemSurveyed(System);
+		// A catalogue system's chart is complete with its survey.
+		if (UExplorationSubsystem* X = UExplorationSubsystem::Get(this)) { X->MarkSurveyed(System); }
 	}
 
 	// Report: newest message on top, so push in reverse.

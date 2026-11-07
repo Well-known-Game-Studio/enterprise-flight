@@ -465,6 +465,11 @@ bool FSlonkExplorationChartTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("named"), S.Exploration->Name(D, TEXT("Vashti's Reach"), Reply));
 	TestEqual(TEXT("found by name"), S.Exploration->Find(TEXT("Vashti's Reach")) ? S.Exploration->Find(TEXT("Vashti's Reach"))->Designation : FString(), D);
 	TestFalse(TEXT("taken"), S.Exploration->Name(D, S.Exploration->GetCatalogue()[2].Designation, Reply));
+	TestFalse(TEXT("not the scanner's nowhere"), S.Exploration->Name(D, TEXT("deep space"), Reply));
+	// The first chart's contact is fixed when the chart is made, not when the roll comes.
+	TestTrue(TEXT("guaranteed"), S.Exploration->Find(D)->bContactGuaranteed);
+	TestTrue(TEXT("charted second"), S.Exploration->Chart(S.Exploration->GetCatalogue()[3].Designation, false));
+	TestFalse(TEXT("not the second"), S.Exploration->Find(S.Exploration->GetCatalogue()[3].Designation)->bContactGuaranteed);
 	// The survey completes the chart.
 	S.Exploration->MarkSurveyed(TEXT("Vashti's Reach"));
 	TestEqual(TEXT("surveyed"), (int32)S.Exploration->Find(D)->State, (int32)EChartState::Surveyed);
@@ -575,6 +580,23 @@ bool FSlonkMissionBeaconTest::RunTest(const FString& Parameters)
 	S.Missions->AdvanceSeconds(1.f, S.Ship(After->TargetName));
 	TestTrue(TEXT("searched"), S.Missions->Act(Id, 0, Out, Reply));
 	TestTrue(TEXT("over"), Out.bMissionOver);
+	// With every star charted the decoded signal has nowhere to point: the beacon closes complete, its science kept.
+	for (int32 Seed = 1; Seed < 40; ++Seed)
+	{
+		FSystems T(Seed);
+		for (const FCatalogueEntry& Entry : T.Exploration->GetCatalogue()) { T.Exploration->Chart(Entry.Designation, false); }
+		T.Missions->AdvanceSeconds(1.f, T.Ship());
+		const int32 Id2 = T.Missions->RaiseEvent(EMissionKind::Beacon);
+		const int32 Standing0 = T.Missions->GetStanding();
+		if (!T.Missions->Act(Id2, 0, Out, Reply) || !Out.bSuccess) { continue; }
+		const FMission* Done = T.Missions->Find(Id2);
+		TestEqual(TEXT("closed complete"), (int32)Done->State, (int32)EMissionState::Completed);
+		TestEqual(TEXT("its science kept"), Done->ScienceEarned, 100);
+		TestTrue(TEXT("its regard paid"), T.Missions->GetStanding() > Standing0);
+		TestTrue(TEXT("over at once"), Out.bMissionOver);
+		return true;
+	}
+	AddError(TEXT("no seed decoded the beacon"));
 	return true;
 }
 

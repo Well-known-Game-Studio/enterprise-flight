@@ -116,8 +116,12 @@ public:
 private:
 	static void ApplyStarClass(AStarBody* S, EStarClass Class, FRandomStream& Rng);
 	/** Planets on geometric orbits out from `StartAu` about `Centre`, named "<Prefix> I, II, ..." until MaxAu. */
-	void SpawnPlanets(UWorld* World, FRandomStream& Rng, const FVector& Centre, const FString& Prefix, EStarClass Class, int32 Count, double MaxAu, TArray<APlanetBody*>& Out);
+	void SpawnPlanets(UWorld* World, FRandomStream& Rng, const FVector& Centre, const FString& Prefix, EStarClass Class, int32 Count, double MaxAu, const FVector& SeedShift, TArray<APlanetBody*>& Out);
 	UPROPERTY() TObjectPtr<USceneComponent> Anchor;
 	/** The stream's state after the stars, so a revealed system is the one Generate would have made at once. */
 	int32 RevealSeed = 0;
+	/** The star's location when the system was generated, before the floating origin moved anything: the worlds'
+	 *  seed coordinates (terrain, rings, lights) are measured from it, so a system revealed later or in another
+	 *  session is the same system. */
+	FVector SeedOrigin = FVector::ZeroVector;
 };

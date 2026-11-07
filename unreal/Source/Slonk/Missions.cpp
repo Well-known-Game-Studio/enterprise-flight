@@ -151,12 +151,17 @@ void UMissionSubsystem::AddStanding(int32 Delta, const FString& Why)
 void UMissionSubsystem::RenameTarget(const FString& OldName, const FString& NewName)
 {
 	bool bAny = false;
-	// Open or closed: the log reads by the name the chart carries now.
+	// Open or closed: the log reads by the name the chart carries now. The system's worlds carry its name with a
+	// numeral ("UFC 8752 II"), so a mission at one of them follows the same way the actors do.
 	for (FMission& M : Missions)
 	{
-		if (M.TargetName != OldName) { continue; }
-		M.TargetName = NewName; M.Title = M.Title.Replace(*OldName, *NewName); bAny = true;
-		M.Log.Add(FString::Printf(TEXT("      %s is now %s."), *OldName, *NewName));
+		const bool bSystem = M.TargetName == OldName;
+		const bool bWorld = (M.TargetKind == EMissionTarget::World || M.TargetKind == EMissionTarget::System) && M.TargetName.StartsWith(OldName + TEXT(" "));
+		if (!bSystem && !bWorld) { continue; }
+		const FString Was = M.TargetName;
+		M.TargetName = bSystem ? NewName : NewName + M.TargetName.RightChop(OldName.Len());
+		M.Title = M.Title.Replace(*Was, *M.TargetName); bAny = true;
+		M.Log.Add(FString::Printf(TEXT("      %s is now %s."), *Was, *M.TargetName));
 	}
 	if (bAny) { Dirty(); }
 }
@@ -254,6 +259,15 @@ void UMissionSubsystem::Expire()
 			Report(FString::Printf(TEXT("%s: the deadline has passed. Starfleet will want to know why."), *M.Title), FLinearColor(1.f, 0.6f, 0.5f));
 			if (UCrewRosterSubsystem* R = Roster()) { FCrewExperience E; E.Tag = M.Kind == EMissionKind::Rescue || M.Kind == EMissionKind::Medical ? TEXT("Loss.Civilians") : TEXT("Order.Refused"); E.Intensity = 0.5f; E.Place = M.TargetName; E.Group = M.Group; E.Text = FString::Printf(TEXT("%s left undone"), *M.Title); E.bCaptainsChoice = true; R->Experience(E); }
 		}
+	}
+}
+
+void UMissionSubsystem::PayScience(const FMission& M, const FString& Note)
+{
+	if (M.ScienceEarned <= 0) { return; }
+	if (UScienceLogSubsystem* L = GetGameInstance() ? GetGameInstance()->GetSubsystem<UScienceLogSubsystem>() : nullptr)
+	{
+		L->AddReward(FString::Printf(TEXT("mission/%d"), M.Id), M.TargetName.IsEmpty() ? FString(TEXT("Mission")) : M.TargetName, M.Title, M.ScienceEarned, Note);
 	}
 }
 
@@ -541,6 +555,8 @@ void UMissionSubsystem::AfterOption(FMission& M, const FMissionOption& O, bool b
 			if (E)
 			{
 				M.TargetKind = EMissionTarget::System; M.TargetName = E->Name();
+				// The leg is budgeted like any order's: the deadline grows to cover it, never shrinks.
+				M.DeadlineStardate = FMath::Max(M.DeadlineStardate, Stardate() + TravelDays(M) + 3.0);
 				M.Log.Add(FString::Printf(TEXT("      The coordinates resolve to %s, %.1f light-years out."), *E->Name(), E->Spec.DistanceLy));
 				Report(FString::Printf(TEXT("The beacon points at %s, Captain: %.1f light-years, uncharted."), *E->Name(), E->Spec.DistanceLy), FLinearColor(0.7f, 1.f, 0.8f), ECrewDepartment::Science);
 			}
@@ -548,6 +564,8 @@ void UMissionSubsystem::AfterOption(FMission& M, const FMissionOption& O, bool b
 			{
 				M.Log.Add(TEXT("      The coordinates point beyond the catalogue; there is nowhere to follow them yet."));
 				Close(M, EMissionState::Completed, TEXT("the signal read, its source beyond reach")); Standing += M.Standing / 2; ++Completed;
+				PayScience(M, TEXT("The signal read; its source beyond the catalogue."));
+				Report(FString::Printf(TEXT("%s: complete. Starfleet's regard: %+d."), *M.Title, M.Standing / 2), FLinearColor(0.6f, 1.f, 0.6f));
 			}
 		}
 		break;
@@ -890,7 +908,10 @@ bool UMissionSubsystem::Act(int32 Id, int32 Option, FMissionOutcome& Out, FStrin
 	}
 	const TArray<int32> Party = PartyFor(M, O);
 	if (Party.Num() == 0) { OutReply = M.Party.Num() > 0 ? TEXT("None of the named party is fit and aboard; name another (ship mission party <id> <names>)") : TEXT("Nobody fit to send"); return false; }
-	const FCrewCheck C = R->Check(O.Skill, O.Difficulty, Party, 0.f, M.Group);
+	// The work already done is not rolled for: a survey on file carries without a check.
+	FCrewCheck C;
+	if (O.bNeedsSurvey) { C.bSuccess = true; C.Margin = 100.f; C.BestId = Party[0]; C.Summary = TEXT("the survey on file"); }
+	else { C = R->Check(O.Skill, O.Difficulty, Party, 0.f, M.Group); }
 	Out.bSuccess = C.bSuccess; Out.CheckSummary = C.Summary; Out.Text = C.bSuccess ? O.SuccessText : O.FailText;
 	M.Log.Add(FString::Printf(TEXT("%.1f  %s: %s %s"), Stardate(), *St->Title, *O.Text, C.bSuccess ? TEXT("- carried.") : TEXT("- failed.")));
 	M.Log.Add(FString::Printf(TEXT("      %s"), *Out.Text));
@@ -915,7 +936,7 @@ bool UMissionSubsystem::Act(int32 Id, int32 Option, FMissionOutcome& Out, FStrin
 		{
 			Close(M, EMissionState::Completed, C.bSuccess ? TEXT("carried through") : TEXT("done, though not well"));
 			Standing += C.bSuccess ? M.Standing : M.Standing / 3; ++Completed;
-			if (M.ScienceEarned > 0) { if (UScienceLogSubsystem* L = GetGameInstance() ? GetGameInstance()->GetSubsystem<UScienceLogSubsystem>() : nullptr) { L->AddReward(FString::Printf(TEXT("mission/%d"), M.Id), M.TargetName.IsEmpty() ? FString(TEXT("Mission")) : M.TargetName, M.Title, M.ScienceEarned, Out.Text); } }
+			PayScience(M, Out.Text);
 			Report(FString::Printf(TEXT("%s: complete. Starfleet's regard: %+d."), *M.Title, C.bSuccess ? M.Standing : M.Standing / 3), FLinearColor(0.6f, 1.f, 0.6f));
 		}
 		else

@@ -36,6 +36,8 @@ struct FCatalogueEntry
 	UPROPERTY(BlueprintReadOnly) FString Contact;
 	/** What the sector rolled for it, raised once each. */
 	UPROPERTY() bool bContactRolled = false;
+	/** The first system charted always brings a first contact; fixed when the chart is made, whenever the roll comes. */
+	UPROPERTY() bool bContactGuaranteed = false;
 	UPROPERTY() bool bPreWarpRaised = false;
 	UPROPERTY() bool bBeaconRaised = false;
 	UPROPERTY() bool bHasBeacon = false;
@@ -88,6 +90,8 @@ public:
 
 	/** Generate the system's worlds now (the approach does it; a mission or the console can ask). */
 	bool Reveal(const FString& Designation);
+	/** The system has an event still to raise (a contact unrolled, a lit world unraised, a beacon unraised). */
+	static bool HasPendingEvents(const FCatalogueEntry& E) { return !E.bContactRolled || (!E.bPreWarpRaised && !E.PreWarpWorld.IsEmpty()) || (!E.bBeaconRaised && E.bHasBeacon); }
 	/** The ship is there: charted, reported, rewarded, and (bRollEvents) the sector's events rolled; the tick rolls
 	 *  them itself once the ship is out of warp, so a hull is spawned where she stops. False when already charted. */
 	bool Chart(const FString& NameOrDesignation, bool bRollEvents = true);
@@ -129,6 +133,8 @@ private:
 	void Load();
 	void Save();
 	FCatalogueEntry* FindMutable(const FString& NameOrDesignation);
+	/** A name no system in the sky or the catalogue carries, and not the scanner's "Deep space". */
+	bool IsNameFree(const FCatalogueEntry& E, const FString& Want) const;
 	AStarSystem* SystemOf(const FCatalogueEntry& E) const;
 	UMissionSubsystem* Missions() const;
 	void Report(const FString& Text, const FLinearColor& Color = FLinearColor(0.75f, 0.9f, 1.f), ECrewDepartment From = ECrewDepartment::Science);

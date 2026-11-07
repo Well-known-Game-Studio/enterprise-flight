@@ -244,6 +244,8 @@ private:
 	void Expire();
 	FString CivilianName(FRandomStream& R) const;
 	void Close(FMission& M, EMissionState State, const FString& Why);
+	/** The science a completed mission earned, into the science log once (by the mission's reward key). */
+	void PayScience(const FMission& M, const FString& Note);
 	TArray<int32> PartyFor(const FMission& M, const FMissionOption& O) const;
 	void Hurt(const FMission& M, const TArray<int32>& Party, float Risk);
 
