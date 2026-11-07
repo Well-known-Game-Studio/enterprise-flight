@@ -424,7 +424,9 @@ void UShipSystemsComponent::TickCrew(float DeltaTime)
 	if (Stores.MedicalSupplies <= 0.f && !bSuppliesOutReported) { bSuppliesOutReported = true; Report(EStation::Medical, TEXT("Sickbay is out of supplies. I can keep people alive, not much more."), FLinearColor(1.f, 0.6f, 0.4f)); }
 	// The critical beyond the beds, or without supplies, slip away.
 	const float Unbedded = FMath::Max(0.f, Crew.Critical - Crew.SickbayBeds) + (Stores.MedicalSupplies <= 0.f ? Crew.Critical * 0.5f : 0.f);
-	const float Lost = FMath::Min(Crew.Critical, Unbedded * 0.004f * DeltaTime);
+	// The step is the world's seconds and can be minutes at x3600: integrate the rate, so a step never takes more
+	// than those without a bed (a rate times a long step took the bedded too).
+	const float Lost = FMath::Min(Crew.Critical, Unbedded * (1.f - FMath::Exp(-0.004f * DeltaTime)));
 	Crew.Critical -= Lost; Crew.Dead += Lost; PendingDead += Lost;
 	// Officers heal in sickbay.
 	for (FOfficer& O : Officers)
