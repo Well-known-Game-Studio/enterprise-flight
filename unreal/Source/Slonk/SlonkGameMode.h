@@ -132,6 +132,11 @@ public:
 	bool bSpawnShowcaseMoons = true;
 	bool bShowcaseMoonsSpawned = false;
 	void SpawnShowcaseMoons();
+	/** The moons and the nebula for these giants (the passes above run over every giant at the start). */
+	void SpawnShowcaseMoonsFor(const TArray<class APlanetBody*>& Giants);
+	void SpawnNebulaeFor(const TArray<class APlanetBody*>& Giants);
+	/** A system revealed after the start passes gets what they would have given it: a first visit looks like a return. */
+	void DressSystem(class AStarSystem* System);
 
 	/** Neighbouring star systems generated at play start, each at its real-sky bearing and distance. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Systems")

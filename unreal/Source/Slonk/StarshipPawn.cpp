@@ -30,6 +30,7 @@
 #include "LcarsPanel.h"
 #include "MissionPanel.h"
 #include "Missions.h"
+#include "Exploration.h"
 #include "Fleet.h"
 #include "LcarsPanels.h"
 #include "CrewPanel.h"
@@ -2271,6 +2272,10 @@ void AStarshipPawn::ProcessDebugCommand()
 	{
 		HandleFleetCommand(Args);
 	}
+	else if (Op == TEXT("chart"))
+	{
+		HandleChartCommand(Args);
+	}
 	else if (Op == TEXT("clock") || Op == TEXT("time"))
 	{
 		// clock [<scale>|up|down|status]: the game clock's scale (1..3600) and what holds it.
@@ -2411,6 +2416,7 @@ void AStarshipPawn::ProcessDebugCommand()
 			TEXT("ship autopilot [warp|impulse|off] [standoff km] [seconds]      ship jump  (to the nav target, dev)"),
 			TEXT("ship warp [on|off] | warpfactor <f> | impulse <1-4> | throttle <0-1> | stop | orbit [on|off]"),
 			TEXT("ship clock [<scale 1-3600>|up|down]  (the game clock; 8 and 9 step it; held at x1 in a fight, near a body, in a warp transition)"),
+			TEXT("ship chart [list|here|name <name>|reveal <designation>|contacts|reset]  (the sector catalogue: uncharted stars, charted by arrival; the peoples met)"),
 			TEXT("ship camera [chase|bridge|cinematic|front|port|starboard|top|bottom] | zoom <x> | look <yaw> <pitch> [s]"),
 			TEXT("ship warpvis [classic|real] | cscale <0..1> | systems | shipwarp [km] [far]"),
 			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mountain|coast|river|linea|land> <alt m> [across|sun|away|along|giant]"),
@@ -3959,14 +3965,63 @@ void AStarshipPawn::HandleMissionCommand(const TArray<FString>& Args)
 	{
 		// dev <kind> [orders|board|event]: one of that kind now, as the given source (events are active at once).
 		EMissionKind K;
-		if (!UMissionSubsystem::ParseKind(Word(2), K)) { Say(TEXT("dev <survey|rescue|diplomacy|delivery|anomaly|medical|patrol|contact|derelict|smuggler> [orders|board|event]"), FColor::Orange); return; }
+		if (!UMissionSubsystem::ParseKind(Word(2), K)) { Say(TEXT("dev <survey|rescue|diplomacy|delivery|anomaly|medical|patrol|contact|derelict|smuggler|explore|firstcontact|prewarp|beacon> [orders|board|event]"), FColor::Orange); return; }
 		const FString Src = Word(3).ToLower();
-		const EMissionSource S = Src.StartsWith(TEXT("ev")) ? EMissionSource::Event : Src.StartsWith(TEXT("b")) || Src.StartsWith(TEXT("st")) ? EMissionSource::Starbase : (K == EMissionKind::Rescue || K == EMissionKind::Anomaly || K == EMissionKind::Contact || K == EMissionKind::Derelict || K == EMissionKind::Smuggler) && Src.IsEmpty() ? EMissionSource::Event : EMissionSource::Starfleet;
+		const bool bEventKind = K == EMissionKind::Rescue || K == EMissionKind::Anomaly || K == EMissionKind::Contact || K == EMissionKind::Derelict || K == EMissionKind::Smuggler || K == EMissionKind::FirstContact || K == EMissionKind::PreWarp || K == EMissionKind::Beacon;
+		const EMissionSource S = Src.StartsWith(TEXT("ev")) ? EMissionSource::Event : Src.StartsWith(TEXT("b")) || Src.StartsWith(TEXT("st")) ? EMissionSource::Starbase : bEventKind && Src.IsEmpty() ? EMissionSource::Event : EMissionSource::Starfleet;
 		const int32 NewId = M->DevSpawn(K, S);
 		if (const FMission* Ms = M->Find(NewId)) { Line(*Ms); } else if (NewId == -2) { Say(TEXT("That kind brings its own hull: it only happens as an event"), FColor::Orange); } else { Say(TEXT("Nothing to make it from (no target in reach)"), FColor::Orange); }
 	}
 	else if (What == TEXT("reset")) { M->Reset(); Say(TEXT("Missions reset"), FColor::Orange); }
 	else { Say(TEXT("ship mission list | log | inbox | read <n> | show <id> | accept <id> | act [<id>] <option> | party <id> <names> | abandon <id> | here [id] | dev <kind> [orders|board|event] | reset"), FColor::Orange, 12.f); }
+}
+
+void AStarshipPawn::HandleChartCommand(const TArray<FString>& Args)
+{
+	// chart [list | here | name <name> | reveal <designation> | contacts | reset]: the sector catalogue.
+	UExplorationSubsystem* X = GetGameInstance() ? GetGameInstance()->GetSubsystem<UExplorationSubsystem>() : nullptr;
+	if (!X) { ScreenMessage(TEXT("No exploration system"), FColor::Orange); return; }
+	auto Word = [&](int32 i) { return Args.IsValidIndex(i) ? Args[i] : FString(); };
+	auto Say = [&](const FString& T, FColor C = FColor::Cyan, float Secs = 10.f) { ScreenMessage(T, C, Secs); UE_LOG(LogTemp, Log, TEXT("Chart: %s"), *T); };
+	auto Line = [&](const FCatalogueEntry& E)
+	{
+		const double Ly = FVector::Dist(X->StarLocation(E), GetActorLocation()) / AStarSystem::LightYearCm;
+		FString T = FString::Printf(TEXT("   %-9s %-14s %-9s %4.1f ly"), *E.Designation, E.GivenName.IsEmpty() ? TEXT("-") : *E.GivenName, *UExplorationSubsystem::StateName(E.State), Ly);
+		if (E.State != EChartState::Unknown) { T += FString::Printf(TEXT("  %d worlds%s%s"), E.Worlds, E.PreWarpWorld.IsEmpty() ? TEXT("") : TEXT(", a lit world"), E.Contact.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(", the %s"), *E.Contact)); }
+		Say(T, E.State == EChartState::Unknown ? FColor::White : FColor::Yellow, 15.f);
+	};
+	const FString What = Word(1).ToLower();
+	if (What.IsEmpty() || What == TEXT("list"))
+	{
+		Say(FString::Printf(TEXT("The sector: %d of %d charted, %d peoples met"), X->CountCharted(), X->GetCatalogue().Num(), X->GetContacts().Num()), FColor::Cyan, 15.f);
+		TArray<const FCatalogueEntry*> Sorted; for (const FCatalogueEntry& E : X->GetCatalogue()) { Sorted.Add(&E); }
+		const FVector Here = GetActorLocation();
+		Sorted.Sort([&](const FCatalogueEntry& A, const FCatalogueEntry& B) { return FVector::DistSquared(X->StarLocation(A), Here) < FVector::DistSquared(X->StarLocation(B), Here); });
+		for (const FCatalogueEntry* E : Sorted) { Line(*E); }
+	}
+	else if (What == TEXT("here"))
+	{
+		if (const FCatalogueEntry* E = X->Here()) { Line(*E); } else { Say(TEXT("Not in a catalogue system"), FColor::Orange); }
+	}
+	else if (What == TEXT("name"))
+	{
+		const FCatalogueEntry* E = X->Here();
+		if (!E) { Say(TEXT("Not in a catalogue system; a star is named from inside it"), FColor::Orange); return; }
+		FString Name; for (int32 i = 2; i < Args.Num(); ++i) { Name += (i > 2 ? TEXT(" ") : TEXT("")) + Args[i]; }
+		FString Reply; X->Name(E->Designation, Name, Reply); Say(Reply, FColor::Cyan);
+	}
+	else if (What == TEXT("reveal"))
+	{
+		const FString D = Word(2).ToUpper() == TEXT("UFC") ? FString::Printf(TEXT("UFC %s"), *Word(3)) : Word(2);
+		Say(X->Reveal(D) ? FString::Printf(TEXT("%s revealed"), *D) : FString::Printf(TEXT("%s: nothing to reveal"), *D), FColor::Cyan);
+	}
+	else if (What == TEXT("contacts"))
+	{
+		if (X->GetContacts().Num() == 0) { Say(TEXT("No peoples met"), FColor::White); }
+		for (const FContactRecord& C : X->GetContacts()) { Say(FString::Printf(TEXT("   the %-12s %-9s at %s, stardate %.1f: %s"), *C.Species, *C.RelationName(), *C.System, C.Stardate, *C.Note), FColor::Yellow, 15.f); }
+	}
+	else if (What == TEXT("reset")) { X->Reset(); Say(TEXT("The chart is blank again"), FColor::Orange); }
+	else { Say(TEXT("ship chart [list | here | name <name> | reveal <designation> | contacts | reset]"), FColor::Orange, 12.f); }
 }
 
 void AStarshipPawn::HandleFleetCommand(const TArray<FString>& Args)

@@ -142,6 +142,20 @@ int32 UScienceLogSubsystem::NextRatingPoints() const
 	return 0;
 }
 
+void UScienceLogSubsystem::RenameSystem(const FString& OldName, const FString& NewName)
+{
+	if (OldName.IsEmpty() || NewName.IsEmpty() || OldName == NewName) { return; }
+	int32 N = 0;
+	for (FScanRecord& R : Records)
+	{
+		if (R.System != OldName) { continue; }
+		R.System = NewName;
+		if (R.Key.StartsWith(OldName + TEXT("/"))) { R.Key = NewName + R.Key.RightChop(OldName.Len()); }
+		++N;
+	}
+	if (N > 0) { Save(); }
+}
+
 void UScienceLogSubsystem::Reset()
 {
 	Records.Reset();

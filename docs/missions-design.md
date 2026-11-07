@@ -35,7 +35,9 @@ each outcome leads (the next stage, or the end), a risk (the chance that a failu
 science points a success earns.
 
 The ten kinds this round: Survey, Rescue, Diplomacy, Delivery, Anomaly, Medical, Patrol, Contact, Derelict,
-Smuggler. Each is a template in `MakeMission`; the target comes from the galaxy's own names (`PickTarget`: a world
+Smuggler; the fleet added Support and Assist; exploration (`exploration-design.md`) added Explore (an order), and
+FirstContact, PreWarp and Beacon, raised as events by the sector itself on arrival in a catalogue system
+(`RaiseEvent`), with a vessel event's hull in a stranger's colours. Each is a template in `MakeMission`; the target comes from the galaxy's own names (`PickTarget`: a world
 with a surface in another system, a station other than the one alongside, another system for a patrol), so every
 mission points at somewhere the ship can actually go, and arrival is simply the target's name turning up in the
 ship's neighbourhood (the same nearby list the crew's ties use) or the ship being in the named system.

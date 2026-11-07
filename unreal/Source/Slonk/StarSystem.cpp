@@ -241,6 +241,25 @@ AStarSystem* AStarSystem::Generate(UWorld* World, const FStarSystemSpec& Spec, c
 		}
 	}
 
+	Sys->Spec = Spec;
+	Sys->RevealSeed = Rng.GetCurrentSeed();
+	if (!Spec.bStarOnly) { Sys->Reveal(); }
+	else { UE_LOG(LogTemp, Log, TEXT("Star system %s: class %d star%s, uncharted, %.2f ly at RA %.1fh Dec %.0f"), *Spec.Name, (int32)Spec.StarClass, bBinary ? TEXT(" with a companion") : TEXT(""), Spec.DistanceLy, Spec.RightAscensionHours, Spec.DeclinationDeg); }
+	return Sys;
+}
+
+void AStarSystem::Reveal()
+{
+	if (bRevealed) { return; }
+	bRevealed = true;
+	UWorld* World = GetWorld();
+	if (!World) { return; }
+	const FVector Loc = GetStarLocation();
+	const FVector CLoc = Companion ? Companion->GetActorLocation() : Loc;
+	const bool bBinary = Companion != nullptr;
+	AStarSystem* Sys = this;
+	AStarBody* S = Star;
+	FRandomStream Rng; Rng.Initialize(RevealSeed);
 	// Planets: the primary's inside a third of the separation (a binary's stable zone), then a few of the
 	// companion's own.
 	TArray<APlanetBody*> Primary, Secondary;
@@ -276,15 +295,30 @@ AStarSystem* AStarSystem::Generate(UWorld* World, const FStarSystemSpec& Spec, c
 		}
 	}
 
-	// A station with its patrol ships at each planet, from the level's traffic spawner.
+	// A station with its patrol ships at each planet, from the level's traffic spawner, where Starfleet is.
 	TActorIterator<ASpaceTraffic> TrafficIt(World);
-	if (TrafficIt)
+	if (Spec.bPopulate && TrafficIt)
 	{
 		TrafficIt->PopulatePlanets(Sys->Planets, Spec.Seed * 13 + 5);
 	}
 	Sys->AdoptLoose();
 	UE_LOG(LogTemp, Log, TEXT("Star system %s: class %d star%s, %d planets (%d of the companion), %.2f ly at RA %.1fh Dec %.0f"), *Spec.Name, (int32)Spec.StarClass, bBinary ? TEXT(" with a companion") : TEXT(""), Sys->Planets.Num(), Secondary.Num(), Spec.DistanceLy, Spec.RightAscensionHours, Spec.DeclinationDeg);
-	return Sys;
+}
+
+void AStarSystem::RenameSystem(const FString& NewName)
+{
+	const FString Old = SystemName;
+	if (NewName.IsEmpty() || NewName == Old) { return; }
+	SystemName = NewName;
+	if (Star) { Star->StarName = NewName; }
+	if (Companion) { Companion->StarName = NewName + TEXT(" B"); }
+	// Every world hanging from the anchor, the moons the showcase pass added included, not only the generator's list.
+	for (TActorIterator<APlanetBody> It(GetWorld()); It; ++It)
+	{
+		if (It->GetAttachParentActor() != this) { continue; }
+		if (It->PlanetName.StartsWith(Old + TEXT(" "))) { It->PlanetName = NewName + It->PlanetName.RightChop(Old.Len()); }
+	}
+	UE_LOG(LogTemp, Log, TEXT("Star system %s is now %s"), *Old, *NewName);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

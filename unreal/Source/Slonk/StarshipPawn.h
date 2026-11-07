@@ -661,6 +661,7 @@ protected:
 	void HandleMissionCommand(const TArray<FString>& Args);
 	/** ship fleet ...: the other ships, their missions and people; transfers either way; dev trouble. */
 	void HandleFleetCommand(const TArray<FString>& Args);
+	void HandleChartCommand(const TArray<FString>& Args);
 
 private:
 	void ApplyHullDimensions();

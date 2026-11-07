@@ -6,6 +6,7 @@
 #include "../CrewRoster.h"
 #include "../Missions.h"
 #include "../Fleet.h"
+#include "../Exploration.h"
 #include "../GameClock.h"
 #include "../WarpDriveComponent.h"
 #include "Engine/GameInstance.h"
@@ -22,6 +23,7 @@ namespace
 		UCrewRosterSubsystem* Roster = nullptr;
 		UMissionSubsystem* Missions = nullptr;
 		UFleetSubsystem* Fleet = nullptr;
+		UExplorationSubsystem* Exploration = nullptr;
 		UGameInstance* Outer = nullptr;
 		FSystems(int32 Seed = 7)
 		{
@@ -32,12 +34,14 @@ namespace
 			Roster = NewObject<UCrewRosterSubsystem>(Outer);
 			Missions = NewObject<UMissionSubsystem>(Outer);
 			Fleet = NewObject<UFleetSubsystem>(Outer);
-			Roster->AddToRoot(); Missions->AddToRoot(); Fleet->AddToRoot();
+			Exploration = NewObject<UExplorationSubsystem>(Outer);
+			Roster->AddToRoot(); Missions->AddToRoot(); Fleet->AddToRoot(); Exploration->AddToRoot();
 			Roster->InitForTest(Seed);
 			Fleet->InitForTest(Roster, Missions);
-			Missions->InitForTest(Roster, Fleet);
+			Missions->InitForTest(Roster, Fleet, Exploration);
+			Exploration->InitForTest(Missions);
 		}
-		~FSystems() { Roster->RemoveFromRoot(); Missions->RemoveFromRoot(); Fleet->RemoveFromRoot(); Outer->RemoveFromRoot(); }
+		~FSystems() { Roster->RemoveFromRoot(); Missions->RemoveFromRoot(); Fleet->RemoveFromRoot(); Exploration->RemoveFromRoot(); Outer->RemoveFromRoot(); }
 		FMissionShipState Ship(const FString& System = TEXT("Sol"), const TArray<FString>& Nearby = {}) const
 		{
 			FMissionShipState S; S.SystemName = System; S.Nearby = Nearby; return S;
@@ -408,6 +412,169 @@ bool FSlonkFleetLossTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("nobody aboard"), H->Complement, 0);
 	TestTrue(TEXT("all hands counted"), H->Lost > 0);
 	TestFalse(TEXT("no mission"), H->Mission.IsActive());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkExplorationCatalogueTest, "Slonk.Exploration.Catalogue", SLONK_TEST_FLAGS)
+bool FSlonkExplorationCatalogueTest::RunTest(const FString& Parameters)
+{
+	// The same sky every game: a dozen stars, apart, in the band, each with its number and its own name.
+	const TArray<FCatalogueEntry> A = UExplorationSubsystem::MakeCatalogue(UExplorationSubsystem::CatalogueSeed, UExplorationSubsystem::CatalogueCount);
+	const TArray<FCatalogueEntry> B = UExplorationSubsystem::MakeCatalogue(UExplorationSubsystem::CatalogueSeed, UExplorationSubsystem::CatalogueCount);
+	TestEqual(TEXT("a dozen"), A.Num(), UExplorationSubsystem::CatalogueCount);
+	TSet<FString> Names;
+	for (int32 i = 0; i < A.Num(); ++i)
+	{
+		const FCatalogueEntry& E = A[i];
+		TestTrue(TEXT("a UFC number"), E.Designation.StartsWith(TEXT("UFC ")));
+		TestFalse(TEXT("unique"), Names.Contains(E.Designation)); Names.Add(E.Designation);
+		TestTrue(TEXT("in the band"), E.Spec.DistanceLy >= 6.f && E.Spec.DistanceLy <= 30.f);
+		TestTrue(TEXT("star only, unpopulated"), E.Spec.bStarOnly && !E.Spec.bPopulate);
+		TestFalse(TEXT("its own name"), E.ProperName.IsEmpty());
+		TestEqual(TEXT("unknown"), (int32)E.State, (int32)EChartState::Unknown);
+		TestEqual(TEXT("deterministic"), E.Designation, B[i].Designation);
+		TestEqual(TEXT("deterministic name"), E.ProperName, B[i].ProperName);
+		const FVector P = AStarSystem::DirectionFromSky(E.Spec.RightAscensionHours, E.Spec.DeclinationDeg) * (double)E.Spec.DistanceLy;
+		for (int32 j = 0; j < i; ++j)
+		{
+			const FVector Q = AStarSystem::DirectionFromSky(A[j].Spec.RightAscensionHours, A[j].Spec.DeclinationDeg) * (double)A[j].Spec.DistanceLy;
+			TestTrue(TEXT("apart"), FVector::Dist(P, Q) >= 1.4);
+		}
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkExplorationChartTest, "Slonk.Exploration.Chart", SLONK_TEST_FLAGS)
+bool FSlonkExplorationChartTest::RunTest(const FString& Parameters)
+{
+	FSystems S;
+	const FCatalogueEntry& First = S.Exploration->GetCatalogue()[0];
+	const FString D = First.Designation;
+	const int32 Standing0 = S.Missions->GetStanding();
+	// Arrival charts it: the first system charted always brings a first contact.
+	TestTrue(TEXT("charted"), S.Exploration->Chart(D));
+	TestFalse(TEXT("only once"), S.Exploration->Chart(D));
+	TestEqual(TEXT("one charted"), S.Exploration->CountCharted(), 1);
+	TestEqual(TEXT("state"), (int32)S.Exploration->Find(D)->State, (int32)EChartState::Charted);
+	TestEqual(TEXT("regard for the chart"), S.Missions->GetStanding(), Standing0 + 10);
+	const FMission* FC = nullptr; for (const FMission& M : S.Missions->GetMissions()) { if (M.Kind == EMissionKind::FirstContact) { FC = &M; } }
+	if (TestNotNull(TEXT("a first contact"), FC)) { TestTrue(TEXT("active"), FC->State == EMissionState::Active); TestFalse(TEXT("a people"), FC->Group.IsNone()); }
+	// Naming: only a charted star, never a taken name; the given name finds it.
+	FString Reply;
+	TestFalse(TEXT("not an unknown star"), S.Exploration->Name(S.Exploration->GetCatalogue()[1].Designation, TEXT("Nowhere"), Reply));
+	TestTrue(TEXT("named"), S.Exploration->Name(D, TEXT("Vashti's Reach"), Reply));
+	TestEqual(TEXT("found by name"), S.Exploration->Find(TEXT("Vashti's Reach")) ? S.Exploration->Find(TEXT("Vashti's Reach"))->Designation : FString(), D);
+	TestFalse(TEXT("taken"), S.Exploration->Name(D, S.Exploration->GetCatalogue()[2].Designation, Reply));
+	// The survey completes the chart.
+	S.Exploration->MarkSurveyed(TEXT("Vashti's Reach"));
+	TestEqual(TEXT("surveyed"), (int32)S.Exploration->Find(D)->State, (int32)EChartState::Surveyed);
+	// A people met is remembered, once.
+	S.Exploration->RecordContact(TEXT("Vethrani"), TEXT("Vashti's Reach"), 1, TEXT("a treaty"));
+	S.Exploration->RecordContact(TEXT("Vethrani"), TEXT("Vashti's Reach"), 0, TEXT("cooled"));
+	TestEqual(TEXT("one record"), S.Exploration->GetContacts().Num(), 1);
+	TestEqual(TEXT("the last word"), S.Exploration->ContactWith(TEXT("Vethrani"))->Relation, 0);
+	TestEqual(TEXT("on the entry"), S.Exploration->Find(D)->Contact, FString(TEXT("Vethrani")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkMissionExploreTest, "Slonk.Missions.Explore", SLONK_TEST_FLAGS)
+bool FSlonkMissionExploreTest::RunTest(const FString& Parameters)
+{
+	FSystems S;
+	const int32 Id = S.Missions->DevSpawn(EMissionKind::Explore, EMissionSource::Starfleet);
+	const FMission* M = S.Missions->Find(Id);
+	if (!TestNotNull(TEXT("an order"), M)) { return false; }
+	TestEqual(TEXT("a system"), (int32)M->TargetKind, (int32)EMissionTarget::System);
+	const FCatalogueEntry* E = S.Exploration->Find(M->TargetName);
+	if (!TestNotNull(TEXT("from the catalogue"), E)) { return false; }
+	TestEqual(TEXT("unknown"), (int32)E->State, (int32)EChartState::Unknown);
+	const FString Designation = E->Designation;
+	FString Reply; FMissionOutcome Out;
+	TestTrue(TEXT("accepted"), S.Missions->Accept(Id, Reply));
+	TestFalse(TEXT("not there yet"), S.Missions->Act(Id, 0, Out, Reply));
+	// Arrival: the ship's state names the system; the exploration tick charts it.
+	const FMissionShipState At = S.Ship(M->TargetName);
+	S.Missions->AdvanceSeconds(1.f, At);
+	S.Exploration->AdvanceSeconds(3.f, At);
+	TestEqual(TEXT("charted on arrival"), (int32)S.Exploration->Find(Designation)->State, (int32)EChartState::Charted);
+	TestTrue(TEXT("in range"), S.Missions->IsAtTarget(*S.Missions->Find(Id)));
+	// The survey option waits for the real survey; the chart is filed with the catalogue's own name.
+	TestFalse(TEXT("survey not complete"), S.Missions->Act(Id, 0, Out, Reply));
+	TestTrue(TEXT("says so"), Reply.Contains(TEXT("survey")));
+	S.Exploration->MarkSurveyed(Designation);
+	TestTrue(TEXT("survey carried"), S.Missions->Act(Id, 0, Out, Reply));
+	TestTrue(TEXT("no check to fail"), Out.bSuccess);
+	TestFalse(TEXT("one stage left"), Out.bMissionOver);
+	TestTrue(TEXT("filed"), S.Missions->Act(Id, 0, Out, Reply));
+	TestTrue(TEXT("over"), Out.bMissionOver);
+	TestEqual(TEXT("complete"), (int32)S.Missions->Find(Id)->State, (int32)EMissionState::Completed);
+	TestTrue(TEXT("science"), S.Missions->Find(Id)->ScienceEarned >= 300);
+	const FCatalogueEntry* After = S.Exploration->Find(Designation);
+	TestEqual(TEXT("named by the catalogue"), After->GivenName, After->ProperName);
+	TestEqual(TEXT("the mission follows the name"), S.Missions->Find(Id)->TargetName, After->ProperName);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkMissionFirstContactTest, "Slonk.Missions.FirstContact", SLONK_TEST_FLAGS)
+bool FSlonkMissionFirstContactTest::RunTest(const FString& Parameters)
+{
+	FSystems S;
+	const int32 Id = S.Missions->RaiseEvent(EMissionKind::FirstContact);
+	const FMission* M = S.Missions->Find(Id);
+	if (!TestNotNull(TEXT("raised"), M)) { return false; }
+	TestEqual(TEXT("active"), (int32)M->State, (int32)EMissionState::Active);
+	TestEqual(TEXT("four stages"), M->Stages.Num(), 4);
+	const FString People = M->Group.ToString();
+	TestFalse(TEXT("a people"), People.IsEmpty());
+	TestTrue(TEXT("named in the exchange"), M->Stages[1].Text.Contains(People));
+	FString Reply; FMissionOutcome Out;
+	// Her hull has to be in the neighbourhood to act; the test's state names it.
+	TestFalse(TEXT("not in range"), S.Missions->Act(Id, 2, Out, Reply));
+	S.Missions->AdvanceSeconds(1.f, S.Ship(TEXT("Sol"), { M->TargetName }));
+	// Shields up: the hard start, then hold and wait; either the exchange opens or she leaves.
+	TestTrue(TEXT("shields"), S.Missions->Act(Id, 2, Out, Reply));
+	TestEqual(TEXT("a hard start"), S.Missions->Find(Id)->Stage, 2);
+	TestTrue(TEXT("hold"), S.Missions->Act(Id, 1, Out, Reply));
+	if (Out.bMissionOver)
+	{
+		TestEqual(TEXT("failed"), (int32)S.Missions->Find(Id)->State, (int32)EMissionState::Failed);
+		const FContactRecord* C = S.Exploration->ContactWith(People);
+		if (TestNotNull(TEXT("recorded"), C)) { TestEqual(TEXT("hostile"), C->Relation, -1); }
+		return true;
+	}
+	TestEqual(TEXT("the exchange"), S.Missions->Find(Id)->Stage, 1);
+	TestTrue(TEXT("linguists"), S.Missions->Act(Id, 0, Out, Reply));
+	TestEqual(TEXT("terms"), S.Missions->Find(Id)->Stage, 3);
+	TestTrue(TEXT("part in peace"), S.Missions->Act(Id, 2, Out, Reply));
+	TestTrue(TEXT("over"), Out.bMissionOver);
+	TestEqual(TEXT("complete"), (int32)S.Missions->Find(Id)->State, (int32)EMissionState::Completed);
+	const FContactRecord* C = S.Exploration->ContactWith(People);
+	if (TestNotNull(TEXT("recorded"), C)) { TestTrue(TEXT("not hostile"), C->Relation >= 0); TestEqual(TEXT("where"), C->System, S.Ship().SystemName); }
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkMissionBeaconTest, "Slonk.Missions.Beacon", SLONK_TEST_FLAGS)
+bool FSlonkMissionBeaconTest::RunTest(const FString& Parameters)
+{
+	FSystems S;
+	S.Missions->AdvanceSeconds(1.f, S.Ship());
+	const int32 Id = S.Missions->RaiseEvent(EMissionKind::Beacon);
+	const FMission* M = S.Missions->Find(Id);
+	if (!TestNotNull(TEXT("raised"), M)) { return false; }
+	TestEqual(TEXT("no target yet"), (int32)M->TargetKind, (int32)EMissionTarget::None);
+	FString Reply; FMissionOutcome Out;
+	TestTrue(TEXT("decode"), S.Missions->Act(Id, 0, Out, Reply));
+	if (!Out.bSuccess) { TestTrue(TEXT("kept its secret"), Out.bMissionOver); return true; }
+	// Decoded: it points at the nearest unknown star of the catalogue, and the source waits there.
+	const FMission* After = S.Missions->Find(Id);
+	TestEqual(TEXT("a system"), (int32)After->TargetKind, (int32)EMissionTarget::System);
+	const FCatalogueEntry* E = S.Exploration->Find(After->TargetName);
+	if (TestNotNull(TEXT("in the catalogue"), E)) { TestEqual(TEXT("unknown"), (int32)E->State, (int32)EChartState::Unknown); }
+	TestEqual(TEXT("the source"), After->Stage, 1);
+	TestFalse(TEXT("not there"), S.Missions->Act(Id, 0, Out, Reply));
+	S.Missions->AdvanceSeconds(1.f, S.Ship(After->TargetName));
+	TestTrue(TEXT("searched"), S.Missions->Act(Id, 0, Out, Reply));
+	TestTrue(TEXT("over"), Out.bMissionOver);
 	return true;
 }
 

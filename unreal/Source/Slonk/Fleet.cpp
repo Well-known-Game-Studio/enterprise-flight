@@ -372,7 +372,7 @@ void UFleetSubsystem::BeginMission(FFleetShip& S, bool bForceNear, bool bMoveAct
 		for (TActorIterator<AStarSystem> It(W); It; ++It)
 		{
 			const bool bOwn = It->SystemName == S.SystemName;
-			if (!bOwn) { Far.Add(It->SystemName); continue; }
+			if (!bOwn) { if (It->bCharted) { Far.Add(It->SystemName); } continue; }
 			for (APlanetBody* P : It->Planets) { if (P && !P->IsMoon()) { Here.Add(P->GetDisplayName()); } }
 		}
 		for (TActorIterator<ASpaceStation> It(W); It; ++It) { if (UScienceScannerComponent::SystemNameAt(W, It->GetActorLocation()) == S.SystemName && It->GetDisplayName() != S.HomeStation) { Here.Add(It->GetDisplayName()); } }

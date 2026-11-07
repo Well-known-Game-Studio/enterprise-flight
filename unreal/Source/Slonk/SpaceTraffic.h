@@ -27,7 +27,9 @@ public:
 	void SpawnDeepSpaceStations();
 	/** One ship by name at Loc, holding station there (no warp, no patrol): a mission's freighter, derelict or
 	 *  stranger. A civilian hull is a Miranda in merchant colours. Returns it, or null. */
-	ASpaceVessel* SpawnNamedShip(const FString& Name, const FVector& Loc, bool bCivilian);
+	/** A hull holding station for an encounter: a freighter, a Starfleet hull, or (bAlien) a stranger's: no class
+	 *  of ours in her lines' colours, larger, lit in a colour nobody uses. */
+	ASpaceVessel* SpawnNamedShip(const FString& Name, const FVector& Loc, bool bCivilian, bool bAlien = false);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic") int32 Seed = 11;
 	/** One station orbits each non-moon planet at this many radii. */

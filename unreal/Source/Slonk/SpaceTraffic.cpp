@@ -141,7 +141,7 @@ void ASpaceTraffic::SpawnPatrolShip(FRandomStream& Rng, const FVector& Loc, cons
 	Spawned.Add(Ship);
 }
 
-ASpaceVessel* ASpaceTraffic::SpawnNamedShip(const FString& Name, const FVector& Loc, bool bCivilian)
+ASpaceVessel* ASpaceTraffic::SpawnNamedShip(const FString& Name, const FVector& Loc, bool bCivilian, bool bAlien)
 {
 	UWorld* World = GetWorld();
 	if (!World) { return nullptr; }
@@ -154,7 +154,17 @@ ASpaceVessel* ASpaceTraffic::SpawnNamedShip(const FString& Name, const FVector& 
 	Ship->CruiseWarpFactor = CruiseFor(Ship->ShipClass);
 	Ship->SizeCm = SizeForClass(Ship->ShipClass, Rng);
 	Ship->VesselName = Name;
-	if (bCivilian) { const float T = Rng.FRandRange(0.4f, 0.55f); Ship->HullColor = FLinearColor(T * 1.1f, T, T * 0.85f); Ship->GlowColor = FLinearColor(1.0f, 0.6f, 0.25f); }
+	if (bAlien)
+	{
+		// Of no known design: the builder has only our classes, so hers is the big explorer's lines a third larger,
+		// in a dark bronze-violet nobody paints a hull, lit magenta, with the accents in the same strange light.
+		Ship->SizeCm *= 1.35f;
+		Ship->HullColor = FLinearColor(0.2f, 0.14f, 0.26f); Ship->GlowColor = FLinearColor(1.0f, 0.35f, 0.9f);
+		Ship->WarmGlowColor = FLinearColor(0.9f, 0.2f, 1.0f);
+		Ship->HullAccentColors = { FLinearColor(0.45f, 0.3f, 0.2f), FLinearColor(0.3f, 0.18f, 0.4f) };
+		Ship->HullMetallic = 0.6f; Ship->HullRoughness = 0.3f;
+	}
+	else if (bCivilian) { const float T = Rng.FRandRange(0.4f, 0.55f); Ship->HullColor = FLinearColor(T * 1.1f, T, T * 0.85f); Ship->GlowColor = FLinearColor(1.0f, 0.6f, 0.25f); }
 	else { Ship->HullColor = FLinearColor(0.3f, 0.32f, 0.38f); Ship->GlowColor = FLinearColor(0.4f, 1.0f, 0.6f); }
 	Ship->HomeLocation = Loc;
 	Ship->PatrolRadiusCm = 0.0;

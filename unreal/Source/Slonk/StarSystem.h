@@ -36,6 +36,10 @@ struct FStarSystemSpec
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "System") EStarClass CompanionClass = EStarClass::None;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "System") float CompanionSeparationAU = 0.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "System") int32 Seed = 1;
+	/** Only the star (and companion) now; the worlds come with Reveal() (the catalogue's uncharted stars). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "System") bool bStarOnly = false;
+	/** Starfleet is here: a station with its ships at each world. False for space nobody has reached. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "System") bool bPopulate = true;
 };
 
 /**
@@ -63,6 +67,12 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "System") TArray<TObjectPtr<APlanetBody>> Planets;
 	/** Everything within this radius of the star belongs to the system (cm). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "System") double RadiusCm = 6.0e15;
+	/** The spec it was generated from (Reveal fills the rest from it). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "System") FStarSystemSpec Spec;
+	/** Starfleet has been here: missions and the fleet may name its places. The catalogue's stars start false. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "System") bool bCharted = true;
+	/** The worlds exist (a star-only system until Reveal). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "System") bool bRevealed = false;
 
 	static constexpr double LightYearCm = 9.4607e17;
 	static constexpr double AuCm = 1.495978707e13;
@@ -74,6 +84,10 @@ public:
 	/** Direction (unit vector) of a sky bearing: X toward the vernal equinox, Z to the north celestial pole. */
 	static FVector DirectionFromSky(float RightAscensionHours, float DeclinationDeg);
 
+	/** The worlds, the belt and (when the spec says Starfleet is here) the stations, from the seed; once. */
+	void Reveal();
+	/** A new name for the system: the star, the companion and the worlds that carry the old name follow. */
+	void RenameSystem(const FString& NewName);
 	/** Attach a body to this anchor, keeping its world transform. */
 	void Adopt(AActor* Body);
 	/** Attach every unattached far body within RadiusCm of the star (moons, nebulae, ships spawned later). */
@@ -104,4 +118,6 @@ private:
 	/** Planets on geometric orbits out from `StartAu` about `Centre`, named "<Prefix> I, II, ..." until MaxAu. */
 	void SpawnPlanets(UWorld* World, FRandomStream& Rng, const FVector& Centre, const FString& Prefix, EStarClass Class, int32 Count, double MaxAu, TArray<APlanetBody*>& Out);
 	UPROPERTY() TObjectPtr<USceneComponent> Anchor;
+	/** The stream's state after the stars, so a revealed system is the one Generate would have made at once. */
+	int32 RevealSeed = 0;
 };

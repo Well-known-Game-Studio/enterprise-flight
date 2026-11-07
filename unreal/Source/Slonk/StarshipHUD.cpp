@@ -1,5 +1,6 @@
 #include "StarshipHUD.h"
 #include "Missions.h"
+#include "Exploration.h"
 #include "GameClock.h"
 #include "CrewRoster.h"
 #include "SlonkLoadSubsystem.h"
@@ -312,6 +313,25 @@ void AStarshipHUD::DrawHUD()
 					DrawText(T, Mis->IsAtTarget(*Obj) ? FLinearColor(1.f, 0.85f, 0.45f) : Accent, X, Y, Font, UIScale); Y += Line;
 				}
 				else if (Offers > 0 || Mis->Unread() > 0) { DrawText(FString::Printf(TEXT("MISSIONS  %d offered, %d unread   (- opens the board)"), Offers, Mis->Unread()), Dim, X, Y, Font, UIScale); Y += Line; }
+			}
+			if (const UExplorationSubsystem* Ex = Ship->GetGameInstance() ? Ship->GetGameInstance()->GetSubsystem<UExplorationSubsystem>() : nullptr)
+			{
+				// New space: the catalogue star the ship is in and how far its chart has come; else the sector's count.
+				if (const FCatalogueEntry* E = Ex->Here())
+				{
+					FString T = FString::Printf(TEXT("CHART  %s"), *E->Designation.ToUpper());
+					if (!E->GivenName.IsEmpty()) { T += TEXT("  ") + E->GivenName.ToUpper(); }
+					T += FString::Printf(TEXT("   %s   %d WORLDS"), *UExplorationSubsystem::StateName(E->State).ToUpper(), E->Worlds);
+					if (E->State == EChartState::Charted)
+					{
+						FString Sys; TArray<FString> Keys; UScienceScannerComponent::SurveyKeys(GetWorld(), Ship->GetActorLocation(), Sys, Keys);
+						const UScienceLogSubsystem* L = Ship->GetGameInstance()->GetSubsystem<UScienceLogSubsystem>();
+						if (L && Keys.Num() > 0) { T += FString::Printf(TEXT("   SURVEY %d/%d"), L->CountScanned(Keys), Keys.Num()); }
+					}
+					if (!E->Contact.IsEmpty()) { T += FString::Printf(TEXT("   THE %s"), *E->Contact.ToUpper()); }
+					DrawText(T, FLinearColor(0.7f, 1.f, 0.8f), X, Y, Font, UIScale); Y += Line;
+				}
+				else if (Ex->CountCharted() > 0) { DrawText(FString::Printf(TEXT("CHART  %d of %d charted"), Ex->CountCharted(), Ex->GetCatalogue().Num()), Dim, X, Y, Font, UIScale); Y += Line; }
 			}
 			if (Ship->TractorBeam && Ship->TractorBeam->IsBeamActive() && Ship->TractorBeam->Target)
 			{
@@ -921,6 +941,8 @@ void AStarshipHUD::DrawNavMarkers(const AActor* Ship, float UIScale)
 		if (!bIsNavTarget && !IsNavListed(O, Dist)) { continue; }
 		if (!bIsNavTarget && !PassesNavFilter(O.Kind)) { continue; }
 		FLinearColor Color = KindColor(O.Kind);
+		// An uncharted sun of the catalogue is a fainter thing on the display until the ship has been there.
+		if (O.Kind == ENavObjectKind::Star && O.Label.StartsWith(TEXT("UFC "))) { Color = FLinearColor(Color.R * 0.6f, Color.G * 0.6f, Color.B * 0.6f, Color.A * 0.75f); }
 		if (bIsNavTarget)
 		{
 			Color = NavTargetColor();
@@ -1077,11 +1099,13 @@ void AStarshipHUD::DrawMinimap(const AActor* Ship, float UIScale)
 	}
 
 	const FVector ShipLoc = Ship->GetActorLocation();
-	// Fit the farthest body (or the ship) with a margin.
+	// Fit the farthest body of this system (or the ship) with a margin; the other suns, light-years out, would
+	// shrink the system to a point (the catalogue puts a dozen in the sky), so they fall off the map's edge.
 	double MaxR = FVector::Dist2D(ShipLoc, StarLocation);
 	for (const FNavObject& O : NavObjects)
 	{
-		MaxR = FMath::Max(MaxR, FVector::Dist2D(O.Location, StarLocation));
+		const double D = FVector::Dist2D(O.Location, StarLocation);
+		if (D < FarSystemCm) { MaxR = FMath::Max(MaxR, D); }
 	}
 	MaxR = FMath::Max(MaxR, BeltRadiusCm);
 	MaxR = FMath::Max(MaxR, 1.0);
@@ -1140,10 +1164,13 @@ void AStarshipHUD::DrawMinimap(const AActor* Ship, float UIScale)
 		const FVector Rel = O.Location - StarLocation;
 		const FVector2D P = MinimapProject(Rel, Scale, CX, CY, YawDeg);
 		const FVector2D Base = MinimapProject(FVector(Rel.X, Rel.Y, 0.0), Scale, CX, CY, YawDeg);
+		if (P.X < X0 || P.X > X0 + W || P.Y < Y0 || P.Y > Y0 + H) { continue; }   // off the map (another system's sun)
 		const bool bIsNavTarget = NavTarget.IsValid() && O.Actor == NavTarget.Get();
 		// The filter applies here too; the suns stay as the map's frame.
 		if (!bIsNavTarget && O.Kind != ENavObjectKind::Star && !PassesNavFilter(O.Kind)) { continue; }
 		FLinearColor Color = KindColor(O.Kind);
+		// An uncharted sun of the catalogue is a fainter thing on the display until the ship has been there.
+		if (O.Kind == ENavObjectKind::Star && O.Label.StartsWith(TEXT("UFC "))) { Color = FLinearColor(Color.R * 0.6f, Color.G * 0.6f, Color.B * 0.6f, Color.A * 0.75f); }
 		float Dot = O.Kind == ENavObjectKind::Star ? 5.f : O.Kind == ENavObjectKind::Moon ? 1.5f : 3.f;
 		Dot *= UIScale;
 		if (FMath::Abs(P.Y - Base.Y) > 1.f)
