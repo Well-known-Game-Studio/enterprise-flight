@@ -1,6 +1,7 @@
 #include "StarshipPlayerController.h"
 
 #include "EnhancedInputComponent.h"
+#include "GameClock.h"
 #include "EnhancedInputSubsystems.h"
 #include "InputAction.h"
 #include "InputMappingContext.h"
@@ -107,6 +108,8 @@ void AStarshipPlayerController::CreateDefaultInputAssets()
 	Ensure(IA_WarpToggle, TEXT("IA_WarpToggle"), EInputActionValueType::Boolean);
 	Ensure(IA_WarpUp, TEXT("IA_WarpUp"), EInputActionValueType::Boolean);
 	Ensure(IA_WarpDown, TEXT("IA_WarpDown"), EInputActionValueType::Boolean);
+	Ensure(IA_TimeUp, TEXT("IA_TimeUp"), EInputActionValueType::Boolean);
+	Ensure(IA_TimeDown, TEXT("IA_TimeDown"), EInputActionValueType::Boolean);
 	Ensure(IA_FirePhasers, TEXT("IA_FirePhasers"), EInputActionValueType::Boolean);
 	Ensure(IA_FireTorpedo, TEXT("IA_FireTorpedo"), EInputActionValueType::Boolean);
 	Ensure(IA_CycleTarget, TEXT("IA_CycleTarget"), EInputActionValueType::Boolean);
@@ -194,6 +197,9 @@ void AStarshipPlayerController::CreateDefaultInputAssets()
 	Map(Ctx, IA_WarpDown, EKeys::LeftBracket);
 	Map(Ctx, IA_WarpDown, EKeys::Subtract);
 	Map(Ctx, IA_WarpDown, EKeys::Gamepad_DPad_Left);
+	// The clock: 8 slower, 9 faster, beside the alert digits.
+	Map(Ctx, IA_TimeUp, EKeys::Nine);
+	Map(Ctx, IA_TimeDown, EKeys::Eight);
 
 	// Weapons.
 	Map(Ctx, IA_FirePhasers, EKeys::LeftMouseButton);
@@ -320,6 +326,8 @@ void AStarshipPlayerController::SetupInputComponent()
 	EIC->BindAction(IA_WarpToggle, ETriggerEvent::Started, this, &AStarshipPlayerController::OnWarpToggle);
 	EIC->BindAction(IA_WarpUp, ETriggerEvent::Started, this, &AStarshipPlayerController::OnWarpUp);
 	EIC->BindAction(IA_WarpDown, ETriggerEvent::Started, this, &AStarshipPlayerController::OnWarpDown);
+	EIC->BindAction(IA_TimeUp, ETriggerEvent::Started, this, &AStarshipPlayerController::OnTimeUp);
+	EIC->BindAction(IA_TimeDown, ETriggerEvent::Started, this, &AStarshipPlayerController::OnTimeDown);
 	EIC->BindAction(IA_FirePhasers, ETriggerEvent::Started, this, &AStarshipPlayerController::OnFirePhasersStarted);
 	EIC->BindAction(IA_FirePhasers, ETriggerEvent::Completed, this, &AStarshipPlayerController::OnFirePhasersCompleted);
 	EIC->BindAction(IA_FireTorpedo, ETriggerEvent::Started, this, &AStarshipPlayerController::OnFireTorpedo);
@@ -617,6 +625,18 @@ void AStarshipPlayerController::OnWarpDown()
 			Ship->WarpDrive->AdjustWarpFactor(-WarpFactorStep);
 		}
 	}
+}
+
+void AStarshipPlayerController::OnTimeUp()
+{
+	if (AStarshipPawn* Ship = GetStarship()) { Ship->StepTimeScale(1); }
+	else if (UGameClockSubsystem* C = UGameClockSubsystem::Get(this)) { C->StepRequested(1); }
+}
+
+void AStarshipPlayerController::OnTimeDown()
+{
+	if (AStarshipPawn* Ship = GetStarship()) { Ship->StepTimeScale(-1); }
+	else if (UGameClockSubsystem* C = UGameClockSubsystem::Get(this)) { C->StepRequested(-1); }
 }
 
 void AStarshipPlayerController::OnFirePhasersStarted()

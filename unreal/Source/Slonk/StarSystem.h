@@ -80,6 +80,8 @@ public:
 	int32 AdoptLoose();
 	/** The system whose star is nearest to a location, or null. */
 	static AStarSystem* Nearest(UWorld* World, const FVector& Location);
+	/** Where a named place is: a system (its star), a world, a station or a ship by display name. */
+	static bool FindNamedLocation(UWorld* World, const FString& Name, FVector& OutLocation);
 	FVector GetStarLocation() const;
 	double DistanceFrom(const FVector& Location) const { return FVector::Dist(GetStarLocation(), Location); }
 

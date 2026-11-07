@@ -77,9 +77,12 @@ APhotonTorpedo::APhotonTorpedo()
 	GlowMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(SlonkMaterials::TorpedoPath));
 }
 
+int32 APhotonTorpedo::InFlight = 0;
+
 void APhotonTorpedo::BeginPlay()
 {
 	Super::BeginPlay();
+	++InFlight;
 
 	if (UMaterialInterface* Mat = SlonkMaterials::LoadOrFallback(GlowMaterial, TEXT("Torpedo")))
 	{
@@ -98,6 +101,12 @@ void APhotonTorpedo::BeginPlay()
 
 	Collision->OnComponentHit.AddDynamic(this, &APhotonTorpedo::OnHit);
 	SetLifeSpan(LifeSeconds);
+}
+
+void APhotonTorpedo::EndPlay(const EEndPlayReason::Type Reason)
+{
+	InFlight = FMath::Max(InFlight - 1, 0);
+	Super::EndPlay(Reason);
 }
 
 void APhotonTorpedo::Launch(const FVector& Direction, double InheritedSpeed, AActor* HomingTarget, const FVector& AimDirection)

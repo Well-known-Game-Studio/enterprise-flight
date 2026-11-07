@@ -9,7 +9,8 @@ experiences) is in `crew-design.md` §4 and §8; this is the mission side. Code:
 A mission is one of three things, and the game says which it was.
 
 - **Starfleet's orders** arrive over subspace as messages in the inbox, every six to fourteen ship's hours while
-  fewer than two of Starfleet's are open. Each names an admiral, a brief and a deadline in stardates. Surveys,
+  fewer than two of Starfleet's are open. Each names an admiral, a brief and a deadline in stardates: the leg to the
+  target at warp 7 plus two to four days (a board's one and a half to three), so it is reachable at any pace. Surveys,
   parleys, outbreaks, patrols, supply runs: the fleet's work. They are *offered*: accept them or let them lapse.
   Letting one lapse or dropping one accepted costs standing; the crew notice too.
 - **A starbase's board** fills when the ship comes alongside a station (within resupply range): three postings for

@@ -1,6 +1,7 @@
 #include "StarshipMovementComponent.h"
 
 #include "EngineUtils.h"
+#include "GameClock.h"
 #include "PlanetBody.h"
 #include "PlanetTerrainComponent.h"
 #include "StarBody.h"
@@ -69,6 +70,9 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 
 	// Clamp huge hitches so a frame spike never flings the ship across the system.
 	DeltaTime = FMath::Min(DeltaTime, 0.1f);
+	// The world's seconds this frame: translation, speed and the orbit run on them; attitude and the inputs keep the
+	// frame's own, so the ship steers the same at x3600 as at x1 (docs/time-design.md).
+	const float SimDt = UGameClockSubsystem::Sim(this, DeltaTime);
 
 	if (bLanded)
 	{
@@ -127,10 +131,10 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 			// Ease toward the wanted range (a few seconds) instead of snapping.
 			OrbitRadius = FMath::Max(FMath::Lerp(OrbitRadius, OrbitRadiusTarget, 1.0 - FMath::Exp(-1.2 * DeltaTime)), MinRadius);
 			const double Speed = GetOrbitSpeed();
-			const double Angle = Speed * DeltaTime / FMath::Max(OrbitRadius, 1.0);
+			const double Angle = Speed * SimDt / FMath::Max(OrbitRadius, 1.0);
 			const FVector NewRadial = Radial.RotateAngleAxisRad(Angle, OrbitAxis).GetSafeNormal();
 			const FVector NewPos = Center + NewRadial * OrbitRadius;
-			Velocity = (NewPos - Here) / DeltaTime;
+			Velocity = (NewPos - Here) / FMath::Max(SimDt, 1e-6f);
 			FQuat OrbitQuat = NewQuat;
 			if (bOrbitFaceBody && SteeringInput.IsNearlyZero(0.02))
 			{
@@ -172,10 +176,10 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 		const FVector DeltaV = TargetVelocity - Velocity;
 		// Acceleration-limited, and with a response time also a fraction of the gap each tick: the shuttle at
 		// 2 g took four minutes to stop from 5 km/s, and a tap of the throttle took seconds to show.
-		double MaxDeltaV = ImpulseAcceleration * DeltaTime;
+		double MaxDeltaV = ImpulseAcceleration * SimDt;
 		if (SpeedResponseSeconds > 0.f)
 		{
-			MaxDeltaV = FMath::Max(MaxDeltaV, DeltaV.Size() * (1.0 - FMath::Exp(-DeltaTime / SpeedResponseSeconds)));
+			MaxDeltaV = FMath::Max(MaxDeltaV, DeltaV.Size() * (1.0 - FMath::Exp(-SimDt / SpeedResponseSeconds)));
 		}
 		Velocity += DeltaV.GetClampedToMaxSize(MaxDeltaV);
 	}
@@ -183,7 +187,7 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 	// closing rate never exceeds the cap (scaling keeps the heading; clamping one axis bled thrust sideways).
 	{
 		const FVector Dir = Velocity.GetSafeNormal();
-		const FVector ToBody = UpdateProximity(Here, Dir);
+		const FVector ToBody = UpdateProximity(Here, Dir, SimDt);
 		if (!ToBody.IsNearlyZero())
 		{
 			const double Closing = FVector::DotProduct(Velocity, ToBody);
@@ -192,10 +196,21 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 				Velocity *= ProximityCap / Closing;
 				bProximityLimited = true;
 			}
+			// The unswept warp move never reaches the surface in one step, whatever the step: the floor speed times
+			// a dilated frame can be more than what is left (the sweep and the terrain floor stop the impulse move).
+			if (bWarpActive && ProximitySurface > 0.0)
+			{
+				const double Step = FVector::DotProduct(Velocity, ToBody) * SimDt;
+				if (Step > ProximitySurface * 0.5)
+				{
+					Velocity *= ProximitySurface * 0.5 / Step;
+					bProximityLimited = true;
+				}
+			}
 		}
 	}
 
-	const FVector Delta = Velocity * DeltaTime;
+	const FVector Delta = Velocity * SimDt;
 
 	if (bWarpActive)
 	{
@@ -415,10 +430,11 @@ void UStarshipMovementComponent::ClearOrbitHold()
 	OrbitBodyName.Empty();
 }
 
-FVector UStarshipMovementComponent::UpdateProximity(const FVector& Here, const FVector& Dir)
+FVector UStarshipMovementComponent::UpdateProximity(const FVector& Here, const FVector& Dir, float SimDt)
 {
 	ProximityBody = nullptr;
 	ProximityCap = 0.0;
+	ProximitySurface = 0.0;
 	ProximityBodyName.Empty();
 	if (!bProximityGovernor)
 	{
@@ -437,8 +453,11 @@ FVector UStarshipMovementComponent::UpdateProximity(const FVector& Here, const F
 	}
 	// Among the bodies our straight-line path would pass through (within ThreatRadii), keep the tightest cap.
 	FVector BestDir = FVector::ZeroVector;
-	double BestCap = TNumericLimits<double>::Max();
+	double BestCap = TNumericLimits<double>::Max(), BestSurface = 0.0;
 	AActor* BestBody = nullptr;
+	// The approach interval is at least two steps of the world's time, so one dilated frame covers at most half of
+	// what is left; at x1 a frame is a sixtieth and the three seconds govern as before.
+	const double Approach = FMath::Max((double)FMath::Max(ApproachSeconds, 0.5f), 2.0 * SimDt);
 	for (const FProximityCandidate& C : ProximityCandidates)
 	{
 		AActor* Body = C.Body.Get();
@@ -468,10 +487,11 @@ FVector UStarshipMovementComponent::UpdateProximity(const FVector& Here, const F
 				continue; // the path misses it
 			}
 		}
-		const double Cap = FMath::Max(Surface / FMath::Max(ApproachSeconds, 0.5f), MinApproachSpeed);
+		const double Cap = FMath::Max(Surface / Approach, MinApproachSpeed);
 		if (Cap < BestCap)
 		{
 			BestCap = Cap;
+			BestSurface = Surface;
 			BestBody = Body;
 			BestDir = ToDir;
 		}
@@ -482,6 +502,7 @@ FVector UStarshipMovementComponent::UpdateProximity(const FVector& Here, const F
 	}
 	ProximityBody = BestBody;
 	ProximityCap = BestCap;
+	ProximitySurface = BestSurface;
 	ProximityBodyName = BestBody->GetActorNameOrLabel();
 	if (const APlanetBody* Planet = Cast<APlanetBody>(BestBody)) { if (!Planet->PlanetName.IsEmpty()) { ProximityBodyName = Planet->PlanetName; } }
 	if (const AStarBody* Star = Cast<AStarBody>(BestBody)) { if (!Star->StarName.IsEmpty()) { ProximityBodyName = Star->StarName; } }

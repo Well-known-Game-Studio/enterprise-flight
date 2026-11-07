@@ -66,6 +66,12 @@ In the classic view transwarp has a look of its own too: the streaks take cyclin
 
 https://github.com/user-attachments/assets/d1a76720-41e4-4bc3-ae41-177799456d21
 
+## Time
+
+Everything in the world runs on one clock, in real time at ×1: the hull's travel, the traffic's warps, repairs, sickbay, the crew's day, the missions and the fleet. The player scales it: 8 and 9 step through ×1, ×10, ×60, ×600 and ×3600 (`ship clock <n>` in the console), and the HUD's TIME line shows the scale in effect, the stardate and the hour. A fight, a warp charge or drop, a landing, the atmosphere, or a body or station the ship is closing on holds it at ×1 and says so; the request comes back when the moment passes. Steering, the camera, the effects and the panels keep real time whatever the scale.
+
+The autopilot drives the clock on a warp leg: it picks a cruise (the drive's setting, raised until the leg fits about a minute of real time, never past 9.9 unless transwarp was already set) and dilates so the remaining distance is about a minute, falling back to ×1 for the last stretch and the drop. Fleet ships' legs and mission deadlines are the distances at warp, so "9 h out" is when she arrives and a deadline is reachable at any pace. The design is in `docs/time-design.md`.
+
 ## Star systems
 
 The Sun's three nearest real neighbours are in the sky at their true bearings and distances: Alpha Centauri (a yellow star with an orange companion 23 AU out, 4.37 light-years), Barnard's Star (a red dwarf, 5.96) and Sirius (a white star with a white-dwarf companion 20 AU out, 8.6). Each is a full system generated from a seed at play start: a star of its spectral class, four to seven planets placed by temperature band (lava and Venus-like worlds inside, Earth-like and ocean worlds in the temperate zone, giants and ice worlds beyond), a companion star with a few worlds of its own where there is one, rings and moons where the giants roll them, a belt in two systems out of three, a station with patrol ships at every planet, and a nebula past each ringed giant. Every body of a system hangs from one anchor, so the floating origin moves a system as a unit and a world keeps its exact place after a light-year crossing.
@@ -251,6 +257,7 @@ Mouse or the left stick steers; H opens the controls panel with the full key lis
 |---|---|
 | W / S, mouse wheel | throttle; 1 to 4 set quarter to full impulse, X all stop, Z reverse |
 | J, [ and ] | warp on/off, warp factor down/up (past 9.9 is transwarp) |
+| 8, 9 | the clock slower, faster (×1 to ×3600; held at ×1 in a fight, near a body, in a warp transition) |
 | L, K | next nav target, clear it |
 | I | nav filter: all, stars, worlds, moons, stations, ships, nebulae and belts (applies to the markers, the map and L; in the chart it is also a drop-down at the top right) |
 | P | autopilot to the nav target: a warp leg when it is far, an impulse approach when it is near; P again disengages |

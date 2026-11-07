@@ -129,6 +129,7 @@ void UControlsPanel::BuildContent()
 		{ TEXT("Arrows"), TEXT("RCS thrusters fore/aft, port/starboard") },
 		{ TEXT("J / Y button"), TEXT("engage or disengage warp") },
 		{ TEXT("[  ]  or  -  +"), TEXT("warp factor") },
+		{ TEXT("8  9"), TEXT("the clock: slower, faster (x1 to x3600; held at x1 in a fight, near a body, in a warp transition)") },
 		{ TEXT("O"), TEXT("orbit hold round the nav target or nearest body") },
 		{ TEXT("P"), TEXT("autopilot to the nav target") },
 		{ TEXT("Home"), TEXT("jump to the nav target (dev)") },

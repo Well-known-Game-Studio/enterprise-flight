@@ -41,6 +41,13 @@ double UWarpDriveComponent::GetWarpSpeedForFactor(float Factor) const
 	return Base * FMath::Pow((10.0 - (double)TranswarpStart) / (10.0 - W), (double)TranswarpExponent);
 }
 
+double UWarpDriveComponent::SpeedForFactor(double Factor)
+{
+	const double Base = 2.99792458e10 * FMath::Pow(FMath::Clamp(Factor, 0.0, 9.9), 10.0 / 3.0);
+	if (Factor <= 9.9) { return Base; }
+	return Base * FMath::Pow(0.1 / (10.0 - FMath::Min(Factor, 9.999)), 3.0);
+}
+
 double UWarpDriveComponent::GetFactorForSpeed(double Speed) const
 {
 	const double AtStart = GetWarpSpeedForFactor(TranswarpStart);

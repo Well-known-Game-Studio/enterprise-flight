@@ -4,6 +4,8 @@
 #include "Missions.h"
 #include "Kismet/GameplayStatics.h"
 #include "EngineUtils.h"
+#include "WarpDriveComponent.h"
+#include "StarSystem.h"
 #include "StarSystem.h"
 #include "PlanetBody.h"
 #include "SpaceVessel.h"
@@ -122,6 +124,14 @@ UCrewRosterSubsystem* UMissionSubsystem::Roster() const
 	if (RosterOverride.IsValid()) { return RosterOverride.Get(); }
 	return GetGameInstance() ? GetGameInstance()->GetSubsystem<UCrewRosterSubsystem>() : nullptr;
 }
+double UMissionSubsystem::TravelDays(const FMission& M) const
+{
+	if (M.TargetKind == EMissionTarget::None || M.TargetKind == EMissionTarget::Vessel) { return 0.0; }
+	FVector To;
+	if (!AStarSystem::FindNamedLocation(GetWorld(), M.TargetName, To)) { return M.TargetKind == EMissionTarget::System ? 2.0 : 0.0; }
+	return UWarpDriveComponent::HoursFor(FVector::Dist(Last.Location, To), 7.0) / 24.0;
+}
+
 double UMissionSubsystem::Stardate() const { const UCrewRosterSubsystem* R = Roster(); return R ? R->GetStardate() : 8305.0; }
 double UMissionSubsystem::Hours() const { const UCrewRosterSubsystem* R = Roster(); return R ? R->GetHours() : 0.0; }
 
@@ -159,12 +169,13 @@ const FMission* UMissionSubsystem::Objective() const
 
 // ---- the ship's tick ----
 
-void UMissionSubsystem::AdvanceSeconds(float Seconds, const FMissionShipState& Ship)
+void UMissionSubsystem::AdvanceSeconds(float Seconds, const FMissionShipState& Ship, float RealSeconds)
 {
+	if (RealSeconds < 0.f) { RealSeconds = Seconds; }
 	Last = Ship;
 	if (UFleetSubsystem* F = Fleet())
 	{
-		F->AdvanceSeconds(Seconds, Ship);
+		F->AdvanceSeconds(Seconds, Ship, RealSeconds);
 		TArray<FFleetRequest> Q; F->DrainRequests(Q);
 		for (const FFleetRequest& R : Q) { int32 Calls = 0; for (const FMission& M : Missions) { if (M.IsOpen() && M.Kind == EMissionKind::Support) { ++Calls; } } if (Calls < 2) { IssueFleetMission(R); } }
 		TArray<FCrewReport> Rep; F->DrainReports(Rep); Reports.Append(Rep);
@@ -194,7 +205,7 @@ void UMissionSubsystem::AdvanceSeconds(float Seconds, const FMissionShipState& S
 		if (!Ship.bAlongside && !Ship.bUnderFire && !Ship.bAtWarp && Events == 0) { RollEvent(); }
 	}
 	Expire();
-	if (bSaveWanted) { SaveDelaySeconds -= Seconds; if (SaveDelaySeconds <= 0.f) { Save(); } }
+	if (bSaveWanted) { SaveDelaySeconds -= RealSeconds; if (SaveDelaySeconds <= 0.f) { Save(); } }
 }
 
 void UMissionSubsystem::Expire()
@@ -277,9 +288,9 @@ FMission UMissionSubsystem::MakeMission(EMissionKind Kind, EMissionSource Source
 {
 	FMission M; M.Id = NextId++; M.Kind = Kind; M.Source = Source; M.OfferedStardate = Stardate();
 	M.From = Source == EMissionSource::Starfleet ? Pick(R, Admirals) : Source == EMissionSource::Starbase ? FString::Printf(TEXT("%s operations"), *Last.StationName) : TEXT("the bridge");
-	const double Days = R.FRandRange(4.0, 9.0);
-	M.DeadlineStardate = Stardate() + Days;
 	if (!PickTarget(M, R)) { M.Id = -1; return M; }   // nowhere to send it: the caller drops it
+	// Reachable at any pace: the leg at warp 7, then two to four days to do the thing.
+	M.DeadlineStardate = Stardate() + TravelDays(M) + R.FRandRange(2.0, 4.0);
 	const FString T = M.TargetName.IsEmpty() ? TEXT("here") : M.TargetName;
 	using S = ECrewSkill; using D = ECrewDepartment;
 	switch (Kind)
@@ -421,7 +432,7 @@ void UMissionSubsystem::PostBoard(const FString& StationName)
 	{
 		FMission M = MakeMission(Kinds[R.RandRange(0, UE_ARRAY_COUNT(Kinds) - 1)], EMissionSource::Starbase, R);
 		if (M.Id < 0) { continue; }
-		M.State = EMissionState::Offered; M.PostedAt = StationName; M.DeadlineStardate = Stardate() + R.FRandRange(3.0, 6.0);
+		M.State = EMissionState::Offered; M.PostedAt = StationName; M.DeadlineStardate = Stardate() + TravelDays(M) + R.FRandRange(1.5, 3.0);
 		Missions.Add(M); ++Posted;
 	}
 	if (Posted > 0) { Report(FString::Printf(TEXT("%s has %d assignments posted for any ship that will take them; they are on the mission board."), *StationName, Posted), FLinearColor(0.75f, 0.9f, 1.f), ECrewDepartment::Operations); }

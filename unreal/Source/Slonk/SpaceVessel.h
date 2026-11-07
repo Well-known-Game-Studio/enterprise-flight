@@ -259,9 +259,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ship|Warp")
 	float WarpIntervalMax = 150.f;
 
-	/** Trips are timed to take about this long whatever the distance (sets the warp factor). */
+	/** The factor her legs are flown at (the stock curve): a trip takes the time the distance says, in the world's
+	 *  seconds, the same law the fleet's records and the player's drive use. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ship|Warp")
-	float TargetTripSeconds = 22.f;
+	float CruiseWarpFactor = 7.f;
 
 	/** Seconds the show-style stretch takes going in and coming out. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ship|Warp")
@@ -313,6 +314,8 @@ private:
 		bool bVisible = false;
 	};
 	void TickWarp(float DeltaTime);
+	/** The world's seconds (the game clock's), which the legs are timed in. */
+	double SimNow() const;
 	void BeginTravel();
 	void EndTravel();
 	void FinishWarp();

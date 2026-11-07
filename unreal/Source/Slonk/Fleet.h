@@ -55,6 +55,8 @@ struct FFleetMission
 	/** Ship's hours of travel or work left in the present task. */
 	UPROPERTY(BlueprintReadOnly) float HoursLeft = 0.f;
 	UPROPERTY(BlueprintReadOnly) float WorkHours = 6.f;
+	/** Ship's hours the leg out (and home) takes: the distance at her class's cruise, whole hours, at least one. */
+	UPROPERTY(BlueprintReadOnly) float TravelHours = 1.f;
 	UPROPERTY(BlueprintReadOnly) double StartedStardate = 0.0;
 	UPROPERTY(BlueprintReadOnly) EFleetTrouble Trouble = EFleetTrouble::None;
 	UPROPERTY(BlueprintReadOnly) FString TroubleText;
@@ -145,7 +147,13 @@ public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 
 	/** Driven by the mission system each tick with the same ship state. */
-	void AdvanceSeconds(float Seconds, const FMissionShipState& Ship);
+	/** The factor a class cruises at (Excelsior 8, Constitution 7, Miranda 6). */
+	static float CruiseFactor(const FString& ShipClass);
+	/** Whole hours a leg from the ship (her hull, else her home) to a named place takes at her cruise; one at least.
+	 *  A place the world does not know (a test, an unspawned system) is a day out when far, an hour when near. */
+	double LegHours(const FFleetShip& S, const FString& Target, bool bFar) const;
+	/** Seconds are the world's (scaled); RealSeconds the frame's, for the scan cadence and the save delay. */
+	void AdvanceSeconds(float Seconds, const FMissionShipState& Ship, float RealSeconds = -1.f);
 
 	// ---- queries ----
 	const TArray<FFleetShip>& GetShips() const { return Ships; }

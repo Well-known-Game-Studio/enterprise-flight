@@ -1,6 +1,8 @@
 #include "SpaceVessel.h"
 #include "ShuttlecraftPawn.h"
 #include "BorgCube.h"
+#include "GameClock.h"
+#include "WarpDriveComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "ShipSystemsComponent.h"
 #include "PersonPawn.h"
@@ -852,6 +854,8 @@ void AProceduralStarship::Tick(float DeltaTime)
 	{
 		return;
 	}
+	// She moves in the world's seconds; her turn and the stretch of her warp are the frame's.
+	const float SimDt = UGameClockSubsystem::Sim(this, DeltaTime);
 	if (WarpPhase != EShipWarpPhase::None)
 	{
 		TickWarp(DeltaTime);
@@ -867,7 +871,7 @@ void AProceduralStarship::Tick(float DeltaTime)
 	}
 	if (bCanWarp && WarpPhase == EShipWarpPhase::None)
 	{
-		WarpTimer -= DeltaTime;
+		WarpTimer -= SimDt;
 		if (WarpTimer <= 0.f)
 		{
 			WarpTimer = NavRng.FRandRange(WarpIntervalMin, WarpIntervalMax);
@@ -889,9 +893,9 @@ void AProceduralStarship::Tick(float DeltaTime)
 	const double TargetSpeed = FMath::Min(CruiseSpeed, FMath::Max(Remaining / 20.0, CruiseSpeed * 0.15));
 	const FVector DesiredV = ToWp * TargetSpeed;
 	const FVector DeltaV = DesiredV - Velocity;
-	const double MaxDv = Acceleration * DeltaTime;
+	const double MaxDv = Acceleration * SimDt;
 	Velocity += DeltaV.Size() > MaxDv ? DeltaV.GetSafeNormal() * MaxDv : DeltaV;
-	SetActorLocation(Here + Velocity * DeltaTime);
+	SetActorLocation(Here + Velocity * SimDt);
 	if (Root) { Root->ComponentVelocity = Velocity; }
 	if (Hull) { Hull->ComponentVelocity = Velocity; }
 	WreckVelocity = Velocity;
@@ -1002,11 +1006,11 @@ void AProceduralStarship::WarpTo(const FVector& DestinationWorld)
 	WarpDirection = Delta / Dist;
 	WarpStartUniverse = ToUniverse(Here);
 	WarpEndUniverse = ToUniverse(DestinationWorld);
-	// Warp factor chosen so the trip takes about TargetTripSeconds (TNG curve: speed = c * w^(10/3)).
-	const double c = VisualLightSpeed(World);
-	const double Factor = FMath::Clamp(FMath::Pow(Dist / (c * FMath::Max(TargetTripSeconds, 1.f)), 0.3), 1.5, 8.0);
-	WarpSpeed = c * FMath::Pow(Factor, 10.0 / 3.0);
-	WarpDepartTime = World->GetTimeSeconds() + StretchSeconds;
+	// Her cruise, by the stock curve: the trip takes the time the distance says, in the world's seconds, which is
+	// what the fleet's record counts and what the player's dilation makes watchable.
+	WarpSpeed = UWarpDriveComponent::SpeedForFactor(CruiseWarpFactor);
+	// Provisional: the spool is the stretch's real seconds, and BeginTravel stamps the leg when it actually starts.
+	WarpDepartTime = SimNow() + StretchSeconds;
 	WarpArriveTime = WarpDepartTime + Dist / WarpSpeed;
 	WarpPhase = EShipWarpPhase::Spooling;
 	PhaseTimer = 0.f;
@@ -1015,6 +1019,12 @@ void AProceduralStarship::WarpTo(const FVector& DestinationWorld)
 	SetActorRotation(FRotationMatrix::MakeFromXZ(WarpDirection, FVector::UpVector).ToQuat());
 	HomeUniverse = ToUniverse(DestinationWorld);
 	bHasWaypoint = false;
+}
+
+double AProceduralStarship::SimNow() const
+{
+	UGameClockSubsystem* C = UGameClockSubsystem::Get(this);
+	return C ? C->GetSeconds() : (GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0);
 }
 
 bool AProceduralStarship::IsRelativisticView() const
@@ -1027,6 +1037,10 @@ bool AProceduralStarship::IsRelativisticView() const
 
 void AProceduralStarship::BeginTravel()
 {
+	// The leg runs in the world's seconds from now: the spool before it was the stretch's real time, which at x60
+	// would otherwise have been over before the stretch played.
+	WarpDepartTime = SimNow();
+	WarpArriveTime = WarpDepartTime + FVector::Dist(WarpStartUniverse, WarpEndUniverse) / FMath::Max(WarpSpeed, 1.0);
 	WarpPhase = EShipWarpPhase::Travelling;
 	PhaseTimer = 0.f;
 	SetMainStretch(1.f, 1.f);
@@ -1049,7 +1063,7 @@ void AProceduralStarship::EndTravel()
 		SetMainVisible(true);
 	}
 	// Light from the trip keeps arriving for a long time for a distant observer; give up after ten minutes.
-	AfterimageDeadline = GetWorld()->GetTimeSeconds() + 600.0;
+	AfterimageDeadline = SimNow() + 600.0;
 }
 
 void AProceduralStarship::FinishWarp()
@@ -1067,12 +1081,13 @@ void AProceduralStarship::TickWarp(float DeltaTime)
 	{
 		return;
 	}
-	const double Now = World->GetTimeSeconds();
+	const double Now = SimNow();
 	PhaseTimer += DeltaTime;
 	switch (WarpPhase)
 	{
 	case EShipWarpPhase::Spooling:
-		if (Now >= WarpDepartTime)
+		// The stretch animates on PhaseTimer (real seconds, like every presentation): wait for it, not the clock.
+		if (PhaseTimer >= StretchSeconds || IsRelativisticView())
 		{
 			BeginTravel();
 		}
@@ -1113,7 +1128,7 @@ FVector AProceduralStarship::GetVisualLocation() const
 		if (PC && PC->PlayerCameraManager && IsRelativisticView())
 		{
 			FShipImage Images[4];
-			ComputeImages(PC->PlayerCameraManager->GetCameraLocation(), World->GetTimeSeconds(), Images);
+			ComputeImages(PC->PlayerCameraManager->GetCameraLocation(), SimNow(), Images);
 			// The nearest visible image decides whether the actor renders at all.
 			double Best = 1e300;
 			FVector BestPos = GetActorLocation();
@@ -1309,7 +1324,7 @@ void AProceduralStarship::UpdateWarpVisuals()
 		return;
 	}
 	const bool bRel = IsRelativisticView();
-	const double Now = World->GetTimeSeconds();
+	const double Now = SimNow();
 	if (!bRel)
 	{
 		// Show style: stretch going in, hidden in transit (a streak marks the departure), stretched then relaxing on arrival.
@@ -1571,6 +1586,6 @@ void ASpaceStation::Tick(float DeltaTime)
 	Super::Tick(DeltaTime);
 	if (!FMath::IsNearlyZero(SpinDegPerSec))
 	{
-		AddActorLocalRotation(FRotator(0.f, SpinDegPerSec * DeltaTime, 0.f));
+		AddActorLocalRotation(FRotator(0.f, SpinDegPerSec * UGameClockSubsystem::Sim(this, DeltaTime), 0.f));
 	}
 }

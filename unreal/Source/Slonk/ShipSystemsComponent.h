@@ -280,11 +280,11 @@ private:
 	/** Break a system by Loss, with the chief's report; Where names the compartment when known. */
 	void DamageSystem(int32 Index, float Loss, const FString& Where);
 	/** The roster lives the ship's time, names the casualties and lends its heads to the officer list. */
-	void TickRoster(float DeltaTime);
+	void TickRoster(float DeltaTime, float RealDeltaTime);
 	TWeakObjectPtr<UCrewRosterSubsystem> Roster;
 	int32 RosterRevisionSeen = -1;
 	/** The missions live the ship's time too and speak through the same log. */
-	void TickMissions(float DeltaTime, const TArray<FString>& Nearby, bool bAlongside, const FString& StationName);
+	void TickMissions(float DeltaTime, const TArray<FString>& Nearby, bool bAlongside, const FString& StationName, float RealDeltaTime);
 	float NearbyTimer = 0.f;
 	TArray<FString> NearbyNames;
 	FString AlongsideNoted;

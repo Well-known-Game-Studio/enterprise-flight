@@ -114,6 +114,8 @@ public:
 	void SetAutopilot(int32 Mode, double StandoffKm, float Seconds);
 	/** P: autopilot to the nav target, a warp leg or an impulse approach by range; pressed again it disengages. */
 	void ToggleAutopilot();
+	/** 8 and 9: the game clock's scale one preset down or up, with a word on screen about what holds it. */
+	void StepTimeScale(int32 Direction);
 	/** In-game console entry (` opens it): "ship nav target Sirius", "ship autopilot warp", "ship help" lists them.
 	 *  The rest of the line is the command. */
 	UFUNCTION(Exec) void Ship(const FString& Command);
@@ -765,6 +767,20 @@ private:
 	bool bAutopilotWarpEngaged = false;
 	FVector2D AutopilotPrevError = FVector2D::ZeroVector;
 	float AutopilotLogTimer = 0.f;
+	/** The factor a warp leg cruises at, picked when the leg begins (0 = not yet). */
+	float AutopilotCruiseFactor = 0.f;
+	/** Real seconds a warp leg should take at the clock's scale the autopilot drives. */
+	float AutopilotRealSeconds = 60.f;
+	/** The leg's planned scale and the remaining distances where the scale starts coming down and reaches x1
+	 *  (set at the first frame at warp; 0 = not yet). */
+	float AutopilotScale0 = 0.f;
+	double AutopilotRampCm = 0.0, AutopilotOneCm = 0.0;
+	/** Bodies and stations the clock's hold weighs, refreshed every half second. */
+	struct FClockBody { TWeakObjectPtr<AActor> Actor; double RadiusCm = 0.0; FString Name; };
+	TArray<FClockBody> ClockBodies;
+	float ClockScanTimer = 0.f;
+	/** What the situation allows the game clock this frame (docs/time-design.md). */
+	void TickClock(float DeltaTime);
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> StarSphereMID;
 	float StarFieldFade = 1.f;
 	void TickAutopilot(float DeltaTime);
