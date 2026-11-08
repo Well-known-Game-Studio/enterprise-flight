@@ -32,7 +32,7 @@ session: the station is spawned off its world (`ASpaceTraffic::SpawnStation`), t
 the generator ("New Tavira"), the starbase by the next number from four hundred. A system renamed renames them,
 the station in the sky included. The colony's lights follow its people as they grow (against the lights last set,
 so slow growth adds up), and a strike leaves a scar on them (a quarter, half if the world was warned) until the
-colony has grown back past what it lost. One order of a kind per system is out at a time: the orders, the boards
+colony has grown back to the people it had. One order of a kind per system is out at a time: the orders, the boards
 and the captain's proposals all check, so two ships' worth of settlers are never sent to one world.
 
 ## 2. The expansion orders
@@ -48,14 +48,16 @@ have the shape of the work: load at a starbase, then go.
   world) or *put it on the first solid ground* (engineering); then *land the module and raise the outpost*
   (engineering, risk). The outpost exists from the last option; the site is never a lit world.
 - **Colony** (`Colony`, +25): at a starbase, *embark eight hundred colonists and their seed stock* (medical) or
-  *take the volunteers and the stores there are* (operations, fewer settlers); at the world, *shuttle them down a
+  *take the volunteers and the stores there are* (operations: six hundred, five when it goes badly, and the
+  colony starts with them); at the world, *shuttle them down a
   hundred at a time* (engineering, risk) or *beam them down and the cargo after* (operations); then *see them
   through the first weeks* (medical, science) or *leave them to it and report* (command). The colony exists from
   the landing (lit, counted, a world the sky can threaten), whatever the first weeks bring.
 - **Starbase** (`Starbase`, +40): at a starbase, *embark the construction corps and the first hull sections*
   (engineering); in the system, *lay the keel* (engineering; the station appears, the works begin, three days);
   then *hold station and guard the works* (tactical, as often as the captain likes; the order's deadline carries
-  the three days of works on top of the leg and the margin) and, when the works are done
+  the three days of works on top of the leg and the margin; the order keeps the regard it was given at, and a
+  keel that cannot be laid is said and the stage held) and, when the works are done
   (the option is refused with the hours left until then), *commission the starbase* (command, without a check):
   its patrol ships spawn, the fleet takes it as a home.
 
@@ -72,8 +74,13 @@ three across, named for the stardate ("Asteroid 8305-K"; one in three a comet, w
 the star), spawned a few million kilometres out on a course that meets the world in a day or two of ship's time.
 The deadline is the impact, and while the rock is real the rock has the last word: a deadline that passes with
 the rock still out there (held in the beam, slowed) moves to its closest approach, and only a mission with no rock
-(the actors of a past session) lands by the clock. The rocks of the open impact missions are put back on their
-courses at the start of a session, where they would be by then. It is in the nav list and on the HUD (IMPACT
+(the actors of a past session) lands by the clock. The rocks not yet done with (gone wide, broken or landed:
+the mission's own record of the rock, apart from its state, so an abandoned or lapsed mission's rock counts too)
+are put back on their courses at the start of a session, where they would be by then; one whose hour passed
+between sessions lands. The strike is tested along the rock's step, not at its ends, since at a dilated clock a
+frame is thousands of kilometres; and the ship's clock counts the rock's own speed in the closing rate, so a rock
+coming to a ship at rest holds the clock like a world the ship closes on. A diversion by the crew sets a course
+that clears the world by three radii (tangent and outward from inside that). It is in the nav list and on the HUD (IMPACT
 line: the world, the hours to impact, the miss distance), it can be locked, scanned and tractored like any rock,
 and the clock treats it as a body to close on. A rock that goes wide is told once and sails on, a rock like any
 other (it can still be broken, and bent back onto the world it still lands), until it is three million kilometres

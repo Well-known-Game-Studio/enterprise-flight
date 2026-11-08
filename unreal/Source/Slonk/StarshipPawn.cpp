@@ -3517,7 +3517,7 @@ void AStarshipPawn::TickClock(float DeltaTime)
 			for (TActorIterator<APlanetBody> It(GetWorld()); It; ++It) { ClockBodies.Add({ *It, It->GetRadiusCm(), It->GetDisplayName() }); }
 			for (TActorIterator<AStarBody> It(GetWorld()); It; ++It) { ClockBodies.Add({ *It, It->GetRadiusCm(), It->StarName.IsEmpty() ? It->GetActorNameOrLabel() : It->StarName }); }
 			for (TActorIterator<ASpaceStation> It(GetWorld()); It; ++It) { ClockBodies.Add({ *It, (double)It->SizeCm * 4.0, It->GetDisplayName() }); }
-			for (TActorIterator<AImpactor> It(GetWorld()); It; ++It) { ClockBodies.Add({ *It, (double)It->Radius * 6.0, It->GetDisplayName() }); }
+			for (TActorIterator<AImpactor> It(GetWorld()); It; ++It) { ClockBodies.Add({ *It, (double)It->Radius * 6.0, It->GetDisplayName() }); }   // a rock comes to the ship at 25 km/s
 		}
 		const FVector Here = GetActorLocation();
 		for (const FClockBody& B : ClockBodies)
@@ -3525,7 +3525,9 @@ void AStarshipPawn::TickClock(float DeltaTime)
 			const AActor* A = B.Actor.Get(); if (!A) { continue; }
 			const FVector To = A->GetActorLocation() - Here; const double Dist = To.Size();
 			if (Dist < 1.0) { continue; }
-			const double Closing = FVector::DotProduct(Movement->Velocity, To / Dist);
+			// The ship's velocity less a rock's own: a rock closing on a ship at rest holds the clock all the same.
+			const AImpactor* Rock = Cast<AImpactor>(A);
+			const double Closing = FVector::DotProduct(Movement->Velocity - (Rock ? Rock->GetVelocity() : FVector::ZeroVector), To / Dist);
 			if (Closing <= 1.0) { continue; }
 			const double Seconds = FMath::Max(Dist - B.RadiusCm, 0.0) / Closing;
 			Low((float)FMath::Max(1.0, FMath::Square(Seconds / 10.0)), FString::Printf(TEXT("closing on %s"), *B.Name));

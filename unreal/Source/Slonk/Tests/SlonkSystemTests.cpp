@@ -773,10 +773,12 @@ bool FSlonkMissionImpactTest::RunTest(const FString& Parameters)
 	if (!TestTrue(TEXT("raised a third time"), Id3 > 0)) { return false; }
 	const FString Rock3 = S.Missions->Find(Id3)->Site;
 	TestTrue(TEXT("abandoned"), S.Missions->Abandon(Id3, Reply));
+	TestFalse(TEXT("the rock is still out there"), S.Missions->Find(Id3)->bRockResolved);
 	const int32 Standing1 = S.Missions->GetStanding();
 	S.Missions->ImpactOutcome(Rock3, World2, EImpactOutcome::Struck);
 	TestEqual(TEXT("the second colony gone"), S.Frontier->AtWorld(World2)->Population, 0.0);
 	TestEqual(TEXT("failed after all"), (int32)S.Missions->Find(Id3)->State, (int32)EMissionState::Failed);
+	TestTrue(TEXT("the rock done with"), S.Missions->Find(Id3)->bRockResolved);
 	TestEqual(TEXT("the loss taken"), S.Missions->GetStanding(), Standing1 - 40);
 	S.Missions->ImpactOutcome(Rock3, World2, EImpactOutcome::Struck);
 	TestEqual(TEXT("once"), S.Missions->GetStanding(), Standing1 - 40);
@@ -799,7 +801,8 @@ bool FSlonkMissionColonyTest::RunTest(const FString& Parameters)
 	FString Reply; FMissionOutcome Out;
 	TestTrue(TEXT("accepted"), S.Missions->Accept(Id, Reply));
 	S.Missions->AdvanceSeconds(1.f, S.Alongside());
-	TestTrue(TEXT("embarked"), S.Missions->Act(Id, 0, Out, Reply));
+	TestTrue(TEXT("embarked"), S.Missions->Act(Id, 1, Out, Reply));   // the volunteers: six hundred, or five when it goes badly
+	const double People = Out.bSuccess ? 600.0 : 500.0;
 	TestFalse(TEXT("not at the world"), S.Missions->Act(Id, 0, Out, Reply));
 	TestNull(TEXT("no colony yet"), S.Frontier->Find(D, ESettlementKind::Colony));
 	S.Missions->AdvanceSeconds(1.f, S.Ship(D, { World }));
@@ -808,6 +811,7 @@ bool FSlonkMissionColonyTest::RunTest(const FString& Parameters)
 	// The colony is theirs from the landing: lit, counted, and a world the sky can threaten.
 	if (!TestNotNull(TEXT("founded at the landing"), S.Frontier->Find(D, ESettlementKind::Colony))) { return false; }
 	TestTrue(TEXT("a colony world"), S.Frontier->ColonyWorlds().Contains(World));
+	TestEqual(TEXT("the people who embarked"), S.Frontier->Find(D, ESettlementKind::Colony)->Population, People);
 	TestTrue(TEXT("the ship leaves them to it"), S.Missions->Act(Id, 1, Out, Reply));
 	TestTrue(TEXT("over"), Out.bMissionOver);
 	int32 Colonies = 0; for (const FSettlement* X : S.Frontier->InSystem(D)) { if (X->Kind == ESettlementKind::Colony) { ++Colonies; } }
@@ -831,6 +835,30 @@ bool FSlonkFrontierPrimeTest::RunTest(const FString& Parameters)
 	TestNotNull(TEXT("founded"), S.Frontier->Found(ESettlementKind::Outpost, D, World));
 	TestFalse(TEXT("no colony in someone's sky"), S.Frontier->CanFound(ESettlementKind::Colony, D, World, Why));
 	TestTrue(TEXT("says whose"), Why.Contains(TEXT("someone's")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFrontierScarTest, "Slonk.Frontier.Scar", SLONK_TEST_FLAGS)
+bool FSlonkFrontierScarTest::RunTest(const FString& Parameters)
+{
+	// A warned strike on a big colony: a third die, the lights carry the scar until the people are back.
+	FSystems S;
+	const FString D = S.ChartedWithWorlds(0); const FString World = D + TEXT(" II");
+	S.Frontier->Found(ESettlementKind::Outpost, D, World);
+	const FSettlement* C = S.Frontier->Found(ESettlementKind::Colony, D, World, 10000.0);
+	if (!TestNotNull(TEXT("settled"), C)) { return false; }
+	TestEqual(TEXT("ten thousand"), C->Population, 10000.0);
+	FString Text; S.Frontier->Strike(World, true, Text);
+	C = S.Frontier->AtWorld(World);
+	TestEqual(TEXT("sixty-five hundred left"), C->Population, 6500.0);
+	TestEqual(TEXT("scarred by half"), C->Scar, 0.5f);
+	// Forty-four days at one in a hundred: past ten thousand again, the scar gone.
+	S.Frontier->AdvanceSeconds(1.f, S.Ship());
+	FCrewShipState Clock; S.Roster->DevAdvanceHours(44 * 24, Clock);
+	S.Frontier->AdvanceSeconds(1.f, S.Ship());
+	C = S.Frontier->AtWorld(World);
+	TestTrue(TEXT("grown back"), C->Population >= 10000.0);
+	TestEqual(TEXT("the scar gone"), C->Scar, 1.f);
 	return true;
 }
 

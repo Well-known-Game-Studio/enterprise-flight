@@ -164,13 +164,18 @@ void AImpactor::Tick(float DeltaTime)
 			break;
 		}
 	}
+	const FVector Was = Universe;
 	Universe += Velocity * SimDt;
 	if (!bHeld) { SetActorLocation(ToWorld(Universe), false, nullptr, ETeleportType::TeleportPhysics); }
 	if (bComet) { TailTimer -= DeltaTime; if (TailTimer <= 0.f) { TailTimer = 0.5f; UpdateTail(); } }
 	if (TargetWorld.IsValid())
 	{
-		const double D = FVector::Dist(Universe, WorldUniverse());
-		if (D <= TargetWorld->GetRadiusCm() + Radius) { Strike(); return; }
+		// The step, not its ends: at a dilated clock one frame is thousands of kilometres, and a world can sit
+		// between where the rock was and where it is.
+		const FVector WU = WorldUniverse();
+		const double D = FVector::Dist(Universe, WU);
+		const double Nearest = FMath::PointDistToSegment(WU, Was, Universe);
+		if (Nearest <= TargetWorld->GetRadiusCm() + Radius) { Universe = FMath::ClosestPointOnSegment(WU, Was, Universe); SetActorLocation(ToWorld(Universe), false, nullptr, ETeleportType::TeleportPhysics); Strike(); return; }
 		const double R = TargetWorld->GetRadiusCm();
 		const bool bPast = TrackSecondsToClosest(Universe, Velocity, WorldUniverse()) <= 0.0;
 		// Averted (off its course by a margin, nothing bending it back; or past the world): the mission is told once,
@@ -211,8 +216,8 @@ float AImpactor::TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent,
 
 void AImpactor::Shatter()
 {
-	if (Health <= 0.f && bResolved) { return; }   // already in pieces
-	Health = 0.f;
+	if (bShattered) { return; }   // already in pieces
+	bShattered = true; Health = 0.f;
 	AExplosionEffect::SpawnExplosion(GetWorld(), GetActorLocation(), Radius * 3.f, 1.6f);
 	// The pieces: three rocks a third the size, scattered, going nowhere.
 	FRandomStream R(GetTypeHash(DisplayName));
@@ -250,11 +255,19 @@ void AImpactor::Resolve(EImpactOutcome Outcome)
 void AImpactor::DevDeflect()
 {
 	if (!TargetWorld.IsValid()) { return; }
-	// A sideways change of course that clears the world by three radii from where it is now.
+	// A new course at the same speed that clears the world by three radii; from inside three radii, one that runs
+	// tangent and a little outward, so the closest approach is where the rock is now (outside the world, or it
+	// would have struck). The old sideways impulse could leave a close rock still on course.
 	const FVector ToW = WorldUniverse() - Universe;
-	const FVector Side = FVector::CrossProduct(ToW.GetSafeNormal(), FVector(0, 0, 1)).GetSafeNormal();
-	const double T = FMath::Max(TrackSecondsToClosest(Universe, Velocity, WorldUniverse()), 1.0);
-	Velocity += Side * (TargetWorld->GetRadiusCm() * 3.0 / T);
+	const double D = ToW.Size();
+	if (D < 1.0) { return; }
+	const FVector Radial = ToW / D;
+	FVector Side = FVector::CrossProduct(Radial, FVector(0, 0, 1)).GetSafeNormal();
+	if (Side.IsNearlyZero()) { Side = FVector::CrossProduct(Radial, FVector(0, 1, 0)).GetSafeNormal(); }
+	const double Speed = FMath::Max(Velocity.Size(), SpeedCmPerS);
+	const double Want = TargetWorld->GetRadiusCm() * 3.0 + Radius;
+	if (D > Want) { const double A = FMath::Asin(Want / D); Velocity = (Radial * FMath::Cos(A) + Side * FMath::Sin(A)) * Speed; }
+	else { Velocity = (Side - Radial * 0.25).GetSafeNormal() * Speed; }
 }
 
 void AImpactor::DevStrike()

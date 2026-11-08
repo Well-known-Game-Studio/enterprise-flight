@@ -35,6 +35,8 @@ struct FSettlement
 	UPROPERTY(BlueprintReadOnly) bool bCommissioned = true;
 	/** A colony's lights after a strike: a quarter (half if it was warned) until it has grown back; 1 unmarked. */
 	UPROPERTY() float Scar = 1.f;
+	/** The people the colony had before the strike: the scar fades when it has grown back to them. */
+	UPROPERTY() double RecoverPeople = 0.0;
 	UPROPERTY() int32 Seed = 0;
 	bool IsStation() const { return Kind != ESettlementKind::Colony; }
 };
@@ -67,11 +69,11 @@ public:
 	void AdvanceSeconds(float RealSeconds, const FMissionShipState& Ship);
 
 	/** Whether this kind may be founded in the system now, and the world it would take (empty for a starbase). */
-	bool CanFound(ESettlementKind Kind, const FString& SystemName, FString& OutWorld, FString& OutWhy) const;
+	bool CanFound(ESettlementKind Kind, const FString& SystemName, FString& OutWorld, FString& OutWhy, bool bOrdered = false) const;
 	/** A system where the kind may be founded: one of the nearest few by the last ship state, or null. */
 	const FCatalogueEntry* PickSystem(ESettlementKind Kind, FRandomStream& R, FString& OutWorld, const TSet<FString>* ExcludeSystems = nullptr) const;
 	/** Found it: the station spawned or the world lit, the record kept, the bridge told. Null when it may not be. */
-	const FSettlement* Found(ESettlementKind Kind, const FString& SystemName, const FString& World);
+	const FSettlement* Found(ESettlementKind Kind, const FString& SystemName, const FString& World, double People = 0.0, bool bOrdered = false);
 	/** A starbase's works are done: commissioned, its patrol ships out. False with hours still to go. */
 	bool Commission(const FString& SystemName, FString& OutWhy);
 	/** A world was struck: the colony loses most of its people (all, if small); the evacuation halves the dead. */

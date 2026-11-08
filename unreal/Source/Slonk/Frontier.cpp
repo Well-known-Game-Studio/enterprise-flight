@@ -155,7 +155,7 @@ double UFrontierSubsystem::WorksHoursLeft(const FString& SystemName) const
 
 // ---- the rules --------------------------------------------------------------------------------
 
-bool UFrontierSubsystem::CanFound(ESettlementKind Kind, const FString& SystemName, FString& OutWorld, FString& OutWhy) const
+bool UFrontierSubsystem::CanFound(ESettlementKind Kind, const FString& SystemName, FString& OutWorld, FString& OutWhy, bool bOrdered) const
 {
 	OutWorld.Empty();
 	const UExplorationSubsystem* X = Exploration();
@@ -183,7 +183,7 @@ bool UFrontierSubsystem::CanFound(ESettlementKind Kind, const FString& SystemNam
 	{
 		if (!Find(Name, ESettlementKind::Outpost) && !Find(Name, ESettlementKind::Colony)) { OutWhy = FString::Printf(TEXT("%s has no outpost or colony to build from"), *Name); return false; }
 		const UMissionSubsystem* M = Missions();
-		if (M && M->GetStanding() < StarbaseStandingNeeded) { OutWhy = FString::Printf(TEXT("Starfleet builds its bases where its best captains have been: regard %d, %d needed"), M->GetStanding(), StarbaseStandingNeeded); return false; }
+		if (!bOrdered && M && M->GetStanding() < StarbaseStandingNeeded) { OutWhy = FString::Printf(TEXT("Starfleet builds its bases where its best captains have been: regard %d, %d needed"), M->GetStanding(), StarbaseStandingNeeded); return false; }
 		if (const FSettlement* O = Find(Name, ESettlementKind::Outpost)) { OutWorld = O->World; } else if (const FSettlement* C = Find(Name, ESettlementKind::Colony)) { OutWorld = C->World; }
 		return true;
 	}
@@ -211,10 +211,10 @@ const FCatalogueEntry* UFrontierSubsystem::PickSystem(ESettlementKind Kind, FRan
 
 // ---- founding ---------------------------------------------------------------------------------
 
-const FSettlement* UFrontierSubsystem::Found(ESettlementKind Kind, const FString& SystemName, const FString& World)
+const FSettlement* UFrontierSubsystem::Found(ESettlementKind Kind, const FString& SystemName, const FString& World, double People, bool bOrdered)
 {
 	FString Pick, Why;
-	if (!CanFound(Kind, SystemName, Pick, Why)) { UE_LOG(LogTemp, Warning, TEXT("Frontier: cannot found %s at %s: %s"), *KindName(Kind), *SystemName, *Why); return nullptr; }
+	if (!CanFound(Kind, SystemName, Pick, Why, bOrdered)) { UE_LOG(LogTemp, Warning, TEXT("Frontier: cannot found %s at %s: %s"), *KindName(Kind), *SystemName, *Why); return nullptr; }
 	const UExplorationSubsystem* X = Exploration();
 	const FCatalogueEntry* E = X->Find(SystemName);
 	FSettlement S;
@@ -229,8 +229,8 @@ const FSettlement* UFrontierSubsystem::Found(ESettlementKind Kind, const FString
 		Report(FString::Printf(TEXT("%s is raised, Captain: the Federation's first station in %s. The module's crew wave from the dome."), *S.Name, *S.System), FLinearColor(0.6f, 1.f, 0.6f));
 		break;
 	case ESettlementKind::Colony:
-		S.Name = ColonyName(R); S.Population = ColonyFirstPeople;
-		Report(FString::Printf(TEXT("%s is founded on %s: eight hundred people and a flag, and the lights on their first night."), *S.Name, *S.World), FLinearColor(0.6f, 1.f, 0.6f));
+		S.Name = ColonyName(R); S.Population = People > 0.0 ? People : ColonyFirstPeople;
+		Report(FString::Printf(TEXT("%s is founded on %s: %.0f people and a flag, and the lights on their first night."), *S.Name, *S.World, S.Population), FLinearColor(0.6f, 1.f, 0.6f));
 		break;
 	case ESettlementKind::Starbase:
 		S.Name = FString::Printf(TEXT("Starbase %d"), NextStarbaseNumber++);
@@ -282,7 +282,7 @@ void UFrontierSubsystem::Strike(const FString& World, bool bEvacuated, FString& 
 		const double Before = S.Population;
 		const double Dead = FMath::Min(Before, (Before < 5000.0 ? Before : Before * 0.7) * (bEvacuated ? 0.5 : 1.0));
 		S.Population = FMath::Max(0.0, Before - Dead);
-		S.Scar = bEvacuated ? 0.5f : 0.25f;   // the lights that are left, dimmed, until the colony has grown back fourfold
+		S.Scar = bEvacuated ? 0.5f : 0.25f; S.RecoverPeople = Before;   // the lights that are left, dimmed, until the colony has grown back to what it was
 		OutText = S.Population <= 0.0 ? FString::Printf(TEXT("%s is gone: %.0f people."), *S.Name, Dead) : FString::Printf(TEXT("%s: %.0f dead of %.0f%s."), *S.Name, Dead, Before, bEvacuated ? TEXT(", the evacuation having got the rest clear") : TEXT(""));
 		Report(OutText, FLinearColor(1.f, 0.5f, 0.4f), ECrewDepartment::Medical);
 		if (UWorld* W = GetWorld()) { LightWorld(W, S); }
@@ -374,7 +374,7 @@ void UFrontierSubsystem::AdvanceSeconds(float RealSeconds, const FMissionShipSta
 			S.Population *= FMath::Pow(1.01, Dt / 24.0);
 			// The lights follow the people once they have changed enough to see, against the lights last set (a step
 			// at a time would never add up); a scar fades as the colony grows back past what it lost.
-			if (S.Scar < 1.f && LightsFor(S.Population) * S.Scar >= LightsFor(S.Population / (S.Scar < 0.5f ? 4.0 : 2.0))) { S.Scar = 1.f; }
+			if (S.Scar < 1.f && S.Population >= S.RecoverPeople) { S.Scar = 1.f; S.RecoverPeople = 0.0; Report(FString::Printf(TEXT("%s has grown back to what it was before the strike."), *S.Name), FLinearColor(0.6f, 1.f, 0.6f)); }
 			const float* Applied = LightsApplied.Find(S.Name);
 			if (!Applied || FMath::Abs(LightsFor(S.Population) * S.Scar - *Applied) > 0.2f) { if (UWorld* W = GetWorld()) { LightWorld(W, S); } }
 			bChanged = true;

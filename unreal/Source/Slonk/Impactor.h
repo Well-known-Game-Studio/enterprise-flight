@@ -34,6 +34,8 @@ public:
 	/** Hours of ship's time to the closest approach (0 once past). */
 	double HoursToClosest() const;
 	bool WillHit() const;
+	/** The rock's track velocity (cm/s; the world's frame is the universe's shifted), as the engine asks for it. */
+	virtual FVector GetVelocity() const override { return Velocity; }
 	bool IsComet() const { return bComet; }
 	/** The world's name now (it follows a rename); the one at the spawn when the world is gone. */
 	FString GetWorldName() const;
@@ -74,6 +76,7 @@ private:
 	bool bComet = false;
 	bool bResolved = false;
 	bool bStruck = false;
+	bool bShattered = false;
 	bool bPlaced = false;
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> Coma;
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> Tail;

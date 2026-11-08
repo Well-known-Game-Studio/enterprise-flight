@@ -710,14 +710,26 @@ void UMissionSubsystem::AfterOption(FMission& M, const FMissionOption& O, bool b
 		// The settlers are down once the landing is behind them: the colony is theirs from then (lit, counted, worth
 		// defending), whatever the first weeks bring.
 		UFrontierSubsystem* F = Frontier();
-		if (F && ((M.Stage == 2 && !bOver) || (bOver && bSucceeded)) && !F->Find(M.Site, ESettlementKind::Colony)) { F->Found(ESettlementKind::Colony, M.Site, M.TargetName); }
+		// The embarkation: the volunteers are six hundred, five hundred when it goes badly; the full expedition eight.
+		if (M.Stage == 1 && !bOver && O.Skill == ECrewSkill::Operations) { M.People = bSuccess ? 600.0 : 500.0; }
+		if (F && ((M.Stage == 2 && !bOver) || (bOver && bSucceeded)) && !F->Find(M.Site, ESettlementKind::Colony)) { F->Found(ESettlementKind::Colony, M.Site, M.TargetName, M.People); }
 		break;
 	}
 	case EMissionKind::Starbase:
 	{
 		UFrontierSubsystem* F = Frontier();
 		if (!F) { break; }
-		if (M.Stage == 2 && !bOver && !F->Find(M.TargetName, ESettlementKind::Starbase)) { F->Found(ESettlementKind::Starbase, M.TargetName, TEXT("")); }   // the keel
+		if (M.Stage == 2 && !bOver && !F->Find(M.TargetName, ESettlementKind::Starbase))
+		{
+			// The keel: the order was given when Starfleet's regard allowed it, and it holds (bOrdered). Should the
+			// founding fail all the same, the stage is held and the bridge told, rather than works that do not exist.
+			if (!F->Found(ESettlementKind::Starbase, M.TargetName, TEXT(""), 0.0, true))
+			{
+				FString W2, Why; F->CanFound(ESettlementKind::Starbase, M.TargetName, W2, Why, true);
+				M.Stage = 1; M.Log.Add(FString::Printf(TEXT("      The keel is not laid: %s."), *Why));
+				Report(FString::Printf(TEXT("%s: the keel cannot be laid. %s."), *M.Title, *Why), FLinearColor(1.f, 0.75f, 0.5f), ECrewDepartment::Engineering);
+			}
+		}
 		if (bOver && bSucceeded) { FString Why; F->Commission(M.TargetName, Why); }
 		break;
 	}
@@ -807,13 +819,16 @@ void UMissionSubsystem::RestoreImpactors()
 	UWorld* W = GetWorld();
 	if (!W) { return; }
 	int32 N = 0;
+	TArray<TPair<FString, FString>> Landed;
 	for (FMission& M : Missions)
 	{
-		if (!M.IsOpen() || M.Kind != EMissionKind::Impact || M.Site.IsEmpty() || AImpactor::FindByName(W, M.Site)) { continue; }
+		// Open or closed: a rock abandoned, or whose offer lapsed, is still out there until it is done with.
+		if (M.Kind != EMissionKind::Impact || M.bRockResolved || M.Site.IsEmpty() || AImpactor::FindByName(W, M.Site)) { continue; }
 		const double HoursLeft = (M.DeadlineStardate - Stardate()) * 24.0;
-		if (HoursLeft <= 0.0) { continue; }
+		if (HoursLeft <= 0.0) { Landed.Emplace(M.Site, M.TargetName); continue; }   // its hour passed between sessions
 		SpawnImpactor(M, HoursLeft); ++N;
 	}
+	for (const TPair<FString, FString>& L : Landed) { ImpactOutcome(L.Key, L.Value, EImpactOutcome::Struck); }
 	if (N > 0) { UE_LOG(LogTemp, Log, TEXT("Missions: %d rocks back on their courses"), N); }
 }
 
@@ -872,6 +887,7 @@ void UMissionSubsystem::ImpactOutcome(const FString& Rock, const FString& World,
 	// before the rock was bent back): a landing counts against it either way.
 	FMission* MP = nullptr; for (FMission& M : Missions) { if (M.IsOpen() && M.Kind == EMissionKind::Impact && M.Site == Rock) { MP = &M; } }
 	if (!MP) { for (FMission& M : Missions) { if (M.Kind == EMissionKind::Impact && M.Site == Rock) { MP = &M; } } }
+	if (MP) { MP->bRockResolved = true; }
 	if (Outcome != EImpactOutcome::Struck)
 	{
 		if (MP && MP->IsOpen()) { CompleteOutside(*MP, Outcome == EImpactOutcome::Averted ? TEXT("the rock goes wide") : TEXT("the rock broken up"), Outcome == EImpactOutcome::Averted ? FString::Printf(TEXT("%s will miss %s. The world never knew."), *Rock, *World) : FString::Printf(TEXT("%s is in pieces, and the pieces go wide of %s."), *Rock, *World)); }

@@ -103,6 +103,10 @@ struct FMission
 	UPROPERTY(BlueprintReadOnly) bool bEvacuated = false;
 	/** An impact: hours of ship's time from the making to the rock's landing. */
 	UPROPERTY(BlueprintReadOnly) double ImpactHours = 0.0;
+	/** An impact: the rock itself is done with (gone wide, broken or landed), whatever became of the mission. */
+	UPROPERTY() bool bRockResolved = false;
+	/** A colony: the settlers embarked (0 for the eight hundred). */
+	UPROPERTY() double People = 0.0;
 	bool IsOpen() const { return State == EMissionState::Offered || State == EMissionState::Active; }
 	const FMissionStage* Current() const { return Stages.IsValidIndex(Stage) ? &Stages[Stage] : nullptr; }
 };
