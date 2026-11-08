@@ -683,7 +683,7 @@ void UShipInteriorComponent::BuildCorridor(FShipRoom& R)
 	const FVector Origin(C.X, 0.0, Floor);
 	R.Lift = InteriorSpot(Origin + FVector(0, 210.0 - 90.0, 0), FVector(0, -1, 0));
 	R.Use = R.Lift;
-	R.UseLabel = FString();
+	R.UseLabel = TEXT("turbolift");   // the corridor's only thing to use is its lift, so the hint names it
 	if (RoomMesh(CorridorMesh, Origin))
 	{
 		for (double Y : { 100.0, -300.0, -700.0, -1050.0 }) { Light(Origin + FVector(0, Y, 240.0), 18.f, 500.f, FLinearColor(0.95f, 0.97f, 1.f)); }

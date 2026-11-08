@@ -3121,7 +3121,7 @@ FString AStarshipPawn::PersonUseHint(const APersonPawn* Person) const
 	const double DUse = FVector::Dist(Feet, Use.GetLocation());
 	const double DLift = FVector::Dist(Feet, Lift.GetLocation());
 	const bool bLift = UShipInteriorComponent::IsLiftStop(Person->GetRoom());
-	if (DUse <= 220.0 && (!bLift || DUse <= DLift)) { return FString::Printf(TEXT("F  %s"), *Label); }
+	if (DUse <= 220.0 && (!bLift || DUse <= DLift) && !Label.IsEmpty()) { return FString::Printf(TEXT("F  %s"), *Label); }
 	if (bLift && DLift <= 220.0) { return TEXT("F  turbolift"); }
 	return FString::Printf(TEXT("%s %.0f m   %s %.0f m"), bLift ? TEXT("turbolift") : TEXT("doorway"), DLift / 100.0, Person->GetRoom() == EShipRoom::Bridge ? TEXT("chair") : TEXT("console"), DUse / 100.0);
 }

@@ -468,8 +468,10 @@ FTransform AShuttlecraftPawn::GetAirlockTransform() const
 	// the ground), standing the way the shuttle stands.
 	const FTransform T = GetActorTransform();
 	const double Drop = Movement ? Movement->GroundClearanceCm : 150.0;
-	// The model's port door is 0.3 m behind the bay's centre with its step out to 1.85 m; the boat's at the origin.
-	const FVector Beside = UsesModel() ? FVector(-180.0, -230.0, 0.0) : FVector(0.0, -330.0, 0.0);
+	// The Type-4 model's port door is 1 m forward of her centre (x 0.55..1.45) with its step out to 1.8 m, and the
+	// port pod runs aft of it (x -3.5..0.5, out to 2.4 m): stand abreast of the door, forward of the pod, 0.6 m
+	// out from the step. The primitive boat's door is at the origin.
+	const FVector Beside = UsesModel() ? FVector(120.0, -240.0, 0.0) : FVector(0.0, -330.0, 0.0);
 	const FVector Pos = T.TransformPosition(Beside + FVector(0.0, 0.0, -Drop + APersonPawn::HalfHeightCm));
 	const FQuat Rot = FRotationMatrix::MakeFromZX(GetActorUpVector(), -GetActorRightVector()).ToQuat();
 	return FTransform(Rot, Pos);
