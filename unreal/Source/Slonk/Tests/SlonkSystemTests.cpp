@@ -911,6 +911,10 @@ bool FSlonkInteriorRoomsTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("the console's words"), (int32)AStarshipPawn::RoomFromWord(TEXT("torp")), (int32)EShipRoom::TorpedoBay);
 	TestEqual(TEXT("the console's words"), (int32)AStarshipPawn::RoomFromWord(TEXT("Mess")), (int32)EShipRoom::Mess);
 	TestEqual(TEXT("the console's words"), (int32)AStarshipPawn::RoomFromWord(TEXT("nowhere")), (int32)EShipRoom::Count);
+	// A deck by its letter names the lift's stop there: deck G is the corridor, not sickbay; deck C the mess.
+	TestEqual(TEXT("deck g"), (int32)AStarshipPawn::RoomFromWord(TEXT("deckg")), (int32)EShipRoom::Corridor);
+	TestEqual(TEXT("deck c"), (int32)AStarshipPawn::RoomFromWord(TEXT("deckc")), (int32)EShipRoom::Mess);
+	TestEqual(TEXT("deck z"), (int32)AStarshipPawn::RoomFromWord(TEXT("deckz")), (int32)EShipRoom::Count);
 	// The compartments the crew are placed in (and the hits find them in) are rooms of the interior.
 	for (const TCHAR* Name : { TEXT("Officers' mess"), TEXT("Rec deck"), TEXT("Crew quarters"), TEXT("Officers' quarters"), TEXT("Torpedo bay"), TEXT("Cargo bays"), TEXT("Sickbay"), TEXT("Main engineering"), TEXT("Main bridge"), TEXT("Shuttle bay") })
 	{

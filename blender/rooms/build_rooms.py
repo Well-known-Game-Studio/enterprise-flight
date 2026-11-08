@@ -1148,20 +1148,28 @@ def build_rec_deck():
         for x in (-5.5, -2.5, 0.5, 3.5, 6.5):
             for z in (1.2, 1.7, 2.2):
                 box("Rib", (x, s * (W / 2 - 0.03), z), (2.2, 0.06, 0.08), M_PanelGrey(), "Walls")
-    # The gallery round the sides and over the entrance, its fascia lit blue, rails at the knee and the hand.
+    # The gallery round the sides and over the entrance, its fascia lit blue, rails at the knee and the hand; the
+    # starboard rail opens where the stair's landing meets the gallery.
     GZ, GD = 3.0, 2.2
-    def rails(cx, cy, length, along_x):
-        for z in (0.45, 1.0):
-            box("GalleryRail", (cx, cy, GZ + z), (length, 0.06, 0.06) if along_x else (0.06, length, 0.06), M_Metal(), "Rails")
+    LANDING_X = 2.8
+    def rails(cx, cy, length, along_x, gap=None):
+        """Knee and hand rails with posts every two metres; `gap` = (a0, a1) along the run leaves an opening (the
+        stair landing's exit onto the gallery), rails split round it and no post in it."""
+        runs = [(-length / 2, length / 2)] if gap is None else [(-length / 2, gap[0]), (gap[1], length / 2)]
+        for (a0, a1) in runs:
+            am, la = (a0 + a1) / 2, a1 - a0
+            for z in (0.45, 1.0):
+                box("GalleryRail", (cx + (am if along_x else 0), cy + (0 if along_x else am), GZ + z), (la, 0.06, 0.06) if along_x else (0.06, la, 0.06), M_Metal(), "Rails")
         n = int(length // 2)
         for k in range(n + 1):
             t = -length / 2 + length * k / max(n, 1)
+            if gap is not None and gap[0] - 0.03 < t < gap[1] + 0.03: continue
             box("RailPost", (cx + (t if along_x else 0), cy + (0 if along_x else t), GZ + 0.5), (0.06, 0.06, 1.0), M_Metal(), "Rails")
     for s in (-1, 1):
         box("Gallery", (0.0, s * (W / 2 - GD / 2), GZ - 0.1), (L, GD, 0.2), M_PanelGrey(), "Floors")
         box("GalleryFascia", (0, s * (W / 2 - GD - 0.02), GZ - 0.3), (L, 0.04, 0.6), M_PanelDark(), "Walls")
         box("FasciaStrip", (0, s * (W / 2 - GD - 0.05), GZ - 0.55), (L - 0.4, 0.02, 0.06), M_StripBlue(), "Lights")
-        rails(0.0, s * (W / 2 - GD + 0.05), L - 0.4, True)
+        rails(0.0, s * (W / 2 - GD + 0.05), L - 0.4, True, gap=(LANDING_X - 0.5, LANDING_X + 0.5) if s > 0 else None)
         for x in (-6, -2, 2, 6):
             box("GalleryPost", (x, s * (W / 2 - GD + 0.15), GZ / 2 - 0.1), (0.2, 0.2, GZ - 0.2), M_PanelGrey(), "Walls")
             R.light((x, s * (W / 2 - 1.1), GZ - 0.4), 25.0, size=1.0)
@@ -1172,7 +1180,7 @@ def build_rec_deck():
     SY = 4.0
     for i in range(15):
         box("Step", (-2.0 + 0.3 * i + 0.15, SY, 0.1 * (i + 1)), (0.3, 1.2, 0.2 * (i + 1)), M_PanelGrey(), "Floors")
-    box("Landing", (2.8, 4.4, 2.9), (0.6, 2.0, 0.2), M_PanelGrey(), "Floors")
+    box("Landing", (LANDING_X, 4.4, 2.9), (0.6, 2.0, 0.2), M_PanelGrey(), "Floors")
     box("StairRail", (0.25, SY - 0.6, 2.35), (5.4, 0.06, 0.06), M_Metal(), "Rails", pitch=-math.degrees(math.atan2(3.0, 4.5)))
     box("StairRail", (0.25, SY - 0.6, 1.75), (5.4, 0.06, 0.06), M_Metal(), "Rails", pitch=-math.degrees(math.atan2(3.0, 4.5)))
     for i in range(0, 15, 3):

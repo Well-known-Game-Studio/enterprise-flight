@@ -67,9 +67,11 @@ corridor's panel, the torpedo bay's consoles and the cargo bay's gantry.
 
 ## 6. Console
 
-`ship lift <bridge|airlock|mess|quarters|crew|deck g|sick|trans|rec|torp|eng|bay|cargo>` (the corridor for sick,
-trans, rec); `ship walkto <room>` (dev: straight to a room's inner door, for tests); `ship walkto use|lift` as
-before. `ship person status` logs the room underfoot.
+`ship lift <bridge|airlock|mess|quarters|crew|sick|trans|rec|torp|eng|bay|cargo>` or `ship lift deck <letter>`
+(the lift's stop on that deck: the corridor for G, and for sick, trans, rec); `ship walkto <room>` (dev: straight
+to a room's inner door, for tests); `ship walkto use|lift` as before. `ship person status` logs the room
+underfoot. F (use) opens the turbolift only in a room with a lift door: at a doorway onto the corridor it does
+nothing, and the hint names the doorway instead.
 
 ## 7. Later
 

@@ -518,8 +518,13 @@ void APersonPawn::TickDeck(float DeltaTime)
 	}
 	SetActorLocationAndRotation(NextFeet + Up * HalfHeightCm, StandingQuat(Up, Fwd), false, nullptr, ETeleportType::TeleportPhysics);
 	bGrounded = true;
-	// Through a doorway into the next room: the ship follows the feet and shows the room they are in.
-	if (Vt.SizeSquared() > 1.0) { C->PersonMoved(this); }
+	// Through a doorway into the next room: the ship follows the feet and shows the room they are in. The craft-
+	// frame position is refreshed first (Tick refreshes it after this), so the step that stops in a doorway counts.
+	if (Vt.SizeSquared() > 1.0)
+	{
+		HullLocal = GetActorTransform().GetRelativeTransform(FTransform(C->GetActorQuat(), C->GetActorLocation()));
+		C->PersonMoved(this);
+	}
 }
 
 void APersonPawn::Away(const FString& Command)

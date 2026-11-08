@@ -477,10 +477,16 @@ void UShipInteriorComponent::Build()
 	// Deck G's corridor: an L whose athwartships leg runs past sickbay's aft door (its box) and whose forward leg
 	// runs along the port side past the transporter room's door (a second box); the rec deck opens off the
 	// athwartships leg to port. Their walls are back to back, so the boxes touch and the rooms are neighbours.
-	const double GFloor = 1900.0 * X - 150.0;
-	const int32 Corr = Add(EShipRoom::Corridor, FVector(5880.0 * X, -470.0, GFloor + 130.0), FVector(120.0, 680.0, 130.0));
-	Rooms[Corr].Legs.Add(FBox(FVector(6000.0 * X, -1150.0, GFloor), FVector(7700.0 * X, -910.0, GFloor + 260.0)));
-	const int32 Rec = Add(EShipRoom::RecDeck, FVector(4830.0 * X, -200.0, GFloor + 300.0), FVector(900.0, 700.0, 300.0));
+	// The adjoining edges are taken from the rooms' own boxes (whose centres scale with the ship's length while
+	// their sizes do not), so the layout stays connected at any length; the sets themselves are drawn for the
+	// 1701-A's 305 m, and only at that length do their doorways coincide with the boxes' seams.
+	const double GFloor = Rooms[Sick].Center.Z - Rooms[Sick].Half.Z;
+	const double SickAft = Rooms[Sick].Center.X - Rooms[Sick].Half.X;            // leg A's starboard wall = sickbay's aft wall
+	const double TrFwd = Rooms[Tr].Center.Y + Rooms[Tr].Half.Y;                 // leg B's port wall = the transporter room's starboard wall
+	const double TrAft = Rooms[Tr].Center.X + Rooms[Tr].Half.X + 100.0;         // leg B runs a metre past the transporter room's aft wall
+	const int32 Corr = Add(EShipRoom::Corridor, FVector(SickAft - 120.0, -470.0, GFloor + 130.0), FVector(120.0, 680.0, 130.0));
+	Rooms[Corr].Legs.Add(FBox(FVector(SickAft, TrFwd, GFloor), FVector(TrAft, TrFwd + 240.0, GFloor + 260.0)));
+	const int32 Rec = Add(EShipRoom::RecDeck, FVector(SickAft - 240.0 - 30.0 - 900.0, -200.0, GFloor + 300.0), FVector(900.0, 700.0, 300.0));
 	const int32 MessR = Add(EShipRoom::Mess, FVector(9300.0, 1700.0, 2600.0) * X + FVector(0, 0, 140.0), FVector(550.0, 350.0, 140.0));
 	const int32 Cab = Add(EShipRoom::Quarters, FVector(9900.0, -1200.0, 2300.0) * X + FVector(0, 0, 140.0), FVector(450.0, 350.0, 140.0));
 	const int32 Crew = Add(EShipRoom::CrewQuarters, FVector(11010.0, 0.0, 2000.0) * X + FVector(0, 0, 130.0), FVector(340.0, 800.0, 130.0));
@@ -687,7 +693,8 @@ void UShipInteriorComponent::BuildCorridor(FShipRoom& R)
 	// Primitives: the two legs' floors, ceilings and walls, the lift door at the forward end, the doorway frames.
 	const FBox LegB = R.Legs.Num() ? R.Legs[0] : FBox(C - H, C + H);
 	const double T = 20.0;
-	const double TrX = 7336.0 * (C.X / 5880.0);   // the transporter room's door along the forward leg (TRANS_DOOR_X)
+	const FShipRoom* TrRoom = Room(EShipRoom::Transporter);
+	const double TrX = TrRoom ? TrRoom->Center.X + 136.0 : LegB.Max.X - 364.0;   // the transporter room's doorway along the forward leg (its BuildTransporter Door)
 	auto Leg = [&](const FVector& Lo, const FVector& Hi, bool bNoPosX, bool bNoNegX, bool bNoPosY, bool bNoNegY, const TArray<double>& PosXCuts, const TArray<double>& NegXCuts, const TArray<double>& NegYCuts)
 	{
 		const FVector Mid = (Lo + Hi) / 2, Ext = (Hi - Lo) / 2;

@@ -2524,7 +2524,7 @@ bool AStarshipPawn::HandleCraftCommand(const FString& Op, const TArray<FString>&
 		if (APersonPawn* P = ActivePerson.Get())
 		{
 			FTransform Lift, Use; FString Label;
-			const FString W = Args[1].ToLower();
+			FString W; for (int32 i = 1; i < Args.Num(); ++i) { W += Args[i].ToLower(); }
 			if (W == TEXT("lift") || W == TEXT("use"))
 			{
 				if (P->IsAboard() && RoomSpots(P->GetRoom(), Lift, Use, Label)) { P->PlaceAboard(this, P->GetRoom(), (W == TEXT("lift") ? Lift : Use) * CraftFrame()); }
@@ -2540,9 +2540,9 @@ bool AStarshipPawn::HandleCraftCommand(const FString& Op, const TArray<FString>&
 	}
 	if (Op == TEXT("lift") && Args.Num() > 1)
 	{
-		const FString W = Args[1].ToLower();
-		EShipRoom Room = EShipRoom::Count;
-		Room = RoomFromWord(W);
+		// The room in one word or two: "lift deck g" names the deck.
+		FString W; for (int32 i = 1; i < Args.Num(); ++i) { W += Args[i].ToLower(); }
+		const EShipRoom Room = RoomFromWord(W);
 		if (APersonPawn* P = ActivePerson.Get()) { if (Room != EShipRoom::Count) { MoveToRoom(P, Room); } }
 		return true;
 	}
@@ -2908,6 +2908,16 @@ EShipRoom AStarshipPawn::RoomFromWord(const FString& Word)
 	if (W.StartsWith(TEXT("crew"))) { return EShipRoom::CrewQuarters; }
 	if (W.StartsWith(TEXT("torp"))) { return EShipRoom::TorpedoBay; }
 	if (W.StartsWith(TEXT("cargo"))) { return EShipRoom::CargoBay; }
+	// A deck by its letter ("deck g", "deckg"): the lift's stop on that deck.
+	FString Letter = W;
+	if (Letter.RemoveFromStart(TEXT("deck")) && Letter.Len() == 1)
+	{
+		for (int32 i = 0; i < (int32)EShipRoom::Count; ++i)
+		{
+			const EShipRoom R = (EShipRoom)i;
+			if (UShipInteriorComponent::IsLiftStop(R) && UShipInteriorComponent::DeckOf(R).ToLower() == Letter) { return R; }
+		}
+	}
 	return EShipRoom::Count;
 }
 
@@ -3069,9 +3079,11 @@ bool AStarshipPawn::PersonUse(APersonPawn* Person)
 	const double DUse = FVector::Dist(Feet, Use.GetLocation());
 	const double DLift = FVector::Dist(Feet, Lift.GetLocation());
 	const double Reach = 220.0;
+	// A room off a corridor has a doorway where its lift door would be: the spot places people, it is no lift.
+	const bool bLift = UShipInteriorComponent::IsLiftStop(Room);
 	AStarshipPlayerController* PC = Cast<AStarshipPlayerController>(Person->GetController());
 	USlonkUIRoot* UI = PC ? PC->GetUIRoot() : nullptr;
-	if (DUse <= Reach && DUse <= DLift)
+	if (DUse <= Reach && (!bLift || DUse <= DLift))
 	{
 		switch (Room)
 		{
@@ -3090,13 +3102,13 @@ bool AStarshipPawn::PersonUse(APersonPawn* Person)
 		default: break;
 		}
 	}
-	if (DLift <= Reach)
+	if (bLift && DLift <= Reach)
 	{
 		if (UI) { UI->TogglePanel(UTurboliftPanel::StaticClass()); }
 		return true;
 	}
-	ScreenMessage(FString::Printf(TEXT("Nothing here to use: the turbolift is %.0f m off, the %s %.0f m"), DLift / 100.0, Room == EShipRoom::Bridge ? TEXT("chair") : TEXT("console"), DUse / 100.0), FColor::Orange, 3.f);
-	UE_LOG(LogTemp, Log, TEXT("Person use: nothing within reach in %s (lift %.1f m, use spot %.1f m)"), *UShipInteriorComponent::RoomName(Room), DLift / 100.0, DUse / 100.0);
+	ScreenMessage(FString::Printf(TEXT("Nothing here to use: the %s is %.0f m off, the %s %.0f m"), bLift ? TEXT("turbolift") : TEXT("doorway"), DLift / 100.0, Room == EShipRoom::Bridge ? TEXT("chair") : TEXT("console"), DUse / 100.0), FColor::Orange, 3.f);
+	UE_LOG(LogTemp, Log, TEXT("Person use: nothing within reach in %s (%s %.1f m, use spot %.1f m)"), *UShipInteriorComponent::RoomName(Room), bLift ? TEXT("lift") : TEXT("doorway"), DLift / 100.0, DUse / 100.0);
 	return false;
 }
 
@@ -3108,9 +3120,10 @@ FString AStarshipPawn::PersonUseHint(const APersonPawn* Person) const
 	if (!RoomSpots(Person->GetRoom(), Lift, Use, Label, &Feet)) { return FString(); }
 	const double DUse = FVector::Dist(Feet, Use.GetLocation());
 	const double DLift = FVector::Dist(Feet, Lift.GetLocation());
-	if (DUse <= 220.0 && DUse <= DLift) { return FString::Printf(TEXT("F  %s"), *Label); }
-	if (DLift <= 220.0) { return TEXT("F  turbolift"); }
-	return FString::Printf(TEXT("turbolift %.0f m   %s %.0f m"), DLift / 100.0, Person->GetRoom() == EShipRoom::Bridge ? TEXT("chair") : TEXT("console"), DUse / 100.0);
+	const bool bLift = UShipInteriorComponent::IsLiftStop(Person->GetRoom());
+	if (DUse <= 220.0 && (!bLift || DUse <= DLift)) { return FString::Printf(TEXT("F  %s"), *Label); }
+	if (bLift && DLift <= 220.0) { return TEXT("F  turbolift"); }
+	return FString::Printf(TEXT("%s %.0f m   %s %.0f m"), bLift ? TEXT("turbolift") : TEXT("doorway"), DLift / 100.0, Person->GetRoom() == EShipRoom::Bridge ? TEXT("chair") : TEXT("console"), DUse / 100.0);
 }
 
 void AStarshipPawn::ToggleShuttle()
