@@ -201,7 +201,8 @@ sidebar: commend, reprimand, promote, leave, a word. `ship crew ...` does the sa
 
 Missions come three ways. Starfleet's orders arrive over subspace as messages in the inbox every several ship's
 hours (surveys, parleys, outbreaks, patrols, supply runs, each with an admiral's name and a deadline in stardates);
-a starbase posts its own board when the ship comes alongside; and space brings the rest unasked while under way: a
+a starbase posts its own board when the ship comes alongside (and both ask for charts of new space; see
+Exploration); and space brings the rest unasked while under way: a
 distress call, a derelict across the course, an Orion freighter with her transponder dark, a reading the sensors
 cannot place, now and then a ship of no known design, the ones with a hull spawning one off the bow. Each mission
 points at a real place in the galaxy and runs through one to three situations with two or three options; an option
@@ -226,9 +227,26 @@ her is a bereavement by name. People transfer either way, one of ours to her wit
 when there is family aboard or her captain thinks well of us. Show: Fleet in the missions panel lists the ships
 and their files; `ship fleet ...` does the rest. The design is in `docs/fleet-design.md`.
 
+## Exploration
+
+Beyond the three charted neighbours the sky holds a dozen uncharted stars within thirty light-years, the same in
+every game, each a point with a catalogue number (`UFC 2461`) in the nav list and the star chart's sector view
+until the ship goes there. Within a light-year its worlds are generated from its seed, with nothing of Starfleet
+in them; arriving charts it, mission or not: the science officer reports the star and its worlds, the chart earns
+regard and science, and the captain can name it (`ship chart name <name>`). Starfleet's most common order while
+unknown stars remain is a chart, carried by the real survey (the star and every world scanned) or a shuttle down,
+and filed under the captain's name for the system or the catalogue's own. What the sector holds there comes as
+events: a first contact with a people nobody has met, a vessel of no known design off the bow and three situations
+from the approach through the exchange to terms, the people named, recorded as friendly, wary or hostile for the
+next ship to meet them, and the crew's biases toward them beginning from nothing; a pre-warp civilisation on a lit
+world under the Prime Directive, observed, visited in disguise, or contacted at the risk of a breach; and an
+ancient beacon whose decoded coordinates point at the next unknown star, one chain into the dark. The HUD's CHART
+line reads the system's state and the survey's progress; `ship chart` lists the sector and the peoples met. The
+design is in `docs/exploration-design.md`.
+
 ## Tests
 
-The crew roster, the missions and the fleet have headless automation tests (`unreal/Source/Slonk/Tests`, run with
+The crew roster, the missions, the fleet and the exploration catalogue have headless automation tests (`unreal/Source/Slonk/Tests`, run with
 `tools/run_tests.sh`, no window or GPU, about half a minute) that build the three systems off the disk and drive
 them through their public API; the rounds are smoke-tested in play with scripts over the editor's MCP plugin. How
 and what is in `docs/testing.md`.

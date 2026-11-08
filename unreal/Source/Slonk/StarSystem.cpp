@@ -7,6 +7,8 @@
 #include "BeltField.h"
 #include "FarBody.h"
 #include "SpaceTraffic.h"
+#include "Nebula.h"
+#include "ScienceScannerComponent.h"
 
 AStarSystem::AStarSystem()
 {
@@ -151,7 +153,7 @@ double AStarSystem::LuminosityScale(EStarClass Class)
 	}
 }
 
-void AStarSystem::SpawnPlanets(UWorld* World, FRandomStream& Rng, const FVector& Centre, const FString& Prefix, EStarClass Class, int32 Count, double MaxAu, TArray<APlanetBody*>& Out)
+void AStarSystem::SpawnPlanets(UWorld* World, FRandomStream& Rng, const FVector& Centre, const FString& Prefix, EStarClass Class, int32 Count, double MaxAu, const FVector& SeedShift, TArray<APlanetBody*>& Out)
 {
 	// Orbits spaced geometrically outward from a few tenths of an AU, scaled by the star's luminosity so the
 	// temperate band sits where a world can keep water. Kinds by temperature band.
@@ -192,7 +194,7 @@ void AStarSystem::SpawnPlanets(UWorld* World, FRandomStream& Rng, const FVector&
 		{
 			P->Archetype = Kind; P->RadiusKm = RadiusKm;
 			P->PlanetName = FString::Printf(TEXT("%s %s"), *Prefix, Numeral(i));
-			P->SeedLocation = PLoc; P->bSeedLocationSet = true;
+			P->SeedLocation = PLoc + SeedShift; P->bSeedLocationSet = true;   // where it would be had nothing moved
 			P->FinishSpawning(FTransform(PLoc));
 			Adopt(P);
 			Planets.Add(P);
@@ -241,14 +243,36 @@ AStarSystem* AStarSystem::Generate(UWorld* World, const FStarSystemSpec& Spec, c
 		}
 	}
 
+	Sys->Spec = Spec;
+	Sys->RevealSeed = Rng.GetCurrentSeed();
+	Sys->SeedOrigin = Loc;
+	if (!Spec.bStarOnly) { Sys->Reveal(); }
+	else { UE_LOG(LogTemp, Log, TEXT("Star system %s: class %d star%s, uncharted, %.2f ly at RA %.1fh Dec %.0f"), *Spec.Name, (int32)Spec.StarClass, bBinary ? TEXT(" with a companion") : TEXT(""), Spec.DistanceLy, Spec.RightAscensionHours, Spec.DeclinationDeg); }
+	return Sys;
+}
+
+void AStarSystem::Reveal()
+{
+	if (bRevealed) { return; }
+	bRevealed = true;
+	UWorld* World = GetWorld();
+	if (!World) { return; }
+	const FVector Loc = GetStarLocation();
+	const FVector CLoc = Companion ? Companion->GetActorLocation() : Loc;
+	const bool bBinary = Companion != nullptr;
+	AStarSystem* Sys = this;
+	AStarBody* S = Star;
+	FRandomStream Rng; Rng.Initialize(RevealSeed);
+	// The world may have been rebased since the star was spawned; the seed coordinates are taken as of then.
+	const FVector SeedShift = SeedOrigin - Loc;
 	// Planets: the primary's inside a third of the separation (a binary's stable zone), then a few of the
 	// companion's own.
 	TArray<APlanetBody*> Primary, Secondary;
 	const double MaxPrimaryAu = bBinary ? (double)Spec.CompanionSeparationAU * 0.3 : 1.0e9;
-	Sys->SpawnPlanets(World, Rng, Loc, Spec.Name, Spec.StarClass, Rng.RandRange(4, 7), MaxPrimaryAu, Primary);
+	Sys->SpawnPlanets(World, Rng, Loc, Spec.Name, Spec.StarClass, Rng.RandRange(4, 7), MaxPrimaryAu, SeedShift, Primary);
 	if (bBinary && Sys->Companion)
 	{
-		Sys->SpawnPlanets(World, Rng, CLoc, Spec.Name + TEXT(" B"), Spec.CompanionClass, Rng.RandRange(1, 3), (double)Spec.CompanionSeparationAU * 0.3, Secondary);
+		Sys->SpawnPlanets(World, Rng, CLoc, Spec.Name + TEXT(" B"), Spec.CompanionClass, Rng.RandRange(1, 3), (double)Spec.CompanionSeparationAU * 0.3, SeedShift, Secondary);
 	}
 
 	// A belt in the first gap past the temperate band, two systems in three.
@@ -276,15 +300,43 @@ AStarSystem* AStarSystem::Generate(UWorld* World, const FStarSystemSpec& Spec, c
 		}
 	}
 
-	// A station with its patrol ships at each planet, from the level's traffic spawner.
+	// A station with its patrol ships at each planet, from the level's traffic spawner, where Starfleet is.
 	TActorIterator<ASpaceTraffic> TrafficIt(World);
-	if (TrafficIt)
+	if (Spec.bPopulate && TrafficIt)
 	{
 		TrafficIt->PopulatePlanets(Sys->Planets, Spec.Seed * 13 + 5);
 	}
 	Sys->AdoptLoose();
 	UE_LOG(LogTemp, Log, TEXT("Star system %s: class %d star%s, %d planets (%d of the companion), %.2f ly at RA %.1fh Dec %.0f"), *Spec.Name, (int32)Spec.StarClass, bBinary ? TEXT(" with a companion") : TEXT(""), Sys->Planets.Num(), Secondary.Num(), Spec.DistanceLy, Spec.RightAscensionHours, Spec.DeclinationDeg);
-	return Sys;
+}
+
+void AStarSystem::RenameSystem(const FString& NewName)
+{
+	const FString Old = SystemName;
+	if (NewName.IsEmpty() || NewName == Old) { return; }
+	SystemName = NewName;
+	if (Star) { Star->StarName = NewName; }
+	if (Companion) { Companion->StarName = NewName + TEXT(" B"); }
+	// Every world hanging from the anchor, the moons the showcase pass added included, not only the generator's list.
+	for (TActorIterator<APlanetBody> It(GetWorld()); It; ++It)
+	{
+		if (It->GetAttachParentActor() != this) { continue; }
+		if (It->PlanetName.StartsWith(Old + TEXT(" "))) { It->PlanetName = NewName + It->PlanetName.RightChop(Old.Len()); }
+	}
+	// The clouds the dressing pass hung off its giants ("<giant> Nebula"), adopted by the anchor or still loose
+	// within its radius: their names are the science log's labels too.
+	for (TActorIterator<ANebula> It(GetWorld()); It; ++It)
+	{
+		if (!It->NebulaName.StartsWith(Old + TEXT(" "))) { continue; }
+		if (It->GetAttachParentActor() != this && (It->GetAttachParentActor() != nullptr || DistanceFrom(It->GetActorLocation()) > RadiusCm)) { continue; }
+		It->NebulaName = NewName + It->NebulaName.RightChop(Old.Len());
+	}
+	// A scan under way of the star, a world or a cloud here would file its record under the old label otherwise.
+	for (TObjectIterator<UScienceScannerComponent> It; It; ++It)
+	{
+		if (It->GetWorld() == GetWorld()) { It->RenameSystem(Old, NewName); }
+	}
+	UE_LOG(LogTemp, Log, TEXT("Star system %s is now %s"), *Old, *NewName);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

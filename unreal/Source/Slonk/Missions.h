@@ -11,7 +11,7 @@
 #include "Missions.generated.h"
 
 UENUM(BlueprintType)
-enum class EMissionKind : uint8 { Survey = 0, Rescue, Diplomacy, Delivery, Anomaly, Medical, Patrol, Contact, Derelict, Smuggler, Support, Assist, Count UMETA(Hidden) };
+enum class EMissionKind : uint8 { Survey = 0, Rescue, Diplomacy, Delivery, Anomaly, Medical, Patrol, Contact, Derelict, Smuggler, Support, Assist, Explore, FirstContact, PreWarp, Beacon, Count UMETA(Hidden) };
 
 UENUM(BlueprintType)
 enum class EMissionSource : uint8 { Starfleet = 0, Starbase, Event, Fleet, Count UMETA(Hidden) };
@@ -45,6 +45,8 @@ struct FMissionOption
 	UPROPERTY(BlueprintReadOnly) float Risk = 0.f;
 	/** Science points a success earns. */
 	UPROPERTY(BlueprintReadOnly) int32 Science = 0;
+	/** Refused until the science log's survey of the target system is complete; carried without a check then. */
+	UPROPERTY(BlueprintReadOnly) bool bNeedsSurvey = false;
 };
 
 USTRUCT(BlueprintType)
@@ -80,6 +82,8 @@ struct FMission
 	UPROPERTY(BlueprintReadOnly) double ClosedStardate = 0.0;
 	/** Starfleet's regard for a success (and the loss of a failure, half). */
 	UPROPERTY(BlueprintReadOnly) int32 Standing = 10;
+	/** The loss of a failure when it is not half (a breach of the Prime Directive); -1 for half. */
+	UPROPERTY(BlueprintReadOnly) int32 FailLoss = -1;
 	UPROPERTY(BlueprintReadOnly) int32 ScienceEarned = 0;
 	/** The crew the captain named for the attempt; empty for the department's own. */
 	UPROPERTY(BlueprintReadOnly) TArray<int32> Party;
@@ -127,6 +131,7 @@ struct FMissionOutcome
 
 struct FFleetRequest;
 class UFleetSubsystem;
+class UExplorationSubsystem;
 
 UCLASS()
 class SLONK_API USlonkMissionSaveGame : public USaveGame
@@ -162,6 +167,13 @@ public:
 	void AdvanceSeconds(float Seconds, const FMissionShipState& Ship, float RealSeconds = -1.f);
 	/** Days a ship at warp 7 needs from where we are to the mission's target (0 for one with no place to go). */
 	double TravelDays(const FMission& M) const;
+	/** The sector's own happenings (exploration): an event of this kind now, active at once; -1 when it cannot be made. */
+	int32 RaiseEvent(EMissionKind Kind);
+	/** Regard from outside the missions (a system charted). */
+	void AddStanding(int32 Delta, const FString& Why);
+	/** A place was named: open missions pointed at it follow. */
+	void RenameTarget(const FString& OldName, const FString& NewName);
+	double Stardate() const;
 
 	// ---- the captain ----
 	bool Accept(int32 Id, FString& OutReply);
@@ -204,19 +216,21 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Missions") void Reset();
 	/** Tests: wired to these systems directly, no save slot, a fixed seed. */
-	void InitForTest(UCrewRosterSubsystem* InRoster, UFleetSubsystem* InFleet);
+	void InitForTest(UCrewRosterSubsystem* InRoster, UFleetSubsystem* InFleet, UExplorationSubsystem* InExploration = nullptr);
 	void Save();
 
 private:
 	void Load();
 	UCrewRosterSubsystem* Roster() const;
 	UFleetSubsystem* Fleet() const;
+	UExplorationSubsystem* Exploration() const;
+	/** What an option carried or failed does beyond the stage (a beacon decoded, a chart filed, a contact's record). */
+	void AfterOption(FMission& M, const FMissionOption& O, bool bSuccess, bool bOver, bool bSucceeded);
 	/** A fleet ship's request for support, or its work nearby, becomes a mission on the board. */
 	void IssueFleetMission(const FFleetRequest& Q);
 	void OfferAssists();
 	class AStarshipPawn* CrewedShip() const;
 	void Report(const FString& Text, const FLinearColor& Color = FLinearColor(0.75f, 0.9f, 1.f), ECrewDepartment From = ECrewDepartment::Command);
-	double Stardate() const;
 	double Hours() const;
 	/** Any change: the panels refresh and a save follows in a couple of seconds. */
 	void Dirty() { ++Revision; bSaveWanted = true; SaveDelaySeconds = 2.f; }
@@ -230,6 +244,8 @@ private:
 	void Expire();
 	FString CivilianName(FRandomStream& R) const;
 	void Close(FMission& M, EMissionState State, const FString& Why);
+	/** The science a completed mission earned, into the science log once (by the mission's reward key). */
+	void PayScience(const FMission& M, const FString& Note);
 	TArray<int32> PartyFor(const FMission& M, const FMissionOption& O) const;
 	void Hurt(const FMission& M, const TArray<int32>& Party, float Risk);
 
@@ -256,6 +272,7 @@ private:
 	bool bNoDisk = false;
 	TWeakObjectPtr<UCrewRosterSubsystem> RosterOverride;
 	TWeakObjectPtr<UFleetSubsystem> FleetOverride;
+	TWeakObjectPtr<UExplorationSubsystem> ExplorationOverride;
 	float SaveDelaySeconds = 0.f;
 	/** The clock's last reading, to notice it going back (a new complement starts it over). */
 	double LastClockHours = -1.0;

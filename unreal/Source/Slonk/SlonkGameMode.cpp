@@ -1,5 +1,6 @@
 #include "SlonkGameMode.h"
 #include "StarSystem.h"
+#include "Exploration.h"
 #include "Kismet/GameplayStatics.h"
 #include "StarshipPawn.h"
 #include "SlonkTiming.h"
@@ -94,6 +95,8 @@ void ASlonkGameMode::SpawnStarSystems()
 	{
 		AStarSystem::Generate(World, Spec, HomeStar);
 	}
+	// The catalogue's uncharted stars: in the sky from the start, their worlds when the ship goes there.
+	if (UExplorationSubsystem* X = UExplorationSubsystem::Get(this)) { X->SpawnStars(World, HomeStar); }
 }
 
 void ASlonkGameMode::SpawnHomeGiant(AStarSystem* Home)
@@ -130,6 +133,13 @@ void ASlonkGameMode::SpawnShowcaseMoons()
 	{
 		if ((It->Style.bRings || It->bShowcaseMoons) && It->IsGiant()) { Giants.Add(*It); }
 	}
+	SpawnShowcaseMoonsFor(Giants);
+}
+
+void ASlonkGameMode::SpawnShowcaseMoonsFor(const TArray<APlanetBody*>& Giants)
+{
+	UWorld* World = GetWorld();
+	if (!World) { return; }
 	int32 N = 0;
 	for (APlanetBody* G : Giants)
 	{
@@ -148,7 +158,7 @@ void ASlonkGameMode::SpawnShowcaseMoons()
 			P->Archetype = EPlanetArchetype::Moon; P->RadiusKm = M.RadiusKm;
 			P->bForceMoonKind = true; P->ForcedMoonKind = M.Kind; P->bForceHazy = M.bHazy;
 			P->PlanetName = AStarSystem::MoonDesignation(World, G);   // the next free numeral after any moon the level gave it
-			P->SeedLocation = Loc; P->bSeedLocationSet = true;
+			P->SeedLocation = (G->bSeedLocationSet ? G->SeedLocation : Centre) + (Loc - Centre); P->bSeedLocationSet = true;   // stable under rebasing, like the giant's
 			P->FinishSpawning(FTransform(Loc));
 			++N;
 		}
@@ -162,12 +172,39 @@ void ASlonkGameMode::SpawnNebulae()
 	// its moons sit between; the first is the pink-and-blue emission cloud, the second cooler and greener.
 	UWorld* World = GetWorld();
 	if (!World) { return; }
-	int32 N = 0;
+	TArray<APlanetBody*> Giants;
 	for (TActorIterator<APlanetBody> It(World); It; ++It)
 	{
-		if (!It->Style.bRings || !(It->ResolvedArchetype == EPlanetArchetype::GasGiant || It->ResolvedArchetype == EPlanetArchetype::IceGiant)) { continue; }
+		if (It->Style.bRings && (It->ResolvedArchetype == EPlanetArchetype::GasGiant || It->ResolvedArchetype == EPlanetArchetype::IceGiant)) { Giants.Add(*It); }
+	}
+	SpawnNebulaeFor(Giants);
+}
+
+void ASlonkGameMode::SpawnNebulaeFor(const TArray<APlanetBody*>& Giants)
+{
+	UWorld* World = GetWorld();
+	if (!World) { return; }
+	int32 N = 0;
+	TMap<const AStarSystem*, int32> Ordinals;   // for giants no system lists (the level's own): the order met
+	for (APlanetBody* It : Giants)
+	{
+		if (!It) { continue; }
 		const FVector Centre = It->GetActorLocation();
-		const FVector Away = (Centre - FVector::ZeroVector).GetSafeNormal();
+		// Away from the giant's own sun (the home star sits at the origin; another system's does not).
+		const AStarSystem* Sys = AStarSystem::Nearest(World, Centre);
+		// The cloud's seed and palette belong to the giant, not to how many clouds this pass has made: a system
+		// dressed on arrival and the same system regenerated at the next start must get the same cloud. The
+		// giant's place in its system's list and the system's seed give it; the first cloud of a system is the
+		// pink one.
+		int32 Ordinal = Sys ? Sys->Planets.IndexOfByKey(It) : INDEX_NONE;
+		int32 Rank = 0;
+		if (Sys && Ordinal != INDEX_NONE)
+		{
+			for (int32 i = 0; i < Ordinal; ++i) { const APlanetBody* P = Sys->Planets[i]; if (P && P->Style.bRings && P->IsGiant()) { ++Rank; } }
+		}
+		else { Ordinal = 100 + Ordinals.FindOrAdd(Sys); Rank = Ordinals[Sys]++; }
+		const int32 SystemSeed = Sys ? Sys->Spec.Seed : 0;
+		const FVector Away = (Centre - (Sys ? Sys->GetStarLocation() : FVector::ZeroVector)).GetSafeNormal();
 		const double RadiusCm = 1.5e10;
 		const FVector Loc = Centre + Away * (RadiusCm * 2.5) + It->GetActorRightVector() * (RadiusCm * 0.8);
 		FActorSpawnParameters SP; SP.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
@@ -175,13 +212,29 @@ void ASlonkGameMode::SpawnNebulae()
 		if (!Neb) { continue; }
 		Neb->NebulaName = It->GetDisplayName() + TEXT(" Nebula");
 		Neb->RadiusKm = (float)(RadiusCm / 1.0e5);
-		if (N == 0) { Neb->ColorA = FLinearColor(0.95f, 0.35f, 0.55f); Neb->ColorB = FLinearColor(0.3f, 0.45f, 1.0f); Neb->EmissiveColor = FLinearColor(1.0f, 0.5f, 0.8f); }
+		if (Rank == 0) { Neb->ColorA = FLinearColor(0.95f, 0.35f, 0.55f); Neb->ColorB = FLinearColor(0.3f, 0.45f, 1.0f); Neb->EmissiveColor = FLinearColor(1.0f, 0.5f, 0.8f); }
 		else { Neb->ColorA = FLinearColor(0.35f, 0.9f, 0.7f); Neb->ColorB = FLinearColor(0.2f, 0.35f, 0.8f); Neb->EmissiveColor = FLinearColor(0.5f, 0.95f, 0.8f); }
-		Neb->Seed = 17.f * N + 3.f;
+		Neb->Seed = (float)((SystemSeed * 31 + Ordinal * 17 + 3) % 1000);
 		Neb->ApplyAppearance();
 		++N;
 	}
 	UE_LOG(LogTemp, Log, TEXT("Nebulae: %d"), N);
+}
+
+void ASlonkGameMode::DressSystem(AStarSystem* System)
+{
+	UWorld* World = GetWorld();
+	if (!World || !System || !bShowcaseMoonsSpawned) { return; }   // the start passes have not run yet: they will cover it
+	TArray<APlanetBody*> Moons, Clouds;
+	for (APlanetBody* P : System->Planets)
+	{
+		if (!P || !P->IsGiant()) { continue; }
+		if (P->Style.bRings || P->bShowcaseMoons) { Moons.Add(P); }
+		if (P->Style.bRings) { Clouds.Add(P); }
+	}
+	if (bSpawnShowcaseMoons && Moons.Num() > 0) { SpawnShowcaseMoonsFor(Moons); }
+	if (bSpawnNebulae && Clouds.Num() > 0) { SpawnNebulaeFor(Clouds); }
+	System->AdoptLoose();
 }
 
 void ASlonkGameMode::SpawnTestTargets()

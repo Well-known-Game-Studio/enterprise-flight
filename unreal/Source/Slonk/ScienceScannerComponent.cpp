@@ -5,6 +5,7 @@
 #include "PlanetBody.h"
 #include "StarBody.h"
 #include "StarSystem.h"
+#include "Exploration.h"
 #include "BeltField.h"
 #include "Nebula.h"
 #include "SpaceVessel.h"
@@ -241,6 +242,16 @@ void UScienceScannerComponent::Cancel()
 	if (IsBusy()) { Finish(TEXT("scan cancelled")); }
 }
 
+void UScienceScannerComponent::RenameSystem(const FString& Old, const FString& New)
+{
+	if (!IsBusy() || Old.IsEmpty() || New.IsEmpty() || Old == New) { return; }
+	// The star carries the bare name; its worlds, their surfaces and its clouds the name and a space.
+	if (TargetLabel == Old) { TargetLabel = New; }
+	else if (TargetLabel.StartsWith(Old + TEXT(" "))) { TargetLabel = New + TargetLabel.RightChop(Old.Len()); }
+	else { return; }
+	UE_LOG(LogTemp, Log, TEXT("Science: the scan in progress is now of %s"), *TargetLabel);
+}
+
 void UScienceScannerComponent::Finish(const FString& Why)
 {
 	if (AStarshipPawn* Ship = Cast<AStarshipPawn>(GetOwner()))
@@ -327,6 +338,8 @@ void UScienceScannerComponent::Complete()
 	if (Keys.Num() > 0 && !Log->IsSystemSurveyed(System) && Log->CountScanned(Keys) == Keys.Num())
 	{
 		SurveyBonus = Log->MarkSystemSurveyed(System);
+		// A catalogue system's chart is complete with its survey.
+		if (UExplorationSubsystem* X = UExplorationSubsystem::Get(this)) { X->MarkSurveyed(System); }
 	}
 
 	// Report: newest message on top, so push in reverse.

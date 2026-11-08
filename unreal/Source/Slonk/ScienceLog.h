@@ -92,6 +92,8 @@ public:
 	/** Pay the system-survey bonus: a record of its own so the log shows it. Returns the bonus. */
 	int32 MarkSystemSurveyed(const FString& System);
 
+	/** A system was named: its records follow (the keys carry the system's name). */
+	void RenameSystem(const FString& OldName, const FString& NewName);
 	/** Forget everything, on disk too (testing). */
 	UFUNCTION(BlueprintCallable, Category = "Science") void Reset();
 
