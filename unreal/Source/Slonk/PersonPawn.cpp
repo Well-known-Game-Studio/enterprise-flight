@@ -518,6 +518,8 @@ void APersonPawn::TickDeck(float DeltaTime)
 	}
 	SetActorLocationAndRotation(NextFeet + Up * HalfHeightCm, StandingQuat(Up, Fwd), false, nullptr, ETeleportType::TeleportPhysics);
 	bGrounded = true;
+	// Through a doorway into the next room: the ship follows the feet and shows the room they are in.
+	if (Vt.SizeSquared() > 1.0) { C->PersonMoved(this); }
 }
 
 void APersonPawn::Away(const FString& Command)

@@ -1,6 +1,8 @@
-// Slonk - the ship's interior as rooms you can walk: main engineering, sickbay, the shuttle bay and the transporter
-// room, built from engine primitives at the places the compartment map puts them, each shown only while someone is in
-// it. The bridge is the modelled set on UBridgeInteriorComponent; the turbolift joins them all.
+// Slonk - the ship's interior as rooms you can walk: main engineering, sickbay, the shuttle bay, the transporter
+// room, the airlock's staging area, deck G's corridor, the rec deck, the officers' mess, the captain's quarters,
+// the crew quarters, the torpedo bay and the cargo bay, modelled sets (or engine primitives while a set is
+// missing) at the places the compartment map puts them, a room shown with its neighbours while someone is in it.
+// The bridge is the modelled set on UBridgeInteriorComponent; the turbolift joins the rest (docs/interiors-design.md).
 #pragma once
 
 #include "CoreMinimal.h"
@@ -14,7 +16,8 @@ class UPrimitiveComponent;
 class UMaterialInterface;
 class UMaterialInstanceDynamic;
 
-/** The places the turbolift goes. Airlock is the staging area under the saucer hatch; its hatch puts you out on the hull. */
+/** The rooms. Airlock is the staging area under the saucer hatch; its hatch puts you out on the hull. Corridor is
+ *  deck G's, off which sickbay, the transporter room and the rec deck open: the lift stops there for the three. */
 UENUM(BlueprintType)
 enum class EShipRoom : uint8
 {
@@ -24,6 +27,13 @@ enum class EShipRoom : uint8
 	ShuttleBay,
 	Transporter,
 	Airlock,
+	Corridor,
+	RecDeck,
+	Mess,
+	Quarters,
+	CrewQuarters,
+	TorpedoBay,
+	CargoBay,
 	Count UMETA(Hidden)
 };
 
@@ -36,6 +46,10 @@ struct FShipRoom
 	/** Centre and half-size of the walkable box, pawn space (cm). */
 	FVector Center = FVector::ZeroVector;
 	FVector Half = FVector::ZeroVector;
+	/** Further boxes of the room (a corridor's second leg), pawn space. */
+	TArray<FBox> Legs;
+	/** The rooms whose boxes touch this one: shown and solid along with it, so a doorway shows the room beyond. */
+	TArray<EShipRoom> Neighbours;
 	/** Feet on the floor by the lift door, facing into the room (pawn space). */
 	FTransform Lift;
 	/** Feet at the room's thing to use (the chair, the pad, the shuttle's door, the master console), facing it. */
@@ -69,8 +83,14 @@ public:
 	EShipRoom Shown() const { return ShownRoom; }
 	static FString RoomName(EShipRoom Which);
 	static FString DeckOf(EShipRoom Which);
-	/** The room a pawn-space point is in, or Count. */
-	EShipRoom RoomAt(const FVector& PawnLocal) const;
+	/** The room the lift stops at for a room: itself, or the corridor it opens off (sickbay, the transporter room
+	 *  and the rec deck are reached along deck G's corridor). */
+	static EShipRoom LiftStop(EShipRoom Which);
+	/** Whether the lift has a door in the room (the panel's stops). */
+	static bool IsLiftStop(EShipRoom Which) { return Which != EShipRoom::Count && LiftStop(Which) == Which; }
+	/** The room a pawn-space point is in, or Count. `Current` is kept while the point is still within its box (a
+	 *  doorway lies in two rooms' tolerance), so a person's room changes only as they leave one. */
+	EShipRoom RoomAt(const FVector& PawnLocal, EShipRoom Current = EShipRoom::Count) const;
 	/** The bridge's spots come from the modelled set: the pawn sets them once it knows where the set stands. */
 	void SetRoomSpots(EShipRoom Which, const FTransform& Lift, const FTransform& Use, const FString& UseLabel);
 	/** The parked shuttle in the bay is its own mesh: hidden while the real one is out. */
@@ -96,6 +116,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Meshes") TSoftObjectPtr<UStaticMesh> BayShuttleMesh;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Meshes") TSoftObjectPtr<UStaticMesh> TransporterMesh;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Meshes") TSoftObjectPtr<UStaticMesh> AirlockMesh;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Meshes") TSoftObjectPtr<UStaticMesh> CorridorMesh;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Meshes") TSoftObjectPtr<UStaticMesh> RecDeckMesh;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Meshes") TSoftObjectPtr<UStaticMesh> MessMesh;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Meshes") TSoftObjectPtr<UStaticMesh> QuartersMesh;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Meshes") TSoftObjectPtr<UStaticMesh> CrewQuartersMesh;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Meshes") TSoftObjectPtr<UStaticMesh> TorpedoBayMesh;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interior|Meshes") TSoftObjectPtr<UStaticMesh> CargoBayMesh;
 
 private:
 	TArray<FShipRoom> Rooms;
@@ -129,7 +156,9 @@ private:
 	UStaticMeshComponent* Cyl(const FVector& Center, float Radius, float Height, UMaterialInterface* Mat, bool bSolid = true) { return Piece(CylinderMesh, Center, FVector(Radius * 2.f, Radius * 2.f, Height), FRotator::ZeroRotator, Mat, bSolid); }
 	void Light(const FVector& Pos, float Intensity, float Radius, FLinearColor Color);
 	/** Floor, ceiling and the four walls of a room's box, with a burgundy lift door set in one wall at a pawn-space point. */
-	void Shell(const FShipRoom& R, const FVector& LiftDoor, const FVector& LiftNormal, bool bOpenAft);
+	void Shell(const FShipRoom& R, const FVector& LiftDoor, const FVector& LiftNormal, bool bOpenAft, const TArray<FVector>& Doorways = {});
+	/** A wall along x (at y = Pos) or along y (at x = Pos) from A0 to A1, Z0..Z1, cut by doorways centred at Cuts along it. */
+	void WallRun(bool bAlongX, double Pos, double A0, double A1, double Z0, double Z1, double Thick, UMaterialInterface* Mat, const TArray<double>& Cuts);
 	/** A console: dark desk with a raked teal screen, facing +X rotated by YawDeg. */
 	void Console(const FVector& FloorPos, float YawDeg, float Width, float Seed);
 	void BuildEngineering(FShipRoom& R);
@@ -137,6 +166,17 @@ private:
 	void BuildShuttleBay(FShipRoom& R);
 	void BuildTransporter(FShipRoom& R);
 	void BuildAirlock(FShipRoom& R);
+	void BuildCorridor(FShipRoom& R);
+	void BuildRecDeck(FShipRoom& R);
+	void BuildMess(FShipRoom& R);
+	void BuildQuarters(FShipRoom& R);
+	void BuildCrewQuarters(FShipRoom& R);
+	void BuildTorpedoBay(FShipRoom& R);
+	void BuildCargoBay(FShipRoom& R);
+	/** The primitive room's doorway (no leaves) in the wall at a pawn-space point, the frame proud of it. */
+	void DoorFrame(const FVector& Door, const FVector& Normal);
+	/** Whether a pawn-space point is within a room's boxes, with a tolerance in cm. */
+	static bool InRoom(const FShipRoom& R, const FVector& P, double Tol);
 
 	UPROPERTY() TObjectPtr<UStaticMesh> CubeMesh;
 	UPROPERTY() TObjectPtr<UStaticMesh> CylinderMesh;

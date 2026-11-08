@@ -41,7 +41,10 @@ starbase's keel laid and its commissioning refused until the works are done, a r
 diverted at the rock or left to land (the regard lost, the colony gone) or abandoned and landing all the same (the
 loss taken once), a colony order founding the colony at the landing and refusing a second order for the system,
 a system with two lit worlds keeping both (the outpost off the dead one, no colony), and the rock's track maths
-(the miss, the time, a push a day out clearing a world).
+(the miss, the time, a push a day out clearing a world); the interior's room table (every room named and decked,
+the lift stopping at deck G's corridor for the three rooms off it, the console's words, every compartment the crew
+are placed in a room), and a ship's day of the crew's places (meals in the officers' mess or on the rec deck,
+sleep in quarters, the off-watch hours on the rec deck, every place named a room of the interior).
 
 Writing one: make an `FSystems` (a roster seed gives the same people every time), drive the subsystems through
 their public API, assert with `TestEqual`/`TestTrue`. For anything that depends on the world (targets picked from

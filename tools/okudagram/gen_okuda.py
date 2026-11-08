@@ -191,6 +191,105 @@ def panel(name, title, seed, live=False, schematic=False, live_labels=None):
     im.save(os.path.join(OUT, f"T_Okuda_{name}.png"), optimize=True)
     print(name, os.path.getsize(os.path.join(OUT, f"T_Okuda_{name}.png")) // 1024, "KB")
 
+def ship_side(d, box, color, fill=None, lw=2):
+    """The refit in profile, bow to the right: saucer, bridge dome, neck, engineering hull with the deflector,
+    pylons, one nacelle. Filled when `fill` is given (the deck-configuration readout), else outlined."""
+    x0, y0, x1, y1 = box
+    L = min(x1 - x0, (y1 - y0) / 0.42)
+    ox, oy = (x0 + x1) / 2 - L / 2, (y0 + y1) / 2 - 0.21 * L
+    def P(u, t): return (ox + u * L, oy + t * L)
+    def poly(pts): d.polygon([P(*p) for p in pts], fill=fill, outline=color, width=lw)
+    def ell(u0, t0, u1, t1): d.ellipse((P(u0, t0), P(u1, t1)), fill=fill, outline=color, width=lw)
+    ell(0.50, 0.20, 0.98, 0.26)                                   # saucer
+    ell(0.68, 0.165, 0.80, 0.215)                                 # B/C decks
+    ell(0.715, 0.14, 0.765, 0.18)                                 # bridge dome
+    poly([(0.56, 0.24), (0.66, 0.24), (0.58, 0.33), (0.49, 0.33)])   # neck
+    d.rounded_rectangle((P(0.30, 0.31), P(0.68, 0.40)), radius=int(0.04 * L), fill=fill, outline=color, width=lw)   # engineering hull
+    ell(0.64, 0.30, 0.70, 0.41)                                   # deflector housing
+    poly([(0.36, 0.31), (0.43, 0.31), (0.30, 0.215), (0.23, 0.215)])   # pylon
+    d.rounded_rectangle((P(0.0, 0.17), P(0.44, 0.215)), radius=int(0.02 * L), fill=fill, outline=color, width=lw)   # nacelle
+
+def deck_config():
+    """The red dot-matrix profile of the deck-configuration display (the corridor's wall panel): the ship filled in
+    red with scan lines through it, the deck letters down the left, the readout along the foot."""
+    im = Image.new("RGB", (W, H), (0, 0, 0)); d = ImageDraw.Draw(im)
+    RED = (235, 30, 30)
+    ship_side(d, (160, 120, W - 60, 760), RED, fill=RED, lw=1)
+    for y in range(0, H, 6): d.line((0, y, W, y), fill=(0, 0, 0), width=2)      # scan lines
+    for k, letter in enumerate("ABCDEFGHIJKLMNOPQRSTU"):
+        y = 90 + k * 40
+        d.text((40, y), letter, font=font(26, 2), fill=(255, 120, 120) if k in (0, 6, 14, 16) else (150, 40, 40))
+        d.rectangle((80, y + 8, 80 + (26 if k in (0, 1, 6, 12, 14, 16, 18) else 12), y + 20), fill=(180, 40, 40))
+    d.text((300, 820), "DECK CONFIGURATION", font=font(40, 8), fill=WHITE)
+    d.text((300, 880), "DECK SPS 0019     DECK ACCESS 0073     TURBOLIFT NET 004     GRAV 1.0 G", font=font(26, 5), fill=(120, 230, 255))
+    d.text((W - 380, 820), "NCC-1701-A", font=font(40, 8), fill=(255, 120, 120))
+    im.save(os.path.join(OUT, "T_Okuda_DeckConfig.png"), optimize=True); print("DeckConfig")
+
+def deflector():
+    """The shield-status display: the header bar, the deflector power scale, the ship's plan inside the dotted
+    shield envelope with its figures, the footer."""
+    im = Image.new("RGB", (W, H), (0, 0, 0)); d = ImageDraw.Draw(im)
+    d.rounded_rectangle((6, 6, W - 7, H - 7), radius=28, outline=BLUE, width=4)
+    d.rectangle((40, 30, W - 40, 110), fill=(30, 110, 200))
+    d.text((70, 36), "SHIELD STATUS: NOMINAL", font=font(58, 8), fill=(200, 235, 255))
+    d.text((70, 128), "DEFLECTOR POWER", font=font(30, 5), fill=(120, 200, 255))
+    d.rectangle((420, 130, W - 80, 160), outline=(120, 200, 255), width=2)
+    d.rectangle((422, 132, 422 + int((W - 504) * 0.72), 158), fill=(120, 200, 255))
+    for k in range(1, 10):
+        x = 420 + (W - 500) * k / 10
+        d.line((x, 160, x, 172), fill=(120, 200, 255), width=2)
+        d.text((x - 12, 174), str(k * 10), font=font(18, 2), fill=(120, 200, 255))
+    # The envelope: a dotted lozenge round the plan, drawn bow up.
+    cx, cy = W // 2, 600
+    for k in range(240):
+        a = 2 * math.pi * k / 240
+        rx, ry = 560 + 120 * math.cos(2 * a), 330
+        x, y = cx + rx * math.cos(a), cy + ry * math.sin(a)
+        d.ellipse((x - 3, y - 3, x + 3, y + 3), fill=(60, 170, 255))
+    for yy in range(300, 920, 60): d.line((cx - 700, yy, cx + 700, yy), fill=(20, 50, 80), width=1)
+    ship_top(d, (cx - 300, 270, cx + 300, 930), (90, 200, 255), lw=3)
+    for (x, y, s) in ((cx + 560, 300, "1788\n9573\n8318"), (cx - 660, 760, "648\n590045\n2 8 6"), (cx - 120, 910, "41154\n0497"), (cx + 540, 840, "2748")):
+        d.multiline_text((x, y), s, font=font(20, 5), fill=(120, 200, 255), spacing=2)
+    d.text((40, H - 90), "DEFLECTOR STATUS", font=font(40, 8), fill=(60, 140, 220))
+    d.text((W - 300, H - 100), "1181.1", font=font(52, 8), fill=(200, 235, 255))
+    im.save(os.path.join(OUT, "T_Okuda_Deflector.png"), optimize=True); print("Deflector")
+
+def torpedo_bay():
+    """The torpedo bay display: the casing's plan to the left, the inventory table and the rack cross-section to the
+    right, the footer."""
+    im = Image.new("RGB", (W, H), (0, 0, 0)); d = ImageDraw.Draw(im)
+    C = (70, 150, 255); DIMC = (30, 70, 130)
+    d.rounded_rectangle((6, 6, W - 7, H - 7), radius=28, outline=C, width=4)
+    d.line((W * 0.36, 20, W * 0.36, H - 110), fill=C, width=2)
+    d.text((60, 40), "PLATFORM   AREA 11", font=font(24, 5), fill=C)
+    # The casing in plan: an elongated hexagon with ribs and the warhead chamber.
+    px, py, pw, ph = 170, 120, 380, 700
+    pts = [(px + pw / 2, py), (px + pw, py + 90), (px + pw, py + ph - 90), (px + pw / 2, py + ph), (px, py + ph - 90), (px, py + 90)]
+    d.polygon(pts, outline=C, width=3)
+    for k in range(7):
+        y = py + 130 + k * 70
+        d.line((px + 40, y, px + pw - 40, y), fill=DIMC, width=2)
+    d.rectangle((px + 120, py + 300, px + pw - 120, py + 420), outline=C, width=3)
+    d.rectangle((px + 140, py + 330, px + 200, py + 390), fill=(160, 230, 255))
+    d.rectangle((px + 210, py + 330, px + 240, py + 390), fill=(160, 230, 255))
+    d.text((W * 0.40, 40), "PHOTON TORPEDO", font=font(24, 5), fill=C)
+    rnd = random.Random(11)
+    for r in range(3):
+        for c in range(6):
+            d.text((W * 0.40 + c * 170, 80 + r * 34), f"{rnd.randint(1000, 99999):05d}", font=font(22, 2), fill=C)
+    d.text((W * 0.40, 230), "CROSS SECTION   AREA 11", font=font(24, 5), fill=C)
+    gx, gy = int(W * 0.44), 290
+    for r in range(9):
+        for c in range(6):
+            x, y = gx + c * 110, gy + r * 50
+            d.rounded_rectangle((x, y, x + 90, y + 36), radius=10, outline=C, width=2, fill=(160, 230, 255) if (r, c) == (4, 2) else None)
+    d.rectangle((gx - 90, gy + 120, gx - 10, gy + 330), outline=C, width=2)                  # the breech
+    for k in range(5): d.line((gx - 90, gy + 140 + k * 40, gx - 10, gy + 140 + k * 40), fill=DIMC, width=1)
+    d.rectangle((gx + 680, gy + 60, gx + 820, gy + 160), outline=C, width=2)                 # the tube
+    d.text((60, H - 90), "TORPEDO BAY", font=font(40, 8), fill=(120, 190, 255))
+    d.text((W - 330, H - 100), "1180.2", font=font(52, 8), fill=(200, 235, 255))
+    im.save(os.path.join(OUT, "T_Okuda_TorpedoBay.png"), optimize=True); print("TorpedoBay")
+
 panel("Tactical", "TACTICAL", 1, live=True)
 panel("MasterSituation", "MASTER SITUATION", 2, schematic=True)
 panel("Communications", "COMMUNICATIONS", 3)
@@ -200,6 +299,7 @@ panel("Environmental", "ENVIRONMENTAL", 6)
 panel("Navigation", "NAVIGATION", 7)
 panel("Helm", "HELM", 8, live=True)
 panel("Weapons", "WEAPONS", 9)
+deck_config(); deflector(); torpedo_bay()
 # The helm pedestal's display, between the two helmsmen and facing the captain: the slim command strip across the
 # top, then the big segmented blue gauge ring with the ship's green plan inside it, bow up. One texture covers the
 # whole black face of the pedestal head; the bridge mesh maps its Scr_Schematic quad to it square.

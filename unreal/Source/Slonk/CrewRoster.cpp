@@ -924,12 +924,16 @@ void UCrewRosterSubsystem::Place(FCrewMember& M)
 	const int32 Start = (int32)M.Watch * 8;
 	const int32 Since = (Hour - Start + 24) % 24;   // hours since the watch began
 	const bool bOfficer = IsOfficer(M.Rank);
+	// The rooms the interior builds (docs/interiors-design.md §3): officers eat in the officers' mess, the rest on
+	// the rec deck, where the galley serves; the off-watch hours are on the rec deck unless the person keeps to
+	// their quarters.
 	const FString Quarters = bOfficer ? TEXT("Officers' quarters") : TEXT("Crew quarters");
+	const FString Mess = bOfficer ? TEXT("Officers' mess") : TEXT("Rec deck");
 	if (Since < 8) { M.Where = M.Posting; M.Activity = ECrewActivity::OnWatch; }
-	else if (Since < 9) { M.Where = Quarters; M.Activity = ECrewActivity::Mess; }
+	else if (Since < 9) { M.Where = Mess; M.Activity = ECrewActivity::Mess; }
 	else if (Since < 16) { M.Where = Quarters; M.Activity = ECrewActivity::Sleeping; }
-	else if (Since < 17) { M.Where = Quarters; M.Activity = ECrewActivity::Mess; }
-	else { M.Where = M.HasTrait(TEXT("Bookish")) || M.HasTrait(TEXT("Loner")) ? Quarters : TEXT("Crew quarters"); M.Activity = ECrewActivity::Recreation; }
+	else if (Since < 17) { M.Where = Mess; M.Activity = ECrewActivity::Mess; }
+	else { M.Where = M.HasTrait(TEXT("Bookish")) || M.HasTrait(TEXT("Loner")) ? Quarters : TEXT("Rec deck"); M.Activity = ECrewActivity::Recreation; }
 }
 
 // ---- the ship's day ----

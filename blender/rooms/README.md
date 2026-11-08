@@ -1,13 +1,18 @@
 # The ship's rooms
 
-`build_rooms.py` builds main engineering, sickbay, the shuttle bay, the transporter room and the airlock staging area of the Enterprise-A in
-Blender from code and exports one static mesh per room (plus the parked shuttle on its own) for Unreal. The layouts
-follow the film sets, used as reference only: The Motion Picture's intermix shaft and horizontal chamber with The
-Wrath of Khan's console room; the Motion Picture ward beds in The Undiscovered Country's palette; The Final
-Frontier's landing bay; the transporter room of V and VI. Geometry is authored in the game's frame (x forward, y
-starboard, z up, metres, origin on the floor at the room's centre) and the room boxes match `UShipInteriorComponent`.
+`build_rooms.py` builds the rooms of the Enterprise-A in Blender from code and exports one static mesh per room
+(plus the parked shuttle on its own) for Unreal: main engineering, sickbay, the shuttle bay, the transporter room,
+the airlock staging area, deck G's corridor, the rec deck, the officers' mess, the captain's quarters, the crew
+quarters, the torpedo bay and the cargo bay. The layouts follow the film sets, used as reference only: The Motion
+Picture's intermix shaft and horizontal chamber with The Wrath of Khan's console room; the Motion Picture ward beds
+in The Undiscovered Country's palette; The Final Frontier's landing bay and its Type-4 Galileo; the transporter
+room, corridor and officers' mess of VI; the rec deck and cargo bay of The Motion Picture; the captain's cabin of
+II; the torpedo bay of II and VI. Geometry is authored in the game's frame (x forward, y starboard, z up, metres,
+origin on the floor at the room's centre; a corridor's at its first leg's centre line) and the room boxes match
+`UShipInteriorComponent`. Rooms off a corridor have open doorways (`doorway`) where their lift doors were: the shell
+carries the opening (`shell(openings=...)`) and the corridor's wall stands back to back with the room's.
 
-    /Applications/Blender.app/Contents/MacOS/Blender -b --factory-startup --python build_rooms.py -- --render --export [--room=eng,sick,bay,trans] [--views=a,b]
+    /Applications/Blender.app/Contents/MacOS/Blender -b --factory-startup --python build_rooms.py -- --render --export [--room=eng,sick,bay,trans,lock,corr,rec,mess,cabin,crew,torp,cargo] [--views=a,b]
 
 `--render` writes previews to `previews/`; `--export` writes `SM_Room*.fbx`. Import them headless with
 `tools/rooms/import_rooms.py` while the GUI editor is closed: it lands them in `/Game/Slonk/Rooms` with their

@@ -796,18 +796,25 @@ void UTurboliftPanel::BuildContent()
 	APersonPawn* Me = Cast<APersonPawn>(GetOwningPlayerPawn());
 	const EShipRoom Here = Me ? Me->GetRoom() : EShipRoom::Count;
 	struct FStop { EShipRoom Room; const TCHAR* Label; FLinearColor Color; };
+	// The stops, deck by deck: the rooms with a lift door. Sickbay, the transporter room and the rec deck open off
+	// deck G's corridor, which is their stop.
 	const FStop Stops[] = {
 		{ EShipRoom::Bridge, TEXT("Bridge"), Lcars::Peach },
-		{ EShipRoom::Sickbay, TEXT("Sickbay"), Lcars::Sky },
-		{ EShipRoom::Transporter, TEXT("Transporter"), Lcars::Periwinkle },
+		{ EShipRoom::Airlock, TEXT("Airlock"), Lcars::Lavender },
+		{ EShipRoom::Mess, TEXT("Officers' Mess"), Lcars::Tan },
+		{ EShipRoom::Quarters, TEXT("Quarters"), Lcars::Lilac },
+		{ EShipRoom::CrewQuarters, TEXT("Crew Quarters"), Lcars::Periwinkle },
+		{ EShipRoom::Corridor, TEXT("Deck G"), Lcars::Sky },
+		{ EShipRoom::TorpedoBay, TEXT("Torpedo Bay"), Lcars::Red },
 		{ EShipRoom::Engineering, TEXT("Engineering"), Lcars::Gold },
 		{ EShipRoom::ShuttleBay, TEXT("Shuttle Bay"), Lcars::Lilac },
-		{ EShipRoom::Airlock, TEXT("Airlock"), Lcars::Lavender },
+		{ EShipRoom::CargoBay, TEXT("Cargo Bay"), Lcars::Orange },
 	};
+	const EShipRoom HereStop = UShipInteriorComponent::LiftStop(Here);
 	for (const FStop& S : Stops)
 	{
 		const EShipRoom Room = S.Room;
-		AddSidebarButton(S.Label, Room == Here ? Lcars::Tan : S.Color, [this, Room]()
+		AddSidebarButton(S.Label, Room == HereStop ? Lcars::Tan : S.Color, [this, Room]()
 		{
 			APersonPawn* P = Cast<APersonPawn>(GetOwningPlayerPawn());
 			AStarshipPawn* Ship = P ? P->Craft.Get() : nullptr;
@@ -818,7 +825,11 @@ void UTurboliftPanel::BuildContent()
 	AddRow(Content, TEXT("You are on"), Here != EShipRoom::Count ? FString::Printf(TEXT("deck %s, %s"), *UShipInteriorComponent::DeckOf(Here), *UShipInteriorComponent::RoomName(Here)) : FString(TEXT("-")), Lcars::Peach, 16.f);
 	for (const FStop& S : Stops)
 	{
-		AddRow(Content, FString::Printf(TEXT("Deck %s"), *UShipInteriorComponent::DeckOf(S.Room)), S.Room == EShipRoom::Airlock ? FString(TEXT("Airlock: the staging area under the saucer hatch")) : UShipInteriorComponent::RoomName(S.Room), S.Room == Here ? Lcars::Tan : FLinearColor::White, 14.f);
+		FString What = UShipInteriorComponent::RoomName(S.Room);
+		if (S.Room == EShipRoom::Airlock) { What = TEXT("Airlock: the staging area under the saucer hatch"); }
+		else if (S.Room == EShipRoom::Corridor) { What = TEXT("Deck G: sickbay, the transporter room and the rec deck off the corridor"); }
+		else if (S.Room == EShipRoom::Quarters) { What = TEXT("Senior officers' quarters: the captain's cabin"); }
+		AddRow(Content, FString::Printf(TEXT("Deck %s"), *UShipInteriorComponent::DeckOf(S.Room)), What, S.Room == HereStop ? Lcars::Tan : FLinearColor::White, 14.f);
 	}
 	AddRow(Content, TEXT(""), TEXT("Choose a deck on the left. F at any lift door brings you back here."), FLinearColor(1, 1, 1, 0.6f), 12.f);
 }

@@ -2519,11 +2519,22 @@ bool AStarshipPawn::HandleCraftCommand(const FString& Op, const TArray<FString>&
 	}
 	if (Op == TEXT("walkto") && Args.Num() > 1)
 	{
-		// Test: walkto use|lift puts the person at the room's spot without the walk.
+		// Test: walkto use|lift puts the person at the room's spot without the walk; walkto <room> puts them just
+		// inside that room's door (a room off a corridor included), as if they had walked there.
 		if (APersonPawn* P = ActivePerson.Get())
 		{
 			FTransform Lift, Use; FString Label;
-			if (P->IsAboard() && RoomSpots(P->GetRoom(), Lift, Use, Label)) { P->PlaceAboard(this, P->GetRoom(), (Args[1].ToLower() == TEXT("lift") ? Lift : Use) * CraftFrame()); }
+			const FString W = Args[1].ToLower();
+			if (W == TEXT("lift") || W == TEXT("use"))
+			{
+				if (P->IsAboard() && RoomSpots(P->GetRoom(), Lift, Use, Label)) { P->PlaceAboard(this, P->GetRoom(), (W == TEXT("lift") ? Lift : Use) * CraftFrame()); }
+			}
+			else if (const EShipRoom Room = RoomFromWord(W); Room != EShipRoom::Count && Room != EShipRoom::Bridge && P->IsAboard() && RoomSpots(Room, Lift, Use, Label))
+			{
+				P->PlaceAboard(this, Room, Lift * CraftFrame());
+				SetInteriorRoom(Room);
+				UE_LOG(LogTemp, Log, TEXT("Walked to %s"), *UShipInteriorComponent::RoomName(Room));
+			}
 		}
 		return true;
 	}
@@ -2531,12 +2542,7 @@ bool AStarshipPawn::HandleCraftCommand(const FString& Op, const TArray<FString>&
 	{
 		const FString W = Args[1].ToLower();
 		EShipRoom Room = EShipRoom::Count;
-		if (W == TEXT("bridge")) { Room = EShipRoom::Bridge; }
-		else if (W.StartsWith(TEXT("eng"))) { Room = EShipRoom::Engineering; }
-		else if (W.StartsWith(TEXT("sick")) || W.StartsWith(TEXT("med"))) { Room = EShipRoom::Sickbay; }
-		else if (W.StartsWith(TEXT("shuttle")) || W == TEXT("bay")) { Room = EShipRoom::ShuttleBay; }
-		else if (W.StartsWith(TEXT("trans"))) { Room = EShipRoom::Transporter; }
-		else if (W.StartsWith(TEXT("air")) || W == TEXT("hatch")) { Room = EShipRoom::Airlock; }
+		Room = RoomFromWord(W);
 		if (APersonPawn* P = ActivePerson.Get()) { if (Room != EShipRoom::Count) { MoveToRoom(P, Room); } }
 		return true;
 	}
@@ -2886,7 +2892,26 @@ bool AStarshipPawn::GoOutside(APersonPawn* Person)
 	return true;
 }
 
-bool AStarshipPawn::MoveToRoom(APersonPawn* Person, EShipRoom Room)
+EShipRoom AStarshipPawn::RoomFromWord(const FString& Word)
+{
+	const FString W = Word.ToLower();
+	if (W == TEXT("bridge")) { return EShipRoom::Bridge; }
+	if (W.StartsWith(TEXT("eng"))) { return EShipRoom::Engineering; }
+	if (W.StartsWith(TEXT("sick")) || W.StartsWith(TEXT("med"))) { return EShipRoom::Sickbay; }
+	if (W.StartsWith(TEXT("shuttle")) || W == TEXT("bay")) { return EShipRoom::ShuttleBay; }
+	if (W.StartsWith(TEXT("trans"))) { return EShipRoom::Transporter; }
+	if (W.StartsWith(TEXT("air")) || W == TEXT("hatch")) { return EShipRoom::Airlock; }
+	if (W.StartsWith(TEXT("corr")) || W == TEXT("g") || W == TEXT("deckg")) { return EShipRoom::Corridor; }
+	if (W.StartsWith(TEXT("rec"))) { return EShipRoom::RecDeck; }
+	if (W.StartsWith(TEXT("mess")) || W.StartsWith(TEXT("lounge"))) { return EShipRoom::Mess; }
+	if (W.StartsWith(TEXT("quarters")) || W.StartsWith(TEXT("cabin")) || W.StartsWith(TEXT("captain"))) { return EShipRoom::Quarters; }
+	if (W.StartsWith(TEXT("crew"))) { return EShipRoom::CrewQuarters; }
+	if (W.StartsWith(TEXT("torp"))) { return EShipRoom::TorpedoBay; }
+	if (W.StartsWith(TEXT("cargo"))) { return EShipRoom::CargoBay; }
+	return EShipRoom::Count;
+}
+
+bool AStarshipPawn::MoveToRoom(APersonPawn* Person, EShipRoom Asked)
 {
 	if (!Person || Person != ActivePerson.Get() || !Person->IsAboard()) { return false; }
 	if (bTransporting)
@@ -2894,15 +2919,17 @@ bool AStarshipPawn::MoveToRoom(APersonPawn* Person, EShipRoom Room)
 		ScreenMessage(TEXT("Turbolift: the transporter has you, hold still"), FColor::Orange);
 		return false;
 	}
+	// The lift stops where it has a door: a room off a corridor is reached along it.
+	const EShipRoom Room = UShipInteriorComponent::LiftStop(Asked);
 	FTransform Lift, Use; FString Label;
 	if (!RoomSpots(Room, Lift, Use, Label)) { return false; }
-	if (Room == Person->GetRoom())
+	if (Room == UShipInteriorComponent::LiftStop(Person->GetRoom()))
 	{
-		ScreenMessage(TEXT("You are already there"), FColor::Orange);
+		ScreenMessage(Room == Asked ? TEXT("You are already there") : *FString::Printf(TEXT("%s is along this corridor"), *UShipInteriorComponent::RoomName(Asked)), FColor::Orange);
 		return false;
 	}
 	TWeakObjectPtr<APersonPawn> P(Person);
-	FadeThen([this, P, Room]()
+	FadeThen([this, P, Room, Asked]()
 	{
 		APersonPawn* Who = P.Get();
 		if (!Who) { return; }
@@ -2910,10 +2937,25 @@ bool AStarshipPawn::MoveToRoom(APersonPawn* Person, EShipRoom Room)
 		if (!RoomSpots(Room, L, U, Lb)) { return; }
 		Who->PlaceAboard(this, Room, L * CraftFrame());
 		SetInteriorRoom(Room);
-		ScreenMessage(FString::Printf(TEXT("Deck %s. %s."), *UShipInteriorComponent::DeckOf(Room), *UShipInteriorComponent::RoomName(Room)), FColor::Cyan, 5.f);
-		UE_LOG(LogTemp, Log, TEXT("Turbolift: %s"), *UShipInteriorComponent::RoomName(Room));
+		const FString Where = Room == Asked ? UShipInteriorComponent::RoomName(Room) : FString::Printf(TEXT("%s: %s is along the corridor"), *UShipInteriorComponent::RoomName(Room), *UShipInteriorComponent::RoomName(Asked));
+		ScreenMessage(FString::Printf(TEXT("Deck %s. %s."), *UShipInteriorComponent::DeckOf(Room), *Where), FColor::Cyan, 5.f);
+		UE_LOG(LogTemp, Log, TEXT("Turbolift: %s"), *Where);
 	});
 	return true;
+}
+
+void AStarshipPawn::PersonMoved(APersonPawn* Person)
+{
+	if (!Person || !Interior || !Person->IsAboard() || Person->GetRoom() == EShipRoom::Bridge) { return; }
+	const EShipRoom At = Interior->RoomAt(Person->FeetInCraft(), Person->GetRoom());
+	if (At == EShipRoom::Count || At == Person->GetRoom()) { return; }
+	Person->SetRoom(At);
+	if (Person == ActivePerson.Get())
+	{
+		SetInteriorRoom(At);
+		ScreenMessage(FString::Printf(TEXT("%s, deck %s"), *UShipInteriorComponent::RoomName(At), *UShipInteriorComponent::DeckOf(At)), FColor::Cyan, 2.5f);
+		UE_LOG(LogTemp, Log, TEXT("Person into %s"), *UShipInteriorComponent::RoomName(At));
+	}
 }
 
 bool AStarshipPawn::BeamDown(APersonPawn* Person)
@@ -3039,6 +3081,12 @@ bool AStarshipPawn::PersonUse(APersonPawn* Person)
 		case EShipRoom::ShuttleBay: return LaunchShuttleFromBay(Person);
 		case EShipRoom::Transporter: return BeamDown(Person);
 		case EShipRoom::Airlock: return GoOutside(Person);
+		case EShipRoom::RecDeck: if (UI) { UI->TogglePanel(UStarChartPanel::StaticClass()); } return true;
+		case EShipRoom::Mess: if (UI) { UI->TogglePanel(UCrewPanel::StaticClass()); } return true;
+		case EShipRoom::Quarters: if (UI) { UI->TogglePanel(UMissionPanel::StaticClass()); } return true;
+		case EShipRoom::CrewQuarters: if (UI) { UI->TogglePanel(UScienceLogPanel::StaticClass()); } return true;
+		case EShipRoom::TorpedoBay: if (UI) { UI->TogglePanel(UTacticalPanel::StaticClass()); } return true;
+		case EShipRoom::CargoBay: if (UI) { UI->TogglePanel(UMsdPanel::StaticClass()); } return true;
 		default: break;
 		}
 	}
