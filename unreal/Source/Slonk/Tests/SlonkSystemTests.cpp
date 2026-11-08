@@ -7,6 +7,8 @@
 #include "../Missions.h"
 #include "../Fleet.h"
 #include "../Exploration.h"
+#include "../Frontier.h"
+#include "../Impactor.h"
 #include "../GameClock.h"
 #include "../WarpDriveComponent.h"
 #include "Engine/GameInstance.h"
@@ -24,6 +26,7 @@ namespace
 		UMissionSubsystem* Missions = nullptr;
 		UFleetSubsystem* Fleet = nullptr;
 		UExplorationSubsystem* Exploration = nullptr;
+		UFrontierSubsystem* Frontier = nullptr;
 		UGameInstance* Outer = nullptr;
 		FSystems(int32 Seed = 7)
 		{
@@ -35,13 +38,27 @@ namespace
 			Missions = NewObject<UMissionSubsystem>(Outer);
 			Fleet = NewObject<UFleetSubsystem>(Outer);
 			Exploration = NewObject<UExplorationSubsystem>(Outer);
-			Roster->AddToRoot(); Missions->AddToRoot(); Fleet->AddToRoot(); Exploration->AddToRoot();
+			Frontier = NewObject<UFrontierSubsystem>(Outer);
+			Roster->AddToRoot(); Missions->AddToRoot(); Fleet->AddToRoot(); Exploration->AddToRoot(); Frontier->AddToRoot();
 			Roster->InitForTest(Seed);
 			Fleet->InitForTest(Roster, Missions);
-			Missions->InitForTest(Roster, Fleet, Exploration);
-			Exploration->InitForTest(Missions);
+			Missions->InitForTest(Roster, Fleet, Exploration, Frontier);
+			Exploration->InitForTest(Missions, Frontier);
+			Frontier->InitForTest(Missions, Exploration);
 		}
-		~FSystems() { Roster->RemoveFromRoot(); Missions->RemoveFromRoot(); Fleet->RemoveFromRoot(); Exploration->RemoveFromRoot(); Outer->RemoveFromRoot(); }
+		~FSystems() { Roster->RemoveFromRoot(); Missions->RemoveFromRoot(); Fleet->RemoveFromRoot(); Exploration->RemoveFromRoot(); Frontier->RemoveFromRoot(); Outer->RemoveFromRoot(); }
+		/** A charted catalogue system with three worlds, the second habitable; its designation. */
+		FString ChartedWithWorlds(int32 Index = 0) const
+		{
+			const FString D = Exploration->GetCatalogue()[Index].Designation;
+			Exploration->Chart(D, false);
+			Exploration->SetWorldsForTest(D, { D + TEXT(" I"), D + TEXT(" II"), D + TEXT(" III") }, { D + TEXT(" II") });
+			return D;
+		}
+		FMissionShipState Alongside(const FString& Station = TEXT("Starbase 11")) const
+		{
+			FMissionShipState S = Ship(); S.bAlongside = true; S.StationName = Station; S.Nearby.Add(Station); return S;
+		}
 		FMissionShipState Ship(const FString& System = TEXT("Sol"), const TArray<FString>& Nearby = {}) const
 		{
 			FMissionShipState S; S.SystemName = System; S.Nearby = Nearby; return S;
@@ -603,6 +620,164 @@ bool FSlonkMissionBeaconTest::RunTest(const FString& Parameters)
 		return true;
 	}
 	AddError(TEXT("no seed decoded the beacon"));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFrontierFoundTest, "Slonk.Frontier.Found", SLONK_TEST_FLAGS)
+bool FSlonkFrontierFoundTest::RunTest(const FString& Parameters)
+{
+	FSystems S;
+	const FString D = S.Exploration->GetCatalogue()[0].Designation;
+	FString World, Why;
+	TestFalse(TEXT("not before the chart"), S.Frontier->CanFound(ESettlementKind::Outpost, D, World, Why));
+	S.ChartedWithWorlds(0);
+	// The outpost first, off the habitable world; then the colony on it; the starbase when Starfleet thinks well of us.
+	TestTrue(TEXT("an outpost may be founded"), S.Frontier->CanFound(ESettlementKind::Outpost, D, World, Why));
+	TestEqual(TEXT("off the habitable world"), World, D + TEXT(" II"));
+	TestFalse(TEXT("no colony without the outpost"), S.Frontier->CanFound(ESettlementKind::Colony, D, World, Why));
+	const FSettlement* O = S.Frontier->Found(ESettlementKind::Outpost, D, World);
+	if (!TestNotNull(TEXT("founded"), O)) { return false; }
+	TestEqual(TEXT("named for its world"), O->Name, D + TEXT(" II Outpost"));
+	TestFalse(TEXT("one outpost a system"), S.Frontier->CanFound(ESettlementKind::Outpost, D, World, Why));
+	TestTrue(TEXT("a colony may follow"), S.Frontier->CanFound(ESettlementKind::Colony, D, World, Why));
+	const FSettlement* C = S.Frontier->Found(ESettlementKind::Colony, D, World);
+	if (!TestNotNull(TEXT("settled"), C)) { return false; }
+	TestEqual(TEXT("eight hundred"), C->Population, UFrontierSubsystem::ColonyFirstPeople);
+	TestTrue(TEXT("a colony world"), S.Frontier->ColonyWorlds().Contains(D + TEXT(" II")));
+	TestFalse(TEXT("no starbase unregarded"), S.Frontier->CanFound(ESettlementKind::Starbase, D, World, Why));
+	S.Missions->AddStanding(UFrontierSubsystem::StarbaseStandingNeeded, TEXT("test"));
+	TestTrue(TEXT("a starbase now"), S.Frontier->CanFound(ESettlementKind::Starbase, D, World, Why));
+	const FSettlement* B = S.Frontier->Found(ESettlementKind::Starbase, D, TEXT(""));
+	if (!TestNotNull(TEXT("keel laid"), B)) { return false; }
+	TestEqual(TEXT("the next number"), B->Name, FString(TEXT("Starbase 400")));
+	TestFalse(TEXT("works to go"), B->bCommissioned);
+	TestFalse(TEXT("not yet"), S.Frontier->Commission(D, Why));
+	TestTrue(TEXT("says how long"), Why.Contains(TEXT("hours")));
+	// Eighty hours of ship's time: the works done, the colony a little bigger.
+	S.Frontier->AdvanceSeconds(1.f, S.Ship());
+	FCrewShipState Clock; S.Roster->DevAdvanceHours(80, Clock);
+	S.Frontier->AdvanceSeconds(1.f, S.Ship());
+	TestEqual(TEXT("works done"), S.Frontier->WorksHoursLeft(D), 0.0);
+	TestTrue(TEXT("commissioned"), S.Frontier->Commission(D, Why));
+	TestTrue(TEXT("the colony grew"), S.Frontier->AtWorld(D + TEXT(" II"))->Population > UFrontierSubsystem::ColonyFirstPeople);
+	// The system renamed: the settlements follow.
+	FString Reply;
+	TestTrue(TEXT("renamed"), S.Exploration->Name(D, TEXT("Vashti"), Reply));
+	TestNotNull(TEXT("the colony by the new name"), S.Frontier->Find(TEXT("Vashti"), ESettlementKind::Colony));
+	TestNotNull(TEXT("its world too"), S.Frontier->AtWorld(TEXT("Vashti II")));
+	// Struck: a small colony is lost entire.
+	FString Text;
+	S.Frontier->Strike(TEXT("Vashti II"), false, Text);
+	TestEqual(TEXT("gone"), S.Frontier->AtWorld(TEXT("Vashti II"))->Population, 0.0);
+	TestEqual(TEXT("no colony worlds"), S.Frontier->ColonyWorlds().Num(), 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkMissionOutpostTest, "Slonk.Missions.Outpost", SLONK_TEST_FLAGS)
+bool FSlonkMissionOutpostTest::RunTest(const FString& Parameters)
+{
+	FSystems S;
+	const FString D = S.ChartedWithWorlds(0);
+	const int32 Id = S.Missions->DevSpawn(EMissionKind::Outpost, EMissionSource::Starfleet);
+	const FMission* M = S.Missions->Find(Id);
+	if (!TestNotNull(TEXT("an order"), M)) { return false; }
+	TestEqual(TEXT("a system"), (int32)M->TargetKind, (int32)EMissionTarget::System);
+	TestEqual(TEXT("the charted one"), M->TargetName, D);
+	FString Reply; FMissionOutcome Out;
+	TestTrue(TEXT("accepted"), S.Missions->Accept(Id, Reply));
+	// The module is loaded alongside any starbase, the site chosen in the system, the outpost raised there.
+	TestEqual(TEXT("the stage wants a starbase"), S.Missions->TargetNameOf(*M), FString(TEXT("a starbase")));
+	TestFalse(TEXT("not alongside"), S.Missions->Act(Id, 0, Out, Reply));
+	S.Missions->AdvanceSeconds(1.f, S.Alongside());
+	TestTrue(TEXT("loaded"), S.Missions->Act(Id, 0, Out, Reply));
+	TestEqual(TEXT("the site next"), S.Missions->Find(Id)->Stage, 1);
+	TestFalse(TEXT("not in the system"), S.Missions->Act(Id, 0, Out, Reply));
+	S.Missions->AdvanceSeconds(1.f, S.Ship(D));
+	TestTrue(TEXT("site chosen"), S.Missions->Act(Id, 0, Out, Reply));
+	TestEqual(TEXT("raising next"), S.Missions->Find(Id)->Stage, 2);
+	TestFalse(TEXT("a site"), S.Missions->Find(Id)->Site.IsEmpty());
+	for (int32 i = 0; i < 12 && !Out.bMissionOver; ++i) { TestTrue(TEXT("raising"), S.Missions->Act(Id, 0, Out, Reply)); }
+	TestTrue(TEXT("over"), Out.bMissionOver);
+	TestEqual(TEXT("complete"), (int32)S.Missions->Find(Id)->State, (int32)EMissionState::Completed);
+	const FSettlement* O = S.Frontier->Find(D, ESettlementKind::Outpost);
+	if (TestNotNull(TEXT("the outpost exists"), O)) { TestEqual(TEXT("at the site"), O->World, S.Missions->Find(Id)->Site); }
+	// The starbase: the keel laid in the system, the commissioning refused until the works are done.
+	S.Missions->AddStanding(UFrontierSubsystem::StarbaseStandingNeeded, TEXT("test"));
+	const int32 Id2 = S.Missions->DevSpawn(EMissionKind::Starbase, EMissionSource::Starfleet);
+	if (!TestTrue(TEXT("a starbase order"), Id2 > 0)) { return false; }
+	TestTrue(TEXT("accepted"), S.Missions->Accept(Id2, Reply));
+	S.Missions->AdvanceSeconds(1.f, S.Alongside());
+	TestTrue(TEXT("corps embarked"), S.Missions->Act(Id2, 0, Out, Reply));
+	S.Missions->AdvanceSeconds(1.f, S.Ship(D));
+	TestTrue(TEXT("keel laid"), S.Missions->Act(Id2, 0, Out, Reply));
+	TestNotNull(TEXT("the works begun"), S.Frontier->Find(D, ESettlementKind::Starbase));
+	TestFalse(TEXT("commissioning refused"), S.Missions->Act(Id2, 1, Out, Reply));
+	TestTrue(TEXT("says the hours"), Reply.Contains(TEXT("hours")));
+	TestTrue(TEXT("the watch held"), S.Missions->Act(Id2, 0, Out, Reply));
+	TestEqual(TEXT("still the works"), S.Missions->Find(Id2)->Stage, 2);
+	S.Frontier->AdvanceSeconds(1.f, S.Ship(D));
+	FCrewShipState Clock; S.Roster->DevAdvanceHours(80, Clock);
+	S.Frontier->AdvanceSeconds(1.f, S.Ship(D));
+	S.Missions->AdvanceSeconds(1.f, S.Ship(D));
+	TestTrue(TEXT("commissioned"), S.Missions->Act(Id2, 1, Out, Reply));
+	TestTrue(TEXT("no check to fail"), Out.bSuccess && Out.bMissionOver);
+	TestTrue(TEXT("in commission"), S.Frontier->Find(D, ESettlementKind::Starbase)->bCommissioned);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkMissionImpactTest, "Slonk.Missions.Impact", SLONK_TEST_FLAGS)
+bool FSlonkMissionImpactTest::RunTest(const FString& Parameters)
+{
+	FSystems S;
+	const FString D = S.ChartedWithWorlds(0);
+	const FString World = D + TEXT(" II");
+	S.Frontier->Found(ESettlementKind::Outpost, D, World);
+	S.Frontier->Found(ESettlementKind::Colony, D, World);
+	S.Missions->AdvanceSeconds(1.f, S.Ship(D));
+	// A rock for the colony world: tracked, then diverted at the rock.
+	const int32 Id = S.Missions->RaiseEvent(EMissionKind::Impact);
+	const FMission* M = S.Missions->Find(Id);
+	if (!TestNotNull(TEXT("raised"), M)) { return false; }
+	TestEqual(TEXT("the colony world"), M->TargetName, World);
+	TestTrue(TEXT("a rock named"), M->Site.StartsWith(TEXT("Asteroid")) || M->Site.StartsWith(TEXT("Comet")));
+	TestTrue(TEXT("hours to the landing"), M->ImpactHours >= 20.0 && M->ImpactHours <= 44.0);
+	TestTrue(TEXT("the deadline is the landing"), FMath::IsNearlyEqual(M->DeadlineStardate, S.Missions->Stardate() + M->ImpactHours / 24.0, 0.01));
+	FString Reply; FMissionOutcome Out;
+	TestTrue(TEXT("the evacuation"), S.Missions->Act(Id, 1, Out, Reply));
+	TestEqual(TEXT("warned if it carried"), S.Missions->Find(Id)->bEvacuated, Out.bSuccess);
+	TestEqual(TEXT("divert next"), S.Missions->Find(Id)->Stage, 1);
+	TestFalse(TEXT("the rock not in range"), S.Missions->Act(Id, 0, Out, Reply));
+	S.Missions->AdvanceSeconds(1.f, S.Ship(D, { M->Site }));
+	for (int32 i = 0; i < 12 && !Out.bMissionOver; ++i) { TestTrue(TEXT("tried"), S.Missions->Act(Id, i % 2, Out, Reply)); }
+	TestTrue(TEXT("diverted"), Out.bMissionOver);
+	TestEqual(TEXT("complete"), (int32)S.Missions->Find(Id)->State, (int32)EMissionState::Completed);
+	TestEqual(TEXT("the colony untouched"), S.Frontier->AtWorld(World)->Population, UFrontierSubsystem::ColonyFirstPeople);
+	// Another, left alone: the hour comes, the rock lands, the colony is lost and Starfleet's regard with it.
+	const int32 Id2 = S.Missions->RaiseEvent(EMissionKind::Impact);
+	if (!TestTrue(TEXT("raised again"), Id2 > 0)) { return false; }
+	const int32 Standing0 = S.Missions->GetStanding();
+	FCrewShipState Clock; S.Roster->DevAdvanceHours(60, Clock);
+	S.Missions->AdvanceSeconds(1.f, S.Ship(D));
+	TestEqual(TEXT("failed"), (int32)S.Missions->Find(Id2)->State, (int32)EMissionState::Failed);
+	TestEqual(TEXT("the regard lost"), S.Missions->GetStanding(), Standing0 - 40);
+	TestEqual(TEXT("the colony gone"), S.Frontier->AtWorld(World)->Population, 0.0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkImpactorTrackTest, "Slonk.Impactor.Track", SLONK_TEST_FLAGS)
+bool FSlonkImpactorTrackTest::RunTest(const FString& Parameters)
+{
+	// A track past a point: the miss is the perpendicular, the time the run to it; behind the rock it is the distance now.
+	const FVector Pos(0, 0, 0), Vel(1000, 0, 0);
+	TestTrue(TEXT("the miss"), FMath::IsNearlyEqual(AImpactor::TrackMissDistance(Pos, Vel, FVector(1.0e6, 500, 0)), 500.0, 1.0e-6));
+	TestTrue(TEXT("the time"), FMath::IsNearlyEqual(AImpactor::TrackSecondsToClosest(Pos, Vel, FVector(1.0e6, 500, 0)), 1000.0, 1.0e-6));
+	TestTrue(TEXT("dead on"), AImpactor::TrackMissDistance(Pos, Vel, FVector(5.0e5, 0, 0)) < 1.0e-6);
+	TestTrue(TEXT("behind"), FMath::IsNearlyEqual(AImpactor::TrackMissDistance(Pos, Vel, FVector(-1000, 0, 0)), 1000.0, 1.0e-6));
+	TestEqual(TEXT("no time behind"), AImpactor::TrackSecondsToClosest(Pos, Vel, FVector(-1000, 0, 0)), 0.0);
+	// A sideways push a day out clears a world: eighty metres a second over twenty hours is a radius and more.
+	const FVector Far(-2.5e6 * 20 * 3600, 0, 0);
+	TestTrue(TEXT("on course from far"), AImpactor::TrackMissDistance(Far, FVector(2.5e6, 0, 0), Pos) < 1.0);
+	TestTrue(TEXT("pushed clear"), AImpactor::TrackMissDistance(Far, FVector(2.5e6, 9000, 0), Pos) > 6.0e8);
 	return true;
 }
 

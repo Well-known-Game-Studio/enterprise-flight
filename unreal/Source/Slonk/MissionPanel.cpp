@@ -63,7 +63,7 @@ void UMissionPanel::BuildContent()
 		UMissionSubsystem* M = Missions(); const FMission* Sel = M ? M->Find(SelectedId) : nullptr;
 		FString Dest;
 		if (Show == 3) { Dest = SelectedShip; }
-		else if (Sel && !Sel->TargetName.IsEmpty() && Sel->TargetKind != EMissionTarget::None) { Dest = Sel->TargetName; }
+		else if (Sel && M->TargetKindOf(*Sel) != EMissionTarget::None && !(M->TargetKindOf(*Sel) == EMissionTarget::Station && M->TargetNameOf(*Sel) == TEXT("a starbase"))) { Dest = M->TargetNameOf(*Sel); }
 		if (Dest.IsEmpty()) { Say(TEXT("No destination for that one"), false); return; }
 		if (AStarshipHUD* H = GetHUD()) { Say(H->SetNavTargetByName(Dest) ? FString::Printf(TEXT("Nav target: %s"), *Dest) : FString::Printf(TEXT("%s is not on the chart (out of the system, or away)"), *Dest), true); }
 	});
@@ -213,7 +213,7 @@ void UMissionPanel::FillFile()
 			Heading(St->Title);
 			Line(St->Text, 14.f, FLinearColor::White);
 			const bool bHere = !St->bAtTarget || M->IsAtTarget(*Ms);
-			if (!bHere) { Line(FString::Printf(TEXT("Not yet in range of %s. Set course and close to within hailing distance."), *Ms->TargetName), 13.f, Lcars::Salmon, 4.f); }
+			if (!bHere) { Line(FString::Printf(TEXT("Not yet in range of %s. Set course and close to within hailing distance."), *M->TargetNameOf(*Ms)), 13.f, Lcars::Salmon, 4.f); }
 			else { Line(TEXT("The captain's choice:"), 13.f, Lcars::Peach, 6.f); }
 			for (int32 i = 0; i < St->Options.Num(); ++i)
 			{

@@ -1,6 +1,8 @@
 #include "StarshipHUD.h"
 #include "Missions.h"
 #include "Exploration.h"
+#include "Frontier.h"
+#include "Impactor.h"
 #include "GameClock.h"
 #include "CrewRoster.h"
 #include "SlonkLoadSubsystem.h"
@@ -307,7 +309,7 @@ void AStarshipHUD::DrawHUD()
 				if (Obj)
 				{
 					FString T = FString::Printf(TEXT("MISSION  %s"), *Obj->Title.ToUpper());
-					if (!Obj->TargetName.IsEmpty() && Obj->TargetKind != EMissionTarget::None) { T += Mis->IsAtTarget(*Obj) ? TEXT("   IN RANGE") : FString::Printf(TEXT("   AT %s"), *Obj->TargetName.ToUpper()); }
+					if (Mis->TargetKindOf(*Obj) != EMissionTarget::None) { T += Mis->IsAtTarget(*Obj) ? TEXT("   IN RANGE") : FString::Printf(TEXT("   AT %s"), *Mis->TargetNameOf(*Obj).ToUpper()); }
 					if (Mis->Active().Num() > 1) { T += FString::Printf(TEXT("   +%d MORE"), Mis->Active().Num() - 1); }
 					if (Offers > 0 || Mis->Unread() > 0) { T += FString::Printf(TEXT("   (%d offered, %d unread)"), Offers, Mis->Unread()); }
 					DrawText(T, Mis->IsAtTarget(*Obj) ? FLinearColor(1.f, 0.85f, 0.45f) : Accent, X, Y, Font, UIScale); Y += Line;
@@ -329,13 +331,33 @@ void AStarshipHUD::DrawHUD()
 						if (L && Keys.Num() > 0) { T += FString::Printf(TEXT("   SURVEY %d/%d"), L->CountScanned(Keys), Keys.Num()); }
 					}
 					if (!E->Contact.IsEmpty()) { T += FString::Printf(TEXT("   THE %s"), *E->Contact.ToUpper()); }
+					// What the Federation has here.
+					if (const UFrontierSubsystem* Fr = Ship->GetGameInstance()->GetSubsystem<UFrontierSubsystem>())
+					{
+						for (const FSettlement* St : Fr->InSystem(E->Name()))
+						{
+							if (St->Kind == ESettlementKind::Colony) { T += FString::Printf(TEXT("   COLONY %s %s"), *St->Name.ToUpper(), *FText::AsNumber((int32)St->Population).ToString()); }
+							else if (St->Kind == ESettlementKind::Starbase && !St->bCommissioned) { T += FString::Printf(TEXT("   %s WORKS %.0f H"), *St->Name.ToUpper(), FMath::Max(St->WorksHoursLeft, 1.0)); }
+							else { T += TEXT("   ") + St->Name.ToUpper(); }
+						}
+					}
 					DrawText(T, FLinearColor(0.7f, 1.f, 0.8f), X, Y, Font, UIScale); Y += Line;
 				}
 				else if (Ex->CountCharted() > 0) { DrawText(FString::Printf(TEXT("CHART  %d of %d charted"), Ex->CountCharted(), Ex->GetCatalogue().Num()), Dim, X, Y, Font, UIScale); Y += Line; }
 			}
+			// A rock on a course in this system: the world, the hours, the miss.
+			for (TActorIterator<AImpactor> It(GetWorld()); It; ++It)
+			{
+				if (FVector::Dist(It->GetActorLocation(), Ship->GetActorLocation()) > 6.0e15) { continue; }
+				const bool bHit = It->WillHit();
+				const FString T = FString::Printf(TEXT("IMPACT  %s   %s   %.1f H   %s"), *It->GetDisplayName().ToUpper(), *It->GetWorldName().ToUpper(), It->HoursToClosest(), bHit ? TEXT("ON COURSE") : *FString::Printf(TEXT("WILL MISS BY %s"), *FormatDistance(It->MissDistanceCm())));
+				DrawText(T, bHit ? FLinearColor(1.f, 0.35f, 0.3f) : FLinearColor(0.6f, 1.f, 0.6f), X, Y, Font, UIScale); Y += Line;
+			}
 			if (Ship->TractorBeam && Ship->TractorBeam->IsBeamActive() && Ship->TractorBeam->Target)
 			{
-				DrawText(FString::Printf(TEXT("TRACTOR BEAM  %s   range %s   (B releases)"), *Ship->TractorBeam->Target->GetActorNameOrLabel().ToUpper(), *FormatDistance(Ship->TractorBeam->GetRangeCm())), Accent, X, Y, Font, UIScale); Y += Line;
+				const AActor* Held = Ship->TractorBeam->Target;
+				const FString HeldName = Cast<ASpaceVessel>(Held) ? Cast<ASpaceVessel>(Held)->GetDisplayName() : Cast<ASpaceTarget>(Held) ? Cast<ASpaceTarget>(Held)->GetDisplayName() : Held->GetActorNameOrLabel();
+				DrawText(FString::Printf(TEXT("TRACTOR BEAM  %s   range %s   (B releases)"), *HeldName.ToUpper(), *FormatDistance(Ship->TractorBeam->GetRangeCm())), Accent, X, Y, Font, UIScale); Y += Line;
 			}
 		}
 		const FRotator Rot = Ship->GetActorRotation();
@@ -661,6 +683,16 @@ void AStarshipHUD::GatherNavObjects(bool bForce)
 		O.Kind = ENavObjectKind::Station;
 		O.Location = It->GetActorLocation();
 		O.RadiusCm = It->GetBoundingRadiusCm();
+		NavObjects.Add(O);
+	}
+	for (TActorIterator<AImpactor> It(World); It; ++It)
+	{
+		FNavObject O;
+		O.Actor = *It;
+		O.Label = It->GetDisplayName();
+		O.Kind = ENavObjectKind::Target;
+		O.Location = It->GetActorLocation();
+		O.RadiusCm = It->Radius;
 		NavObjects.Add(O);
 	}
 	for (TActorIterator<ABorgCube> It(World); It; ++It)

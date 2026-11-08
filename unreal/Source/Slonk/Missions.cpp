@@ -17,6 +17,8 @@
 #include "ScienceLog.h"
 #include "Fleet.h"
 #include "Exploration.h"
+#include "Frontier.h"
+#include "Impactor.h"
 
 const TCHAR* UMissionSubsystem::SlotName = TEXT("Missions");
 
@@ -33,11 +35,13 @@ namespace
 		FMissionOption O; O.Text = Text; O.Skill = Skill; O.Difficulty = Diff; O.Party = Party; O.SuccessTag = STag; O.FailTag = FTag; O.SuccessText = SText; O.FailText = FText; O.NextOnSuccess = NextS; O.NextOnFail = NextF; O.bFailEndsMission = bFailEnds; O.Risk = Risk; O.Science = Science; return O;
 	}
 	FMissionStage Stage(const TCHAR* Title, const FString& Text, bool bAtTarget = true) { FMissionStage S; S.Title = Title; S.Text = Text; S.bAtTarget = bAtTarget; return S; }
+	/** A stage at its own place: a Station with no name is any station the ship is alongside. */
+	FMissionStage StageAt(const TCHAR* Title, const FString& Text, EMissionTarget Kind, const FString& Name) { FMissionStage S = Stage(Title, Text, true); S.bOwnTarget = true; S.TargetKind = Kind; S.TargetName = Name; return S; }
 }
 
 FString UMissionSubsystem::KindName(EMissionKind K)
 {
-	static const TCHAR* N[] = { TEXT("Survey"), TEXT("Rescue"), TEXT("Diplomacy"), TEXT("Delivery"), TEXT("Anomaly"), TEXT("Medical"), TEXT("Patrol"), TEXT("Contact"), TEXT("Derelict"), TEXT("Smuggler"), TEXT("Support"), TEXT("Assist"), TEXT("Explore"), TEXT("FirstContact"), TEXT("PreWarp"), TEXT("Beacon") };
+	static const TCHAR* N[] = { TEXT("Survey"), TEXT("Rescue"), TEXT("Diplomacy"), TEXT("Delivery"), TEXT("Anomaly"), TEXT("Medical"), TEXT("Patrol"), TEXT("Contact"), TEXT("Derelict"), TEXT("Smuggler"), TEXT("Support"), TEXT("Assist"), TEXT("Explore"), TEXT("FirstContact"), TEXT("PreWarp"), TEXT("Beacon"), TEXT("Outpost"), TEXT("Colony"), TEXT("Starbase"), TEXT("Impact") };
 	return (int32)K < (int32)EMissionKind::Count ? N[(int32)K] : TEXT("-");
 }
 FString UMissionSubsystem::SourceName(EMissionSource S) { static const TCHAR* N[] = { TEXT("Starfleet"), TEXT("Starbase"), TEXT("Event"), TEXT("Fleet") }; return (int32)S < 4 ? N[(int32)S] : TEXT("-"); }
@@ -114,9 +118,9 @@ AStarshipPawn* UMissionSubsystem::CrewedShip() const
 
 UFleetSubsystem* UMissionSubsystem::Fleet() const { if (FleetOverride.IsValid()) { return FleetOverride.Get(); } return GetGameInstance() ? GetGameInstance()->GetSubsystem<UFleetSubsystem>() : nullptr; }
 
-void UMissionSubsystem::InitForTest(UCrewRosterSubsystem* InRoster, UFleetSubsystem* InFleet, UExplorationSubsystem* InExploration)
+void UMissionSubsystem::InitForTest(UCrewRosterSubsystem* InRoster, UFleetSubsystem* InFleet, UExplorationSubsystem* InExploration, UFrontierSubsystem* InFrontier)
 {
-	bNoDisk = true; RosterOverride = InRoster; FleetOverride = InFleet; ExplorationOverride = InExploration;
+	bNoDisk = true; RosterOverride = InRoster; FleetOverride = InFleet; ExplorationOverride = InExploration; FrontierOverride = InFrontier;
 	Rng.Initialize(11);
 }
 
@@ -139,6 +143,11 @@ UExplorationSubsystem* UMissionSubsystem::Exploration() const
 {
 	if (ExplorationOverride.IsValid()) { return ExplorationOverride.Get(); }
 	return GetGameInstance() ? GetGameInstance()->GetSubsystem<UExplorationSubsystem>() : nullptr;
+}
+UFrontierSubsystem* UMissionSubsystem::Frontier() const
+{
+	if (FrontierOverride.IsValid()) { return FrontierOverride.Get(); }
+	return GetGameInstance() ? GetGameInstance()->GetSubsystem<UFrontierSubsystem>() : nullptr;
 }
 
 void UMissionSubsystem::AddStanding(int32 Delta, const FString& Why)
@@ -163,6 +172,9 @@ void UMissionSubsystem::RenameTarget(const FString& OldName, const FString& NewN
 		M.Title = M.Title.Replace(*Was, *M.TargetName); bAny = true;
 		M.Log.Add(FString::Printf(TEXT("      %s is now %s."), *Was, *M.TargetName));
 	}
+	// The stages' own places and the site chosen follow the same way.
+	auto Follow = [&](FString& N) { if (N == OldName) { N = NewName; bAny = true; } else if (N.StartsWith(OldName + TEXT(" "))) { N = NewName + N.RightChop(OldName.Len()); bAny = true; } };
+	for (FMission& M : Missions) { Follow(M.Site); for (FMissionStage& St : M.Stages) { if (St.bOwnTarget) { Follow(St.TargetName); } } }
 	if (bAny) { Dirty(); }
 }
 
@@ -251,6 +263,11 @@ void UMissionSubsystem::Expire()
 			if (M.Kind == EMissionKind::Assist) { if (UFleetSubsystem* F = Fleet()) { F->SetAssistMission(M.TargetName, -1); } }   // her file no longer points at it
 			if (M.Source == EMissionSource::Starfleet) { Standing -= M.Standing / 4; Report(FString::Printf(TEXT("%s: Starfleet's orders went unanswered. Noted at Command."), *M.Title), FLinearColor(1.f, 0.75f, 0.5f), ECrewDepartment::Operations); }
 		}
+		else if (M.Kind == EMissionKind::Impact)
+		{
+			// The hour came with the rock still on course: it lands (the actor says so itself where there is one).
+			ImpactOutcome(M.Site, M.TargetName, EImpactOutcome::Struck);
+		}
 		else
 		{
 			Close(M, EMissionState::Failed, TEXT("the deadline passed"));
@@ -288,6 +305,13 @@ FString UMissionSubsystem::CivilianName(FRandomStream& R) const
 
 bool UMissionSubsystem::PickTarget(FMission& M, FRandomStream& R)
 {
+	// A place named from outside (a proposal, a dev rock): taken as given, the kind's own rules aside.
+	if (!ForcedTarget.IsEmpty())
+	{
+		M.TargetName = ForcedTarget; M.Site = ForcedSite;
+		M.TargetKind = M.Kind == EMissionKind::Colony || M.Kind == EMissionKind::Impact ? EMissionTarget::World : EMissionTarget::System;
+		return true;
+	}
 	// The galaxy's own names: a world with a surface in another system for a survey or a plague, a station for a
 	// delivery or a parley, a system for a patrol; never where the ship is.
 	switch (M.Kind)
@@ -316,6 +340,19 @@ bool UMissionSubsystem::PickTarget(FMission& M, FRandomStream& R)
 		M.TargetKind = EMissionTarget::World; M.TargetName = E->PreWarpWorld; M.Group = FName(*FString::Printf(TEXT("%s people"), *E->PreWarpWorld)); return true;
 	}
 	case EMissionKind::Beacon: M.TargetKind = EMissionTarget::None; return true;   // the signal gives the target when decoded
+	case EMissionKind::Outpost: case EMissionKind::Colony: case EMissionKind::Starbase:
+	{
+		// Somewhere the Federation may found it (the frontier's rules); a colony's order names the world.
+		const UFrontierSubsystem* F = Frontier();
+		const ESettlementKind SK = M.Kind == EMissionKind::Outpost ? ESettlementKind::Outpost : M.Kind == EMissionKind::Colony ? ESettlementKind::Colony : ESettlementKind::Starbase;
+		FString World;
+		const FCatalogueEntry* E = F ? F->PickSystem(SK, R, World) : nullptr;
+		if (!E) { return false; }
+		if (M.Kind == EMissionKind::Colony) { M.TargetKind = EMissionTarget::World; M.TargetName = World; M.Site = E->Name(); }
+		else { M.TargetKind = EMissionTarget::System; M.TargetName = E->Name(); }
+		return true;
+	}
+	case EMissionKind::Impact: return PickInhabitedWorld(M, R, M.Source == EMissionSource::Event);
 	default: return true;   // the events bring their own target
 	}
 	UWorld* W = GetWorld();
@@ -522,6 +559,68 @@ FMission UMissionSubsystem::MakeMission(EMissionKind Kind, EMissionSource Source
 		S1.Options.Add(Opt(TEXT("Search the system for the source"), S::Science, 55.f, D::Science, TEXT("Discovery"), TEXT("Away.Danger"), TEXT("On a dead moon, a structure older than the mountains, still transmitting: a find for the histories."), TEXT("Weeks of searching turn up nothing but the signal; it goes on without them."), -1, -1, false, 0.15f, 500));
 		M.Stages = { S0, S1 }; break;
 	}
+	case EMissionKind::Outpost:
+	{
+		M.Title = FString::Printf(TEXT("An outpost at %s"), *T); M.Standing = 15;
+		M.Brief = FString::Printf(TEXT("Starfleet wants the Federation's flag in %s: an outpost module, a crew of thirty, and a station off one of its worlds. The module waits in a starbase's yard."), *T);
+		FMissionStage S0 = StageAt(TEXT("The module"), TEXT("The outpost module is a hundred metres of prefabricated station in the yard, and thirty people with their lives in crates."), EMissionTarget::Station, TEXT(""));
+		S0.Options.Add(Opt(TEXT("Take on the module and its crew"), S::Operations, 35.f, D::Operations, TEXT(""), TEXT(""), TEXT("Loaded, lashed and logged; the yard waves them off."), TEXT("Loaded, after a day of arguments about the manifest."), 1, 1, false, 0.f));
+		S0.Options.Add(Opt(TEXT("Load it fast and go"), S::Engineering, 45.f, D::Engineering, TEXT(""), TEXT("Away.Danger"), TEXT("Six hours, not a day; the chief says never again."), TEXT("A crate goes adrift in the bay and a hand with it."), 1, 1, false, 0.1f));
+		FMissionStage S1 = StageAt(TEXT("The site"), FString::Printf(TEXT("%s's worlds turn below the sensors. The outpost will be off one of them for a century; the choice is the ship's."), *T), EMissionTarget::System, T);
+		S1.Options.Add(Opt(TEXT("Survey the worlds for a site"), S::Science, 45.f, D::Science, TEXT("Discovery"), TEXT(""), TEXT("The science watch picks a world with water and a quiet sky."), TEXT("The survey is thin; the first solid world will have to do."), 2, 2, false, 0.f, 80));
+		S1.Options.Add(Opt(TEXT("Put it off the first solid ground"), S::Engineering, 35.f, D::Engineering, TEXT(""), TEXT(""), TEXT("Done; it is not elegant."), TEXT("Done, in a worse orbit than meant."), 2, 2, false, 0.f));
+		FMissionStage S2 = StageAt(TEXT("Raising the outpost"), TEXT("The module is in orbit off the world; now it becomes a station."), EMissionTarget::System, T);
+		S2.Options.Add(Opt(TEXT("Land the module and raise the outpost"), S::Engineering, 50.f, D::Engineering, TEXT("Away.Routine"), TEXT("Away.Danger"), TEXT("The dome is up and the lights are on; the crew's first signal home is a photograph."), TEXT("A strut fails on the way in; a day lost and someone hurt."), -1, 2, false, 0.15f, 60));
+		M.Stages = { S0, S1, S2 }; break;
+	}
+	case EMissionKind::Colony:
+	{
+		M.Title = FString::Printf(TEXT("Settle %s"), *T); M.Standing = 25;
+		M.Brief = FString::Printf(TEXT("Eight hundred settlers have asked Starfleet for %s, and Starfleet has asked the ship: carry them from the starbase where they wait, land them, and see them through their first weeks."), *T);
+		FMissionStage S0 = StageAt(TEXT("Embarkation"), TEXT("Eight hundred people and their seed stock, their animals and their arguments, on a starbase's concourse."), EMissionTarget::Station, TEXT(""));
+		S0.Options.Add(Opt(TEXT("Embark the settlers and their seed stock"), S::Medicine, 40.f, D::Medical, TEXT(""), TEXT(""), TEXT("Every one of them examined, inoculated and berthed; the ship is a town for a week."), TEXT("Berthed, the examinations half done; sickbay will catch up on the way."), 1, 1, false, 0.f));
+		S0.Options.Add(Opt(TEXT("Take the volunteers and the stores there are"), S::Operations, 35.f, D::Operations, TEXT(""), TEXT(""), TEXT("Six hundred of the keenest and what will fit."), TEXT("Five hundred, and short of everything."), 1, 1, false, 0.f));
+		FMissionStage S1 = Stage(TEXT("The landing"), FString::Printf(TEXT("%s below, green and brown and blue; the settlers at the viewports have gone quiet."), *T));
+		S1.Options.Add(Opt(TEXT("Shuttle them down a hundred at a time"), S::Engineering, 50.f, D::Engineering, TEXT("Away.Routine"), TEXT("Away.Danger"), TEXT("Eight flights, two days, nobody hurt; the last shuttle brings the chief's tools."), TEXT("The sixth flight lands hard; there are injuries, and the settlers help carry."), 2, 2, false, 0.2f));
+		S1.Options.Add(Opt(TEXT("Beam them down and the cargo after"), S::Operations, 45.f, D::Operations, TEXT(""), TEXT(""), TEXT("Twenty at a time all day; the transporter chief sleeps for a week."), TEXT("A pattern buffer fault; one group is a long hour in the buffer, and shaken."), 2, 2, false, 0.f));
+		FMissionStage S2 = Stage(TEXT("The first weeks"), TEXT("Tents, then prefabs, then the first crop. The ship can stay a while."));
+		S2.Options.Add(Opt(TEXT("See them through the first weeks"), S::Medicine, 45.f, D::Medical, TEXT("Away.Routine"), TEXT(""), TEXT("A fever is caught early, a well is sited, a child is born aboard; they will be all right."), TEXT("A fever runs through the camp before it is caught; they will be all right, mostly."), -1, -1, false, 0.f, 100));
+		S2.Options.Add(Opt(TEXT("Leave them to it and report"), S::Command, 30.f, D::Command, TEXT(""), TEXT(""), TEXT("They wave the ship off. The chief says they will manage."), TEXT("They watch the ship go."), -1, -1, false, 0.f));
+		M.Stages = { S0, S1, S2 }; break;
+	}
+	case EMissionKind::Starbase:
+	{
+		M.Title = FString::Printf(TEXT("A starbase for %s"), *T); M.Standing = 40;
+		M.Brief = FString::Printf(TEXT("Starfleet will build a starbase in %s: the construction corps and the first hull sections wait at a starbase, the works take days, and the ship holds the ground."), *T);
+		FMissionStage S0 = StageAt(TEXT("The corps"), TEXT("Four hundred of the construction corps and the first hull sections: a starbase in kit form."), EMissionTarget::Station, TEXT(""));
+		S0.Options.Add(Opt(TEXT("Embark the construction corps and the hull sections"), S::Engineering, 45.f, D::Engineering, TEXT(""), TEXT(""), TEXT("Embarked; the bay has never been so full."), TEXT("Embarked, over two days instead of one."), 1, 1, false, 0.f));
+		FMissionStage S1 = StageAt(TEXT("The keel"), FString::Printf(TEXT("%s, and the place the station will be. The corps are ready."), *T), EMissionTarget::System, T);
+		S1.Options.Add(Opt(TEXT("Lay the keel"), S::Engineering, 50.f, D::Engineering, TEXT("Discovery"), TEXT(""), TEXT("The keel is laid, the first section is lit, the works begin."), TEXT("The first section is set wrong and reset; a day lost, then the works begin."), 2, 2, false, 0.f));
+		FMissionStage S2 = StageAt(TEXT("The works"), TEXT("The station grows a section a day. The ship holds station while it does."), EMissionTarget::System, T);
+		S2.Options.Add(Opt(TEXT("Hold station and guard the works"), S::Tactical, 40.f, D::Security, TEXT(""), TEXT(""), TEXT("A quiet watch; the corps wave."), TEXT("A raider's probe, driven off; the corps lose a day."), 2, 2, false, 0.f));
+		FMissionOption Cm = Opt(TEXT("Commission the starbase"), S::Command, 0.f, D::Command, TEXT("Discovery"), TEXT(""), TEXT("Her number is read, her flag is up and her patrol ships are out: a home in new space."), TEXT(""), -1, -1, false, 0.f, 100);
+		Cm.bNeedsWorks = true; S2.Options.Add(Cm);
+		M.Stages = { S0, S1, S2 }; break;
+	}
+	case EMissionKind::Impact:
+	{
+		// The rock: named for the stardate, one in three a comet; the hours to its landing budget the deadline (an
+		// order's leg counted in).
+		const bool bComet = R.FRand() < 0.34f;
+		M.Site = FString::Printf(TEXT("%s %d-%c"), bComet ? TEXT("Comet") : TEXT("Asteroid"), (int32)Stardate(), TCHAR('A' + (M.Id % 26)));
+		M.ImpactHours = (Source == EMissionSource::Event ? 0.0 : TravelDays(M) * 24.0) + R.FRandRange(20.0, 44.0);
+		M.DeadlineStardate = Stardate() + M.ImpactHours / 24.0;
+		M.Title = FString::Printf(TEXT("%s: %s"), *M.Site, *T); M.Standing = 35; M.FailLoss = 40;
+		M.Brief = FString::Printf(TEXT("%s on a closing course with %s: %s a kilometre or more across, and in %.0f hours it lands. %s has people on it."), *M.Site, *T, bComet ? TEXT("dirty ice") : TEXT("rock"), M.ImpactHours, *T);
+		FMissionStage S0 = Stage(TEXT("The track"), TEXT("The sensors have it; the rest is what to do before it arrives."), false);
+		S0.Options.Add(Opt(TEXT("Refine its orbit"), S::Science, 40.f, D::Science, TEXT("Discovery"), TEXT(""), TEXT("The track is sure now: the hour, the place, the size of it."), TEXT("The track is rough; the hour is a guess."), 1, 1, false, 0.f, 80));
+		S0.Options.Add(Opt(TEXT("Warn the world and begin the evacuation"), S::Operations, 45.f, D::Operations, TEXT(""), TEXT(""), TEXT("The word goes down and the roads fill; if it lands, fewer die."), TEXT("The word goes down and is not believed; some leave."), 1, 1, false, 0.f));
+		FMissionStage S1 = StageAt(TEXT("Divert it"), TEXT("The rock turns slowly in the lights, a mountain out of place. There is time for one thing at a time."), EMissionTarget::Vessel, M.Site);
+		S1.Options.Add(Opt(TEXT("Tractor it off its course"), S::Engineering, 50.f, D::Engineering, TEXT(""), TEXT(""), TEXT("The beam holds for an hour and the course bends by a hair: enough."), TEXT("The beam loses its grip; the course is what it was."), -1, 1, false, 0.f));
+		S1.Options.Add(Opt(TEXT("Break it up with torpedoes"), S::Tactical, 45.f, D::Security, TEXT(""), TEXT(""), TEXT("A spread, placed; the rock comes apart and the pieces go wide."), TEXT("The spread scars it and it rolls on."), -1, 1, false, 0.f));
+		S1.Options.Add(Opt(TEXT("A party to plant charges on it"), S::Engineering, 60.f, D::Engineering, TEXT("Away.Routine"), TEXT("Away.Danger"), TEXT("The charges are set in a seam and the rock splits clean."), TEXT("The seam gives early; the party is got off, not all of it whole."), -1, 1, false, 0.3f, 120));
+		M.Stages = { S0, S1 }; break;
+	}
 	default: break;
 	}
 	return M;
@@ -532,9 +631,9 @@ int32 UMissionSubsystem::RaiseEvent(EMissionKind Kind)
 	FRandomStream R(Rng.RandRange(1, 1 << 20));
 	FMission M = MakeMission(Kind, EMissionSource::Event, R);
 	if (M.Id < 0) { return -1; }
-	M.State = EMissionState::Active; M.DeadlineStardate = Stardate() + (Kind == EMissionKind::Beacon ? 10.0 : 2.0);
+	M.State = EMissionState::Active; if (Kind != EMissionKind::Impact) { M.DeadlineStardate = Stardate() + (Kind == EMissionKind::Beacon ? 10.0 : 2.0); }
 	M.Log.Add(FString::Printf(TEXT("%.1f  %s"), Stardate(), *M.Brief));
-	if (M.TargetKind == EMissionTarget::Vessel) { SpawnEventVessel(M, M.TargetName); }
+	Place(M);
 	Missions.Add(M);
 	Report(FString::Printf(TEXT("%s It is on the mission board, Captain."), *M.Brief), FLinearColor(1.f, 0.85f, 0.5f), ECrewDepartment::Science);
 	Dirty();
@@ -585,6 +684,35 @@ void UMissionSubsystem::AfterOption(FMission& M, const FMissionOption& O, bool b
 	case EMissionKind::PreWarp:
 		if (bOver && X && O.SuccessTag == TEXT("Contact.First")) { X->RecordContact(M.Group.ToString(), Last.SystemName, bSuccess ? 1 : -1, O.Text); }
 		break;
+	case EMissionKind::Outpost:
+	{
+		UFrontierSubsystem* F = Frontier();
+		// The site: the survey's pick (the habitable first), else the first solid ground; then the outpost itself.
+		if (M.Stage == 2 && M.Site.IsEmpty() && X) { if (const FCatalogueEntry* E = X->Find(M.TargetName)) { if (E->SolidWorlds.Num() > 0) { M.Site = bSuccess ? E->SolidWorlds[0] : E->SolidWorlds.Last(); } } }
+		if (bOver && bSucceeded && F) { F->Found(ESettlementKind::Outpost, M.TargetName, M.Site); }
+		break;
+	}
+	case EMissionKind::Colony:
+		if (bOver && bSucceeded) { if (UFrontierSubsystem* F = Frontier()) { F->Found(ESettlementKind::Colony, M.Site, M.TargetName); } }
+		break;
+	case EMissionKind::Starbase:
+	{
+		UFrontierSubsystem* F = Frontier();
+		if (!F) { break; }
+		if (M.Stage == 2 && !bOver && !F->Find(M.TargetName, ESettlementKind::Starbase)) { F->Found(ESettlementKind::Starbase, M.TargetName, TEXT("")); }   // the keel
+		if (bOver && bSucceeded) { FString Why; F->Commission(M.TargetName, Why); }
+		break;
+	}
+	case EMissionKind::Impact:
+	{
+		if (M.Stage == 1 && !bOver && bSuccess && O.Skill == ECrewSkill::Operations) { M.bEvacuated = true; }
+		if (bOver && bSucceeded)
+		{
+			// The crew did it: the rock goes wide or comes apart in the world.
+			if (AImpactor* Rock = AImpactor::FindByName(GetWorld(), M.Site)) { if (O.Skill == ECrewSkill::Engineering && O.Risk <= 0.f) { Rock->DevDeflect(); } else { Rock->Shatter(); } }
+		}
+		break;
+	}
 	default: break;
 	}
 }
@@ -592,11 +720,12 @@ void UMissionSubsystem::AfterOption(FMission& M, const FMissionOption& O, bool b
 void UMissionSubsystem::IssueOrders()
 {
 	FRandomStream R(Rng.RandRange(1, 1 << 20));
-	static const EMissionKind Kinds[] = { EMissionKind::Survey, EMissionKind::Diplomacy, EMissionKind::Medical, EMissionKind::Patrol, EMissionKind::Survey, EMissionKind::Delivery, EMissionKind::Explore, EMissionKind::Explore, EMissionKind::Explore };
+	static const EMissionKind Kinds[] = { EMissionKind::Survey, EMissionKind::Diplomacy, EMissionKind::Medical, EMissionKind::Patrol, EMissionKind::Survey, EMissionKind::Delivery, EMissionKind::Explore, EMissionKind::Explore, EMissionKind::Explore, EMissionKind::Outpost, EMissionKind::Colony, EMissionKind::Starbase, EMissionKind::Impact };
 	FMission M = MakeMission(Kinds[R.RandRange(0, UE_ARRAY_COUNT(Kinds) - 1)], EMissionSource::Starfleet, R);
-	if (M.Id < 0 && M.Kind == EMissionKind::Explore) { M = MakeMission(EMissionKind::Survey, EMissionSource::Starfleet, R); }   // nothing left to chart
+	if (M.Id < 0) { M = MakeMission(EMissionKind::Survey, EMissionSource::Starfleet, R); }   // nothing left to chart or found, nowhere in danger
 	if (M.Id < 0) { return; }
 	M.State = EMissionState::Offered;
+	Place(M);
 	Missions.Add(M);
 	FStarfleetMessage Msg; Msg.Stardate = Stardate(); Msg.From = M.From; Msg.Subject = M.Title; Msg.MissionId = M.Id;
 	Msg.Text = FString::Printf(TEXT("To the %s. %s Report completion by stardate %.1f. %s, Starfleet Command."), *(Roster() ? Roster()->GetShipName() : FString(TEXT("Enterprise"))), *M.Brief, M.DeadlineStardate, *M.From);
@@ -608,7 +737,7 @@ void UMissionSubsystem::IssueOrders()
 void UMissionSubsystem::PostBoard(const FString& StationName)
 {
 	FRandomStream R(GetTypeHash(StationName) ^ (int32)(Hours() / 24.0));
-	static const EMissionKind Kinds[] = { EMissionKind::Delivery, EMissionKind::Survey, EMissionKind::Diplomacy, EMissionKind::Medical, EMissionKind::Explore };
+	static const EMissionKind Kinds[] = { EMissionKind::Delivery, EMissionKind::Survey, EMissionKind::Diplomacy, EMissionKind::Medical, EMissionKind::Explore, EMissionKind::Outpost, EMissionKind::Colony };
 	const int32 Day = (int32)(Hours() / 24.0);
 	if (const int32* Posted = BoardDays.Find(StationName)) { if (*Posted == Day) { return; } }
 	BoardDays.Add(StationName, Day);
@@ -629,12 +758,101 @@ void UMissionSubsystem::RollEvent()
 	FRandomStream R(Rng.RandRange(1, 1 << 20));
 	const float X = R.FRand();
 	const EMissionKind Kind = X < 0.3f ? EMissionKind::Anomaly : X < 0.55f ? EMissionKind::Rescue : X < 0.75f ? EMissionKind::Derelict : X < 0.92f ? EMissionKind::Smuggler : EMissionKind::Contact;
-	FMission M = MakeMission(Kind, EMissionSource::Event, R);
-	M.State = EMissionState::Active; M.DeadlineStardate = Stardate() + 1.0;
+	// Where there is a world with people on it, one time in six the sky throws something at it.
+	FMission M; M.Id = -1;
+	if (R.FRand() < 0.17f) { M = MakeMission(EMissionKind::Impact, EMissionSource::Event, R); }
+	if (M.Id < 0) { M = MakeMission(Kind, EMissionSource::Event, R); }
+	M.State = EMissionState::Active; if (M.Kind != EMissionKind::Impact) { M.DeadlineStardate = Stardate() + 1.0; }
 	M.Log.Add(FString::Printf(TEXT("%.1f  %s"), Stardate(), *M.Brief));
-	if (M.TargetKind == EMissionTarget::Vessel) { SpawnEventVessel(M, M.TargetName); }
+	Place(M);
 	Missions.Add(M);
-	Report(FString::Printf(TEXT("%s. It is on the mission board, Captain."), *M.Brief), FLinearColor(1.f, 0.85f, 0.5f), Kind == EMissionKind::Anomaly || Kind == EMissionKind::Contact ? ECrewDepartment::Science : ECrewDepartment::Operations);
+	Report(FString::Printf(TEXT("%s. It is on the mission board, Captain."), *M.Brief), FLinearColor(1.f, 0.85f, 0.5f), M.Kind == EMissionKind::Anomaly || M.Kind == EMissionKind::Contact || M.Kind == EMissionKind::Impact ? ECrewDepartment::Science : ECrewDepartment::Operations);
+	Dirty();
+}
+
+void UMissionSubsystem::Place(FMission& M)
+{
+	if (M.TargetKind == EMissionTarget::Vessel && M.Source == EMissionSource::Event) { SpawnEventVessel(M, M.TargetName); }
+	if (M.Kind == EMissionKind::Impact) { SpawnImpactor(M); }
+}
+
+bool UMissionSubsystem::PickInhabitedWorld(FMission& M, FRandomStream& R, bool bHere)
+{
+	// A world with people: one lit at night in a charted system, or a colony of ours; never one already under a rock.
+	TSet<FString> Taken; for (const FMission& O : Missions) { if (O.IsOpen() && O.Kind == EMissionKind::Impact) { Taken.Add(O.TargetName); } }
+	TArray<FString> Worlds;
+	if (UWorld* W = GetWorld())
+	{
+		for (TActorIterator<APlanetBody> It(W); It; ++It)
+		{
+			if (It->IsMoon() || It->Style.NightLightIntensity <= 0.01f || Taken.Contains(It->GetDisplayName())) { continue; }
+			const AStarSystem* Sys = AStarSystem::Nearest(W, It->GetActorLocation());
+			if (!Sys || !Sys->bCharted || (Sys->SystemName == Last.SystemName) != bHere) { continue; }
+			Worlds.AddUnique(It->GetDisplayName());
+		}
+	}
+	if (const UFrontierSubsystem* F = Frontier())
+	{
+		const UExplorationSubsystem* X = Exploration();
+		for (const FString& C : F->ColonyWorlds())
+		{
+			const FCatalogueEntry* E = X ? X->EntryForWorld(C) : nullptr;
+			if (Taken.Contains(C) || (E && (E->Name() == Last.SystemName) != bHere)) { continue; }
+			Worlds.AddUnique(C);
+		}
+	}
+	if (Worlds.Num() == 0) { return false; }
+	M.TargetKind = EMissionTarget::World; M.TargetName = Worlds[R.RandRange(0, Worlds.Num() - 1)];
+	return true;
+}
+
+void UMissionSubsystem::SpawnImpactor(FMission& M)
+{
+	UWorld* W = GetWorld();
+	if (!W || M.Site.IsEmpty()) { return; }
+	APlanetBody* Target = nullptr;
+	for (TActorIterator<APlanetBody> It(W); It; ++It) { if (It->GetDisplayName() == M.TargetName) { Target = *It; break; } }
+	if (!Target) { return; }
+	if (AImpactor* Rock = AImpactor::Spawn(W, Target, M.Site, M.ImpactHours, M.Site.StartsWith(TEXT("Comet")), M.Id * 131 + 7)) { Rock->MissionId = M.Id; }
+}
+
+void UMissionSubsystem::CompleteOutside(FMission& M, const FString& Why, const FString& Text)
+{
+	M.Log.Add(FString::Printf(TEXT("      %s"), *Text));
+	Close(M, EMissionState::Completed, Why);
+	Standing += M.Standing; ++Completed;
+	PayScience(M, Text);
+	Report(FString::Printf(TEXT("%s: complete. Starfleet's regard: %+d."), *M.Title, M.Standing), FLinearColor(0.6f, 1.f, 0.6f));
+}
+
+void UMissionSubsystem::ImpactOutcome(const FString& Rock, const FString& World, EImpactOutcome Outcome)
+{
+	FMission* MP = nullptr; for (FMission& M : Missions) { if (M.IsOpen() && M.Kind == EMissionKind::Impact && M.Site == Rock) { MP = &M; } }
+	if (Outcome != EImpactOutcome::Struck)
+	{
+		if (MP) { CompleteOutside(*MP, Outcome == EImpactOutcome::Averted ? TEXT("the rock goes wide") : TEXT("the rock broken up"), Outcome == EImpactOutcome::Averted ? FString::Printf(TEXT("%s will miss %s. The world never knew."), *Rock, *World) : FString::Printf(TEXT("%s is in pieces, and the pieces go wide of %s."), *Rock, *World)); }
+		Dirty();
+		return;
+	}
+	// It lands. The world is marked, the colony counts its dead, Starfleet's regard falls, and the crew carry it.
+	const bool bEvacuated = MP && MP->bEvacuated;
+	FString Text;
+	if (UFrontierSubsystem* F = Frontier()) { F->Strike(World, bEvacuated, Text); }
+	if (UWorld* W = GetWorld()) { for (TActorIterator<APlanetBody> It(W); It; ++It) { if (It->GetDisplayName() == World) { It->SetNightLights(It->Style.NightLightIntensity * (bEvacuated ? 0.5f : 0.25f)); } } }
+	Report(FString::Printf(TEXT("%s has struck %s. %s"), *Rock, *World, *Text), FLinearColor(1.f, 0.4f, 0.3f), ECrewDepartment::Science);
+	if (UCrewRosterSubsystem* R = Roster())
+	{
+		FCrewExperience E; E.Tag = TEXT("Loss.Civilians"); E.Intensity = bEvacuated ? 0.6f : 0.9f; E.Place = World; E.Text = FString::Printf(TEXT("%s struck %s"), *Rock, *World);
+		R->Experience(E);
+	}
+	if (MP)
+	{
+		MP->Log.Add(FString::Printf(TEXT("      %s"), *Text));
+		Close(*MP, EMissionState::Failed, TEXT("the rock landed"));
+		const int32 Loss = MP->FailLoss >= 0 ? MP->FailLoss : MP->Standing / 2;
+		Standing -= Loss; ++Failed;
+		Report(FString::Printf(TEXT("%s: failed. Starfleet's regard: %d."), *MP->Title, -Loss), FLinearColor(1.f, 0.6f, 0.5f));
+	}
 	Dirty();
 }
 
@@ -771,18 +989,21 @@ void UMissionSubsystem::FleetWithdraw(int32 MissionId, const FString& Why)
 	}
 }
 
-int32 UMissionSubsystem::DevSpawn(EMissionKind Kind, EMissionSource Source)
+int32 UMissionSubsystem::DevSpawn(EMissionKind Kind, EMissionSource Source) { return DevSpawnAt(Kind, Source, FString(), FString()); }
+
+int32 UMissionSubsystem::DevSpawnAt(EMissionKind Kind, EMissionSource Source, const FString& Target, const FString& Site)
 {
 	FRandomStream R(Rng.RandRange(1, 1 << 20));
 	if (Kind == EMissionKind::Support || Kind == EMissionKind::Assist) { return -2; }   // the fleet raises these (ship fleet trouble / mission)
+	ForcedTarget = Target; ForcedSite = Site;
 	FMission M = MakeMission(Kind, Source, R);
+	ForcedTarget.Empty(); ForcedSite.Empty();
 	if (M.Id < 0) { return -1; }
 	if (M.TargetKind == EMissionTarget::Vessel && Source != EMissionSource::Event) { return -2; }   // its hull only exists as an encounter
 	if (Source == EMissionSource::Event)
 	{
-		M.State = EMissionState::Active; M.DeadlineStardate = Stardate() + 1.0;
+		M.State = EMissionState::Active; if (Kind != EMissionKind::Impact) { M.DeadlineStardate = Stardate() + 1.0; }
 		M.Log.Add(FString::Printf(TEXT("%.1f  %s"), Stardate(), *M.Brief));
-		if (M.TargetKind == EMissionTarget::Vessel) { SpawnEventVessel(M, M.TargetName); }
 	}
 	else
 	{
@@ -790,6 +1011,7 @@ int32 UMissionSubsystem::DevSpawn(EMissionKind Kind, EMissionSource Source)
 		if (Source == EMissionSource::Starfleet) { FStarfleetMessage Msg; Msg.Stardate = Stardate(); Msg.From = M.From; Msg.Subject = M.Title; Msg.MissionId = M.Id; Msg.Text = M.Brief; Inbox.Add(Msg); }
 		else { M.PostedAt = Last.StationName.IsEmpty() ? TEXT("the board") : Last.StationName; }
 	}
+	Place(M);
 	Missions.Add(M);
 	Dirty();
 	return M.Id;
@@ -843,14 +1065,34 @@ bool UMissionSubsystem::SetParty(int32 Id, const TArray<int32>& Ids, FString& Ou
 	OutReply = TEXT("No such mission"); return false;
 }
 
+EMissionTarget UMissionSubsystem::TargetKindOf(const FMission& M) const
+{
+	const FMissionStage* St = M.Current();
+	return St && St->bOwnTarget ? St->TargetKind : M.TargetKind;
+}
+
+FString UMissionSubsystem::TargetNameOf(const FMission& M) const
+{
+	const FMissionStage* St = M.Current();
+	if (St && St->bOwnTarget) { return St->TargetKind == EMissionTarget::Station && St->TargetName.IsEmpty() ? TEXT("a starbase") : St->TargetName; }
+	return M.TargetName;
+}
+
 bool UMissionSubsystem::IsAtTarget(const FMission& M) const
 {
-	switch (M.TargetKind)
+	const FMissionStage* St = M.Current();
+	const bool bOwn = St && St->bOwnTarget;
+	const EMissionTarget K = bOwn ? St->TargetKind : M.TargetKind;
+	const FString& N = bOwn ? St->TargetName : M.TargetName;
+	switch (K)
 	{
 	case EMissionTarget::None: return true;
-	case EMissionTarget::System: return Last.SystemName == M.TargetName;
-	default: for (const FString& N : Last.Nearby) { if (N == M.TargetName) { return true; } } return false;
+	case EMissionTarget::System: return Last.SystemName == N;
+	case EMissionTarget::Station: if (N.IsEmpty()) { return Last.bAlongside; } break;
+	default: break;
 	}
+	for (const FString& Near : Last.Nearby) { if (Near == N) { return true; } }
+	return false;
 }
 
 TArray<int32> UMissionSubsystem::PartyFor(const FMission& M, const FMissionOption& O) const
@@ -908,9 +1150,16 @@ bool UMissionSubsystem::Act(int32 Id, int32 Option, FMissionOutcome& Out, FStrin
 	}
 	const TArray<int32> Party = PartyFor(M, O);
 	if (Party.Num() == 0) { OutReply = M.Party.Num() > 0 ? TEXT("None of the named party is fit and aboard; name another (ship mission party <id> <names>)") : TEXT("Nobody fit to send"); return false; }
-	// The work already done is not rolled for: a survey on file carries without a check.
+	if (O.bNeedsWorks)
+	{
+		const UFrontierSubsystem* F = Frontier();
+		const double Left = F ? F->WorksHoursLeft(M.TargetName) : 0.0;
+		if (!F || !F->Find(M.TargetName, ESettlementKind::Starbase)) { OutReply = TEXT("No keel has been laid"); return false; }
+		if (Left > 0.0) { OutReply = FString::Printf(TEXT("The works need another %.0f hours of ship's time"), FMath::Max(Left, 1.0)); return false; }
+	}
+	// The work already done is not rolled for: a survey on file, a station built, carry without a check.
 	FCrewCheck C;
-	if (O.bNeedsSurvey) { C.bSuccess = true; C.Margin = 100.f; C.BestId = Party[0]; C.Summary = TEXT("the survey on file"); }
+	if (O.bNeedsSurvey || O.bNeedsWorks) { C.bSuccess = true; C.Margin = 100.f; C.BestId = Party[0]; C.Summary = O.bNeedsSurvey ? TEXT("the survey on file") : TEXT("the works complete"); }
 	else { C = R->Check(O.Skill, O.Difficulty, Party, 0.f, M.Group); }
 	Out.bSuccess = C.bSuccess; Out.CheckSummary = C.Summary; Out.Text = C.bSuccess ? O.SuccessText : O.FailText;
 	M.Log.Add(FString::Printf(TEXT("%.1f  %s: %s %s"), Stardate(), *St->Title, *O.Text, C.bSuccess ? TEXT("- carried.") : TEXT("- failed.")));

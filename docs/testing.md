@@ -4,7 +4,7 @@ How the systems are kept working as they grow. Three tiers, from cheapest to ful
 
 ## 1. Headless automation tests (`unreal/Source/Slonk/Tests/`)
 
-The crew roster, the missions, the fleet and the exploration catalogue are game-instance subsystems whose logic does not need a world: the
+The crew roster, the missions, the fleet, the exploration catalogue and the frontier are game-instance subsystems whose logic does not need a world: the
 clock, the checks, the experiences, the mission stages, the fleet's hours, transfers. They get a test-only
 constructor path (`InitForTest`) that wires them to each other directly, skips the save slots and never writes
 them, so the tests touch no save on disk and run in a second editor process with no window and no GPU.
@@ -33,7 +33,13 @@ started over under a running fleet, the sector catalogue (a dozen stars, apart, 
 a system charted by arrival (once, with its regard and its first contact), named (never an unknown star, never a
 taken name) and surveyed, a people recorded once, an Explore order carried from arrival through the survey
 requirement to the chart filed under the catalogue's name, a first contact played through the hard start to its
-record, and a beacon decoded to the nearest unknown star.
+record, and a beacon decoded to the nearest unknown star (and, with every star charted, closed complete with its
+science kept); the frontier's rules (an outpost off the habitable world, the colony after it, the starbase when
+Starfleet's regard allows, the works run down by the clock and commissioned, the settlements following a rename, a
+small colony lost entire to a strike), an outpost order carried alongside a starbase then in the system and a
+starbase's keel laid and its commissioning refused until the works are done, a rock raised for a colony world and
+diverted at the rock or left to land (the regard lost, the colony gone), and the rock's track maths (the miss, the
+time, a push a day out clearing a world).
 
 Writing one: make an `FSystems` (a roster seed gives the same people every time), drive the subsystems through
 their public API, assert with `TestEqual`/`TestTrue`. For anything that depends on the world (targets picked from

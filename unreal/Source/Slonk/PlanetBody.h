@@ -272,6 +272,8 @@ public:
 
 	/** Whether this world has settlements (lit at night, built by day). */
 	bool HasCities() const;
+	/** The night-side lights set from outside (a colony founded, a world struck): the style is kept from here on. */
+	void SetNightLights(float Intensity);
 	/** Reach (km) within which towns are built around the view; 0 switches the buildings off. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Cities") float CityReachKm = 30.f;
 

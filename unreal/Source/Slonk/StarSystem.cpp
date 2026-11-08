@@ -1,4 +1,5 @@
 #include "StarSystem.h"
+#include "Impactor.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "SpaceVessel.h"
@@ -36,6 +37,7 @@ bool AStarSystem::FindNamedLocation(UWorld* World, const FString& Name, FVector&
 	for (TActorIterator<AStarSystem> It(World); It; ++It) { if (It->SystemName == Name) { OutLocation = It->GetStarLocation(); return true; } }
 	for (TActorIterator<APlanetBody> It(World); It; ++It) { if (It->GetDisplayName() == Name) { OutLocation = It->GetActorLocation(); return true; } }
 	for (TActorIterator<ASpaceVessel> It(World); It; ++It) { if (It->GetDisplayName() == Name) { OutLocation = It->GetActorLocation(); return true; } }
+	for (TActorIterator<AImpactor> It(World); It; ++It) { if (It->GetDisplayName() == Name) { OutLocation = It->GetActorLocation(); return true; } }
 	return false;
 }
 

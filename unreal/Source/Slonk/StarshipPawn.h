@@ -662,6 +662,10 @@ protected:
 	/** ship fleet ...: the other ships, their missions and people; transfers either way; dev trouble. */
 	void HandleFleetCommand(const TArray<FString>& Args);
 	void HandleChartCommand(const TArray<FString>& Args);
+	/** ship frontier ...: the settlements; a proposal to Starfleet; dev founding. */
+	void HandleFrontierCommand(const TArray<FString>& Args);
+	/** ship impact ...: the rocks on a course; dev raise/deflect/shatter/hit. */
+	void HandleImpactCommand(const TArray<FString>& Args);
 
 private:
 	void ApplyHullDimensions();

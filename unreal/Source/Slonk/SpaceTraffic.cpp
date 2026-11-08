@@ -177,23 +177,35 @@ ASpaceVessel* ASpaceTraffic::SpawnNamedShip(const FString& Name, const FVector& 
 
 ASpaceStation* ASpaceTraffic::SpawnStationAt(const FString& Name, const FString& StyleName, const FVector& Loc, FRandomStream& Rng)
 {
+	return SpawnStation(Name, StyleForName(StyleName), Loc, ShipsPerStation, Rng.RandRange(1, 1 << 20));
+}
+
+ASpaceStation* ASpaceTraffic::SpawnStation(const FString& Name, EStationStyle Style, const FVector& Loc, int32 Ships, int32 SeedValue)
+{
 	UWorld* World = GetWorld();
 	if (!World) { return nullptr; }
+	FRandomStream Rng(SeedValue);
 	const FTransform StationXf(FRotator(Rng.FRandRange(-15.f, 15.f), Rng.FRandRange(0.f, 360.f), 0.f), Loc);
 	ASpaceStation* Station = World->SpawnActorDeferred<ASpaceStation>(ASpaceStation::StaticClass(), StationXf, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
 	if (!Station) { return nullptr; }
 	Station->Seed = Rng.RandRange(1, 1 << 20);
 	Station->VesselName = Name;
-	Station->Style = StyleForName(StyleName);
+	Station->Style = Style;
 	// Spacedock-type bases are the giants; the others are a kilometre or two across.
 	Station->SizeCm = Station->Style == EStationStyle::Spacedock ? Rng.FRandRange(450000.f, 650000.f) : Rng.FRandRange(150000.f, 300000.f);
 	Station->FinishSpawning(StationXf);
 	Spawned.Add(Station);
-	for (int32 i = 0; i < ShipsPerStation; ++i)
-	{
-		SpawnPatrolShip(Rng, Loc + Rng.GetUnitVector() * Station->SizeCm * Rng.FRandRange(3.f, 8.f), Loc, Station->SizeCm * 10.0);
-	}
+	SpawnPatrols(Loc, Station->SizeCm, Ships, Rng.RandRange(1, 1 << 20));
 	return Station;
+}
+
+void ASpaceTraffic::SpawnPatrols(const FVector& Loc, double SizeCm, int32 Ships, int32 SeedValue)
+{
+	FRandomStream Rng(SeedValue);
+	for (int32 i = 0; i < Ships; ++i)
+	{
+		SpawnPatrolShip(Rng, Loc + Rng.GetUnitVector() * SizeCm * Rng.FRandRange(3.f, 8.f), Loc, SizeCm * 10.0);
+	}
 }
 
 void ASpaceTraffic::PopulateWith(const TArray<APlanetBody*>& Planets, FRandomStream& Rng, bool bNameStationsByPlanet)

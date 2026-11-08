@@ -31,6 +31,8 @@
 #include "MissionPanel.h"
 #include "Missions.h"
 #include "Exploration.h"
+#include "Impactor.h"
+#include "Frontier.h"
 #include "Fleet.h"
 #include "LcarsPanels.h"
 #include "CrewPanel.h"
@@ -2276,6 +2278,14 @@ void AStarshipPawn::ProcessDebugCommand()
 	{
 		HandleChartCommand(Args);
 	}
+	else if (Op == TEXT("frontier"))
+	{
+		HandleFrontierCommand(Args);
+	}
+	else if (Op == TEXT("impact"))
+	{
+		HandleImpactCommand(Args);
+	}
 	else if (Op == TEXT("clock") || Op == TEXT("time"))
 	{
 		// clock [<scale>|up|down|status]: the game clock's scale (1..3600) and what holds it.
@@ -2417,6 +2427,8 @@ void AStarshipPawn::ProcessDebugCommand()
 			TEXT("ship warp [on|off] | warpfactor <f> | impulse <1-4> | throttle <0-1> | stop | orbit [on|off]"),
 			TEXT("ship clock [<scale 1-3600>|up|down]  (the game clock; 8 and 9 step it; held at x1 in a fight, near a body, in a warp transition)"),
 			TEXT("ship chart [list|here|name <name>|reveal <designation>|contacts|reset]  (the sector catalogue: uncharted stars, charted by arrival; the peoples met)"),
+			TEXT("ship frontier [list|propose <outpost|colony|starbase> [<system>]|dev found <kind> [<system>]|reset]  (the Federation's outposts, colonies and starbases in charted space)"),
+			TEXT("ship impact [status|raise [<world>]|deflect|shatter|hit]  (a rock on a course for an inhabited world; the dev ops for testing)"),
 			TEXT("ship camera [chase|bridge|cinematic|front|port|starboard|top|bottom] | zoom <x> | look <yaw> <pitch> [s]"),
 			TEXT("ship warpvis [classic|real] | cscale <0..1> | systems | shipwarp [km] [far]"),
 			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mountain|coast|river|linea|land> <alt m> [across|sun|away|along|giant]"),
@@ -2458,6 +2470,7 @@ void AStarshipPawn::ToggleScan()
 		AActor* Candidate = Weapons ? Weapons->LockedTarget.Get() : nullptr;
 		FString Label = Candidate ? Candidate->GetActorNameOrLabel() : FString();
 		if (const ASpaceVessel* V = Cast<ASpaceVessel>(Candidate)) { Label = V->GetDisplayName(); }
+		if (const ASpaceTarget* Tg = Cast<ASpaceTarget>(Candidate)) { Label = Tg->GetDisplayName(); }
 		if (!Candidate)
 		{
 			if (AStarshipHUD* H = PlayerHUD())
@@ -3504,6 +3517,7 @@ void AStarshipPawn::TickClock(float DeltaTime)
 			for (TActorIterator<APlanetBody> It(GetWorld()); It; ++It) { ClockBodies.Add({ *It, It->GetRadiusCm(), It->GetDisplayName() }); }
 			for (TActorIterator<AStarBody> It(GetWorld()); It; ++It) { ClockBodies.Add({ *It, It->GetRadiusCm(), It->StarName.IsEmpty() ? It->GetActorNameOrLabel() : It->StarName }); }
 			for (TActorIterator<ASpaceStation> It(GetWorld()); It; ++It) { ClockBodies.Add({ *It, (double)It->SizeCm * 4.0, It->GetDisplayName() }); }
+			for (TActorIterator<AImpactor> It(GetWorld()); It; ++It) { ClockBodies.Add({ *It, (double)It->Radius * 6.0, It->GetDisplayName() }); }
 		}
 		const FVector Here = GetActorLocation();
 		for (const FClockBody& B : ClockBodies)
@@ -3735,9 +3749,9 @@ void AStarshipPawn::JumpToActor(AActor* Target, double TargetRadiusCm, float Sta
 		StandoffRadii = StarJumpStandoffRadii;
 	}
 	double Standoff = FMath::Max(TargetRadiusCm * StandoffRadii, GetShipLengthCm() * 20.0);
-	if (Target->IsA<ASpaceVessel>())
+	if (Target->IsA<ASpaceVessel>() || Target->IsA<ASpaceTarget>())
 	{
-		// Ships and stations are small: arrive close enough to see them.
+		// Ships, stations and rocks are small: arrive close enough to see them (and to hold a rock in the beam).
 		Standoff = FMath::Max(TargetRadiusCm * 5.0, GetShipLengthCm() * 3.0);
 	}
 	const FVector NewLoc = TargetLoc + Approach * Standoff;
@@ -3965,7 +3979,7 @@ void AStarshipPawn::HandleMissionCommand(const TArray<FString>& Args)
 	{
 		// dev <kind> [orders|board|event]: one of that kind now, as the given source (events are active at once).
 		EMissionKind K;
-		if (!UMissionSubsystem::ParseKind(Word(2), K)) { Say(TEXT("dev <survey|rescue|diplomacy|delivery|anomaly|medical|patrol|contact|derelict|smuggler|explore|firstcontact|prewarp|beacon> [orders|board|event]"), FColor::Orange); return; }
+		if (!UMissionSubsystem::ParseKind(Word(2), K)) { Say(TEXT("dev <survey|rescue|diplomacy|delivery|anomaly|medical|patrol|contact|derelict|smuggler|explore|firstcontact|prewarp|beacon|outpost|colony|starbase|impact> [orders|board|event]"), FColor::Orange); return; }
 		const FString Src = Word(3).ToLower();
 		const bool bEventKind = K == EMissionKind::Rescue || K == EMissionKind::Anomaly || K == EMissionKind::Contact || K == EMissionKind::Derelict || K == EMissionKind::Smuggler || K == EMissionKind::FirstContact || K == EMissionKind::PreWarp || K == EMissionKind::Beacon;
 		const EMissionSource S = Src.StartsWith(TEXT("ev")) ? EMissionSource::Event : Src.StartsWith(TEXT("b")) || Src.StartsWith(TEXT("st")) ? EMissionSource::Starbase : bEventKind && Src.IsEmpty() ? EMissionSource::Event : EMissionSource::Starfleet;
@@ -3987,7 +4001,7 @@ void AStarshipPawn::HandleChartCommand(const TArray<FString>& Args)
 	{
 		const double Ly = FVector::Dist(X->StarLocation(E), GetActorLocation()) / AStarSystem::LightYearCm;
 		FString T = FString::Printf(TEXT("   %-9s %-14s %-9s %4.1f ly"), *E.Designation, E.GivenName.IsEmpty() ? TEXT("-") : *E.GivenName, *UExplorationSubsystem::StateName(E.State), Ly);
-		if (E.State != EChartState::Unknown) { T += FString::Printf(TEXT("  %d worlds%s%s"), E.Worlds, E.PreWarpWorld.IsEmpty() ? TEXT("") : TEXT(", a lit world"), E.Contact.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(", the %s"), *E.Contact)); }
+		if (E.State != EChartState::Unknown || E.Worlds > 0) { T += FString::Printf(TEXT("  %d worlds, %d habitable%s%s"), E.Worlds, E.HabitableWorlds.Num(), E.PreWarpWorld.IsEmpty() ? TEXT("") : TEXT(", a lit world"), E.Contact.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(", the %s"), *E.Contact)); }
 		Say(T, E.State == EChartState::Unknown ? FColor::White : FColor::Yellow, 15.f);
 	};
 	const FString What = Word(1).ToLower();
@@ -4022,6 +4036,101 @@ void AStarshipPawn::HandleChartCommand(const TArray<FString>& Args)
 	}
 	else if (What == TEXT("reset")) { X->Reset(); Say(TEXT("The chart is blank again"), FColor::Orange); }
 	else { Say(TEXT("ship chart [list | here | name <name> | reveal <designation> | contacts | reset]"), FColor::Orange, 12.f); }
+}
+
+void AStarshipPawn::HandleFrontierCommand(const TArray<FString>& Args)
+{
+	// frontier [list | propose <kind> [<system>] | dev found <kind> [<system>] | reset]: the settlements.
+	UFrontierSubsystem* F = GetGameInstance() ? GetGameInstance()->GetSubsystem<UFrontierSubsystem>() : nullptr;
+	UMissionSubsystem* M = GetGameInstance() ? GetGameInstance()->GetSubsystem<UMissionSubsystem>() : nullptr;
+	UExplorationSubsystem* X = GetGameInstance() ? GetGameInstance()->GetSubsystem<UExplorationSubsystem>() : nullptr;
+	if (!F || !M || !X) { ScreenMessage(TEXT("No frontier system"), FColor::Orange); return; }
+	auto Word = [&](int32 i) { return Args.IsValidIndex(i) ? Args[i] : FString(); };
+	auto Say = [&](const FString& T, FColor C = FColor::Cyan, float Secs = 10.f) { ScreenMessage(T, C, Secs); UE_LOG(LogTemp, Log, TEXT("Frontier: %s"), *T); };
+	auto Rest = [&](int32 From) { FString N; for (int32 i = From; i < Args.Num(); ++i) { N += (i > From ? TEXT(" ") : TEXT("")) + Args[i]; } return N; };
+	auto SystemArg = [&](int32 From) -> FString
+	{
+		FString N = Rest(From);
+		if (N.ToUpper().StartsWith(TEXT("UFC "))) { N = TEXT("UFC ") + N.Mid(4); }
+		if (N.IsEmpty()) { if (const FCatalogueEntry* E = X->Here()) { N = E->Name(); } }
+		return N;
+	};
+	const FString What = Word(1).ToLower();
+	if (What.IsEmpty() || What == TEXT("list"))
+	{
+		if (F->GetSettlements().Num() == 0) { Say(TEXT("The Federation has founded nothing in new space yet"), FColor::White); }
+		for (const FSettlement& S : F->GetSettlements())
+		{
+			FString T = FString::Printf(TEXT("   %-9s %-22s at %s"), *UFrontierSubsystem::KindName(S.Kind), *S.Name, S.World.IsEmpty() ? *S.System : *S.World);
+			if (S.Kind == ESettlementKind::Colony) { T += FString::Printf(TEXT(", %.0f people"), S.Population); }
+			if (S.Kind == ESettlementKind::Starbase && !S.bCommissioned) { T += FString::Printf(TEXT(", works %.0f h to go"), S.WorksHoursLeft); }
+			Say(T, FColor::Yellow, 15.f);
+		}
+	}
+	else if (What == TEXT("propose"))
+	{
+		// The case put to Starfleet: the order comes if the system qualifies, else the reason it does not.
+		ESettlementKind K;
+		if (!UFrontierSubsystem::ParseKind(Word(2), K)) { Say(TEXT("propose <outpost|colony|starbase> [<system>]"), FColor::Orange); return; }
+		const FString Sys = SystemArg(3);
+		FString World, Why;
+		if (!F->CanFound(K, Sys, World, Why)) { Say(FString::Printf(TEXT("Starfleet declines: %s"), *Why), FColor::Orange, 12.f); return; }
+		const EMissionKind MK = K == ESettlementKind::Outpost ? EMissionKind::Outpost : K == ESettlementKind::Colony ? EMissionKind::Colony : EMissionKind::Starbase;
+		const int32 Id = M->DevSpawnAt(MK, EMissionSource::Starfleet, K == ESettlementKind::Colony ? World : Sys, K == ESettlementKind::Colony ? Sys : FString());
+		if (const FMission* Ms = M->Find(Id)) { Say(FString::Printf(TEXT("Starfleet agrees: %s. The order is in your inbox (#%d)."), *Ms->Title, Id)); }
+		else { Say(TEXT("Starfleet has no answer"), FColor::Orange); }
+	}
+	else if (What == TEXT("dev") && Word(2).ToLower() == TEXT("found"))
+	{
+		ESettlementKind K;
+		if (!UFrontierSubsystem::ParseKind(Word(3), K)) { Say(TEXT("dev found <outpost|colony|starbase> [<system>]"), FColor::Orange); return; }
+		const FString Sys = SystemArg(4);
+		FString World, Why;
+		if (!F->CanFound(K, Sys, World, Why)) { Say(Why, FColor::Orange, 12.f); return; }
+		if (const FSettlement* S = F->Found(K, Sys, World)) { Say(FString::Printf(TEXT("%s founded at %s"), *S->Name, *S->System)); if (K == ESettlementKind::Starbase) { FString W2; F->Commission(Sys, W2); Say(W2, FColor::White); } }
+	}
+	else if (What == TEXT("reset")) { F->Reset(); Say(TEXT("The frontier is blank again (the actors stay until the next session)"), FColor::Orange); }
+	else { Say(TEXT("ship frontier [list | propose <kind> [<system>] | dev found <kind> [<system>] | reset]"), FColor::Orange, 12.f); }
+}
+
+void AStarshipPawn::HandleImpactCommand(const TArray<FString>& Args)
+{
+	// impact [status | raise [<world>] | deflect | shatter | hit]: the rocks on a course, and the dev ops.
+	UMissionSubsystem* M = GetGameInstance() ? GetGameInstance()->GetSubsystem<UMissionSubsystem>() : nullptr;
+	if (!M) { ScreenMessage(TEXT("No mission system"), FColor::Orange); return; }
+	auto Word = [&](int32 i) { return Args.IsValidIndex(i) ? Args[i] : FString(); };
+	auto Say = [&](const FString& T, FColor C = FColor::Cyan, float Secs = 10.f) { ScreenMessage(T, C, Secs); UE_LOG(LogTemp, Log, TEXT("Impact: %s"), *T); };
+	// The rock named after the op, else the nearest.
+	auto Nearest = [&]() -> AImpactor*
+	{
+		FString Named; for (int32 i = 2; i < Args.Num(); ++i) { Named += (i > 2 ? TEXT(" ") : TEXT("")) + Args[i]; }
+		if (!Named.IsEmpty()) { return AImpactor::FindByName(GetWorld(), Named); }
+		AImpactor* Best = nullptr; double BestD = TNumericLimits<double>::Max();
+		for (TActorIterator<AImpactor> It(GetWorld()); It; ++It) { const double D = FVector::DistSquared(It->GetActorLocation(), GetActorLocation()); if (D < BestD) { BestD = D; Best = *It; } }
+		return Best;
+	};
+	const FString What = Word(1).ToLower();
+	if (What.IsEmpty() || What == TEXT("status"))
+	{
+		int32 N = 0;
+		for (TActorIterator<AImpactor> It(GetWorld()); It; ++It)
+		{
+			++N;
+			Say(FString::Printf(TEXT("   %s: %s for %s, %.1f h to closest approach, %s, %.0f km off, health %.0f%%"), *It->GetDisplayName(), It->IsComet() ? TEXT("a comet") : TEXT("an asteroid"), *It->GetWorldName(), It->HoursToClosest(), It->WillHit() ? TEXT("ON COURSE") : *FString::Printf(TEXT("will miss by %.0f km"), It->MissDistanceCm() / 1.0e5), FVector::Dist(It->GetActorLocation(), GetActorLocation()) / 1.0e5, It->GetHealthFraction() * 100.f), It->WillHit() ? FColor::Orange : FColor::Green, 15.f);
+		}
+		if (N == 0) { Say(TEXT("Nothing on a course for anywhere"), FColor::White); }
+	}
+	else if (What == TEXT("raise"))
+	{
+		// A rock for a named world, else for one the sector picks here.
+		FString World; for (int32 i = 2; i < Args.Num(); ++i) { World += (i > 2 ? TEXT(" ") : TEXT("")) + Args[i]; }
+		const int32 Id = World.IsEmpty() ? M->DevSpawn(EMissionKind::Impact, EMissionSource::Event) : M->DevSpawnAt(EMissionKind::Impact, EMissionSource::Event, World, FString());
+		if (const FMission* Ms = M->Find(Id)) { Say(FString::Printf(TEXT("%s raised (#%d), due %.1f"), *Ms->Title, Id, Ms->DeadlineStardate)); } else { Say(TEXT("No inhabited world here to aim at (name one)"), FColor::Orange); }
+	}
+	else if (What == TEXT("deflect")) { if (AImpactor* R = Nearest()) { R->DevDeflect(); Say(FString::Printf(TEXT("%s deflected: will miss by %.0f km"), *R->GetDisplayName(), R->MissDistanceCm() / 1.0e5)); } else { Say(TEXT("No rock"), FColor::Orange); } }
+	else if (What == TEXT("shatter")) { if (AImpactor* R = Nearest()) { const FString N = R->GetDisplayName(); R->Shatter(); Say(FString::Printf(TEXT("%s shattered"), *N)); } else { Say(TEXT("No rock"), FColor::Orange); } }
+	else if (What == TEXT("hit")) { if (AImpactor* R = Nearest()) { R->DevStrike(); Say(FString::Printf(TEXT("%s put at its world"), *R->GetDisplayName())); } else { Say(TEXT("No rock"), FColor::Orange); } }
+	else { Say(TEXT("ship impact [status | raise [<world>] | deflect [<rock>] | shatter [<rock>] | hit [<rock>]]"), FColor::Orange, 12.f); }
 }
 
 void AStarshipPawn::HandleFleetCommand(const TArray<FString>& Args)

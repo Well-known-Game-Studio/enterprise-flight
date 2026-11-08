@@ -37,7 +37,10 @@ science points a success earns.
 The ten kinds this round: Survey, Rescue, Diplomacy, Delivery, Anomaly, Medical, Patrol, Contact, Derelict,
 Smuggler; the fleet added Support and Assist; exploration (`exploration-design.md`) added Explore (an order), and
 FirstContact, PreWarp and Beacon, raised as events by the sector itself on arrival in a catalogue system
-(`RaiseEvent`), with a vessel event's hull in a stranger's colours. Each is a template in `MakeMission`; the target comes from the galaxy's own names (`PickTarget`: a world
+(`RaiseEvent`), with a vessel event's hull in a stranger's colours; the frontier (`frontier-design.md`) added
+Outpost, Colony and Starbase (orders and postings, carried in stages that each have a place of their own: a
+Station with no name is any starbase alongside) and Impact (an event or an order, a real rock in the world, the
+deadline its landing). Each is a template in `MakeMission`; the target comes from the galaxy's own names (`PickTarget`: a world
 with a surface in another system, a station other than the one alongside, another system for a patrol), so every
 mission points at somewhere the ship can actually go, and arrival is simply the target's name turning up in the
 ship's neighbourhood (the same nearby list the crew's ties use) or the ship being in the named system.

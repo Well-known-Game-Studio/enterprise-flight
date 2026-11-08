@@ -55,6 +55,9 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> Body;
 
+	/** The name the console and the nav list use (the actor's label; the impactor its own). */
+	virtual FString GetDisplayName() const { return GetActorNameOrLabel(); }
+
 	UFUNCTION(BlueprintPure, Category = "Target")
 	float GetHealthFraction() const { return MaxHealth > 0.f ? Health / MaxHealth : 0.f; }
 
