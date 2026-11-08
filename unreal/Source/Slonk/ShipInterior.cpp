@@ -478,7 +478,7 @@ void UShipInteriorComponent::Build()
 	// runs along the port side past the transporter room's door (a second box); the rec deck opens off the
 	// athwartships leg to port. Their walls are back to back, so the boxes touch and the rooms are neighbours.
 	const double GFloor = 1900.0 * X - 150.0;
-	const int32 Corr = Add(EShipRoom::Corridor, FVector(5880.0 * X, -475.0, GFloor + 130.0), FVector(120.0, 675.0, 130.0));
+	const int32 Corr = Add(EShipRoom::Corridor, FVector(5880.0 * X, -470.0, GFloor + 130.0), FVector(120.0, 680.0, 130.0));
 	Rooms[Corr].Legs.Add(FBox(FVector(6000.0 * X, -1150.0, GFloor), FVector(7700.0 * X, -910.0, GFloor + 260.0)));
 	const int32 Rec = Add(EShipRoom::RecDeck, FVector(4830.0 * X, -200.0, GFloor + 300.0), FVector(900.0, 700.0, 300.0));
 	const int32 MessR = Add(EShipRoom::Mess, FVector(9300.0, 1700.0, 2600.0) * X + FVector(0, 0, 140.0), FVector(550.0, 350.0, 140.0));
@@ -557,7 +557,7 @@ void UShipInteriorComponent::BuildSickbay(FShipRoom& R)
 {
 	const FVector C = R.Center, H = R.Half;
 	const double Floor = C.Z - H.Z;
-	const FVector Door(C.X - H.X, C.Y - 250.0, Floor);
+	const FVector Door(C.X - H.X, C.Y - 126.0, Floor);   // the doorway onto deck G's corridor, at a bay's centre (build_rooms.py SICK_DOOR_Y)
 	R.Lift = InteriorSpot(Door + FVector(90.0, 0, 0), FVector(1, 0, 0));
 	R.Use = InteriorSpot(FVector(C.X + 320.0 - 85.0, C.Y + 200.0, Floor), FVector(1, 0, 0));
 	R.UseLabel = TEXT("open the sickbay board");
@@ -623,7 +623,7 @@ void UShipInteriorComponent::BuildTransporter(FShipRoom& R)
 {
 	const FVector C = R.Center, H = R.Half;
 	const double Floor = C.Z - H.Z;
-	const FVector Door(C.X + 150.0, C.Y + H.Y, Floor);
+	const FVector Door(C.X + 136.0, C.Y + H.Y, Floor);   // the doorway onto the corridor's forward leg (TRANS_DOOR_X)
 	R.Lift = InteriorSpot(Door + FVector(0, -90.0, 0), FVector(0, -1, 0));
 	const FVector Pad(C.X - 150.0, C.Y, Floor);
 	R.UseLabel = TEXT("energise");
@@ -675,7 +675,7 @@ void UShipInteriorComponent::BuildCorridor(FShipRoom& R)
 	const FVector C = R.Center, H = R.Half;
 	const double Floor = C.Z - H.Z;
 	const FVector Origin(C.X, 0.0, Floor);
-	R.Lift = InteriorSpot(Origin + FVector(0, 200.0 - 90.0, 0), FVector(0, -1, 0));
+	R.Lift = InteriorSpot(Origin + FVector(0, 210.0 - 90.0, 0), FVector(0, -1, 0));
 	R.Use = R.Lift;
 	R.UseLabel = FString();
 	if (RoomMesh(CorridorMesh, Origin))
@@ -687,7 +687,7 @@ void UShipInteriorComponent::BuildCorridor(FShipRoom& R)
 	// Primitives: the two legs' floors, ceilings and walls, the lift door at the forward end, the doorway frames.
 	const FBox LegB = R.Legs.Num() ? R.Legs[0] : FBox(C - H, C + H);
 	const double T = 20.0;
-	const double TrX = 7350.0 * (C.X / 5880.0);   // the transporter room's door along the forward leg
+	const double TrX = 7336.0 * (C.X / 5880.0);   // the transporter room's door along the forward leg (TRANS_DOOR_X)
 	auto Leg = [&](const FVector& Lo, const FVector& Hi, bool bNoPosX, bool bNoNegX, bool bNoPosY, bool bNoNegY, const TArray<double>& PosXCuts, const TArray<double>& NegXCuts, const TArray<double>& NegYCuts)
 	{
 		const FVector Mid = (Lo + Hi) / 2, Ext = (Hi - Lo) / 2;
@@ -701,7 +701,7 @@ void UShipInteriorComponent::BuildCorridor(FShipRoom& R)
 	};
 	// The athwartships leg: sickbay's doorway to starboard, the rec deck's to port, open at its aft (-y) end into
 	// the forward leg; the forward leg: the transporter room's doorway to port, open at its aft (-x) end.
-	Leg(C - H, C + H, false, false, false, true, { -250.0, (LegB.Min.Y + LegB.Max.Y) / 2 }, { -400.0 }, {});
+	Leg(C - H, C + H, false, false, false, true, { -126.0, (LegB.Min.Y + LegB.Max.Y) / 2 }, { -574.0 }, {});
 	Leg(LegB.Min, LegB.Max, false, true, false, false, {}, {}, { TrX });
 	Box(FVector(C.X, LegB.Min.Y - T / 2, C.Z), FVector(2 * H.X + 2 * T, T, 2 * H.Z), PanelGrey);   // the outer corner
 	// The lift door in the forward end wall; the doorways' frames (the openings are in the rooms beyond, whose
@@ -709,8 +709,8 @@ void UShipInteriorComponent::BuildCorridor(FShipRoom& R)
 	const FVector LiftDoor(C.X, C.Y + H.Y, Floor);
 	Box(LiftDoor + FVector(0, -8.0, 112.0), FVector(128.0, 8.0, 224.0), Burgundy, 0.f, false);
 	Box(LiftDoor + FVector(0, -9.0, 112.0), FVector(3.0, 2.0, 220.0), PanelGrey, 0.f, false);
-	DoorFrame(FVector(C.X + H.X, -250.0, Floor), FVector(-1, 0, 0));
-	DoorFrame(FVector(C.X - H.X, -400.0, Floor), FVector(1, 0, 0));
+	DoorFrame(FVector(C.X + H.X, -126.0, Floor), FVector(-1, 0, 0));
+	DoorFrame(FVector(C.X - H.X, -574.0, Floor), FVector(1, 0, 0));
 	DoorFrame(FVector(TrX, LegB.Min.Y, Floor), FVector(0, 1, 0));
 	Console(FVector(LegB.Max.X - 40.0, (LegB.Min.Y + LegB.Max.Y) / 2, Floor), 0.f, 160.f, 21.f);
 	for (double Y : { 100.0, -300.0, -700.0, -1050.0 }) { Light(Origin + FVector(0, Y, 240.0), 18.f, 500.f, FLinearColor(0.95f, 0.97f, 1.f)); }
@@ -721,7 +721,7 @@ void UShipInteriorComponent::BuildRecDeck(FShipRoom& R)
 {
 	const FVector C = R.Center, H = R.Half;
 	const double Floor = C.Z - H.Z;
-	const FVector Door(C.X + H.X, C.Y - 200.0, Floor);
+	const FVector Door(C.X + H.X, C.Y - 374.0, Floor);   // the doorway from the corridor (REC_DOOR_Y)
 	R.Lift = InteriorSpot(Door + FVector(-90.0, 0, 0), FVector(-1, 0, 0));
 	R.Use = InteriorSpot(FVector(C.X - H.X + 250.0, C.Y, Floor), FVector(-1, 0, 0));
 	R.UseLabel = TEXT("the screen: open the star chart");
@@ -798,7 +798,7 @@ void UShipInteriorComponent::BuildCrewQuarters(FShipRoom& R)
 	const double Floor = C.Z - H.Z;
 	const FVector Origin(C.X - 210.0, 0.0, Floor);
 	R.Lift = InteriorSpot(Origin + FVector(0, 800.0 - 90.0, 0), FVector(0, -1, 0));
-	R.Use = InteriorSpot(Origin + FVector(260.0, -440.0 - 100.0, 0), FVector(0, 1, 0));
+	R.Use = InteriorSpot(Origin + FVector(300.0, -400.0 - 125.0, 0), FVector(0, 1, 0));   // before the desk against the cabin's forward wall
 	R.UseLabel = TEXT("the viewer: the library computer");
 	if (RoomMesh(CrewQuartersMesh, Origin))
 	{
@@ -807,9 +807,9 @@ void UShipInteriorComponent::BuildCrewQuarters(FShipRoom& R)
 		return;
 	}
 	Shell(R, FVector(Origin.X, Origin.Y + 800.0, Floor), FVector(0, -1, 0), false);
-	Box(Origin + FVector(260.0 + 60.0, -620.0, 60.0), FVector(100.0, 200.0, 20.0), BedWhite);
-	Box(Origin + FVector(260.0 + 60.0, -620.0, 160.0), FVector(100.0, 200.0, 20.0), BedWhite);
-	Box(Origin + FVector(260.0, -440.0 - 30.0, 37.0), FVector(140.0, 60.0, 74.0), PanelGrey);
+	Box(Origin + FVector(120.0 + 420.0 - 50.0, -600.0, 60.0), FVector(100.0, 200.0, 20.0), BedWhite);
+	Box(Origin + FVector(120.0 + 420.0 - 50.0, -600.0, 160.0), FVector(100.0, 200.0, 20.0), BedWhite);
+	Box(Origin + FVector(300.0, -400.0 - 35.0, 37.0), FVector(140.0, 60.0, 74.0), PanelGrey);
 	for (double Y : { 600.0, 200.0, -200.0, -600.0 }) { Light(Origin + FVector(0, Y, 240.0), 16.f, 500.f, FLinearColor(0.95f, 0.97f, 1.f)); }
 }
 

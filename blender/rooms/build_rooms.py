@@ -309,6 +309,20 @@ def wall_screen(center, w, h, yaw, tex, group="Screens"):
     box("ScreenFrame", (cx + d[0] * 0.02, cy + d[1] * 0.02, cz), (0.04, w + 0.12, h + 0.12), M_PanelDark(), "Consoles", yaw=yaw)
     screen("Scr", (cx - d[0] * 0.005, cy - d[1] * 0.005, cz), w, h, M_Screen(tex), group, yaw=yaw)
 
+# The refit's corridor section (metres from the centre line): the deck grating, the lit lower panels leaning out
+# to the waist, the straight band, the upper panels leaning in to the narrow dark ceiling (The Motion Picture to
+# The Undiscovered Country; the waist is where a room's wall meets the corridor, back to back).
+CORR_F, CORR_W, CORR_C, CORR_Z1, CORR_Z2, CORR_H = 0.95, 1.2, 0.8, 0.95, 1.55, 2.5
+# Deck G's corridor: the athwartships leg (y) with its bays anchored at the junction with the forward leg, the
+# forward leg (x) in seven bays; the doors sit at bay centres, and the rooms' sets and the game put their doorways
+# at the same places (ShipInterior.cpp follows these numbers).
+CORR_A_Y0, CORR_A_Y1, CORR_A_ANCHOR, CORR_A_PITCH = -11.5, 2.1, -9.1, 2.24
+CORR_B_X0, CORR_B_X1, CORR_B_Y0, CORR_B_Y1 = 1.2, 18.2, -11.5, -9.1
+CORR_B_PITCH = (CORR_B_X1 - CORR_B_X0) / 7
+SICK_DOOR_Y = CORR_A_ANCHOR + 3.5 * CORR_A_PITCH          # -1.26: sickbay's doorway, to starboard
+REC_DOOR_Y = CORR_A_ANCHOR + 1.5 * CORR_A_PITCH           # -5.74: the rec deck's, to port
+TRANS_DOOR_X = CORR_B_X0 + 5.5 * CORR_B_PITCH             # 14.56: the transporter room's, off the forward leg
+
 # ---- room shell ------------------------------------------------------------------------------------------------
 class Room:
     def __init__(self, code, L, W, H):
@@ -617,7 +631,7 @@ def build_sickbay():
     cabinet on the starboard wall and the canted lit panels of the forward bulkhead. Lift door aft, port."""
     R = Room("sick", 12.0, 9.0, 3.0)
     L, W, H = R.L, R.W, R.H
-    shell(R, M_PanelLight(), M_Carpet(), M_PanelGrey(), openings=[("-x", -2.5, 1.3, 2.3)])
+    shell(R, M_PanelLight(), M_Carpet(), M_PanelGrey(), openings=[("-x", SICK_DOOR_Y, 1.3, 2.3)])
     # Ward beds.
     for bx in (-3.6, -1.2, 1.2):
         for s in (-1, 1):
@@ -703,8 +717,8 @@ def build_sickbay():
     # A second door forward to the rest of the complex, and the doorway aft onto deck G's corridor (the lift is
     # down the corridor).
     lift_door(R, "+x", -2.0 + 0.0 if False else 4.1, mat_=M_PanelDark(), label="WardDoor")
-    pilasters(R, 2.0, walls=("+y", "-x"), skip=(("-x", -2.5),))
-    doorway('y', -L / 2 - 0.06, -2.5, 1, label="CorridorDoor")
+    pilasters(R, 2.0, walls=("+y", "-x"), skip=(("-x", SICK_DOOR_Y),))
+    doorway('y', -L / 2 - 0.06, SICK_DOOR_Y, 1, label="CorridorDoor")
     cove_ceiling(R, drop=0.32, width=0.9, panels=[(-2.5, -1.6), (-2.5, 1.6), (2.5, -1.6), (2.5, 1.6)], energy=16.0)
     return R
 
@@ -861,7 +875,7 @@ def build_transporter():
     R = Room("trans", 8.0, 7.0, 3.0)
     L, W, H = R.L, R.W, R.H
     PX, PY = -1.5, 0.0
-    shell(R, M_PanelGrey(), M_Carpet(), M_PanelGrey(), openings=[("+y", 1.5, 1.3, 2.3)])
+    shell(R, M_PanelGrey(), M_Carpet(), M_PanelGrey(), openings=[("+y", TRANS_DOOR_X - 13.2, 1.3, 2.3)])
     # The pad: a two-step round platform, its top a pale glowing disc with the six stations and their rim.
     lathe("PadBase", [(0.0, 0.0), (2.1, 0.0), (2.1, 0.1), (1.82, 0.1), (1.82, 0.24), (0.0, 0.24)], (PX, PY, 0), M_PanelGrey(), "Pad", segments=64)
     disc("PadTop", (PX, PY, 0.245), 1.72, M_Pad(), "Pad", segments=64)
@@ -918,8 +932,8 @@ def build_transporter():
     for x in (0.4, 1.2, 2.0, 2.8):
         box("Locker", (x, -W / 2 + 0.25, 1.05), (0.7, 0.5, 2.1), M_PanelDark(), "Furniture", bevel=0.01)
         box("LockerSeam", (x, -W / 2 + 0.51, 1.05), (0.02, 0.01, 1.9), M_PanelGrey(), "Furniture")
-    pilasters(R, 2.0, walls=("+y", "+x"), skip=(("+y", 1.5),))
-    doorway('x', W / 2 + 0.06, 1.5, -1, label="CorridorDoor")   # onto deck G's corridor; the lift is along it
+    pilasters(R, 2.0, walls=("+y", "+x"), skip=(("+y", TRANS_DOOR_X - 13.2),))
+    doorway('x', W / 2 + 0.06, TRANS_DOOR_X - 13.2, -1, label="CorridorDoor")   # onto deck G's corridor; the lift is along it
     radial_ceiling(R, (PX, PY), 1.9, ribs=8, energy=14.0, panels=[(2.5, -1.8), (2.5, 1.8), (0.6, -2.6), (0.6, 2.6)])
     return R
 
@@ -993,42 +1007,78 @@ def M_Torpedo(): return mat("TorpedoBlack", (0.03, 0.03, 0.035), 0.4, 0.3)
 def M_Grating(): return mat("Grating", (0.18, 0.19, 0.21), 0.6, 0.5)
 def M_Plant(): return mat("Plant", (0.12, 0.35, 0.14), 0.8)
 
-def corridor_leg(R, x0, x1, y0, y1, walls=("-x", "+x", "-y", "+y"), openings=None, lights=3.0, floor_mat=None, soffit=0.35):
-    """One straight run of corridor in the film style: pale walls with a dark rail at the waist, a canted soffit
-    leaning in from two metres to the ceiling with a lit cove at its foot, grey carpet, a light strip down the
-    ceiling. `walls` names the sides to close; `openings` maps a side to its doorways (centre, width, height), cut
-    through wall, rail and skirting alike (the frames are the caller's, see `doorway`)."""
-    openings = openings or {}
-    T, H = 0.12, R.H
-    mx, my = (x0 + x1) / 2, (y0 + y1) / 2
-    box("Floor", (mx, my, -T / 2), (x1 - x0, y1 - y0, T), floor_mat or M_CarpetGrey(), "Floors")
-    box("Ceiling", (mx, my, H + T / 2), (x1 - x0, y1 - y0, T), M_PanelGrey(), "Ceiling")
-    ZS = 2.0; ln = math.hypot(soffit, H - ZS); th = math.degrees(math.atan2(soffit, H - ZS))
-    for wall in walls:
-        cuts = openings.get(wall, [])
-        low = [(c, w, 1.1) for (c, w, h) in cuts]
-        if wall in ("-x", "+x"):
-            sgn = -1 if wall == "-x" else 1; px = x0 if sgn < 0 else x1
-            wall_run("CorrWall", 'y', px + sgn * T / 2, y0 - T, y1 + T, 0, H, T, M_PanelLight(), "Walls", cuts)
-            wall_run("Rail", 'y', px - sgn * 0.03, y0, y1, 0.9, 1.02, 0.06, M_PanelDark(), "Walls", low)
-            wall_run("Skirt", 'y', px - sgn * 0.02, y0, y1, 0, 0.2, 0.04, M_PanelDark(), "Walls", low)
-            box("Soffit", (px - sgn * soffit / 2, my, (ZS + H) / 2), (0.04, y1 - y0, ln), M_PanelLight(), "Ceiling", pitch=-sgn * th)
-            box("Cove", (px - sgn * 0.04, my, ZS + 0.02), (0.04, y1 - y0, 0.04), M_Soft(), "Lights")
-        else:
-            sgn = -1 if wall == "-y" else 1; py = y0 if sgn < 0 else y1
-            wall_run("CorrWall", 'x', py + sgn * T / 2, x0 - T, x1 + T, 0, H, T, M_PanelLight(), "Walls", cuts)
-            wall_run("Rail", 'x', py - sgn * 0.03, x0, x1, 0.9, 1.02, 0.06, M_PanelDark(), "Walls", low)
-            wall_run("Skirt", 'x', py - sgn * 0.02, x0, x1, 0, 0.2, 0.04, M_PanelDark(), "Walls", low)
-            box("Soffit", (mx, py - sgn * soffit / 2, (ZS + H) / 2), (x1 - x0, 0.04, ln), M_PanelLight(), "Ceiling", roll=sgn * th)
-            box("Cove", (mx, py - sgn * 0.04, ZS + 0.02), (x1 - x0, 0.04, 0.04), M_Soft(), "Lights")
-    if x1 - x0 >= y1 - y0:
-        box("CeilStrip", (mx, my, H - 0.02), (x1 - x0 - 0.4, 0.4, 0.04), M_Soft(), "Lights")
-        n = max(1, int((x1 - x0) // lights))
-        for k in range(n): R.light((x0 + (x1 - x0) * (k + 0.5) / n, my, H - 0.12), 18.0, size=1.2)
-    else:
-        box("CeilStrip", (mx, my, H - 0.02), (0.4, y1 - y0 - 0.4, 0.04), M_Soft(), "Lights")
-        n = max(1, int((y1 - y0) // lights))
-        for k in range(n): R.light((mx, y0 + (y1 - y0) * (k + 0.5) / n, H - 0.12), 18.0, size=1.2)
+def corridor_leg(R, x0, x1, y0, y1, walls=("-x", "+x", "-y", "+y"), doors=None, anchor=None, pitch=2.24, lights=True, gap=None):
+    """One straight run of the refit's corridor between (x0,y0) and (x1,y1): the section above, built in bays of
+    `pitch` between frames (ribs following the section), each bay a lit lower panel under grey and pale panels, or
+    a door bay (a straight wall with the door set in it: `doors` maps a side wall to [(centre, kind)] with kind
+    "open" for a doorway onto a room, its opening cut, or "shut" for leaves). `anchor` is a bay boundary along the
+    run; `gap` = (a0, a1, side) leaves that stretch of a side wall out (the junction with another leg). The end
+    walls across the run are flat (the caller sets a lift door or a panel in them)."""
+    doors = doors or {}
+    along_y = (y1 - y0) >= (x1 - x0)
+    a0, a1 = (y0, y1) if along_y else (x0, x1)
+    cc = (x0 + x1) / 2 if along_y else (y0 + y1) / 2          # the centre line's cross coordinate
+    F, W, Cw, Z1, Z2, H, T = CORR_F, CORR_W, CORR_C, CORR_Z1, CORR_Z2, CORR_H, 0.12
+    mid = (a0 + a1) / 2
+    def pt(a, u, z): return (cc + u, a, z) if along_y else (a, cc + u, z)
+    def sz(la, th, hz): return (th, la, hz) if along_y else (la, th, hz)
+    def cant(name, a_mid, la, u_lo, z_lo, u_hi, z_hi, mat_, group, thick=0.04, s=1):
+        """A panel leaning from (u_lo, z_lo) to (u_hi, z_hi) across the section (u outward along side s)."""
+        ln = math.hypot(u_hi - u_lo, z_hi - z_lo); th = math.degrees(math.atan2(u_hi - u_lo, z_hi - z_lo))
+        um, zm = (u_lo + u_hi) / 2, (z_lo + z_hi) / 2
+        if along_y: box(name, pt(a_mid, s * um, zm), sz(la, thick, ln), mat_, group, pitch=s * th)
+        else: box(name, pt(a_mid, s * um, zm), sz(la, thick, ln), mat_, group, roll=-s * th)
+    # Floor and ceiling the length of the run.
+    box("Floor", pt(mid, 0, -T / 2), sz(a1 - a0, 2 * W + 2 * T, T), M_Grating(), "Floors")
+    box("Ceiling", pt(mid, 0, H + T / 2), sz(a1 - a0, 2 * Cw, T), M_PanelDark(), "Ceiling")
+    # Bays.
+    anchor = a0 if anchor is None else anchor
+    k0 = math.floor((a0 - anchor) / pitch + 1e-6); k1 = math.ceil((a1 - anchor) / pitch - 1e-6)
+    bounds = [max(a0, min(a1, anchor + k * pitch)) for k in range(k0, k1 + 1)]
+    bounds = [b for i, b in enumerate(bounds) if i == 0 or b - bounds[i - 1] > 0.05]
+    for s, wall in ((-1, "-x" if along_y else "-y"), (1, "+x" if along_y else "+y")):
+        if wall not in walls: continue
+        wall_doors = doors.get(wall, [])
+        for i in range(len(bounds) - 1):
+            b0, b1 = bounds[i], bounds[i + 1]; bm = (b0 + b1) / 2; la = b1 - b0 - 0.16
+            if gap and gap[2] == wall and b0 >= gap[0] - 0.05 and b1 <= gap[1] + 0.05: continue
+            door = next(((c, k) for (c, k) in wall_doors if b0 <= c <= b1), None)
+            if door is None:
+                # A wall bay: the lit lower panel in its grey surround, the straight band, the pale upper panel.
+                cant("LowerFrame", bm, la, F, 0.0, W, Z1, M_PanelGrey(), "Walls", s=s)
+                cant("LowerLit", bm, la - 0.24, F - 0.035, 0.12, W - 0.035, Z1 - 0.12, M_Soft(), "Lights", thick=0.02, s=s)
+                box("Band", pt(bm, s * (W + 0.02), (Z1 + Z2) / 2), sz(la, 0.04, Z2 - Z1), M_PanelGrey(), "Walls")
+                box("BandRail", pt(bm, s * (W - 0.01), Z1 + 0.08), sz(la, 0.03, 0.05), M_PanelDark(), "Walls")
+                cant("Upper", bm, la, W, Z2, Cw, H, M_PanelLight(), "Walls", s=s)
+            else:
+                # A door bay: a straight wall at the waist the full height, the door (open or shut) set in it, the
+                # floor and ceiling filled out to it.
+                c, kind = door
+                cuts = [(c, 1.3, 2.3)] if kind == "open" else []
+                wall_run("DoorWall", 'y' if along_y else 'x', cc + s * (W + T / 2), b0, b1, 0, H, T, M_PanelLight(), "Walls", cuts)
+                box("DoorFloor", pt(bm, s * (F + W) / 2, -0.005), sz(b1 - b0, W - F, 0.01), M_Grating(), "Floors")
+                box("DoorCeiling", pt(bm, s * (Cw + W) / 2, H - 0.02), sz(b1 - b0, W - Cw + 0.02, 0.04), M_PanelDark(), "Ceiling")
+                doorway('y' if along_y else 'x', cc + s * W, c, -s, depth=0.14 if kind == "shut" else 0.24, leaves=M_Burgundy() if kind == "shut" else None, label="CorrDoor")
+        # The frames between bays: ribs following the section, proud of the panels.
+        for i, b in enumerate(bounds):
+            if b <= a0 + 0.05 or b >= a1 - 0.05: continue
+            if gap and gap[2] == wall and gap[0] - 0.05 < b < gap[1] + 0.05: continue
+            cant("Rib", b, 0.16, F - 0.06, 0.0, W - 0.06, Z1, M_PanelGrey(), "Walls", thick=0.12, s=s)
+            box("Rib", pt(b, s * (W - 0.03), (Z1 + Z2) / 2), sz(0.16, 0.12, Z2 - Z1), M_PanelGrey(), "Walls")
+            cant("Rib", b, 0.16, W - 0.06, Z2, Cw - 0.06, H, M_PanelGrey(), "Walls", thick=0.12, s=s)
+    # Ceiling beams across at the frames, a light in each bay.
+    for i, b in enumerate(bounds):
+        if a0 + 0.05 < b < a1 - 0.05: box("CeilBeam", pt(b, 0, H - 0.06), sz(0.16, 2 * Cw - 0.1, 0.12), M_PanelGrey(), "Ceiling")
+        if i < len(bounds) - 1 and lights:
+            bm = (b + bounds[i + 1]) / 2
+            box("CeilLight", pt(bm, 0, H - 0.015), sz(0.6, 0.25, 0.03), M_Strip(), "Lights")
+            R.light(pt(bm, 0, H - 0.1), 10.0, size=0.6)
+            R.light(pt(bm, 0, 0.6), 14.0, size=1.6)
+    # The end walls across the run (flat; the caller sets what is in them).
+    for s, wall in ((-1, "-y" if along_y else "-x"), (1, "+y" if along_y else "+x")):
+        if wall not in walls: continue
+        a = a0 if s < 0 else a1
+        box("EndWall", pt(a + s * T / 2, 0, H / 2), sz(T, 2 * W + 2 * T, H), M_PanelLight(), "Walls")
 
 def torpedo(pos, yaw=0.0):
     """A photon torpedo casing: the black elongated case with its red band, the white nose and the glow aft."""
@@ -1047,40 +1097,32 @@ def lounge_chair(pos, yaw, mat_=None):
         box("LoungeArm", (x + d[1] * s * 0.45, y - d[0] * s * 0.45, z + 0.5), (0.8, 0.1, 0.3), mat_, "Furniture", yaw=yaw, bevel=0.04)
 
 def build_corridor():
-    """Deck G's corridor (The Undiscovered Country): an L of pale grey-blue walls under their canted soffits, the
-    dark rail at the waist, grey carpet, a light strip down the ceiling. The athwartships leg has sickbay's
-    doorway to starboard, the rec deck's to port and the lift at its forward end; the forward leg along the port
-    side has the transporter room's doorway and ends at the lit deck-configuration panel over its console.
-    Origin: the floor at the athwartships leg's centre line, abreast of the corridor's forward end."""
-    R = Room("corr", 2.4, 13.5, 2.6)
-    H = R.H
-    AX0, AX1, AY0, AY1 = -1.2, 1.2, -11.5, 2.0       # the athwartships leg
-    BX0, BX1, BY0, BY1 = 1.2, 18.2, -11.5, -9.1      # the forward leg, off its aft end to port
-    corridor_leg(R, AX0, AX1, AY0, AY1, walls=("-x", "+x", "+y"), openings={"-x": [(-4.0, 1.6, 2.4)], "+x": [(-2.5, 1.3, 2.3), ((BY0 + BY1) / 2, BY1 - BY0, H)]})
-    corridor_leg(R, BX0, BX1, BY0, BY1, walls=("-y", "+y", "+x"), openings={"-y": [(14.7, 1.3, 2.3)]})
-    # The outer corner: the forward leg's port wall carried across the athwartships leg's end.
-    wall_run("CorrWall", 'x', BY0 - 0.06, AX0 - 0.12, BX0, 0, H, 0.12, M_PanelLight(), "Walls")
-    wall_run("Rail", 'x', BY0 + 0.03, AX0, AX1, 0.9, 1.02, 0.06, M_PanelDark(), "Walls")
-    box("Soffit", (0.0, BY0 + 0.175, 2.3), (AX1 - AX0, 0.04, math.hypot(0.35, 0.6)), M_PanelLight(), "Ceiling", roll=-math.degrees(math.atan2(0.35, 0.6)))
-    box("Cove", (0.0, BY0 + 0.04, 2.02), (AX1 - AX0, 0.04, 0.04), M_Soft(), "Lights")
-    # The doorways: the rec deck's (wide) to port, sickbay's to starboard, the transporter room's off the forward leg.
-    doorway('y', AX0 - 0.06, -4.0, 1, dw=1.6, dh=2.4, label="RecDoor")
-    doorway('y', AX1 + 0.06, -2.5, -1, label="SickbayDoor")
-    doorway('x', BY0 - 0.06, 14.7, 1, label="TransporterDoor")
-    # Doors to rooms not built: shut, dark, with their frames and lamps.
-    for y in (-8.5, 0.0): doorway('y', AX0 - 0.0, y, 1, depth=0.14, leaves=M_PanelDark(), label="CabinDoor")
-    for x in (6.0, 10.5): doorway('x', BY1 + 0.0, x, -1, depth=0.14, leaves=M_PanelDark(), label="CabinDoor")
-    # The lift at the forward end of the athwartships leg: the burgundy door in the end wall.
-    doorway('x', AY1 + 0.0, 0.0, -1, depth=0.14, leaves=M_Burgundy(), label="Lift")
-    box("LiftLabel", (0.0, AY1 - 0.08, 2.5), (0.6, 0.02, 0.08), M_Strip(), "Lights")
-    # The end of the forward leg: the deck-configuration panel lit on the wall over a console shelf (TUC's corridor
-    # outside the transporter room), a bench opposite the transporter door.
-    wall_screen((BX1 - 0.16, (BY0 + BY1) / 2, 1.6), 1.6, 1.0, 0.0, "DeckConfig")
-    box("PanelShelf", (BX1 - 0.3, (BY0 + BY1) / 2, 0.95), (0.5, 1.7, 0.08), M_PanelDark(), "Furniture")
-    box("PanelKeys", (BX1 - 0.32, (BY0 + BY1) / 2, 0.995), (0.36, 1.2, 0.012), M_Buttons(), "Lights")
-    R.light((BX1 - 0.8, (BY0 + BY1) / 2, 1.6), 10.0, color=(0.6, 0.75, 1.0), size=0.6)
-    box("Bench", (14.7, BY1 - 0.3, 0.45), (1.8, 0.4, 0.06), M_PanelDark(), "Furniture", bevel=0.01)
-    for x in (13.9, 15.5): box("BenchLeg", (x, BY1 - 0.3, 0.21), (0.08, 0.34, 0.42), M_Metal(), "Furniture")
+    """Deck G's corridor (the refit's, The Motion Picture to The Undiscovered Country): an L of the canted section
+    in bays between frames, the lit lower panels, the grated deck. The athwartships leg has sickbay's doorway to
+    starboard and the rec deck's to port, the lift in its forward end wall, shut doors between; the forward leg
+    along the port side has the transporter room's doorway and ends at the lit deck-configuration panel over its
+    console. Origin: the floor at the athwartships leg's centre line, abreast of the corridor's forward end."""
+    R = Room("corr", 2 * CORR_W, CORR_A_Y1 - CORR_A_Y0, CORR_H)
+    H = CORR_H
+    A = CORR_A_ANCHOR; P = CORR_A_PITCH
+    corridor_leg(R, -CORR_W, CORR_W, CORR_A_Y0, CORR_A_Y1, walls=("-x", "+x", "+y"), anchor=A, pitch=P,
+                 doors={"+x": [(SICK_DOOR_Y, "open"), (A + 0.5 * P, "shut")], "-x": [(REC_DOOR_Y, "open"), (A + 4.5 * P, "shut")]},
+                 gap=(CORR_B_Y0, CORR_B_Y1, "+x"))
+    PB = CORR_B_PITCH
+    corridor_leg(R, CORR_B_X0, CORR_B_X1, CORR_B_Y0, CORR_B_Y1, walls=("-y", "+y", "+x"), anchor=CORR_B_X0, pitch=PB,
+                 doors={"-y": [(TRANS_DOOR_X, "open"), (CORR_B_X0 + 1.5 * PB, "shut")], "+y": [(CORR_B_X0 + 3.5 * PB, "shut")]})
+    # The outer corner: the forward leg's port wall line carried across the athwartships leg's end, and a post
+    # where the two canted walls meet at the inner corner.
+    box("EndWall", (0.0, CORR_B_Y0 - 0.06, H / 2), (2 * CORR_W + 0.24, 0.12, H), M_PanelLight(), "Walls")
+    box("CornerPost", (CORR_W + 0.02, CORR_B_Y1 - 0.02, H / 2), (0.36, 0.36, H), M_PanelGrey(), "Walls")
+    # The lift in the forward end wall, the deck-configuration panel and its console shelf at the forward leg's end.
+    doorway('x', CORR_A_Y1, 0.0, -1, depth=0.14, leaves=M_Burgundy(), label="Lift")
+    box("LiftLabel", (0.0, CORR_A_Y1 - 0.08, 2.42), (0.6, 0.02, 0.08), M_Strip(), "Lights")
+    ym = (CORR_B_Y0 + CORR_B_Y1) / 2
+    wall_screen((CORR_B_X1 - 0.16, ym, 1.55), 1.5, 0.95, 0.0, "DeckConfig")
+    box("PanelShelf", (CORR_B_X1 - 0.3, ym, 0.95), (0.5, 1.6, 0.08), M_PanelDark(), "Furniture")
+    box("PanelKeys", (CORR_B_X1 - 0.32, ym, 0.995), (0.36, 1.2, 0.012), M_Buttons(), "Lights")
+    R.light((CORR_B_X1 - 0.8, ym, 1.6), 10.0, color=(0.6, 0.75, 1.0), size=0.6)
     return R
 
 def build_rec_deck():
@@ -1090,8 +1132,8 @@ def build_rec_deck():
     doorway from deck G's corridor is in the forward wall, to port of centre."""
     R = Room("rec", 18.0, 14.0, 6.0)
     L, W, H = R.L, R.W, R.H
-    shell(R, M_PanelLight(), M_CarpetGrey(), M_PanelDark(), openings=[("+x", -2.0, 1.6, 2.4)])
-    doorway('y', L / 2 + 0.06, -2.0, -1, dw=1.6, dh=2.4, label="CorridorDoor")
+    shell(R, M_PanelLight(), M_CarpetGrey(), M_PanelDark(), openings=[("+x", REC_DOOR_Y + 2.0, 1.3, 2.3)])
+    doorway('y', L / 2 + 0.06, REC_DOOR_Y + 2.0, -1, label="CorridorDoor")
     # The screen aft, its sill lit; the viewer stands before it (the Use spot).
     wall_screen((-L / 2 + 0.16, 0.0, 3.0), 9.0, 4.0, 180.0, "Navigation")
     box("ScreenSill", (-L / 2 + 0.35, 0, 0.9), (0.5, 9.6, 0.1), M_PanelDark(), "Furniture")
@@ -1267,40 +1309,38 @@ def build_cabin():
     return R
 
 def build_crew_quarters():
-    """Deck F, crew quarters: a cabin corridor athwartships with the lift at its starboard end and cabin doors down
-    both sides, the last cabin to port open: two bunks, a desk with its viewer, a locker, a wash stand. Origin: the
-    floor at the corridor's centre; the cabin lies forward of the corridor at its port end."""
-    R = Room("crew", 2.6, 16.0, 2.6)
-    H = R.H
-    X0, X1, Y0, Y1 = -1.3, 1.3, -8.0, 8.0
-    CX0, CX1, CY0, CY1 = 1.3, 5.5, -8.0, -4.4          # the open cabin
-    corridor_leg(R, X0, X1, Y0, Y1, walls=("-x", "+x", "-y", "+y"), openings={"+x": [(-6.2, 1.1, 2.2)]})
-    for y in (-6.2, -3.8, -1.4, 1.0, 3.4, 5.8):
-        doorway('y', X0, y, 1, dw=1.1, dh=2.2, depth=0.14, leaves=M_PanelDark(), label="CabinDoor")
-        if y > -5: doorway('y', X1, y, -1, dw=1.1, dh=2.2, depth=0.14, leaves=M_PanelDark(), label="CabinDoor")
-        box("CabinNumber", (X0 + 0.02, y + 0.9, 1.9), (0.02, 0.3, 0.12), M_Buttons(), "Lights")
-        if y > -5: box("CabinNumber", (X1 - 0.02, y + 0.9, 1.9), (0.02, 0.3, 0.12), M_Buttons(), "Lights")
-    doorway('y', X1 + 0.06, -6.2, -1, dw=1.1, dh=2.2, label="OpenCabin")
+    """Deck F, crew quarters: a cabin corridor of the refit's section athwartships, the lift at its starboard end,
+    cabin doors in alternate bays down both sides, the last cabin forward of the port end open: two bunks, a desk
+    with its viewer, a locker, a wash stand. Origin: the floor at the corridor's centre; the cabin lies forward of
+    the corridor at its port end."""
+    R = Room("crew", 2 * CORR_W, 16.0, CORR_H)
+    H = CORR_H; W = CORR_W
+    Y0, Y1, P = -8.0, 8.0, 2.0
+    CX0, CX1, CY0, CY1 = W, W + 4.2, -8.0, -4.0            # the open cabin: two bays wide
+    shut = [(-3.0, "shut"), (1.0, "shut"), (5.0, "shut")]
+    corridor_leg(R, -W, W, Y0, Y1, walls=("-x", "+x", "-y", "+y"), anchor=Y0, pitch=P,
+                 doors={"-x": [(-7.0, "shut"), (-3.0, "shut"), (1.0, "shut"), (5.0, "shut")], "+x": [(-7.0, "open")] + shut})
+    for y in (-7.0, -3.0, 1.0, 5.0):
+        box("CabinNumber", (-W + 0.02, y + 0.85, 1.9), (0.02, 0.3, 0.12), M_Buttons(), "Lights")
+        box("CabinNumber", (W - 0.02, y + 0.85, 1.9), (0.02, 0.3, 0.12), M_Buttons(), "Lights")
     doorway('x', Y1, 0.0, -1, depth=0.14, leaves=M_Burgundy(), label="Lift")
-    box("LiftLabel", (0.0, Y1 - 0.08, 2.5), (0.6, 0.02, 0.08), M_Strip(), "Lights")
-    # The open cabin: its floor, ceiling and walls (the corridor's wall is its aft side).
+    box("LiftLabel", (0.0, Y1 - 0.08, 2.42), (0.6, 0.02, 0.08), M_Strip(), "Lights")
+    # The open cabin: its floor, ceiling and walls (the corridor's door wall is its aft side).
     T = 0.12
     box("Floor", ((CX0 + CX1) / 2, (CY0 + CY1) / 2, -T / 2), (CX1 - CX0, CY1 - CY0, T), M_CarpetGrey(), "Floors")
     box("Ceiling", ((CX0 + CX1) / 2, (CY0 + CY1) / 2, 2.4 + T / 2), (CX1 - CX0, CY1 - CY0, T), M_PanelGrey(), "Ceiling")
     wall_run("CabinWall", 'y', CX1 + T / 2, CY0 - T, CY1 + T, 0, 2.4, T, M_PanelLight(), "Walls")
     wall_run("CabinWall", 'x', CY0 - T / 2, CX0, CX1 + T, 0, 2.4, T, M_PanelLight(), "Walls")
     wall_run("CabinWall", 'x', CY1 + T / 2, CX0, CX1 + T, 0, 2.4, T, M_PanelLight(), "Walls")
-    mx, my = (CX0 + CX1) / 2, (CY0 + CY1) / 2
-    # Two bunks against the forward wall, a reading lamp each; the desk and viewer against the starboard wall (Use);
-    # the locker by the door, the wash stand opposite with its mirror.
+    mx, my = (CX0 + CX1) / 2, -7.0
     for z in (0.35, 1.45):
-        box("Bunk", (CX1 - 0.5, my, z), (1.0, 2.0, 0.16), M_PanelLight(), "Furniture", bevel=0.02)
-        box("Mattress", (CX1 - 0.5, my, z + 0.14), (0.96, 1.96, 0.12), M_Linen(), "Furniture", bevel=0.03)
-        box("BunkCover", (CX1 - 0.5, my - 0.3, z + 0.2), (0.96, 1.3, 0.06), M_Burgundy(), "Furniture", bevel=0.02)
-        box("BunkPillow", (CX1 - 0.5, my + 0.75, z + 0.24), (0.7, 0.4, 0.1), M_Linen(), "Furniture", bevel=0.03)
-        box("BunkLamp", (CX1 - 0.04, my + 0.7, z + 0.9), (0.04, 0.4, 0.06), M_Soft(), "Lights")
-    box("BunkLadder", (CX1 - 1.02, my - 0.6, 0.9), (0.04, 0.4, 1.6), M_Metal(), "Furniture")
-    for z in (0.3, 0.6, 0.9, 1.2, 1.5): box("Rung", (CX1 - 1.02, my - 0.6, z), (0.03, 0.36, 0.03), M_Metal(), "Furniture")
+        box("Bunk", (CX1 - 0.5, my + 1.0, z), (1.0, 2.0, 0.16), M_PanelLight(), "Furniture", bevel=0.02)
+        box("Mattress", (CX1 - 0.5, my + 1.0, z + 0.14), (0.96, 1.96, 0.12), M_Linen(), "Furniture", bevel=0.03)
+        box("BunkCover", (CX1 - 0.5, my + 0.7, z + 0.2), (0.96, 1.3, 0.06), M_Burgundy(), "Furniture", bevel=0.02)
+        box("BunkPillow", (CX1 - 0.5, my + 1.75, z + 0.24), (0.7, 0.4, 0.1), M_Linen(), "Furniture", bevel=0.03)
+        box("BunkLamp", (CX1 - 0.04, my + 1.7, z + 0.9), (0.04, 0.4, 0.06), M_Soft(), "Lights")
+    box("BunkLadder", (CX1 - 1.02, my + 0.4, 0.9), (0.04, 0.4, 1.6), M_Metal(), "Furniture")
+    for z in (0.3, 0.6, 0.9, 1.2, 1.5): box("Rung", (CX1 - 1.02, my + 0.4, z), (0.03, 0.36, 0.03), M_Metal(), "Furniture")
     box("Desk", (mx - 0.4, CY1 - 0.35, 0.37), (1.4, 0.6, 0.74), M_PanelLight(), "Furniture", bevel=0.02)
     box("DeskTop", (mx - 0.4, CY1 - 0.35, 0.76), (1.46, 0.66, 0.04), M_Black(), "Furniture")
     box("Viewer", (mx - 0.4, CY1 - 0.2, 1.05), (0.5, 0.1, 0.4), M_Black(), "Furniture", bevel=0.01)
@@ -1311,8 +1351,8 @@ def build_crew_quarters():
     box("WashStand", (mx + 0.6, CY0 + 0.3, 0.45), (0.7, 0.5, 0.9), M_PanelLight(), "Furniture", bevel=0.02)
     lathe("Basin", [(0.0, 0.0), (0.22, 0.0), (0.26, 0.1), (0.0, 0.1)], (mx + 0.6, CY0 + 0.3, 0.9), M_PanelLight(), "Furniture", segments=20)
     disc("Mirror", (mx + 0.6, CY0 + 0.03, 1.6), 0.3, M_Glass(), "Glass", axis='y', up=(0, 1, 0), segments=32)
-    box("CabinLight", (mx, my, 2.38), (1.0, 0.5, 0.04), M_Soft(), "Lights")
-    R.light((mx, my, 2.2), 20.0, size=0.9)
+    box("CabinLight", (mx, (CY0 + CY1) / 2, 2.38), (1.0, 0.5, 0.04), M_Soft(), "Lights")
+    R.light((mx, (CY0 + CY1) / 2, 2.2), 20.0, size=0.9)
     return R
 
 def build_torpedo_bay():
@@ -1456,7 +1496,7 @@ VIEWS = {
 VIEWS.update({
     "corr": {
         "lift": ((0.0, 1.0, 1.65), (0.0, -9.0, 1.3), 20),
-        "sickdoor": ((-0.8, -5.5, 1.65), (1.2, -2.5, 1.2), 22),
+        "sickdoor": ((-0.6, -4.5, 1.65), (1.2, -1.3, 1.2), 22),
         "legb": ((2.0, -10.3, 1.65), (18.0, -10.3, 1.4), 22),
         "panel": ((15.0, -10.3, 1.65), (18.2, -10.3, 1.5), 24),
         "high": ((-6.0, -5.0, 8.0), (6.0, -6.0, 1.0), 22),
@@ -1482,8 +1522,8 @@ VIEWS.update({
     },
     "crew": {
         "lift": ((0.0, 7.0, 1.65), (0.0, -8.0, 1.2), 20),
-        "cabindoor": ((-0.5, -5.0, 1.65), (3.5, -6.6, 1.1), 22),
-        "bunks": ((1.8, -4.8, 1.6), (5.3, -6.6, 0.9), 22),
+        "cabindoor": ((-0.7, -3.8, 1.65), (1.3, -7.0, 1.1), 22),
+        "bunks": ((1.8, -4.4, 1.6), (5.3, -6.4, 0.9), 22),
         "high": ((-5.0, -12.0, 8.0), (1.5, -3.0, 1.0), 22),
     },
     "torp": {

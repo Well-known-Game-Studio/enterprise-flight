@@ -62,49 +62,26 @@ def grid(d, box, rnd, cols=8, rows=4):
             col = rnd.choice(PAL) if on else DIM
             d.rectangle((x0 + 8 + c * cw, y0 + 32 + r * ch, x0 + 8 + (c + 1) * cw - 6, y0 + 32 + (r + 1) * ch - 6), fill=col)
 
-def ship_top(d, box, color, lw=2):
-    """The refit from above, bow up, as a green wireframe plan like the helm pedestal's display: saucer with a
-    radial grid and the bridge dome, impulse deck, neck, engineering hull with the deflector and shuttlebay,
-    swept pylons, nacelles with bussard caps and grilles. Proportions of the 305 m ship (saucer 142 m across)."""
+VIEWS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ship_views")
+def ship_view(im, box, view, color, fill=None, lines=True, sil_alpha=0.16):
+    """The ship herself on a screen: the plan ("top", bow up) or profile ("side", bow right) rendered from the
+    1701-A model by render_ship_views.py, fitted into `box`. The silhouette goes down as a dim wash of `color` (or
+    solid `fill`), the Freestyle line drawing over it in `color`."""
     x0, y0, x1, y1 = box
-    L = min((y1 - y0) * 0.98, (x1 - x0) / 0.47)        # length on the texture
-    cx, top = (x0 + x1) / 2, (y0 + y1) / 2 - L / 2
-    def P(u, t): return (cx + u * L, top + t * L)       # u across (right +), t down the length, both fractions of L
-    def ell(u, t, r, w=lw): d.ellipse((cx + (u - r) * L, top + (t - r) * L, cx + (u + r) * L, top + (t + r) * L), outline=color, width=w)
-    def rrect(u0, t0, u1, t1, rad, w=lw):
-        xa, xb = sorted((cx + u0 * L, cx + u1 * L))
-        d.rounded_rectangle((xa, top + t0 * L, xb, top + t1 * L), radius=max(1, int(rad * L)), outline=color, width=w)
-    def line(a, b, w=lw): d.line((P(*a), P(*b)), fill=color, width=w)
-    # Saucer: rim, grid rings, 24 radials, the bridge and the B/C deck superstructure.
-    SC, R = 0.233, 0.2325
-    ell(0, SC, R, lw + 1)
-    for f in (0.18, 0.4, 0.62, 0.82): ell(0, SC, R * f, 1)
-    for k in range(24):
-        a = math.radians(k * 15)
-        line((R * 0.18 * math.sin(a), SC - R * 0.18 * math.cos(a)), (R * 0.985 * math.sin(a), SC - R * 0.985 * math.cos(a)), 1)
-    ell(0, SC, 0.03, lw); ell(0, SC, 0.014, 1)
-    rrect(-0.035, SC + 0.02, 0.035, SC + 0.21, 0.02, 1)                      # B/C decks and the impulse deck
-    rrect(-0.06, SC + 0.19, 0.06, SC + 0.245, 0.01, lw)
-    for u in (-0.04, -0.013, 0.013, 0.04): line((u, SC + 0.2), (u, SC + 0.24), 1)
-    # Neck down to the engineering hull.
-    line((-0.028, SC + 0.2), (-0.02, 0.5)); line((0.028, SC + 0.2), (0.02, 0.5))
-    # Engineering hull: deflector housing forward, the hull, the shuttlebay doors aft.
-    ell(0, 0.455, 0.045, lw + 1); ell(0, 0.455, 0.025, 1)
-    rrect(-0.058, 0.44, 0.058, 0.94, 0.05, lw + 1)
-    line((-0.045, 0.86), (-0.045, 0.93), 1); line((0.045, 0.86), (0.045, 0.93), 1); line((-0.03, 0.88), (0.03, 0.88), 1)
-    line((0, 0.5), (0, 0.84), 1)
-    for sgn in (-1, 1):
-        # Pylon: a thin quad rooted on the engineering hull forward of midships and swept aft and outboard to the
-        # nacelle's aft third (bow is up, so the nacelle end sits lower on the plan than the hull end).
-        pts = [P(sgn * 0.058, 0.60), P(sgn * 0.058, 0.665), P(sgn * 0.17, 0.835), P(sgn * 0.17, 0.76)]
-        d.polygon(pts, outline=color, width=lw)
-        # Nacelle: body, centre seam, bussard cap, grilles, aft cap.
-        rrect(sgn * 0.17, 0.42, sgn * 0.225, 1.0, 0.025, lw + 1)
-        line((sgn * 0.1975, 0.47), (sgn * 0.1975, 0.95), 1)
-        ell(sgn * 0.1975, 0.445, 0.02, 1)
-        for t in (0.66, 0.74, 0.82):
-            rrect(sgn * 0.178, t, sgn * 0.217, t + 0.05, 0.005, 1)
-        line((sgn * 0.17, 0.96), (sgn * 0.225, 0.96), 1)
+    sil = Image.open(os.path.join(VIEWS_DIR, f"ship_{view}_sil.png")).convert("L")
+    lin = Image.open(os.path.join(VIEWS_DIR, f"ship_{view}_lines.png")).convert("L")
+    bb = sil.getbbox(); pad = 24
+    bb = (max(0, bb[0] - pad), max(0, bb[1] - pad), min(sil.width, bb[2] + pad), min(sil.height, bb[3] + pad))
+    sil = sil.crop(bb); lin = lin.crop(bb)
+    sc = min((x1 - x0) / sil.width, (y1 - y0) / sil.height)
+    size = (max(1, int(sil.width * sc)), max(1, int(sil.height * sc)))
+    sil = sil.resize(size, Image.LANCZOS); lin = lin.resize(size, Image.LANCZOS)
+    ox, oy = int(x0 + ((x1 - x0) - size[0]) / 2), int(y0 + ((y1 - y0) - size[1]) / 2)
+    if fill is not None: im.paste(Image.new("RGB", size, fill), (ox, oy), sil)
+    else: im.paste(Image.new("RGB", size, tuple(int(c * sil_alpha) for c in color)), (ox, oy), sil)
+    if lines:
+        lin = lin.point(lambda v: min(255, int(v * 1.8)))
+        im.paste(Image.new("RGB", size, color), (ox, oy), lin)
 
 def gauge_ring(d, cx, cy, R):
     """The pedestal's circular status gauge: a thick blue ring broken into segments with thin white sections
@@ -166,7 +143,7 @@ def panel(name, title, seed, live=False, schematic=False, live_labels=None):
     kinds = ["bars", "ring", "grid", "readouts"]
     if schematic:
         module_frame(d, (40, 96, 1260, 980), "MASTER SYSTEMS DISPLAY")
-        ship_top(d, (60, 130, 1240, 970), GREEN)
+        ship_view(im, (60, 130, 1240, 970), "top", GREEN)
     else:
         for ci, (cx0, cx1) in enumerate(cols):
             for ri, (ry0, ry1) in enumerate(rows):
@@ -191,30 +168,12 @@ def panel(name, title, seed, live=False, schematic=False, live_labels=None):
     im.save(os.path.join(OUT, f"T_Okuda_{name}.png"), optimize=True)
     print(name, os.path.getsize(os.path.join(OUT, f"T_Okuda_{name}.png")) // 1024, "KB")
 
-def ship_side(d, box, color, fill=None, lw=2):
-    """The refit in profile, bow to the right: saucer, bridge dome, neck, engineering hull with the deflector,
-    pylons, one nacelle. Filled when `fill` is given (the deck-configuration readout), else outlined."""
-    x0, y0, x1, y1 = box
-    L = min(x1 - x0, (y1 - y0) / 0.42)
-    ox, oy = (x0 + x1) / 2 - L / 2, (y0 + y1) / 2 - 0.21 * L
-    def P(u, t): return (ox + u * L, oy + t * L)
-    def poly(pts): d.polygon([P(*p) for p in pts], fill=fill, outline=color, width=lw)
-    def ell(u0, t0, u1, t1): d.ellipse((P(u0, t0), P(u1, t1)), fill=fill, outline=color, width=lw)
-    ell(0.50, 0.20, 0.98, 0.26)                                   # saucer
-    ell(0.68, 0.165, 0.80, 0.215)                                 # B/C decks
-    ell(0.715, 0.14, 0.765, 0.18)                                 # bridge dome
-    poly([(0.56, 0.24), (0.66, 0.24), (0.58, 0.33), (0.49, 0.33)])   # neck
-    d.rounded_rectangle((P(0.30, 0.31), P(0.68, 0.40)), radius=int(0.04 * L), fill=fill, outline=color, width=lw)   # engineering hull
-    ell(0.64, 0.30, 0.70, 0.41)                                   # deflector housing
-    poly([(0.36, 0.31), (0.43, 0.31), (0.30, 0.215), (0.23, 0.215)])   # pylon
-    d.rounded_rectangle((P(0.0, 0.17), P(0.44, 0.215)), radius=int(0.02 * L), fill=fill, outline=color, width=lw)   # nacelle
-
 def deck_config():
     """The red dot-matrix profile of the deck-configuration display (the corridor's wall panel): the ship filled in
     red with scan lines through it, the deck letters down the left, the readout along the foot."""
     im = Image.new("RGB", (W, H), (0, 0, 0)); d = ImageDraw.Draw(im)
     RED = (235, 30, 30)
-    ship_side(d, (160, 120, W - 60, 760), RED, fill=RED, lw=1)
+    ship_view(im, (200, 140, W - 80, 760), "side", RED, fill=RED, lines=False)
     for y in range(0, H, 6): d.line((0, y, W, y), fill=(0, 0, 0), width=2)      # scan lines
     for k, letter in enumerate("ABCDEFGHIJKLMNOPQRSTU"):
         y = 90 + k * 40
@@ -247,7 +206,7 @@ def deflector():
         x, y = cx + rx * math.cos(a), cy + ry * math.sin(a)
         d.ellipse((x - 3, y - 3, x + 3, y + 3), fill=(60, 170, 255))
     for yy in range(300, 920, 60): d.line((cx - 700, yy, cx + 700, yy), fill=(20, 50, 80), width=1)
-    ship_top(d, (cx - 300, 270, cx + 300, 930), (90, 200, 255), lw=3)
+    ship_view(im, (cx - 320, 270, cx + 320, 930), "top", (90, 200, 255))
     for (x, y, s) in ((cx + 560, 300, "1788\n9573\n8318"), (cx - 660, 760, "648\n590045\n2 8 6"), (cx - 120, 910, "41154\n0497"), (cx + 540, 840, "2748")):
         d.multiline_text((x, y), s, font=font(20, 5), fill=(120, 200, 255), spacing=2)
     d.text((40, H - 90), "DEFLECTOR STATUS", font=font(40, 8), fill=(60, 140, 220))
@@ -306,7 +265,7 @@ deck_config(); deflector(); torpedo_bay()
 im = Image.new("RGB", (1024, 1024), (0, 0, 0)); d = ImageDraw.Draw(im)
 command_strip(d, (52, 28, 972, 124))
 gauge_ring(d, 512, 598, 388)
-ship_top(d, (512 - 300, 598 - 330, 512 + 300, 598 + 330), (34, 215, 80), lw=2)
+ship_view(im, (512 - 300, 598 - 330, 512 + 300, 598 + 330), "top", (34, 215, 80))
 for (x, y) in ((40, 160), (984, 160), (40, 1000), (984, 1000)):
     d.ellipse((x - 5, y - 5, x + 5, y + 5), fill=(60, 64, 70))                # bezel screws
 im.save(os.path.join(OUT, "T_Okuda_Schematic.png"), optimize=True); print("schematic")
