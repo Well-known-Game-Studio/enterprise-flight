@@ -2,7 +2,7 @@
 bar graphs, ring gauges, small condensed labels. Live panels leave two outlined bar slots (right column) that
 the screen material fills from game state: slot A at uv (0.60..0.96, 0.10..0.15), slot B at (0.60..0.96, 0.20..0.25)."""
 import os, random, math, json
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageChops
 W, H = 2048, 1024
 OUT = os.environ.get("OKUDA_OUT", os.path.dirname(os.path.abspath(__file__)))
 FONT = "/System/Library/Fonts/Avenir Next Condensed.ttc"
@@ -63,25 +63,30 @@ def grid(d, box, rnd, cols=8, rows=4):
             d.rectangle((x0 + 8 + c * cw, y0 + 32 + r * ch, x0 + 8 + (c + 1) * cw - 6, y0 + 32 + (r + 1) * ch - 6), fill=col)
 
 VIEWS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ship_views")
-def ship_view(im, box, view, color, fill=None, lines=True, sil_alpha=0.16):
-    """The ship herself on a screen: the plan ("top", bow up) or profile ("side", bow right) rendered from the
-    1701-A model by render_ship_views.py, fitted into `box`. The silhouette goes down as a dim wash of `color` (or
-    solid `fill`), the Freestyle line drawing over it in `color`."""
+def ship_fit(box, view, rotate=0):
+    """The rendered view's silhouette and line drawing (render_ship_views.py: "top" bow up, "side" bow right),
+    turned by `rotate` degrees (PIL's sense: positive anticlockwise) and fitted into `box`: (offset, silhouette,
+    lines), both greyscale masks of the same size."""
     x0, y0, x1, y1 = box
     sil = Image.open(os.path.join(VIEWS_DIR, f"ship_{view}_sil.png")).convert("L")
     lin = Image.open(os.path.join(VIEWS_DIR, f"ship_{view}_lines.png")).convert("L")
+    if rotate: sil = sil.rotate(rotate, expand=True); lin = lin.rotate(rotate, expand=True)
     bb = sil.getbbox(); pad = 24
     bb = (max(0, bb[0] - pad), max(0, bb[1] - pad), min(sil.width, bb[2] + pad), min(sil.height, bb[3] + pad))
     sil = sil.crop(bb); lin = lin.crop(bb)
     sc = min((x1 - x0) / sil.width, (y1 - y0) / sil.height)
     size = (max(1, int(sil.width * sc)), max(1, int(sil.height * sc)))
-    sil = sil.resize(size, Image.LANCZOS); lin = lin.resize(size, Image.LANCZOS)
-    ox, oy = int(x0 + ((x1 - x0) - size[0]) / 2), int(y0 + ((y1 - y0) - size[1]) / 2)
-    if fill is not None: im.paste(Image.new("RGB", size, fill), (ox, oy), sil)
-    else: im.paste(Image.new("RGB", size, tuple(int(c * sil_alpha) for c in color)), (ox, oy), sil)
-    if lines:
-        lin = lin.point(lambda v: min(255, int(v * 1.8)))
-        im.paste(Image.new("RGB", size, color), (ox, oy), lin)
+    sil = sil.resize(size, Image.LANCZOS); lin = lin.resize(size, Image.LANCZOS).point(lambda v: min(255, int(v * 1.8)))
+    return (int(x0 + ((x1 - x0) - size[0]) / 2), int(y0 + ((y1 - y0) - size[1]) / 2)), sil, lin
+
+def ship_view(im, box, view, color, fill=None, lines=True, sil_alpha=0.16, rotate=0):
+    """The ship herself on a screen, from the renders of the 1701-A model: the silhouette as a dim wash of `color`
+    (or solid `fill`), the line drawing over it in `color`."""
+    off, sil, lin = ship_fit(box, view, rotate)
+    if fill is not None: im.paste(Image.new("RGB", sil.size, fill), off, sil)
+    else: im.paste(Image.new("RGB", sil.size, tuple(int(c * sil_alpha) for c in color)), off, sil)
+    if lines: im.paste(Image.new("RGB", sil.size, color), off, lin)
+    return off, sil
 
 def gauge_ring(d, cx, cy, R):
     """The pedestal's circular status gauge: a thick blue ring broken into segments with thin white sections
@@ -198,15 +203,18 @@ def deflector():
         x = 420 + (W - 500) * k / 10
         d.line((x, 160, x, 172), fill=(120, 200, 255), width=2)
         d.text((x - 12, 174), str(k * 10), font=font(18, 2), fill=(120, 200, 255))
-    # The envelope: a dotted lozenge round the plan, drawn bow up.
-    cx, cy = W // 2, 600
-    for k in range(240):
-        a = 2 * math.pi * k / 240
-        rx, ry = 560 + 120 * math.cos(2 * a), 330
-        x, y = cx + rx * math.cos(a), cy + ry * math.sin(a)
-        d.ellipse((x - 3, y - 3, x + 3, y + 3), fill=(60, 170, 255))
-    for yy in range(300, 920, 60): d.line((cx - 700, yy, cx + 700, yy), fill=(20, 50, 80), width=1)
-    ship_view(im, (cx - 320, 270, cx + 320, 930), "top", (90, 200, 255))
+    # The shield: a bubble grown from the ship's own silhouette (the plan turned bow-right), its body a faint blue
+    # wash with a brighter rim, the grid behind it.
+    box = (300, 320, W - 300, 920)
+    off, sil, lin = ship_fit(box, "top", rotate=-90)
+    full = Image.new("L", (W, H), 0); full.paste(sil, off)
+    bubble = full.filter(ImageFilter.GaussianBlur(130)).point(lambda v: 255 if v > 26 else 0).filter(ImageFilter.GaussianBlur(6))
+    rim = ImageChops.subtract(bubble, bubble.filter(ImageFilter.MinFilter(15)))
+    for yy in range(300, 920, 60): d.line((170, yy, W - 170, yy), fill=(20, 50, 80), width=1)
+    im.paste(Image.new("RGB", (W, H), (40, 120, 220)), (0, 0), bubble.point(lambda v: int(v * 0.30)))
+    im.paste(Image.new("RGB", (W, H), (150, 215, 255)), (0, 0), rim)
+    ship_view(im, box, "top", (110, 210, 255), rotate=-90)
+    cx = W // 2
     for (x, y, s) in ((cx + 560, 300, "1788\n9573\n8318"), (cx - 660, 760, "648\n590045\n2 8 6"), (cx - 120, 910, "41154\n0497"), (cx + 540, 840, "2748")):
         d.multiline_text((x, y), s, font=font(20, 5), fill=(120, 200, 255), spacing=2)
     d.text((40, H - 90), "DEFLECTOR STATUS", font=font(40, 8), fill=(60, 140, 220))
