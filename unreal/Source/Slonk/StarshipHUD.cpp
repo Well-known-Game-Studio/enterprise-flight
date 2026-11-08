@@ -1391,6 +1391,7 @@ void AStarshipHUD::DrawScienceRows(const AStarshipPawn* Ship, float& X, float& Y
 	AActor* Candidate = Ship->Weapons ? Ship->Weapons->LockedTarget.Get() : nullptr;
 	FString Label = Candidate ? Candidate->GetActorNameOrLabel() : FString();
 	if (const ASpaceVessel* V = Cast<ASpaceVessel>(Candidate)) { Label = V->GetDisplayName(); }
+	if (const ASpaceTarget* Tg = Cast<ASpaceTarget>(Candidate)) { Label = Tg->GetDisplayName(); }   // a rock by its name, as the scan files it
 	if (!Candidate)
 	{
 		FNavObject Info;

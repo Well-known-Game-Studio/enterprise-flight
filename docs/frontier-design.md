@@ -30,7 +30,7 @@ Settlements are made by missions, never spawned on their own, and replayed from 
 session: the station is spawned off its world (`ASpaceTraffic::SpawnStation`), the colony world lit
 (`APlanetBody::SetNightLights`). Names: the outpost after its world ("Vashti's Reach II Outpost"), the colony from
 the generator ("New Tavira"), the starbase by the next number from four hundred. A system renamed renames them,
-the station in the sky included. The colony's lights follow its people as they grow (against the lights last set,
+the station in the sky included. Growth and the works are written every six ship-hours and at the session's end. The colony's lights follow its people as they grow (against the lights last set,
 so slow growth adds up), and a strike leaves a scar on them (a quarter, half if the world was warned) until the
 colony has grown back to the people it had. One order of a kind per system is out at a time: the orders, the boards
 and the captain's proposals all check, so two ships' worth of settlers are never sent to one world.
@@ -102,7 +102,7 @@ caught a day out needs a minute of the beam and one caught an hour out needs mor
 torpedoes break it (its health by its size, two or three kilometres of rock being ten seconds of phasers or a
 spread of torpedoes). A torpedo flies at six hundred metres a second over the ship's own speed, and the rock at
 twenty-five kilometres a second: fired from ahead of it, or at a rock held in the beam, they meet; fired after a
-rock already past, they never catch it. The mission sees the rock miss or die and closes complete. If the rock lands: the world's lights dim by the blow, a colony loses most
+rock already past, they never catch it. The mission sees the rock miss or die and closes complete. If the rock lands: the world's lights dim by the blow (a scar the frontier keeps across sessions), a colony loses most
 of its people (all of them, if small), Starfleet's regard falls by forty, and the crew carry it (`Loss.Civilians`,
 with the evacuation halving the dead).
 

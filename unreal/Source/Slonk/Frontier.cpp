@@ -70,7 +70,7 @@ void UFrontierSubsystem::Load()
 	{
 		if (const USlonkFrontierSaveGame* S = Cast<USlonkFrontierSaveGame>(UGameplayStatics::LoadGameFromSlot(SlotName, 0)))
 		{
-			Settlements = S->Settlements; NextStarbaseNumber = S->NextStarbaseNumber;
+			Settlements = S->Settlements; NextStarbaseNumber = S->NextStarbaseNumber; WorldScars = S->WorldScars;
 		}
 	}
 	UE_LOG(LogTemp, Log, TEXT("Frontier: %d settlements"), Settlements.Num());
@@ -83,14 +83,29 @@ void UFrontierSubsystem::Save()
 	if (bNoDisk) { return; }
 	USlonkFrontierSaveGame* S = Cast<USlonkFrontierSaveGame>(UGameplayStatics::CreateSaveGameObject(USlonkFrontierSaveGame::StaticClass()));
 	if (!S) { return; }
-	S->Settlements = Settlements; S->NextStarbaseNumber = NextStarbaseNumber;
+	S->Settlements = Settlements; S->NextStarbaseNumber = NextStarbaseNumber; S->WorldScars = WorldScars;
 	UGameplayStatics::SaveGameToSlot(S, SlotName, 0);
+	bUnsaved = false;
+}
+
+void UFrontierSubsystem::Deinitialize()
+{
+	if (bUnsaved) { Save(); }
+	Super::Deinitialize();
+}
+
+void UFrontierSubsystem::ScarWorld(const FString& World, float Factor)
+{
+	float& Scar = WorldScars.FindOrAdd(World, 1.f);
+	Scar *= Factor;
+	if (UWorld* W = GetWorld()) { for (TActorIterator<APlanetBody> B(W); B; ++B) { if (B->GetDisplayName() == World) { B->SetNightLights(B->Style.NightLightIntensity * Factor); } } }
+	Save();
 }
 
 void UFrontierSubsystem::Reset()
 {
 	// The actors stay until the next session; the record is blank now.
-	Settlements.Reset(); NextStarbaseNumber = 400;
+	Settlements.Reset(); NextStarbaseNumber = 400; WorldScars.Reset();
 	Save();
 }
 
@@ -309,6 +324,9 @@ void UFrontierSubsystem::RenameSystem(const FString& OldName, const FString& New
 			if (float* L = LightsApplied.Find(Was)) { LightsApplied.Add(S.Name, *L); LightsApplied.Remove(Was); }
 		}
 	}
+	// The scars of worlds not ours follow the name too.
+	TArray<FString> Keys; WorldScars.GetKeys(Keys);
+	for (const FString& K : Keys) { if (K.StartsWith(OldName + TEXT(" "))) { const float V = WorldScars[K]; WorldScars.Remove(K); WorldScars.Add(NewName + K.RightChop(OldName.Len()), V); bAny = true; } }
 	if (bAny) { Save(); }
 }
 
@@ -321,6 +339,8 @@ void UFrontierSubsystem::SpawnSettlements(UWorld* World)
 	{
 		if (S.IsStation()) { SpawnStation(World, S); } else { LightWorld(World, S); }
 	}
+	// The worlds of others that were struck: their lights as the strike left them (the planets are made anew).
+	for (const TPair<FString, float>& Sc : WorldScars) { for (TActorIterator<APlanetBody> B(World); B; ++B) { if (B->GetDisplayName() == Sc.Key) { B->SetNightLights(B->Style.NightLightIntensity * Sc.Value); } } }
 	if (Settlements.Num() > 0) { UE_LOG(LogTemp, Log, TEXT("Frontier: %d settlements in the world"), Settlements.Num()); }
 }
 
@@ -386,5 +406,5 @@ void UFrontierSubsystem::AdvanceSeconds(float RealSeconds, const FMissionShipSta
 			bChanged = true;
 		}
 	}
-	if (bChanged) { SaveTimer -= Dt; if (SaveTimer <= 0.0) { SaveTimer = 6.0; Save(); } }
+	if (bChanged) { bUnsaved = true; SaveTimer -= Dt; if (SaveTimer <= 0.0) { SaveTimer = 6.0; Save(); } }   // else at the session's end
 }

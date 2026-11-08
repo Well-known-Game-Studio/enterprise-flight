@@ -48,6 +48,8 @@ class SLONK_API USlonkFrontierSaveGame : public USaveGame
 public:
 	UPROPERTY() TArray<FSettlement> Settlements;
 	UPROPERTY() int32 NextStarbaseNumber = 400;
+	/** Worlds not ours that were struck: the fraction of their lights left. */
+	UPROPERTY() TMap<FString, float> WorldScars;
 };
 
 /**
@@ -61,6 +63,8 @@ class SLONK_API UFrontierSubsystem : public UGameInstanceSubsystem
 	GENERATED_BODY()
 public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
+	/** The session's end: growth and works not yet written are saved. */
+	virtual void Deinitialize() override;
 	static UFrontierSubsystem* Get(const UObject* WorldContext);
 
 	/** The settlements into the world (the game mode, after the catalogue's stars are in). */
@@ -78,6 +82,8 @@ public:
 	bool Commission(const FString& SystemName, FString& OutWhy);
 	/** A world was struck: the colony loses most of its people (all, if small); the evacuation halves the dead. */
 	void Strike(const FString& World, bool bEvacuated, FString& OutText);
+	/** A world not ours was struck: its lights dimmed by Factor now and at every session's start (struck again, dimmer). */
+	void ScarWorld(const FString& World, float Factor);
 	/** A system was renamed: its settlements and their worlds follow. */
 	void RenameSystem(const FString& OldName, const FString& NewName);
 
@@ -88,6 +94,8 @@ public:
 	/** The colony worlds: inhabited by us, and so worth defending. */
 	TArray<FString> ColonyWorlds() const;
 	double WorksHoursLeft(const FString& SystemName) const;
+	/** The fraction of its lights a struck world of others has left (1 unmarked). */
+	float WorldScar(const FString& World) const { const float* S = WorldScars.Find(World); return S ? *S : 1.f; }
 
 	void DrainReports(TArray<FCrewReport>& Out) { Out = MoveTemp(Reports); Reports.Reset(); }
 	int32 GetRevision() const { return Revision; }
@@ -117,6 +125,8 @@ private:
 	/** The colony world's lights for its people (and its scar), remembered so growth refreshes them when they change. */
 	void LightWorld(UWorld* World, const FSettlement& S);
 	TMap<FString, float> LightsApplied;
+	UPROPERTY() TMap<FString, float> WorldScars;
+	bool bUnsaved = false;
 
 	UPROPERTY() TArray<FSettlement> Settlements;
 	int32 NextStarbaseNumber = 400;

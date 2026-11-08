@@ -740,6 +740,7 @@ void UMissionSubsystem::AfterOption(FMission& M, const FMissionOption& O, bool b
 		{
 			// The crew did it: the rock goes wide or comes apart in the world.
 			if (AImpactor* Rock = AImpactor::FindByName(GetWorld(), M.Site)) { if (O.Skill == ECrewSkill::Engineering && O.Risk <= 0.f) { Rock->DevDeflect(); } else { Rock->Shatter(); } }
+			else { M.bRockResolved = true; }   // no actor to say so (a past session's rock): the crew's word is the end of it
 		}
 		break;
 	}
@@ -835,7 +836,7 @@ void UMissionSubsystem::RestoreImpactors()
 bool UMissionSubsystem::PickInhabitedWorld(FMission& M, FRandomStream& R, bool bHere)
 {
 	// A world with people: one lit at night in a charted system, or a colony of ours; never one already under a rock.
-	TSet<FString> Taken; for (const FMission& O : Missions) { if (O.IsOpen() && O.Kind == EMissionKind::Impact) { Taken.Add(O.TargetName); } }
+	TSet<FString> Taken; for (const FMission& O : Missions) { if (O.Kind == EMissionKind::Impact && !O.bRockResolved) { Taken.Add(O.TargetName); } }   // until the rock is done with, open mission or not
 	TArray<FString> Worlds;
 	if (UWorld* W = GetWorld())
 	{
@@ -901,7 +902,7 @@ void UMissionSubsystem::ImpactOutcome(const FString& Rock, const FString& World,
 	UFrontierSubsystem* F = Frontier();
 	const bool bColony = F && F->ColonyWorlds().Contains(World);
 	if (F) { F->Strike(World, bEvacuated, Text); }   // a colony's lights are its own: dimmed by its scar
-	if (!bColony) { if (UWorld* W = GetWorld()) { for (TActorIterator<APlanetBody> It(W); It; ++It) { if (It->GetDisplayName() == World) { It->SetNightLights(It->Style.NightLightIntensity * (bEvacuated ? 0.5f : 0.25f)); } } } }
+	if (!bColony && F) { F->ScarWorld(World, bEvacuated ? 0.5f : 0.25f); }   // a world of theirs: the scar kept and put back next session
 	Report(FString::Printf(TEXT("%s has struck %s. %s"), *Rock, *World, *Text), FLinearColor(1.f, 0.4f, 0.3f), ECrewDepartment::Science);
 	if (UCrewRosterSubsystem* R = Roster())
 	{

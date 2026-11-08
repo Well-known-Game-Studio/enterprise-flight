@@ -782,6 +782,17 @@ bool FSlonkMissionImpactTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("the loss taken"), S.Missions->GetStanding(), Standing1 - 40);
 	S.Missions->ImpactOutcome(Rock3, World2, EImpactOutcome::Struck);
 	TestEqual(TEXT("once"), S.Missions->GetStanding(), Standing1 - 40);
+	// A fourth, abandoned with its rock still out: the world is spoken for until the rock is done with.
+	const FString D3 = S.ChartedWithWorlds(2); const FString World3 = D3 + TEXT(" II");
+	S.Frontier->Found(ESettlementKind::Outpost, D3, World3); S.Frontier->Found(ESettlementKind::Colony, D3, World3);
+	S.Missions->AdvanceSeconds(1.f, S.Ship(D3));
+	const int32 Id4 = S.Missions->RaiseEvent(EMissionKind::Impact);
+	if (!TestTrue(TEXT("raised a fourth time"), Id4 > 0)) { return false; }
+	TestTrue(TEXT("abandoned too"), S.Missions->Abandon(Id4, Reply));
+	TestEqual(TEXT("no second rock for a world under one"), S.Missions->RaiseEvent(EMissionKind::Impact), -1);
+	// A world not ours struck: the scar is the frontier's to keep.
+	S.Missions->ImpactOutcome(TEXT("Asteroid 0-Z"), D3 + TEXT(" III"), EImpactOutcome::Struck);
+	TestEqual(TEXT("a quarter of its lights"), S.Frontier->WorldScar(D3 + TEXT(" III")), 0.25f);
 	return true;
 }
 
