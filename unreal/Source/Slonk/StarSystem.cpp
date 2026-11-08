@@ -7,6 +7,8 @@
 #include "BeltField.h"
 #include "FarBody.h"
 #include "SpaceTraffic.h"
+#include "Nebula.h"
+#include "ScienceScannerComponent.h"
 
 AStarSystem::AStarSystem()
 {
@@ -320,6 +322,19 @@ void AStarSystem::RenameSystem(const FString& NewName)
 	{
 		if (It->GetAttachParentActor() != this) { continue; }
 		if (It->PlanetName.StartsWith(Old + TEXT(" "))) { It->PlanetName = NewName + It->PlanetName.RightChop(Old.Len()); }
+	}
+	// The clouds the dressing pass hung off its giants ("<giant> Nebula"), adopted by the anchor or still loose
+	// within its radius: their names are the science log's labels too.
+	for (TActorIterator<ANebula> It(GetWorld()); It; ++It)
+	{
+		if (!It->NebulaName.StartsWith(Old + TEXT(" "))) { continue; }
+		if (It->GetAttachParentActor() != this && (It->GetAttachParentActor() != nullptr || DistanceFrom(It->GetActorLocation()) > RadiusCm)) { continue; }
+		It->NebulaName = NewName + It->NebulaName.RightChop(Old.Len());
+	}
+	// A scan under way of the star, a world or a cloud here would file its record under the old label otherwise.
+	for (TObjectIterator<UScienceScannerComponent> It; It; ++It)
+	{
+		if (It->GetWorld() == GetWorld()) { It->RenameSystem(Old, NewName); }
 	}
 	UE_LOG(LogTemp, Log, TEXT("Star system %s is now %s"), *Old, *NewName);
 }

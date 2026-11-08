@@ -136,6 +136,8 @@ private:
 	/** A name no system in the sky or the catalogue carries, and not the scanner's "Deep space". */
 	bool IsNameFree(const FCatalogueEntry& E, const FString& Want) const;
 	AStarSystem* SystemOf(const FCatalogueEntry& E) const;
+	/** The name in the sky, the lit world, the science log, the missions' targets and the contact records follow. */
+	void ApplyRename(FCatalogueEntry& E, const FString& Old, const FString& New);
 	UMissionSubsystem* Missions() const;
 	void Report(const FString& Text, const FLinearColor& Color = FLinearColor(0.75f, 0.9f, 1.f), ECrewDepartment From = ECrewDepartment::Science);
 	/** What the sector holds where the ship is, raised as events (one per visit). */

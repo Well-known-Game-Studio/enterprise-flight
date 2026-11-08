@@ -242,6 +242,16 @@ void UScienceScannerComponent::Cancel()
 	if (IsBusy()) { Finish(TEXT("scan cancelled")); }
 }
 
+void UScienceScannerComponent::RenameSystem(const FString& Old, const FString& New)
+{
+	if (!IsBusy() || Old.IsEmpty() || New.IsEmpty() || Old == New) { return; }
+	// The star carries the bare name; its worlds, their surfaces and its clouds the name and a space.
+	if (TargetLabel == Old) { TargetLabel = New; }
+	else if (TargetLabel.StartsWith(Old + TEXT(" "))) { TargetLabel = New + TargetLabel.RightChop(Old.Len()); }
+	else { return; }
+	UE_LOG(LogTemp, Log, TEXT("Science: the scan in progress is now of %s"), *TargetLabel);
+}
+
 void UScienceScannerComponent::Finish(const FString& Why)
 {
 	if (AStarshipPawn* Ship = Cast<AStarshipPawn>(GetOwner()))

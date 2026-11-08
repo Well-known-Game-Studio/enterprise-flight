@@ -517,6 +517,12 @@ bool FSlonkMissionExploreTest::RunTest(const FString& Parameters)
 	const FCatalogueEntry* After = S.Exploration->Find(Designation);
 	TestEqual(TEXT("named by the catalogue"), After->GivenName, After->ProperName);
 	TestEqual(TEXT("the mission follows the name"), S.Missions->Find(Id)->TargetName, After->ProperName);
+	// A reset of the catalogue takes the names back everywhere they went.
+	const FString Proper = After->ProperName;
+	S.Exploration->Reset();
+	TestEqual(TEXT("nothing charted"), S.Exploration->CountCharted(), 0);
+	TestNull(TEXT("the name is gone"), S.Exploration->Find(Proper));
+	TestEqual(TEXT("the mission is back on the catalogue number"), S.Missions->Find(Id)->TargetName, Designation);
 	return true;
 }
 

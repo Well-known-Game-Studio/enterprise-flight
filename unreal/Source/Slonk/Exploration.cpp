@@ -117,10 +117,26 @@ void UExplorationSubsystem::Save()
 
 void UExplorationSubsystem::Reset()
 {
+	// The names given go back to the catalogue numbers everywhere they went (the missions' targets, the science
+	// log's records, the stars and worlds in the sky) before the catalogue is made anew; the stars lose their
+	// worlds only with a new session.
+	for (FCatalogueEntry& E : Catalogue) { if (!E.GivenName.IsEmpty()) { ApplyRename(E, E.GivenName, E.Designation); } }
 	Catalogue = MakeCatalogue(CatalogueSeed, CatalogueCount); Contacts.Reset();
-	// The stars in the world keep their designations again, and lose their worlds only with a new session.
-	for (FCatalogueEntry& E : Catalogue) { if (AStarSystem* S = SystemOf(E)) { S->RenameSystem(E.Designation); S->bCharted = false; } }
+	for (FCatalogueEntry& E : Catalogue) { if (AStarSystem* S = SystemOf(E)) { S->bCharted = false; } }
 	Save();
+}
+
+void UExplorationSubsystem::ApplyRename(FCatalogueEntry& E, const FString& OldName, const FString& New)
+{
+	const FString Old = OldName;   // a copy: Reset passes the entry's own given name, cleared on the next line
+	if (Old.IsEmpty() || New.IsEmpty() || Old == New) { return; }
+	E.GivenName = New == E.Designation ? FString() : New;
+	if (AStarSystem* S = SystemOf(E)) { S->RenameSystem(New); }
+	// The lit world the sensors noted carries the system's name too.
+	if (E.PreWarpWorld.StartsWith(Old + TEXT(" "))) { E.PreWarpWorld = New + E.PreWarpWorld.RightChop(Old.Len()); }
+	if (UScienceLogSubsystem* L = GetGameInstance() ? GetGameInstance()->GetSubsystem<UScienceLogSubsystem>() : nullptr) { L->RenameSystem(Old, New); }
+	if (UMissionSubsystem* M = Missions()) { M->RenameTarget(Old, New); }
+	for (FContactRecord& C : Contacts) { if (C.System == Old) { C.System = New; } }
 }
 
 const FCatalogueEntry* UExplorationSubsystem::Find(const FString& NameOrDesignation) const
@@ -309,14 +325,7 @@ bool UExplorationSubsystem::Name(const FString& NameOrDesignation, const FString
 	if (Want.IsEmpty()) { Want = E->ProperName; }
 	if (Want.Len() > 24) { OutReply = TEXT("A name of twenty-four letters at most"); return false; }
 	if (!IsNameFree(*E, Want)) { OutReply = FString::Printf(TEXT("%s is taken"), *Want); return false; }
-	const FString Old = E->Name();
-	E->GivenName = Want;
-	if (AStarSystem* S = SystemOf(*E)) { S->RenameSystem(Want); }
-	// The lit world the sensors noted carries the system's name too.
-	if (E->PreWarpWorld.StartsWith(Old + TEXT(" "))) { E->PreWarpWorld = Want + E->PreWarpWorld.RightChop(Old.Len()); }
-	if (UScienceLogSubsystem* L = GetGameInstance() ? GetGameInstance()->GetSubsystem<UScienceLogSubsystem>() : nullptr) { L->RenameSystem(Old, Want); }
-	if (UMissionSubsystem* M = Missions()) { M->RenameTarget(Old, Want); }
-	for (FContactRecord& C : Contacts) { if (C.System == Old) { C.System = Want; } }
+	ApplyRename(*E, E->Name(), Want);
 	Report(FString::Printf(TEXT("%s is entered in the chart as %s."), *E->Designation, *Want), FLinearColor(0.7f, 1.f, 0.8f), ECrewDepartment::Operations);
 	OutReply = FString::Printf(TEXT("%s is now %s"), *E->Designation, *Want);
 	Save();

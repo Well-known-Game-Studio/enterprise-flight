@@ -919,6 +919,15 @@ void AStarshipHUD::DrawEllipse(float CX, float CY, float RX, float RY, const FLi
 	}
 }
 
+/** A star of the catalogue nobody has been to yet: by its system's chart, not its label (a charted system keeps
+ *  its catalogue number until it is named). */
+static bool IsUnchartedStar(const FNavObject& O)
+{
+	if (O.Kind != ENavObjectKind::Star || !O.Actor) { return false; }
+	const AStarSystem* Sys = Cast<AStarSystem>(O.Actor->GetAttachParentActor());
+	return Sys && !Sys->bCharted;
+}
+
 void AStarshipHUD::DrawNavMarkers(const AActor* Ship, float UIScale)
 {
 	GatherNavObjects();
@@ -942,7 +951,7 @@ void AStarshipHUD::DrawNavMarkers(const AActor* Ship, float UIScale)
 		if (!bIsNavTarget && !PassesNavFilter(O.Kind)) { continue; }
 		FLinearColor Color = KindColor(O.Kind);
 		// An uncharted sun of the catalogue is a fainter thing on the display until the ship has been there.
-		if (O.Kind == ENavObjectKind::Star && O.Label.StartsWith(TEXT("UFC "))) { Color = FLinearColor(Color.R * 0.6f, Color.G * 0.6f, Color.B * 0.6f, Color.A * 0.75f); }
+		if (IsUnchartedStar(O)) { Color = FLinearColor(Color.R * 0.6f, Color.G * 0.6f, Color.B * 0.6f, Color.A * 0.75f); }
 		if (bIsNavTarget)
 		{
 			Color = NavTargetColor();
@@ -1170,7 +1179,7 @@ void AStarshipHUD::DrawMinimap(const AActor* Ship, float UIScale)
 		if (!bIsNavTarget && O.Kind != ENavObjectKind::Star && !PassesNavFilter(O.Kind)) { continue; }
 		FLinearColor Color = KindColor(O.Kind);
 		// An uncharted sun of the catalogue is a fainter thing on the display until the ship has been there.
-		if (O.Kind == ENavObjectKind::Star && O.Label.StartsWith(TEXT("UFC "))) { Color = FLinearColor(Color.R * 0.6f, Color.G * 0.6f, Color.B * 0.6f, Color.A * 0.75f); }
+		if (IsUnchartedStar(O)) { Color = FLinearColor(Color.R * 0.6f, Color.G * 0.6f, Color.B * 0.6f, Color.A * 0.75f); }
 		float Dot = O.Kind == ENavObjectKind::Star ? 5.f : O.Kind == ENavObjectKind::Moon ? 1.5f : 3.f;
 		Dot *= UIScale;
 		if (FMath::Abs(P.Y - Base.Y) > 1.f)

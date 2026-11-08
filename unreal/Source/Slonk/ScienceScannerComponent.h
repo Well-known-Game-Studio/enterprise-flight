@@ -40,6 +40,9 @@ public:
 	bool BeginSurfaceSurvey(APlanetBody* Body, FString& OutReason);
 	void Cancel();
 	bool IsBusy() const { return State != EScanState::Idle; }
+	/** A system was renamed under a scan in progress: the label the record will carry follows it (so the record
+	 *  matches the migrated log and counts toward the survey), the surface survey's included. */
+	void RenameSystem(const FString& Old, const FString& New);
 
 	UFUNCTION(BlueprintPure, Category = "Science") EScanState GetState() const { return State; }
 	UFUNCTION(BlueprintPure, Category = "Science") float GetProgress() const { return Progress; }

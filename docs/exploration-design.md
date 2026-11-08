@@ -27,7 +27,10 @@ name nobody has given it yet, and a state:
 A charted system is named: the captain's choice (`ship chart name <name>`; the designation stays as its catalogue
 number) or, when the chart is filed unnamed, the catalogue's own. Its worlds carry the system's name with
 numerals until the survey names them. Charted systems join the galaxy's names: missions can be sent to their
-worlds, the fleet's runs can go there, the star chart calls them by name.
+worlds, the fleet's runs can go there, the star chart calls them by name. A name given follows everywhere the old
+one went: the star and its worlds in the sky, the clouds hung off its giants, the science log's records and keys,
+the missions' targets, the contact records, a scan under way at the moment of naming; `ship chart reset` takes
+them all back to the catalogue numbers the same way.
 
 Charting happens by **arrival**, mission or not. The captain who points the ship at an unknown star and goes is
 exploring, and the subsystem rewards it the same.

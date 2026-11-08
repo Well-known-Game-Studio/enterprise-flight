@@ -185,12 +185,25 @@ void ASlonkGameMode::SpawnNebulaeFor(const TArray<APlanetBody*>& Giants)
 	UWorld* World = GetWorld();
 	if (!World) { return; }
 	int32 N = 0;
+	TMap<const AStarSystem*, int32> Ordinals;   // for giants no system lists (the level's own): the order met
 	for (APlanetBody* It : Giants)
 	{
 		if (!It) { continue; }
 		const FVector Centre = It->GetActorLocation();
 		// Away from the giant's own sun (the home star sits at the origin; another system's does not).
 		const AStarSystem* Sys = AStarSystem::Nearest(World, Centre);
+		// The cloud's seed and palette belong to the giant, not to how many clouds this pass has made: a system
+		// dressed on arrival and the same system regenerated at the next start must get the same cloud. The
+		// giant's place in its system's list and the system's seed give it; the first cloud of a system is the
+		// pink one.
+		int32 Ordinal = Sys ? Sys->Planets.IndexOfByKey(It) : INDEX_NONE;
+		int32 Rank = 0;
+		if (Sys && Ordinal != INDEX_NONE)
+		{
+			for (int32 i = 0; i < Ordinal; ++i) { const APlanetBody* P = Sys->Planets[i]; if (P && P->Style.bRings && P->IsGiant()) { ++Rank; } }
+		}
+		else { Ordinal = 100 + Ordinals.FindOrAdd(Sys); Rank = Ordinals[Sys]++; }
+		const int32 SystemSeed = Sys ? Sys->Spec.Seed : 0;
 		const FVector Away = (Centre - (Sys ? Sys->GetStarLocation() : FVector::ZeroVector)).GetSafeNormal();
 		const double RadiusCm = 1.5e10;
 		const FVector Loc = Centre + Away * (RadiusCm * 2.5) + It->GetActorRightVector() * (RadiusCm * 0.8);
@@ -199,9 +212,9 @@ void ASlonkGameMode::SpawnNebulaeFor(const TArray<APlanetBody*>& Giants)
 		if (!Neb) { continue; }
 		Neb->NebulaName = It->GetDisplayName() + TEXT(" Nebula");
 		Neb->RadiusKm = (float)(RadiusCm / 1.0e5);
-		if (N == 0) { Neb->ColorA = FLinearColor(0.95f, 0.35f, 0.55f); Neb->ColorB = FLinearColor(0.3f, 0.45f, 1.0f); Neb->EmissiveColor = FLinearColor(1.0f, 0.5f, 0.8f); }
+		if (Rank == 0) { Neb->ColorA = FLinearColor(0.95f, 0.35f, 0.55f); Neb->ColorB = FLinearColor(0.3f, 0.45f, 1.0f); Neb->EmissiveColor = FLinearColor(1.0f, 0.5f, 0.8f); }
 		else { Neb->ColorA = FLinearColor(0.35f, 0.9f, 0.7f); Neb->ColorB = FLinearColor(0.2f, 0.35f, 0.8f); Neb->EmissiveColor = FLinearColor(0.5f, 0.95f, 0.8f); }
-		Neb->Seed = 17.f * N + 3.f;
+		Neb->Seed = (float)((SystemSeed * 31 + Ordinal * 17 + 3) % 1000);
 		Neb->ApplyAppearance();
 		++N;
 	}
