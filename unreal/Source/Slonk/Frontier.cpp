@@ -168,14 +168,14 @@ bool UFrontierSubsystem::CanFound(ESettlementKind Kind, const FString& SystemNam
 	{
 	case ESettlementKind::Outpost:
 		// Off the world a colony would take, never the pre-warp one (the Prime Directive: nothing of ours in their sky).
-		for (const FString& W : E->HabitableWorlds) { if (W != E->PreWarpWorld) { OutWorld = W; break; } }
-		if (OutWorld.IsEmpty()) { for (const FString& W : E->SolidWorlds) { if (W != E->PreWarpWorld) { OutWorld = W; break; } } }
+		for (const FString& W : E->HabitableWorlds) { if (!E->IsLit(W)) { OutWorld = W; break; } }
+		if (OutWorld.IsEmpty()) { for (const FString& W : E->SolidWorlds) { if (!E->IsLit(W)) { OutWorld = W; break; } } }
 		if (OutWorld.IsEmpty()) { OutWhy = FString::Printf(TEXT("%s has no solid world to put it off%s"), *Name, E->PreWarpWorld.IsEmpty() ? TEXT("") : TEXT(" that is not theirs")); return false; }
 		return true;
 	case ESettlementKind::Colony:
 	{
 		if (!Find(Name, ESettlementKind::Outpost) && !Find(Name, ESettlementKind::Starbase)) { OutWhy = FString::Printf(TEXT("%s has no outpost yet; the settlers need somewhere to land to"), *Name); return false; }
-		for (const FString& W : E->HabitableWorlds) { if (W != E->PreWarpWorld) { OutWorld = W; break; } }
+		for (const FString& W : E->HabitableWorlds) { if (!E->IsLit(W)) { OutWorld = W; break; } }
 		if (OutWorld.IsEmpty()) { OutWhy = FString::Printf(TEXT("%s has no habitable world%s"), *Name, E->HabitableWorlds.Num() > 0 ? TEXT(" that is not already someone's") : TEXT("")); return false; }
 		return true;
 	}
@@ -191,7 +191,7 @@ bool UFrontierSubsystem::CanFound(ESettlementKind Kind, const FString& SystemNam
 	}
 }
 
-const FCatalogueEntry* UFrontierSubsystem::PickSystem(ESettlementKind Kind, FRandomStream& R, FString& OutWorld) const
+const FCatalogueEntry* UFrontierSubsystem::PickSystem(ESettlementKind Kind, FRandomStream& R, FString& OutWorld, const TSet<FString>* ExcludeSystems) const
 {
 	const UExplorationSubsystem* X = Exploration();
 	if (!X) { return nullptr; }
@@ -200,6 +200,7 @@ const FCatalogueEntry* UFrontierSubsystem::PickSystem(ESettlementKind Kind, FRan
 	for (const FCatalogueEntry& E : X->GetCatalogue())
 	{
 		FString W, Why;
+		if (ExcludeSystems && ExcludeSystems->Contains(E.Name())) { continue; }   // an order for it is out already
 		if (CanFound(Kind, E.Designation, W, Why)) { Can.Add(&E); Worlds.Add(W); }
 	}
 	if (Can.Num() == 0) { return nullptr; }
@@ -281,6 +282,7 @@ void UFrontierSubsystem::Strike(const FString& World, bool bEvacuated, FString& 
 		const double Before = S.Population;
 		const double Dead = FMath::Min(Before, (Before < 5000.0 ? Before : Before * 0.7) * (bEvacuated ? 0.5 : 1.0));
 		S.Population = FMath::Max(0.0, Before - Dead);
+		S.Scar = bEvacuated ? 0.5f : 0.25f;   // the lights that are left, dimmed, until the colony has grown back fourfold
 		OutText = S.Population <= 0.0 ? FString::Printf(TEXT("%s is gone: %.0f people."), *S.Name, Dead) : FString::Printf(TEXT("%s: %.0f dead of %.0f%s."), *S.Name, Dead, Before, bEvacuated ? TEXT(", the evacuation having got the rest clear") : TEXT(""));
 		Report(OutText, FLinearColor(1.f, 0.5f, 0.4f), ECrewDepartment::Medical);
 		if (UWorld* W = GetWorld()) { LightWorld(W, S); }
@@ -298,7 +300,14 @@ void UFrontierSubsystem::RenameSystem(const FString& OldName, const FString& New
 		if (S.System != OldName) { continue; }
 		S.System = NewName; bAny = true;
 		if (S.World.StartsWith(OldName + TEXT(" "))) { S.World = NewName + S.World.RightChop(OldName.Len()); }
-		if (S.Name.StartsWith(OldName + TEXT(" "))) { S.Name = NewName + S.Name.RightChop(OldName.Len()); }
+		if (S.Name.StartsWith(OldName + TEXT(" ")))
+		{
+			// The station in the sky carries the name too (the missions' targets follow through the mission system's own rename).
+			const FString Was = S.Name;
+			S.Name = NewName + S.Name.RightChop(OldName.Len());
+			if (UWorld* W = GetWorld()) { for (TActorIterator<ASpaceVessel> V(W); V; ++V) { if (V->VesselName == Was) { V->VesselName = S.Name; } } }
+			if (float* L = LightsApplied.Find(Was)) { LightsApplied.Add(S.Name, *L); LightsApplied.Remove(Was); }
+		}
 	}
 	if (bAny) { Save(); }
 }
@@ -336,10 +345,12 @@ void UFrontierSubsystem::SpawnStation(UWorld* World, const FSettlement& S)
 
 void UFrontierSubsystem::LightWorld(UWorld* World, const FSettlement& S)
 {
+	const float L = LightsFor(S.Population) * S.Scar;
+	LightsApplied.Add(S.Name, L);
 	for (TActorIterator<APlanetBody> B(World); B; ++B)
 	{
 		if (B->GetDisplayName() != S.World) { continue; }
-		B->SetNightLights(LightsFor(S.Population));
+		B->SetNightLights(L);
 		return;
 	}
 }
@@ -360,9 +371,12 @@ void UFrontierSubsystem::AdvanceSeconds(float RealSeconds, const FMissionShipSta
 		if (S.Kind == ESettlementKind::Colony && S.Population > 0.0)
 		{
 			// A colony grows one in a hundred a day: a world in a few years.
-			const double Before = S.Population;
 			S.Population *= FMath::Pow(1.01, Dt / 24.0);
-			if (FMath::Abs(LightsFor(S.Population) - LightsFor(Before)) > 0.2) { if (UWorld* W = GetWorld()) { LightWorld(W, S); } }
+			// The lights follow the people once they have changed enough to see, against the lights last set (a step
+			// at a time would never add up); a scar fades as the colony grows back past what it lost.
+			if (S.Scar < 1.f && LightsFor(S.Population) * S.Scar >= LightsFor(S.Population / (S.Scar < 0.5f ? 4.0 : 2.0))) { S.Scar = 1.f; }
+			const float* Applied = LightsApplied.Find(S.Name);
+			if (!Applied || FMath::Abs(LightsFor(S.Population) * S.Scar - *Applied) > 0.2f) { if (UWorld* W = GetWorld()) { LightWorld(W, S); } }
 			bChanged = true;
 		}
 		if (S.Kind == ESettlementKind::Starbase && !S.bCommissioned && S.WorksHoursLeft > 0.0)

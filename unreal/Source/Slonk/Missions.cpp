@@ -165,7 +165,7 @@ void UMissionSubsystem::RenameTarget(const FString& OldName, const FString& NewN
 	for (FMission& M : Missions)
 	{
 		const bool bSystem = M.TargetName == OldName;
-		const bool bWorld = (M.TargetKind == EMissionTarget::World || M.TargetKind == EMissionTarget::System) && M.TargetName.StartsWith(OldName + TEXT(" "));
+		const bool bWorld = (M.TargetKind == EMissionTarget::World || M.TargetKind == EMissionTarget::System || M.TargetKind == EMissionTarget::Station) && M.TargetName.StartsWith(OldName + TEXT(" "));   // a station named for its world too
 		if (!bSystem && !bWorld) { continue; }
 		const FString Was = M.TargetName;
 		M.TargetName = bSystem ? NewName : NewName + M.TargetName.RightChop(OldName.Len());
@@ -265,8 +265,10 @@ void UMissionSubsystem::Expire()
 		}
 		else if (M.Kind == EMissionKind::Impact)
 		{
-			// The hour came with the rock still on course: it lands (the actor says so itself where there is one).
-			ImpactOutcome(M.Site, M.TargetName, EImpactOutcome::Struck);
+			// The hour came. Where the rock is real it says itself how it ends (held in the beam, or slowed, it may be
+			// late): the deadline follows it. Without one, it lands.
+			if (const AImpactor* Rock = AImpactor::FindByName(GetWorld(), M.Site)) { M.DeadlineStardate = SD + FMath::Max(Rock->HoursToClosest(), 1.0) / 24.0; Dirty(); }
+			else { ImpactOutcome(M.Site, M.TargetName, EImpactOutcome::Struck); }
 		}
 		else
 		{
@@ -306,8 +308,10 @@ FString UMissionSubsystem::CivilianName(FRandomStream& R) const
 bool UMissionSubsystem::PickTarget(FMission& M, FRandomStream& R)
 {
 	// A place named from outside (a proposal, a dev rock): taken as given, the kind's own rules aside.
+	const bool bExpansion = M.Kind == EMissionKind::Outpost || M.Kind == EMissionKind::Colony || M.Kind == EMissionKind::Starbase;
 	if (!ForcedTarget.IsEmpty())
 	{
+		if (bExpansion && HasOpenExpansion(M.Kind, M.Kind == EMissionKind::Colony ? ForcedSite : ForcedTarget)) { return false; }   // one order a system
 		M.TargetName = ForcedTarget; M.Site = ForcedSite;
 		M.TargetKind = M.Kind == EMissionKind::Colony || M.Kind == EMissionKind::Impact ? EMissionTarget::World : EMissionTarget::System;
 		return true;
@@ -346,7 +350,8 @@ bool UMissionSubsystem::PickTarget(FMission& M, FRandomStream& R)
 		const UFrontierSubsystem* F = Frontier();
 		const ESettlementKind SK = M.Kind == EMissionKind::Outpost ? ESettlementKind::Outpost : M.Kind == EMissionKind::Colony ? ESettlementKind::Colony : ESettlementKind::Starbase;
 		FString World;
-		const FCatalogueEntry* E = F ? F->PickSystem(SK, R, World) : nullptr;
+		TSet<FString> Busy; for (const FMission& O : Missions) { if (O.IsOpen() && O.Kind == M.Kind) { Busy.Add(O.Kind == EMissionKind::Colony ? O.Site : O.TargetName); } }   // one order of a kind a system
+		const FCatalogueEntry* E = F ? F->PickSystem(SK, R, World, &Busy) : nullptr;
 		if (!E) { return false; }
 		if (M.Kind == EMissionKind::Colony) { M.TargetKind = EMissionTarget::World; M.TargetName = World; M.Site = E->Name(); }
 		else { M.TargetKind = EMissionTarget::System; M.TargetName = E->Name(); }
@@ -591,6 +596,7 @@ FMission UMissionSubsystem::MakeMission(EMissionKind Kind, EMissionSource Source
 	case EMissionKind::Starbase:
 	{
 		M.Title = FString::Printf(TEXT("A starbase for %s"), *T); M.Standing = 40;
+		M.DeadlineStardate += UFrontierSubsystem::StarbaseWorksHours / 24.0;   // the works themselves, on top of the leg and the margin
 		M.Brief = FString::Printf(TEXT("Starfleet will build a starbase in %s: the construction corps and the first hull sections wait at a starbase, the works take days, and the ship holds the ground."), *T);
 		FMissionStage S0 = StageAt(TEXT("The corps"), TEXT("Four hundred of the construction corps and the first hull sections: a starbase in kit form."), EMissionTarget::Station, TEXT(""));
 		S0.Options.Add(Opt(TEXT("Embark the construction corps and the hull sections"), S::Engineering, 45.f, D::Engineering, TEXT(""), TEXT(""), TEXT("Embarked; the bay has never been so full."), TEXT("Embarked, over two days instead of one."), 1, 1, false, 0.f));
@@ -688,13 +694,25 @@ void UMissionSubsystem::AfterOption(FMission& M, const FMissionOption& O, bool b
 	{
 		UFrontierSubsystem* F = Frontier();
 		// The site: the survey's pick (the habitable first), else the first solid ground; then the outpost itself.
-		if (M.Stage == 2 && M.Site.IsEmpty() && X) { if (const FCatalogueEntry* E = X->Find(M.TargetName)) { if (E->SolidWorlds.Num() > 0) { M.Site = bSuccess ? E->SolidWorlds[0] : E->SolidWorlds.Last(); } } }
+		if (M.Stage == 2 && M.Site.IsEmpty() && X)
+		{
+			if (const FCatalogueEntry* E = X->Find(M.TargetName))
+			{
+				TArray<FString> Free; for (const FString& W : E->SolidWorlds) { if (!E->IsLit(W)) { Free.Add(W); } }   // never in someone's sky
+				if (Free.Num() > 0) { M.Site = bSuccess ? Free[0] : Free.Last(); }
+			}
+		}
 		if (bOver && bSucceeded && F) { F->Found(ESettlementKind::Outpost, M.TargetName, M.Site); }
 		break;
 	}
 	case EMissionKind::Colony:
-		if (bOver && bSucceeded) { if (UFrontierSubsystem* F = Frontier()) { F->Found(ESettlementKind::Colony, M.Site, M.TargetName); } }
+	{
+		// The settlers are down once the landing is behind them: the colony is theirs from then (lit, counted, worth
+		// defending), whatever the first weeks bring.
+		UFrontierSubsystem* F = Frontier();
+		if (F && ((M.Stage == 2 && !bOver) || (bOver && bSucceeded)) && !F->Find(M.Site, ESettlementKind::Colony)) { F->Found(ESettlementKind::Colony, M.Site, M.TargetName); }
 		break;
+	}
 	case EMissionKind::Starbase:
 	{
 		UFrontierSubsystem* F = Frontier();
@@ -773,7 +791,30 @@ void UMissionSubsystem::RollEvent()
 void UMissionSubsystem::Place(FMission& M)
 {
 	if (M.TargetKind == EMissionTarget::Vessel && M.Source == EMissionSource::Event) { SpawnEventVessel(M, M.TargetName); }
-	if (M.Kind == EMissionKind::Impact) { SpawnImpactor(M); }
+	if (M.Kind == EMissionKind::Impact) { SpawnImpactor(M, M.ImpactHours); }
+}
+
+bool UMissionSubsystem::HasOpenExpansion(EMissionKind Kind, const FString& System) const
+{
+	for (const FMission& M : Missions) { if (M.IsOpen() && M.Kind == Kind && (M.Kind == EMissionKind::Colony ? M.Site : M.TargetName) == System) { return true; } }
+	return false;
+}
+
+void UMissionSubsystem::RestoreImpactors()
+{
+	// The rock of an open impact mission, where it would be by now on the course its seed gives: the hours left to
+	// the deadline. One whose hour has passed lands at the next tick (Expire finds no rock).
+	UWorld* W = GetWorld();
+	if (!W) { return; }
+	int32 N = 0;
+	for (FMission& M : Missions)
+	{
+		if (!M.IsOpen() || M.Kind != EMissionKind::Impact || M.Site.IsEmpty() || AImpactor::FindByName(W, M.Site)) { continue; }
+		const double HoursLeft = (M.DeadlineStardate - Stardate()) * 24.0;
+		if (HoursLeft <= 0.0) { continue; }
+		SpawnImpactor(M, HoursLeft); ++N;
+	}
+	if (N > 0) { UE_LOG(LogTemp, Log, TEXT("Missions: %d rocks back on their courses"), N); }
 }
 
 bool UMissionSubsystem::PickInhabitedWorld(FMission& M, FRandomStream& R, bool bHere)
@@ -806,14 +847,14 @@ bool UMissionSubsystem::PickInhabitedWorld(FMission& M, FRandomStream& R, bool b
 	return true;
 }
 
-void UMissionSubsystem::SpawnImpactor(FMission& M)
+void UMissionSubsystem::SpawnImpactor(FMission& M, double HoursToImpact)
 {
 	UWorld* W = GetWorld();
 	if (!W || M.Site.IsEmpty()) { return; }
 	APlanetBody* Target = nullptr;
 	for (TActorIterator<APlanetBody> It(W); It; ++It) { if (It->GetDisplayName() == M.TargetName) { Target = *It; break; } }
 	if (!Target) { return; }
-	if (AImpactor* Rock = AImpactor::Spawn(W, Target, M.Site, M.ImpactHours, M.Site.StartsWith(TEXT("Comet")), M.Id * 131 + 7)) { Rock->MissionId = M.Id; }
+	if (AImpactor* Rock = AImpactor::Spawn(W, Target, M.Site, HoursToImpact, M.Site.StartsWith(TEXT("Comet")), M.Id * 131 + 7)) { Rock->MissionId = M.Id; }
 }
 
 void UMissionSubsystem::CompleteOutside(FMission& M, const FString& Why, const FString& Text)
@@ -827,18 +868,24 @@ void UMissionSubsystem::CompleteOutside(FMission& M, const FString& Why, const F
 
 void UMissionSubsystem::ImpactOutcome(const FString& Rock, const FString& World, EImpactOutcome Outcome)
 {
+	// The mission for the rock: the open one, else the closed one (abandoned by the captain; or completed as averted
+	// before the rock was bent back): a landing counts against it either way.
 	FMission* MP = nullptr; for (FMission& M : Missions) { if (M.IsOpen() && M.Kind == EMissionKind::Impact && M.Site == Rock) { MP = &M; } }
+	if (!MP) { for (FMission& M : Missions) { if (M.Kind == EMissionKind::Impact && M.Site == Rock) { MP = &M; } } }
 	if (Outcome != EImpactOutcome::Struck)
 	{
-		if (MP) { CompleteOutside(*MP, Outcome == EImpactOutcome::Averted ? TEXT("the rock goes wide") : TEXT("the rock broken up"), Outcome == EImpactOutcome::Averted ? FString::Printf(TEXT("%s will miss %s. The world never knew."), *Rock, *World) : FString::Printf(TEXT("%s is in pieces, and the pieces go wide of %s."), *Rock, *World)); }
+		if (MP && MP->IsOpen()) { CompleteOutside(*MP, Outcome == EImpactOutcome::Averted ? TEXT("the rock goes wide") : TEXT("the rock broken up"), Outcome == EImpactOutcome::Averted ? FString::Printf(TEXT("%s will miss %s. The world never knew."), *Rock, *World) : FString::Printf(TEXT("%s is in pieces, and the pieces go wide of %s."), *Rock, *World)); }
 		Dirty();
 		return;
 	}
 	// It lands. The world is marked, the colony counts its dead, Starfleet's regard falls, and the crew carry it.
+	if (MP && MP->State == EMissionState::Failed) { return; }   // it has landed once already
 	const bool bEvacuated = MP && MP->bEvacuated;
 	FString Text;
-	if (UFrontierSubsystem* F = Frontier()) { F->Strike(World, bEvacuated, Text); }
-	if (UWorld* W = GetWorld()) { for (TActorIterator<APlanetBody> It(W); It; ++It) { if (It->GetDisplayName() == World) { It->SetNightLights(It->Style.NightLightIntensity * (bEvacuated ? 0.5f : 0.25f)); } } }
+	UFrontierSubsystem* F = Frontier();
+	const bool bColony = F && F->ColonyWorlds().Contains(World);
+	if (F) { F->Strike(World, bEvacuated, Text); }   // a colony's lights are its own: dimmed by its scar
+	if (!bColony) { if (UWorld* W = GetWorld()) { for (TActorIterator<APlanetBody> It(W); It; ++It) { if (It->GetDisplayName() == World) { It->SetNightLights(It->Style.NightLightIntensity * (bEvacuated ? 0.5f : 0.25f)); } } } }
 	Report(FString::Printf(TEXT("%s has struck %s. %s"), *Rock, *World, *Text), FLinearColor(1.f, 0.4f, 0.3f), ECrewDepartment::Science);
 	if (UCrewRosterSubsystem* R = Roster())
 	{
@@ -848,7 +895,7 @@ void UMissionSubsystem::ImpactOutcome(const FString& Rock, const FString& World,
 	if (MP)
 	{
 		MP->Log.Add(FString::Printf(TEXT("      %s"), *Text));
-		Close(*MP, EMissionState::Failed, TEXT("the rock landed"));
+		Close(*MP, EMissionState::Failed, MP->IsOpen() ? TEXT("the rock landed") : TEXT("the rock landed after all"));
 		const int32 Loss = MP->FailLoss >= 0 ? MP->FailLoss : MP->Standing / 2;
 		Standing -= Loss; ++Failed;
 		Report(FString::Printf(TEXT("%s: failed. Starfleet's regard: %d."), *MP->Title, -Loss), FLinearColor(1.f, 0.6f, 0.5f));

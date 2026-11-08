@@ -4072,10 +4072,12 @@ void AStarshipPawn::HandleFrontierCommand(const TArray<FString>& Args)
 		// The case put to Starfleet: the order comes if the system qualifies, else the reason it does not.
 		ESettlementKind K;
 		if (!UFrontierSubsystem::ParseKind(Word(2), K)) { Say(TEXT("propose <outpost|colony|starbase> [<system>]"), FColor::Orange); return; }
-		const FString Sys = SystemArg(3);
+		FString Sys = SystemArg(3);
 		FString World, Why;
 		if (!F->CanFound(K, Sys, World, Why)) { Say(FString::Printf(TEXT("Starfleet declines: %s"), *Why), FColor::Orange, 12.f); return; }
+		if (const FCatalogueEntry* E = X->Find(Sys)) { Sys = E->Name(); }   // the order by the name in use, so arrival matches it
 		const EMissionKind MK = K == ESettlementKind::Outpost ? EMissionKind::Outpost : K == ESettlementKind::Colony ? EMissionKind::Colony : EMissionKind::Starbase;
+		if (M->HasOpenExpansion(MK, Sys)) { Say(FString::Printf(TEXT("Starfleet has that order out already for %s"), *Sys), FColor::Orange, 12.f); return; }
 		const int32 Id = M->DevSpawnAt(MK, EMissionSource::Starfleet, K == ESettlementKind::Colony ? World : Sys, K == ESettlementKind::Colony ? Sys : FString());
 		if (const FMission* Ms = M->Find(Id)) { Say(FString::Printf(TEXT("Starfleet agrees: %s. The order is in your inbox (#%d)."), *Ms->Title, Id)); }
 		else { Say(TEXT("Starfleet has no answer"), FColor::Orange); }

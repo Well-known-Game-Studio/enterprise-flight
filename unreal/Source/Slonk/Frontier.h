@@ -33,6 +33,8 @@ struct FSettlement
 	/** A starbase's works: hours of ship's time until it can be commissioned; 0 when built. */
 	UPROPERTY(BlueprintReadOnly) double WorksHoursLeft = 0.0;
 	UPROPERTY(BlueprintReadOnly) bool bCommissioned = true;
+	/** A colony's lights after a strike: a quarter (half if it was warned) until it has grown back; 1 unmarked. */
+	UPROPERTY() float Scar = 1.f;
 	UPROPERTY() int32 Seed = 0;
 	bool IsStation() const { return Kind != ESettlementKind::Colony; }
 };
@@ -67,7 +69,7 @@ public:
 	/** Whether this kind may be founded in the system now, and the world it would take (empty for a starbase). */
 	bool CanFound(ESettlementKind Kind, const FString& SystemName, FString& OutWorld, FString& OutWhy) const;
 	/** A system where the kind may be founded: one of the nearest few by the last ship state, or null. */
-	const FCatalogueEntry* PickSystem(ESettlementKind Kind, FRandomStream& R, FString& OutWorld) const;
+	const FCatalogueEntry* PickSystem(ESettlementKind Kind, FRandomStream& R, FString& OutWorld, const TSet<FString>* ExcludeSystems = nullptr) const;
 	/** Found it: the station spawned or the world lit, the record kept, the bridge told. Null when it may not be. */
 	const FSettlement* Found(ESettlementKind Kind, const FString& SystemName, const FString& World);
 	/** A starbase's works are done: commissioned, its patrol ships out. False with hours still to go. */
@@ -110,8 +112,9 @@ private:
 	void Report(const FString& Text, const FLinearColor& Color = FLinearColor(0.75f, 0.9f, 1.f), ECrewDepartment From = ECrewDepartment::Operations);
 	/** The station into the world (the kind's style, off its world or the star), its patrol ships if commissioned. */
 	void SpawnStation(UWorld* World, const FSettlement& S);
-	/** The colony world's lights for its people. */
+	/** The colony world's lights for its people (and its scar), remembered so growth refreshes them when they change. */
 	void LightWorld(UWorld* World, const FSettlement& S);
+	TMap<FString, float> LightsApplied;
 
 	UPROPERTY() TArray<FSettlement> Settlements;
 	int32 NextStarbaseNumber = 400;

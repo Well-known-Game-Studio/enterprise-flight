@@ -35,7 +35,8 @@ public:
 	double HoursToClosest() const;
 	bool WillHit() const;
 	bool IsComet() const { return bComet; }
-	const FString& GetWorldName() const { return WorldName; }
+	/** The world's name now (it follows a rename); the one at the spawn when the world is gone. */
+	FString GetWorldName() const;
 	int32 MissionId = -1;
 
 	/** A push off the course: a change of velocity (cm/s) in this direction; the sideways part is what counts. */
@@ -53,6 +54,8 @@ public:
 	/** The beam's push: cm/s^2 of sideways acceleration while the tractor holds the rock. */
 	static constexpr double TractorPushCmPerS2 = 300.0;
 	static constexpr double SpeedCmPerS = 2.5e6;   // 25 km/s
+	/** An averted rock is retired this far past the world (three million kilometres). */
+	static constexpr double RetireCm = 3.0e11;
 
 private:
 	FVector WorldUniverse() const;
@@ -70,6 +73,7 @@ private:
 	FVector Velocity = FVector::ZeroVector;
 	bool bComet = false;
 	bool bResolved = false;
+	bool bStruck = false;
 	bool bPlaced = false;
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> Coma;
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> Tail;

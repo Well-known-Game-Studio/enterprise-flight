@@ -133,6 +133,7 @@ FVector AImpactor::WorldUniverse() const
 
 double AImpactor::MissDistanceCm() const { return TrackMissDistance(Universe, Velocity, WorldUniverse()); }
 double AImpactor::HoursToClosest() const { return TrackSecondsToClosest(Universe, Velocity, WorldUniverse()) / 3600.0; }
+FString AImpactor::GetWorldName() const { return TargetWorld.IsValid() ? TargetWorld->GetDisplayName() : WorldName; }
 bool AImpactor::WillHit() const { return TargetWorld.IsValid() && MissDistanceCm() < TargetWorld->GetRadiusCm() + Radius; }
 
 void AImpactor::Push(const FVector& DeltaV)
@@ -143,7 +144,6 @@ void AImpactor::Push(const FVector& DeltaV)
 void AImpactor::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
-	if (bResolved) { return; }
 	const float SimDt = UGameClockSubsystem::Sim(this, DeltaTime);
 	// Under the beam: the beam has moved the rock (its hold on the clock makes these real seconds) and the push
 	// it gives is a change of course toward the ship, the longer the harder.
@@ -171,9 +171,12 @@ void AImpactor::Tick(float DeltaTime)
 	{
 		const double D = FVector::Dist(Universe, WorldUniverse());
 		if (D <= TargetWorld->GetRadiusCm() + Radius) { Strike(); return; }
-		// Off its course by a margin (nothing bends it back): averted, the mission told once; or past the world.
 		const double R = TargetWorld->GetRadiusCm();
-		if ((!bHeld && MissDistanceCm() > R * 1.5 + Radius) || (TrackSecondsToClosest(Universe, Velocity, WorldUniverse()) <= 0.0 && D > R * 3.0)) { Resolve(EImpactOutcome::Averted); }
+		const bool bPast = TrackSecondsToClosest(Universe, Velocity, WorldUniverse()) <= 0.0;
+		// Averted (off its course by a margin, nothing bending it back; or past the world): the mission is told once,
+		// and the rock sails on, a rock like any other, until it is well past the world and retired.
+		if (!bResolved && ((!bHeld && MissDistanceCm() > R * 1.5 + Radius) || (bPast && D > R * 3.0))) { Resolve(EImpactOutcome::Averted); }
+		if (bResolved && bPast && D > RetireCm && !bHeld) { Destroy(); return; }
 	}
 }
 
@@ -199,7 +202,7 @@ void AImpactor::UpdateTail()
 
 float AImpactor::TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent, AController* EventInstigator, AActor* DamageCauser)
 {
-	if (Health <= 0.f || bResolved) { return 0.f; }
+	if (Health <= 0.f) { return 0.f; }
 	const float Applied = AActor::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
 	Health -= Applied;
 	if (Health <= 0.f) { Shatter(); }
@@ -208,7 +211,8 @@ float AImpactor::TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent,
 
 void AImpactor::Shatter()
 {
-	if (bResolved) { return; }
+	if (Health <= 0.f && bResolved) { return; }   // already in pieces
+	Health = 0.f;
 	AExplosionEffect::SpawnExplosion(GetWorld(), GetActorLocation(), Radius * 3.f, 1.6f);
 	// The pieces: three rocks a third the size, scattered, going nowhere.
 	FRandomStream R(GetTypeHash(DisplayName));
@@ -227,7 +231,7 @@ void AImpactor::Shatter()
 
 void AImpactor::Strike()
 {
-	if (bResolved) { return; }
+	if (bStruck) { return; }
 	AExplosionEffect::SpawnExplosion(GetWorld(), GetActorLocation(), Radius * 12.f, 3.0f);
 	Resolve(EImpactOutcome::Struck);
 	Destroy();
@@ -235,9 +239,12 @@ void AImpactor::Strike()
 
 void AImpactor::Resolve(EImpactOutcome Outcome)
 {
-	if (bResolved) { return; }
+	// Averted or shattered is said once. A landing is said even after an averted call (a rock bent back onto
+	// the world lands all the same), once.
+	if (Outcome == EImpactOutcome::Struck) { if (bStruck) { return; } bStruck = true; }
+	else if (bResolved) { return; }
 	bResolved = true;
-	if (UMissionSubsystem* M = GetGameInstance() ? GetGameInstance()->GetSubsystem<UMissionSubsystem>() : nullptr) { M->ImpactOutcome(DisplayName, WorldName, Outcome); }
+	if (UMissionSubsystem* M = GetGameInstance() ? GetGameInstance()->GetSubsystem<UMissionSubsystem>() : nullptr) { M->ImpactOutcome(DisplayName, GetWorldName(), Outcome); }
 }
 
 void AImpactor::DevDeflect()

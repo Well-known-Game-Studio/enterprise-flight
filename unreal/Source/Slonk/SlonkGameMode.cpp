@@ -100,6 +100,8 @@ void ASlonkGameMode::SpawnStarSystems()
 	if (UExplorationSubsystem* X = UExplorationSubsystem::Get(this)) { X->SpawnStars(World, HomeStar); }
 	// What the Federation has founded out there: stations off their worlds, colony worlds lit.
 	if (UFrontierSubsystem* F = UFrontierSubsystem::Get(this)) { F->SpawnSettlements(World); }
+	// The rocks of the impact missions still open, back on their courses.
+	if (UMissionSubsystem* Ms = GetGameInstance() ? GetGameInstance()->GetSubsystem<UMissionSubsystem>() : nullptr) { Ms->RestoreImpactors(); }
 }
 
 void ASlonkGameMode::SpawnHomeGiant(AStarSystem* Home)

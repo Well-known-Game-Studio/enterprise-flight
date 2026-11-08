@@ -683,6 +683,8 @@ bool FSlonkMissionOutpostTest::RunTest(const FString& Parameters)
 	if (!TestNotNull(TEXT("an order"), M)) { return false; }
 	TestEqual(TEXT("a system"), (int32)M->TargetKind, (int32)EMissionTarget::System);
 	TestEqual(TEXT("the charted one"), M->TargetName, D);
+	TestEqual(TEXT("one order a system"), S.Missions->DevSpawn(EMissionKind::Outpost, EMissionSource::Starfleet), -1);
+	TestEqual(TEXT("nor by proposal"), S.Missions->DevSpawnAt(EMissionKind::Outpost, EMissionSource::Starfleet, D, FString()), -1);
 	FString Reply; FMissionOutcome Out;
 	TestTrue(TEXT("accepted"), S.Missions->Accept(Id, Reply));
 	// The module is loaded alongside any starbase, the site chosen in the system, the outpost raised there.
@@ -705,6 +707,7 @@ bool FSlonkMissionOutpostTest::RunTest(const FString& Parameters)
 	S.Missions->AddStanding(UFrontierSubsystem::StarbaseStandingNeeded, TEXT("test"));
 	const int32 Id2 = S.Missions->DevSpawn(EMissionKind::Starbase, EMissionSource::Starfleet);
 	if (!TestTrue(TEXT("a starbase order"), Id2 > 0)) { return false; }
+	TestTrue(TEXT("the works are in the deadline"), S.Missions->Find(Id2)->DeadlineStardate >= S.Missions->Stardate() + UFrontierSubsystem::StarbaseWorksHours / 24.0 + 2.0 - 0.01);
 	TestTrue(TEXT("accepted"), S.Missions->Accept(Id2, Reply));
 	S.Missions->AdvanceSeconds(1.f, S.Alongside());
 	TestTrue(TEXT("corps embarked"), S.Missions->Act(Id2, 0, Out, Reply));
@@ -761,6 +764,73 @@ bool FSlonkMissionImpactTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("failed"), (int32)S.Missions->Find(Id2)->State, (int32)EMissionState::Failed);
 	TestEqual(TEXT("the regard lost"), S.Missions->GetStanding(), Standing0 - 40);
 	TestEqual(TEXT("the colony gone"), S.Frontier->AtWorld(World)->Population, 0.0);
+	// A third, for another colony, abandoned by the captain: the rock is still real, and its landing is still the
+	// ship's failure.
+	const FString D2 = S.ChartedWithWorlds(1); const FString World2 = D2 + TEXT(" II");
+	S.Frontier->Found(ESettlementKind::Outpost, D2, World2); S.Frontier->Found(ESettlementKind::Colony, D2, World2);
+	S.Missions->AdvanceSeconds(1.f, S.Ship(D2));
+	const int32 Id3 = S.Missions->RaiseEvent(EMissionKind::Impact);
+	if (!TestTrue(TEXT("raised a third time"), Id3 > 0)) { return false; }
+	const FString Rock3 = S.Missions->Find(Id3)->Site;
+	TestTrue(TEXT("abandoned"), S.Missions->Abandon(Id3, Reply));
+	const int32 Standing1 = S.Missions->GetStanding();
+	S.Missions->ImpactOutcome(Rock3, World2, EImpactOutcome::Struck);
+	TestEqual(TEXT("the second colony gone"), S.Frontier->AtWorld(World2)->Population, 0.0);
+	TestEqual(TEXT("failed after all"), (int32)S.Missions->Find(Id3)->State, (int32)EMissionState::Failed);
+	TestEqual(TEXT("the loss taken"), S.Missions->GetStanding(), Standing1 - 40);
+	S.Missions->ImpactOutcome(Rock3, World2, EImpactOutcome::Struck);
+	TestEqual(TEXT("once"), S.Missions->GetStanding(), Standing1 - 40);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkMissionColonyTest, "Slonk.Missions.Colony", SLONK_TEST_FLAGS)
+bool FSlonkMissionColonyTest::RunTest(const FString& Parameters)
+{
+	FSystems S;
+	const FString D = S.ChartedWithWorlds(0);
+	const FString World = D + TEXT(" II");
+	S.Frontier->Found(ESettlementKind::Outpost, D, World);
+	const int32 Id = S.Missions->DevSpawn(EMissionKind::Colony, EMissionSource::Starfleet);
+	const FMission* M = S.Missions->Find(Id);
+	if (!TestNotNull(TEXT("an order"), M)) { return false; }
+	TestEqual(TEXT("the habitable world"), M->TargetName, World);
+	TestEqual(TEXT("its system"), M->Site, D);
+	TestEqual(TEXT("one order a system"), S.Missions->DevSpawn(EMissionKind::Colony, EMissionSource::Starfleet), -1);
+	FString Reply; FMissionOutcome Out;
+	TestTrue(TEXT("accepted"), S.Missions->Accept(Id, Reply));
+	S.Missions->AdvanceSeconds(1.f, S.Alongside());
+	TestTrue(TEXT("embarked"), S.Missions->Act(Id, 0, Out, Reply));
+	TestFalse(TEXT("not at the world"), S.Missions->Act(Id, 0, Out, Reply));
+	TestNull(TEXT("no colony yet"), S.Frontier->Find(D, ESettlementKind::Colony));
+	S.Missions->AdvanceSeconds(1.f, S.Ship(D, { World }));
+	TestTrue(TEXT("landed"), S.Missions->Act(Id, 0, Out, Reply));
+	TestEqual(TEXT("the first weeks next"), S.Missions->Find(Id)->Stage, 2);
+	// The colony is theirs from the landing: lit, counted, and a world the sky can threaten.
+	if (!TestNotNull(TEXT("founded at the landing"), S.Frontier->Find(D, ESettlementKind::Colony))) { return false; }
+	TestTrue(TEXT("a colony world"), S.Frontier->ColonyWorlds().Contains(World));
+	TestTrue(TEXT("the ship leaves them to it"), S.Missions->Act(Id, 1, Out, Reply));
+	TestTrue(TEXT("over"), Out.bMissionOver);
+	int32 Colonies = 0; for (const FSettlement* X : S.Frontier->InSystem(D)) { if (X->Kind == ESettlementKind::Colony) { ++Colonies; } }
+	TestEqual(TEXT("one colony"), Colonies, 1);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFrontierPrimeTest, "Slonk.Frontier.Prime", SLONK_TEST_FLAGS)
+bool FSlonkFrontierPrimeTest::RunTest(const FString& Parameters)
+{
+	// Two lit worlds, both habitable: nothing of ours goes to either; the outpost takes the dead one.
+	FSystems S;
+	const FString D = S.Exploration->GetCatalogue()[0].Designation;
+	S.Exploration->Chart(D, false);
+	S.Exploration->SetWorldsForTest(D, { D + TEXT(" I"), D + TEXT(" II"), D + TEXT(" III") }, { D + TEXT(" II"), D + TEXT(" III") }, D + TEXT(" II"), { D + TEXT(" II"), D + TEXT(" III") });
+	const FCatalogueEntry* E = S.Exploration->Find(D);
+	TestTrue(TEXT("the second lit world is theirs too"), E && E->IsLit(D + TEXT(" III")));
+	FString World, Why;
+	TestTrue(TEXT("an outpost may be founded"), S.Frontier->CanFound(ESettlementKind::Outpost, D, World, Why));
+	TestEqual(TEXT("off the dead world"), World, D + TEXT(" I"));
+	TestNotNull(TEXT("founded"), S.Frontier->Found(ESettlementKind::Outpost, D, World));
+	TestFalse(TEXT("no colony in someone's sky"), S.Frontier->CanFound(ESettlementKind::Colony, D, World, Why));
+	TestTrue(TEXT("says whose"), Why.Contains(TEXT("someone's")));
 	return true;
 }
 

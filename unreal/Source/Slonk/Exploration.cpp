@@ -138,6 +138,7 @@ void UExplorationSubsystem::ApplyRename(FCatalogueEntry& E, const FString& OldNa
 	Follow(E.PreWarpWorld);
 	for (FString& W : E.SolidWorlds) { Follow(W); }
 	for (FString& W : E.HabitableWorlds) { Follow(W); }
+	for (FString& W : E.LitWorlds) { Follow(W); }
 	if (UFrontierSubsystem* F = GetGameInstance() ? GetGameInstance()->GetSubsystem<UFrontierSubsystem>() : nullptr) { F->RenameSystem(Old, New); }
 	if (FrontierOverride.IsValid()) { FrontierOverride->RenameSystem(Old, New); }
 	if (UScienceLogSubsystem* L = GetGameInstance() ? GetGameInstance()->GetSubsystem<UScienceLogSubsystem>() : nullptr) { L->RenameSystem(Old, New); }
@@ -155,15 +156,19 @@ const FCatalogueEntry* UExplorationSubsystem::EntryForWorld(const FString& World
 {
 	for (const FCatalogueEntry& E : Catalogue)
 	{
-		if (E.SolidWorlds.Contains(World) || E.HabitableWorlds.Contains(World) || (!E.PreWarpWorld.IsEmpty() && E.PreWarpWorld == World)) { return &E; }
+		if (E.SolidWorlds.Contains(World) || E.HabitableWorlds.Contains(World) || E.IsLit(World)) { return &E; }
 		if (E.State != EChartState::Unknown && World.StartsWith(E.Name() + TEXT(" "))) { return &E; }
 	}
 	return nullptr;
 }
 
-void UExplorationSubsystem::SetWorldsForTest(const FString& NameOrDesignation, const TArray<FString>& Solid, const TArray<FString>& Habitable, const FString& PreWarp)
+void UExplorationSubsystem::SetWorldsForTest(const FString& NameOrDesignation, const TArray<FString>& Solid, const TArray<FString>& Habitable, const FString& PreWarp, const TArray<FString>& Lit)
 {
-	if (FCatalogueEntry* E = FindMutable(NameOrDesignation)) { E->SolidWorlds = Solid; E->HabitableWorlds = Habitable; E->PreWarpWorld = PreWarp; E->Worlds = Solid.Num(); }
+	if (FCatalogueEntry* E = FindMutable(NameOrDesignation))
+	{
+		E->SolidWorlds = Solid; E->HabitableWorlds = Habitable; E->PreWarpWorld = PreWarp; E->Worlds = Solid.Num();
+		E->LitWorlds = Lit; if (!PreWarp.IsEmpty()) { E->LitWorlds.AddUnique(PreWarp); }
+	}
 }
 
 FCatalogueEntry* UExplorationSubsystem::FindMutable(const FString& NameOrDesignation)
@@ -248,19 +253,19 @@ bool UExplorationSubsystem::Reveal(const FString& Designation)
 	// What the sensors count, kept for the chart: the worlds, the lit one, and which have ground (the habitable
 	// first, for whoever would settle there).
 	int32 Worlds = 0; FString PreWarp;
-	TArray<FString> Habitable, Solid, Other;
+	TArray<FString> Habitable, Solid, Other, Lit;
 	for (const APlanetBody* P : S->Planets)
 	{
 		if (!P || P->IsMoon()) { continue; }
 		++Worlds;
-		if (P->Style.NightLightIntensity > 0.001f && PreWarp.IsEmpty()) { PreWarp = P->GetDisplayName(); }
+		if (P->Style.NightLightIntensity > 0.001f) { Lit.Add(P->GetDisplayName()); if (PreWarp.IsEmpty()) { PreWarp = P->GetDisplayName(); } }
 		if (!P->HasSolidSurface()) { continue; }
 		const EPlanetArchetype A = P->ResolvedArchetype;
 		if (A == EPlanetArchetype::Terrestrial || A == EPlanetArchetype::Ocean) { Habitable.Add(P->GetDisplayName()); }
 		else if (A == EPlanetArchetype::Desert || A == EPlanetArchetype::Mars) { Solid.Add(P->GetDisplayName()); }
 		else { Other.Add(P->GetDisplayName()); }
 	}
-	E->Worlds = Worlds; E->PreWarpWorld = PreWarp;
+	E->Worlds = Worlds; E->PreWarpWorld = PreWarp; E->LitWorlds = Lit;
 	E->HabitableWorlds = Habitable;
 	E->SolidWorlds = Habitable; E->SolidWorlds.Append(Solid); E->SolidWorlds.Append(Other);
 	return true;

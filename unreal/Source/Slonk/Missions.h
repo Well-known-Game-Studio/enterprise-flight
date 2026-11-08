@@ -188,6 +188,10 @@ public:
 	void AddStanding(int32 Delta, const FString& Why);
 	/** A place was named: open missions pointed at it follow. */
 	void RenameTarget(const FString& OldName, const FString& NewName);
+	/** An expansion order (outpost, colony, starbase) for the system is open already. */
+	bool HasOpenExpansion(EMissionKind Kind, const FString& System) const;
+	/** A session's start, the planets in: the rocks of the open impact missions, where they would be by now. */
+	void RestoreImpactors();
 	double Stardate() const;
 
 	// ---- the captain ----
@@ -266,7 +270,7 @@ private:
 	void SpawnEventVessel(FMission& M, const FString& Name);
 	/** What a mission brings into the world when it is made (an encounter's hull, an impact's rock). */
 	void Place(FMission& M);
-	void SpawnImpactor(FMission& M);
+	void SpawnImpactor(FMission& M, double HoursToImpact);
 	/** An inhabited world (a lit one in a charted system, a colony of ours): here, or anywhere but here. */
 	bool PickInhabitedWorld(FMission& M, FRandomStream& R, bool bHere);
 	/** Closed from outside the captain's choices (the rock missed): complete, paid, reported. */
