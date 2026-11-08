@@ -244,9 +244,25 @@ ancient beacon whose decoded coordinates point at the next unknown star, one cha
 line reads the system's state and the survey's progress; `ship chart` lists the sector and the peoples met. The
 design is in `docs/exploration-design.md`.
 
+## The frontier
+
+What the Federation does with charted space, and what the ship does when a world is in danger. Starfleet's orders
+(and a starbase's board, and the captain's own proposal, `ship frontier propose <kind> [<system>]`) found
+**outposts** (a small station off a solid world, loaded at a starbase and raised in the system), **colonies**
+(eight hundred settlers carried from a starbase to a habitable world that is nobody's, lit from their first night
+and growing every ship's day) and **starbases** (a Spacedock with its own patrol ships, three days of works from
+the keel to the commissioning, where Starfleet's regard for the ship is high); each order is carried in stages
+with a place of its own (the starbase to load at, then the system), the settlements are saved and replayed, and
+the chart's CHART line shows them. And **impact**: an asteroid or comet on a course for an inhabited world (a
+colony, a pre-warp world, a lit world of the home system), a real rock in the nav list moving under the game clock,
+with a day or two to its landing; tracked and the world warned, then diverted at the rock by the crew's checks, or
+by the ship herself: the tractor beam held on it pushes it off its course the longer it holds, phasers and
+torpedoes break it. A rock that lands dims the world, empties a colony and costs Starfleet's regard. `ship
+frontier` and `ship impact` on the console; the design is in `docs/frontier-design.md`.
+
 ## Tests
 
-The crew roster, the missions, the fleet and the exploration catalogue have headless automation tests (`unreal/Source/Slonk/Tests`, run with
+The crew roster, the missions, the fleet, the exploration catalogue and the frontier have headless automation tests (`unreal/Source/Slonk/Tests`, run with
 `tools/run_tests.sh`, no window or GPU, about half a minute) that build the three systems off the disk and drive
 them through their public API; the rounds are smoke-tested in play with scripts over the editor's MCP plugin. How
 and what is in `docs/testing.md`.

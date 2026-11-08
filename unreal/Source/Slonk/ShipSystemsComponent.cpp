@@ -13,6 +13,8 @@
 #include "WarpDriveComponent.h"
 #include "Missions.h"
 #include "Exploration.h"
+#include "Frontier.h"
+#include "Impactor.h"
 
 UShipSystemsComponent::UShipSystemsComponent()
 {
@@ -187,6 +189,8 @@ void UShipSystemsComponent::TickRoster(float DeltaTime, float RealDeltaTime)
 			if (FVector::Dist(It->GetActorLocation(), Here) < It->GetRadiusCm() * 6.0) { NearbyNames.AddUnique(N); }
 			if (bBind && It->HasSolidSurface()) { Worlds.Add(N); }
 		}
+		// A rock on a course: within hailing distance like a hull.
+		for (TActorIterator<AImpactor> It(GetWorld()); It; ++It) { if (FVector::Dist(It->GetActorLocation(), Here) < 3.0e7) { NearbyNames.AddUnique(It->GetDisplayName()); } }
 		if (bBind && (Worlds.Num() + Stations.Num() + Ships.Num()) > 0) { R->BindPlaces(Worlds, Stations, Ships); }
 	}
 	State.Nearby = NearbyNames;
@@ -245,6 +249,12 @@ void UShipSystemsComponent::TickMissions(float DeltaTime, const TArray<FString>&
 		X->AdvanceSeconds(RealDeltaTime, St);
 		TArray<FCrewReport> Theirs; X->DrainReports(Theirs); Said.Append(Theirs);
 		M->DrainReports(Theirs); Said.Append(Theirs);   // an event raised by the arrival
+	}
+	// The frontier: the colonies grow and the works go on by the ship's hours.
+	if (UFrontierSubsystem* F = S->GetGameInstance()->GetSubsystem<UFrontierSubsystem>())
+	{
+		F->AdvanceSeconds(RealDeltaTime, St);
+		TArray<FCrewReport> Theirs; F->DrainReports(Theirs); Said.Append(Theirs);
 	}
 	UCrewRosterSubsystem* R = Roster.Get();
 	for (const FCrewReport& C : Said)

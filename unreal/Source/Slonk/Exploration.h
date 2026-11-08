@@ -32,6 +32,11 @@ struct FCatalogueEntry
 	UPROPERTY(BlueprintReadOnly) int32 Worlds = 0;
 	/** A world with city lights: a civilisation that has not left it. */
 	UPROPERTY(BlueprintReadOnly) FString PreWarpWorld;
+	/** Every world with lights at night (the pre-warp one first): nothing of ours goes there. */
+	UPROPERTY() TArray<FString> LitWorlds;
+	/** The worlds with ground, the habitable ones first; and those a colony could live on (terrestrial, ocean). */
+	UPROPERTY() TArray<FString> SolidWorlds;
+	UPROPERTY() TArray<FString> HabitableWorlds;
 	/** The people met there, if any. */
 	UPROPERTY(BlueprintReadOnly) FString Contact;
 	/** What the sector rolled for it, raised once each. */
@@ -43,6 +48,8 @@ struct FCatalogueEntry
 	UPROPERTY() bool bHasBeacon = false;
 	/** The name in use: the given one, else the designation. */
 	FString Name() const { return GivenName.IsEmpty() ? Designation : GivenName; }
+	/** Someone lives there already. */
+	bool IsLit(const FString& World) const { return LitWorlds.Contains(World) || (!PreWarpWorld.IsEmpty() && PreWarpWorld == World); }
 };
 
 /** A people met in new space and how it went. */
@@ -102,6 +109,10 @@ public:
 
 	const TArray<FCatalogueEntry>& GetCatalogue() const { return Catalogue; }
 	const FCatalogueEntry* Find(const FString& NameOrDesignation) const;
+	/** The entry whose worlds include this one (by the revealed lists, else the name's prefix), or null. */
+	const FCatalogueEntry* EntryForWorld(const FString& World) const;
+	/** Tests: the worlds a revealed system would have listed. */
+	void SetWorldsForTest(const FString& NameOrDesignation, const TArray<FString>& Solid, const TArray<FString>& Habitable, const FString& PreWarp = FString(), const TArray<FString>& Lit = {});
 	/** The entry the ship is in by the last state, or null. */
 	const FCatalogueEntry* Here() const { return Find(Last.SystemName); }
 	int32 CountCharted() const;
@@ -122,7 +133,7 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Exploration") void Reset();
 	/** Tests: the catalogue from the seed, no save slot, no world. */
-	void InitForTest(UMissionSubsystem* InMissions);
+	void InitForTest(UMissionSubsystem* InMissions, class UFrontierSubsystem* InFrontier = nullptr);
 	/** The catalogue from a seed (pure): designations unique, bearings apart, distances 6..30 ly. */
 	static TArray<FCatalogueEntry> MakeCatalogue(int32 Seed, int32 Count);
 	static constexpr int32 CatalogueSeed = 2461;
@@ -152,6 +163,7 @@ private:
 	int32 Revision = 0;
 	bool bNoDisk = false;
 	TWeakObjectPtr<UMissionSubsystem> MissionsOverride;
+	TWeakObjectPtr<class UFrontierSubsystem> FrontierOverride;
 	FRandomStream Rng;
 	static const TCHAR* SlotName;
 };

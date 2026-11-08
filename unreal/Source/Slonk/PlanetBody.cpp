@@ -965,6 +965,16 @@ void APlanetBody::PollWeatherMap(float DeltaTime)
 	}
 }
 
+void APlanetBody::SetNightLights(float Intensity)
+{
+	// The style is resolved once more from the seed (the same values) and then kept, so a later appearance pass
+	// does not roll the lights away again.
+	if (bStyleFromArchetype) { ResolveStyleFromArchetype(); bStyleFromArchetype = false; }
+	Style.NightLightIntensity = Intensity;
+	for (UMaterialInstanceDynamic* M : SurfaceMIDs()) { if (M) { M->SetScalarParameterValue(TEXT("NightLightIntensity"), Intensity); } }
+	if (Terrain) { Terrain->SetScalarParameter(TEXT("NightLightIntensity"), Intensity); }
+}
+
 bool APlanetBody::HasCities() const
 {
 	return Style.NightLightIntensity > 0.f && !IsGiant() && Style.ReliefFraction > 0.f && CityReachKm > 0.f;

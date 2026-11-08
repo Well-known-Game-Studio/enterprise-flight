@@ -1,6 +1,7 @@
 #include "SlonkGameMode.h"
 #include "StarSystem.h"
 #include "Exploration.h"
+#include "Frontier.h"
 #include "Kismet/GameplayStatics.h"
 #include "StarshipPawn.h"
 #include "SlonkTiming.h"
@@ -97,6 +98,10 @@ void ASlonkGameMode::SpawnStarSystems()
 	}
 	// The catalogue's uncharted stars: in the sky from the start, their worlds when the ship goes there.
 	if (UExplorationSubsystem* X = UExplorationSubsystem::Get(this)) { X->SpawnStars(World, HomeStar); }
+	// What the Federation has founded out there: stations off their worlds, colony worlds lit.
+	if (UFrontierSubsystem* F = UFrontierSubsystem::Get(this)) { F->SpawnSettlements(World); }
+	// The rocks of the impact missions still open, back on their courses.
+	if (UMissionSubsystem* Ms = GetGameInstance() ? GetGameInstance()->GetSubsystem<UMissionSubsystem>() : nullptr) { Ms->RestoreImpactors(); }
 }
 
 void ASlonkGameMode::SpawnHomeGiant(AStarSystem* Home)

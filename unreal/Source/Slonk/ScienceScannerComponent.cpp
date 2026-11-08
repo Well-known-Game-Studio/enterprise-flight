@@ -6,6 +6,7 @@
 #include "StarBody.h"
 #include "StarSystem.h"
 #include "Exploration.h"
+#include "Impactor.h"
 #include "BeltField.h"
 #include "Nebula.h"
 #include "SpaceVessel.h"
@@ -114,7 +115,7 @@ bool UScienceScannerComponent::ClassifyTarget(const AActor* Actor, EScanKind& Ou
 	if (Actor->IsA<ABorgCube>()) { OutKind = EScanKind::Hostile; return true; }
 	if (Actor->IsA<ASpaceStation>()) { OutKind = EScanKind::Station; return true; }
 	if (Actor->IsA<ASpaceVessel>() || Actor->IsA<AStarshipPawn>()) { OutKind = EScanKind::Ship; return true; }
-	if (Actor->IsA<ABeltField>()) { OutKind = EScanKind::Belt; return true; }
+	if (Actor->IsA<ABeltField>() || Actor->IsA<AImpactor>()) { OutKind = EScanKind::Belt; return true; }
 	if (Actor->IsA<ANebula>()) { OutKind = EScanKind::Nebula; return true; }
 	return false;
 }
@@ -174,12 +175,20 @@ bool UScienceScannerComponent::InRange(const AActor* Actor, EScanKind K, double&
 	}
 	case EScanKind::Belt:
 	{
-		// Distance from the ring's centre line, in the belt's own plane.
-		const ABeltField* B = CastChecked<ABeltField>(Actor);
-		const FVector Rel = B->GetActorTransform().InverseTransformPosition(ShipLoc);
-		const double Radial = FMath::Abs(FVector2D(Rel.X, Rel.Y).Size() - B->BeltRadiusCm);
-		OutDistCm = FMath::Sqrt(Radial * Radial + Rel.Z * Rel.Z);
-		OutRangeCm = BeltRangeHalfWidths * B->BeltHalfWidthCm;
+		// Distance from the ring's centre line, in the belt's own plane; a lone rock (an impactor) from its surface.
+		if (const ABeltField* B = Cast<ABeltField>(Actor))
+		{
+			const FVector Rel = B->GetActorTransform().InverseTransformPosition(ShipLoc);
+			const double Radial = FMath::Abs(FVector2D(Rel.X, Rel.Y).Size() - B->BeltRadiusCm);
+			OutDistCm = FMath::Sqrt(Radial * Radial + Rel.Z * Rel.Z);
+			OutRangeCm = BeltRangeHalfWidths * B->BeltHalfWidthCm;
+		}
+		else
+		{
+			const AImpactor* I = CastChecked<AImpactor>(Actor);
+			OutDistCm = To.Size() - I->Radius;
+			OutRangeCm = 5.0e7;   // five hundred kilometres
+		}
 		break;
 	}
 	case EScanKind::Nebula:
@@ -616,6 +625,12 @@ void UScienceScannerComponent::FactsForVessel(const AActor* A, FScanRecord& R) c
 
 void UScienceScannerComponent::FactsForBelt(const AActor* A, FScanRecord& R) const
 {
+	if (const AImpactor* I = Cast<AImpactor>(A))
+	{
+		R.Facts.Add(FString::Printf(TEXT("%s, %s across"), I->IsComet() ? TEXT("Dirty ice and dust") : TEXT("Nickel-iron and silicate"), *Km(2.0 * I->Radius)));
+		R.Facts.Add(FString::Printf(TEXT("On a course for %s: %.1f h to closest approach, %s"), *I->GetWorldName(), I->HoursToClosest(), I->WillHit() ? TEXT("on course") : *FString::Printf(TEXT("missing by %s"), *Km(I->MissDistanceCm()))));
+		return;
+	}
 	const ABeltField* B = CastChecked<ABeltField>(A);
 	R.Facts.Add(FString::Printf(TEXT("Orbit %.2f AU, %s wide"), B->BeltRadiusCm / AStarSystem::AuCm, *Km(2.0 * B->BeltHalfWidthCm)));
 	R.Facts.Add(FString::Printf(TEXT("Bodies from %.0f m to %s across"), B->MinRockRadiusCm / 50.0, *Km(2.0 * B->MaxRockRadiusCm)));

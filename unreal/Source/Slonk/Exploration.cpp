@@ -10,6 +10,7 @@
 #include "ScienceScannerComponent.h"
 #include "CrewRoster.h"
 #include "SlonkGameMode.h"
+#include "Frontier.h"
 
 const TCHAR* UExplorationSubsystem::SlotName = TEXT("Exploration");
 
@@ -27,9 +28,9 @@ UExplorationSubsystem* UExplorationSubsystem::Get(const UObject* WorldContext)
 	return GI ? GI->GetSubsystem<UExplorationSubsystem>() : nullptr;
 }
 
-void UExplorationSubsystem::InitForTest(UMissionSubsystem* InMissions)
+void UExplorationSubsystem::InitForTest(UMissionSubsystem* InMissions, UFrontierSubsystem* InFrontier)
 {
-	bNoDisk = true; MissionsOverride = InMissions;
+	bNoDisk = true; MissionsOverride = InMissions; FrontierOverride = InFrontier;
 	Rng.Initialize(13);
 	Catalogue = MakeCatalogue(CatalogueSeed, CatalogueCount);
 	Contacts.Reset();
@@ -132,8 +133,14 @@ void UExplorationSubsystem::ApplyRename(FCatalogueEntry& E, const FString& OldNa
 	if (Old.IsEmpty() || New.IsEmpty() || Old == New) { return; }
 	E.GivenName = New == E.Designation ? FString() : New;
 	if (AStarSystem* S = SystemOf(E)) { S->RenameSystem(New); }
-	// The lit world the sensors noted carries the system's name too.
-	if (E.PreWarpWorld.StartsWith(Old + TEXT(" "))) { E.PreWarpWorld = New + E.PreWarpWorld.RightChop(Old.Len()); }
+	// The lit world the sensors noted carries the system's name too, and the lists of its worlds.
+	auto Follow = [&](FString& W) { if (W.StartsWith(Old + TEXT(" "))) { W = New + W.RightChop(Old.Len()); } };
+	Follow(E.PreWarpWorld);
+	for (FString& W : E.SolidWorlds) { Follow(W); }
+	for (FString& W : E.HabitableWorlds) { Follow(W); }
+	for (FString& W : E.LitWorlds) { Follow(W); }
+	if (UFrontierSubsystem* F = GetGameInstance() ? GetGameInstance()->GetSubsystem<UFrontierSubsystem>() : nullptr) { F->RenameSystem(Old, New); }
+	if (FrontierOverride.IsValid()) { FrontierOverride->RenameSystem(Old, New); }
 	if (UScienceLogSubsystem* L = GetGameInstance() ? GetGameInstance()->GetSubsystem<UScienceLogSubsystem>() : nullptr) { L->RenameSystem(Old, New); }
 	if (UMissionSubsystem* M = Missions()) { M->RenameTarget(Old, New); }
 	for (FContactRecord& C : Contacts) { if (C.System == Old) { C.System = New; } }
@@ -143,6 +150,25 @@ const FCatalogueEntry* UExplorationSubsystem::Find(const FString& NameOrDesignat
 {
 	for (const FCatalogueEntry& E : Catalogue) { if (E.Designation == NameOrDesignation || (!E.GivenName.IsEmpty() && E.GivenName == NameOrDesignation)) { return &E; } }
 	return nullptr;
+}
+
+const FCatalogueEntry* UExplorationSubsystem::EntryForWorld(const FString& World) const
+{
+	for (const FCatalogueEntry& E : Catalogue)
+	{
+		if (E.SolidWorlds.Contains(World) || E.HabitableWorlds.Contains(World) || E.IsLit(World)) { return &E; }
+		if (E.State != EChartState::Unknown && World.StartsWith(E.Name() + TEXT(" "))) { return &E; }
+	}
+	return nullptr;
+}
+
+void UExplorationSubsystem::SetWorldsForTest(const FString& NameOrDesignation, const TArray<FString>& Solid, const TArray<FString>& Habitable, const FString& PreWarp, const TArray<FString>& Lit)
+{
+	if (FCatalogueEntry* E = FindMutable(NameOrDesignation))
+	{
+		E->SolidWorlds = Solid; E->HabitableWorlds = Habitable; E->PreWarpWorld = PreWarp; E->Worlds = Solid.Num();
+		E->LitWorlds = Lit; if (!PreWarp.IsEmpty()) { E->LitWorlds.AddUnique(PreWarp); }
+	}
 }
 
 FCatalogueEntry* UExplorationSubsystem::FindMutable(const FString& NameOrDesignation)
@@ -207,9 +233,9 @@ void UExplorationSubsystem::SpawnStars(UWorld* World, const FVector& HomeStarLoc
 		if (!S) { continue; }
 		S->bCharted = E.State != EChartState::Unknown;
 		Systems.Add(E.Designation, S);
-		// A charted system has its worlds from the start: the ship may be coming back to one.
-		if (E.State != EChartState::Unknown) { S->Reveal(); }
 	}
+	// A charted system has its worlds from the start (the ship may be coming back to one), and the chart its lists of them.
+	for (FCatalogueEntry& E : Catalogue) { if (E.State != EChartState::Unknown) { Reveal(E.Designation); } }
 	UE_LOG(LogTemp, Log, TEXT("Exploration: %d catalogue stars in the sky"), Systems.Num());
 }
 
@@ -224,10 +250,24 @@ bool UExplorationSubsystem::Reveal(const FString& Designation)
 		// Revealed after the start: the moons and the nebula the start passes would have given its giants.
 		if (ASlonkGameMode* GM = S->GetWorld() ? Cast<ASlonkGameMode>(S->GetWorld()->GetAuthGameMode()) : nullptr) { GM->DressSystem(S); }
 	}
-	// What the sensors count, kept for the chart.
+	// What the sensors count, kept for the chart: the worlds, the lit one, and which have ground (the habitable
+	// first, for whoever would settle there).
 	int32 Worlds = 0; FString PreWarp;
-	for (const APlanetBody* P : S->Planets) { if (P && !P->IsMoon()) { ++Worlds; if (P->Style.NightLightIntensity > 0.001f && PreWarp.IsEmpty()) { PreWarp = P->GetDisplayName(); } } }
-	E->Worlds = Worlds; E->PreWarpWorld = PreWarp;
+	TArray<FString> Habitable, Solid, Other, Lit;
+	for (const APlanetBody* P : S->Planets)
+	{
+		if (!P || P->IsMoon()) { continue; }
+		++Worlds;
+		if (P->Style.NightLightIntensity > 0.001f) { Lit.Add(P->GetDisplayName()); if (PreWarp.IsEmpty()) { PreWarp = P->GetDisplayName(); } }
+		if (!P->HasSolidSurface()) { continue; }
+		const EPlanetArchetype A = P->ResolvedArchetype;
+		if (A == EPlanetArchetype::Terrestrial || A == EPlanetArchetype::Ocean) { Habitable.Add(P->GetDisplayName()); }
+		else if (A == EPlanetArchetype::Desert || A == EPlanetArchetype::Mars) { Solid.Add(P->GetDisplayName()); }
+		else { Other.Add(P->GetDisplayName()); }
+	}
+	E->Worlds = Worlds; E->PreWarpWorld = PreWarp; E->LitWorlds = Lit;
+	E->HabitableWorlds = Habitable;
+	E->SolidWorlds = Habitable; E->SolidWorlds.Append(Solid); E->SolidWorlds.Append(Other);
 	return true;
 }
 

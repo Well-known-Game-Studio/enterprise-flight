@@ -11,7 +11,7 @@
 #include "Missions.generated.h"
 
 UENUM(BlueprintType)
-enum class EMissionKind : uint8 { Survey = 0, Rescue, Diplomacy, Delivery, Anomaly, Medical, Patrol, Contact, Derelict, Smuggler, Support, Assist, Explore, FirstContact, PreWarp, Beacon, Count UMETA(Hidden) };
+enum class EMissionKind : uint8 { Survey = 0, Rescue, Diplomacy, Delivery, Anomaly, Medical, Patrol, Contact, Derelict, Smuggler, Support, Assist, Explore, FirstContact, PreWarp, Beacon, Outpost, Colony, Starbase, Impact, Count UMETA(Hidden) };
 
 UENUM(BlueprintType)
 enum class EMissionSource : uint8 { Starfleet = 0, Starbase, Event, Fleet, Count UMETA(Hidden) };
@@ -47,6 +47,8 @@ struct FMissionOption
 	UPROPERTY(BlueprintReadOnly) int32 Science = 0;
 	/** Refused until the science log's survey of the target system is complete; carried without a check then. */
 	UPROPERTY(BlueprintReadOnly) bool bNeedsSurvey = false;
+	/** Refused while a starbase's works in the target system have hours to go; carried without a check then. */
+	UPROPERTY(BlueprintReadOnly) bool bNeedsWorks = false;
 };
 
 USTRUCT(BlueprintType)
@@ -58,6 +60,11 @@ struct FMissionStage
 	UPROPERTY(BlueprintReadOnly) TArray<FMissionOption> Options;
 	/** The ship must be at the target to act on it. */
 	UPROPERTY(BlueprintReadOnly) bool bAtTarget = true;
+	/** The stage's own place in place of the mission's (a starbase to load at, then the system): a Station with no
+	 *  name is any station the ship is alongside. */
+	UPROPERTY(BlueprintReadOnly) bool bOwnTarget = false;
+	UPROPERTY(BlueprintReadOnly) EMissionTarget TargetKind = EMissionTarget::None;
+	UPROPERTY(BlueprintReadOnly) FString TargetName;
 };
 
 USTRUCT(BlueprintType)
@@ -90,6 +97,16 @@ struct FMission
 	UPROPERTY(BlueprintReadOnly) TArray<FString> Log;
 	/** The station that posted it, for a starbase's board. */
 	UPROPERTY(BlueprintReadOnly) FString PostedAt;
+	/** The world chosen for an outpost; the rock's name for an impact. */
+	UPROPERTY(BlueprintReadOnly) FString Site;
+	/** An impact: the world was warned and is emptying. */
+	UPROPERTY(BlueprintReadOnly) bool bEvacuated = false;
+	/** An impact: hours of ship's time from the making to the rock's landing. */
+	UPROPERTY(BlueprintReadOnly) double ImpactHours = 0.0;
+	/** An impact: the rock itself is done with (gone wide, broken or landed), whatever became of the mission. */
+	UPROPERTY() bool bRockResolved = false;
+	/** A colony: the settlers embarked (0 for the eight hundred). */
+	UPROPERTY() double People = 0.0;
 	bool IsOpen() const { return State == EMissionState::Offered || State == EMissionState::Active; }
 	const FMissionStage* Current() const { return Stages.IsValidIndex(Stage) ? &Stages[Stage] : nullptr; }
 };
@@ -132,6 +149,8 @@ struct FMissionOutcome
 struct FFleetRequest;
 class UFleetSubsystem;
 class UExplorationSubsystem;
+class UFrontierSubsystem;
+enum class EImpactOutcome : uint8;
 
 UCLASS()
 class SLONK_API USlonkMissionSaveGame : public USaveGame
@@ -173,6 +192,10 @@ public:
 	void AddStanding(int32 Delta, const FString& Why);
 	/** A place was named: open missions pointed at it follow. */
 	void RenameTarget(const FString& OldName, const FString& NewName);
+	/** An expansion order (outpost, colony, starbase) for the system is open already. */
+	bool HasOpenExpansion(EMissionKind Kind, const FString& System) const;
+	/** A session's start, the planets in: the rocks of the open impact missions, where they would be by now. */
+	void RestoreImpactors();
 	double Stardate() const;
 
 	// ---- the captain ----
@@ -181,11 +204,19 @@ public:
 	/** Take an option of the current stage; the party is the mission's named one or the department's own. */
 	bool Act(int32 Id, int32 Option, FMissionOutcome& Out, FString& OutReply);
 	bool SetParty(int32 Id, const TArray<int32>& Ids, FString& OutReply);
-	/** The ship is at the mission's target now (by the last state's neighbourhood). */
+	/** The ship is at the mission's target now (by the last state's neighbourhood): the stage's own place if it has one. */
 	bool IsAtTarget(const FMission& M) const;
+	/** The place the current stage wants (the stage's own, else the mission's); "a starbase" for any station. */
+	FString TargetNameOf(const FMission& M) const;
+	EMissionTarget TargetKindOf(const FMission& M) const;
+	/** The rock reported in from the world: missed, broken, or landed. The mission closes either way. */
+	void ImpactOutcome(const FString& Rock, const FString& World, EImpactOutcome Outcome);
+	double Hours() const;
 	/** Dev: an order, a posting or an event of this kind, now. */
 	/** Returns the new id; -1 when nothing could be made (no target in reach), -2 when the kind brings its own hull and so only happens as an event. */
 	int32 DevSpawn(EMissionKind Kind, EMissionSource Source);
+	/** The same with the target named (a proposal's system, a rock's world); Site for a colony's system. */
+	int32 DevSpawnAt(EMissionKind Kind, EMissionSource Source, const FString& Target, const FString& Site);
 	/** The fleet ship's own work ended (done or failed): whatever of ours was on it closes. */
 	void FleetWorkOver(int32 MissionId, bool bTheirSuccess);
 	/** A fleet ship's request or offer is withdrawn (she managed, she is lost, she was recalled): closed, nothing owed. */
@@ -216,7 +247,7 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Missions") void Reset();
 	/** Tests: wired to these systems directly, no save slot, a fixed seed. */
-	void InitForTest(UCrewRosterSubsystem* InRoster, UFleetSubsystem* InFleet, UExplorationSubsystem* InExploration = nullptr);
+	void InitForTest(UCrewRosterSubsystem* InRoster, UFleetSubsystem* InFleet, UExplorationSubsystem* InExploration = nullptr, UFrontierSubsystem* InFrontier = nullptr);
 	void Save();
 
 private:
@@ -224,6 +255,7 @@ private:
 	UCrewRosterSubsystem* Roster() const;
 	UFleetSubsystem* Fleet() const;
 	UExplorationSubsystem* Exploration() const;
+	UFrontierSubsystem* Frontier() const;
 	/** What an option carried or failed does beyond the stage (a beacon decoded, a chart filed, a contact's record). */
 	void AfterOption(FMission& M, const FMissionOption& O, bool bSuccess, bool bOver, bool bSucceeded);
 	/** A fleet ship's request for support, or its work nearby, becomes a mission on the board. */
@@ -231,7 +263,6 @@ private:
 	void OfferAssists();
 	class AStarshipPawn* CrewedShip() const;
 	void Report(const FString& Text, const FLinearColor& Color = FLinearColor(0.75f, 0.9f, 1.f), ECrewDepartment From = ECrewDepartment::Command);
-	double Hours() const;
 	/** Any change: the panels refresh and a save follows in a couple of seconds. */
 	void Dirty() { ++Revision; bSaveWanted = true; SaveDelaySeconds = 2.f; }
 	// generation
@@ -241,6 +272,13 @@ private:
 	void PostBoard(const FString& StationName);
 	void RollEvent();
 	void SpawnEventVessel(FMission& M, const FString& Name);
+	/** What a mission brings into the world when it is made (an encounter's hull, an impact's rock). */
+	void Place(FMission& M);
+	void SpawnImpactor(FMission& M, double HoursToImpact);
+	/** An inhabited world (a lit one in a charted system, a colony of ours): here, or anywhere but here. */
+	bool PickInhabitedWorld(FMission& M, FRandomStream& R, bool bHere);
+	/** Closed from outside the captain's choices (the rock missed): complete, paid, reported. */
+	void CompleteOutside(FMission& M, const FString& Why, const FString& Text);
 	void Expire();
 	FString CivilianName(FRandomStream& R) const;
 	void Close(FMission& M, EMissionState State, const FString& Why);
@@ -273,6 +311,9 @@ private:
 	TWeakObjectPtr<UCrewRosterSubsystem> RosterOverride;
 	TWeakObjectPtr<UFleetSubsystem> FleetOverride;
 	TWeakObjectPtr<UExplorationSubsystem> ExplorationOverride;
+	TWeakObjectPtr<UFrontierSubsystem> FrontierOverride;
+	/** A target named from outside for the mission being made (DevSpawnAt). */
+	FString ForcedTarget, ForcedSite;
 	float SaveDelaySeconds = 0.f;
 	/** The clock's last reading, to notice it going back (a new complement starts it over). */
 	double LastClockHours = -1.0;

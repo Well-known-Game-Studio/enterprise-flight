@@ -102,6 +102,6 @@ holds; the bridge log keeps it. Console: `ship chart [list | here | name <name> 
 
 The alien hull as a design of its own (parts and proportions the builder does not make yet), their language as a
 puzzle rather than a check, the contact record driving later encounters (their ships in the sector, a second
-contact that remembers the first), colonies and outposts the Federation founds in charted space, a sector beyond
+contact that remembers the first), a sector beyond
 thirty light-years once transwarp is an unlock, the chart as a thing the captain draws on, and away missions on
 the pre-warp world once the interiors and the figures are there to show them.

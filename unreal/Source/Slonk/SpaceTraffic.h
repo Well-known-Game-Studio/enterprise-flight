@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "SpaceVessel.h"
 #include "SpaceTraffic.generated.h"
 
 class ASpaceVessel;
@@ -30,6 +31,10 @@ public:
 	/** A hull holding station for an encounter: a freighter, a Starfleet hull, or (bAlien) a stranger's: no class
 	 *  of ours in her lines' colours, larger, lit in a colour nobody uses. */
 	ASpaceVessel* SpawnNamedShip(const FString& Name, const FVector& Loc, bool bCivilian, bool bAlien = false);
+	/** A station of this style at Loc with Ships patrol hulls about it (the frontier's outposts and starbases). */
+	class ASpaceStation* SpawnStation(const FString& Name, EStationStyle Style, const FVector& Loc, int32 Ships, int32 SeedValue);
+	/** Patrol hulls about a place (a starbase commissioned after its station was spawned). */
+	void SpawnPatrols(const FVector& Loc, double SizeCm, int32 Ships, int32 SeedValue);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic") int32 Seed = 11;
 	/** One station orbits each non-moon planet at this many radii. */
