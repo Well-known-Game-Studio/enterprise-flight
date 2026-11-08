@@ -73,7 +73,15 @@ before. `ship person status` logs the room underfoot.
 
 ## 7. Later
 
-The figures on their shifts (the roster's placement read into the rooms, walking the corridors between watches);
-the saucer's curved corridors and more of them (deck F's cabins onto a ring, engineering's corridor to the
-torpedo bay); sliding doors that open as you come; the brig and the armoury; the observation lounge in the neck;
-the captain's quarters as a place to sleep the clock forward.
+The next round is the ship's plan: the decks A to U as data (each deck's outline from the hull, its corridor
+graph, its rooms and its lift stops, from the Strategic Design plans the compartment map already follows), a
+corridor kit grown from `corridor_leg` with curved bays and junctions (ring corridors and radial spokes in the
+saucer, the neck's vertical trunk with its landings, engineering's long fore-and-aft corridor with cross passages),
+the signature rooms kept as authored sets and the repeated ones (cabins, labs, stores, workshops) from small kits
+by size, turbolift shafts from the network diagram with cars that travel, and the whole laid out at the ship's
+real size first: everything else in the game is full scale, so the corridors are as long as the plans make them,
+and if the walks prove too long the radii and bay counts are tuned afterwards rather than compressed from the
+start. The neighbour mechanism keeps only the stretch around the player live; bays become instanced meshes.
+After that the figures on their shifts (the roster's placement read into the rooms, walking the corridor graph
+between watches); sliding doors that open as you come; the brig and the armoury; the observation lounge in the
+neck; the captain's quarters as a place to sleep the clock forward.
