@@ -174,7 +174,12 @@ public:
 	/** Back in the chair: the person is removed, the captain has the conn. */
 	void SitDown(APersonPawn* Person);
 	/** The turbolift: to a room, or Airlock to go out onto the hull. */
+	/** The turbolift to a room: it stops where it has a door (a room off a corridor is reached along it). */
 	bool MoveToRoom(APersonPawn* Person, EShipRoom Room);
+	/** The person's feet have moved: if they have crossed into another room, follow them (the room shown, the HUD). */
+	void PersonMoved(APersonPawn* Person);
+	/** A room from a console word (bridge, eng, sick, bay, trans, air, corr, rec, mess, quarters, crew, torp, cargo). */
+	static EShipRoom RoomFromWord(const FString& Word);
 	/** From the transporter pad to the ground under the ship, and back to the pad. */
 	bool BeamDown(APersonPawn* Person);
 	bool BeamUp(APersonPawn* Person);

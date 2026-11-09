@@ -12,7 +12,11 @@ import unreal
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SRC = os.path.join(ROOT, "blender", "rooms")
 DEST = "/Game/Slonk/Rooms"
-NAMES = ["SM_RoomEngineering", "SM_RoomSickbay", "SM_RoomShuttleBay", "SM_RoomBayShuttle", "SM_RoomTransporter", "SM_RoomAirlock"]
+NAMES = ["SM_RoomEngineering", "SM_RoomSickbay", "SM_RoomShuttleBay", "SM_RoomBayShuttle", "SM_RoomTransporter", "SM_RoomAirlock",
+         "SM_RoomCorridorG", "SM_RoomRecDeck", "SM_RoomMess", "SM_RoomCabin", "SM_RoomCrewQuarters", "SM_RoomTorpedoBay", "SM_RoomCargoBay"]
+# ROOMS=a,b in the environment imports a subset.
+if os.environ.get("ROOMS"):
+    NAMES = [n for n in NAMES if n in os.environ["ROOMS"].split(",")]
 
 def import_mesh(name):
     opts = unreal.FbxImportUI()

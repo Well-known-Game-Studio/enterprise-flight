@@ -78,6 +78,8 @@ public:
 	void PlaceAboard(AStarshipPawn* Ship, EShipRoom InRoom, const FTransform& FeetWorld);
 	bool IsAboard() const { return Frame == EPersonFrame::Deck; }
 	EShipRoom GetRoom() const { return Room; }
+	/** The ship moves the person's room as their feet cross into another (AStarshipPawn::PersonMoved). */
+	void SetRoom(EShipRoom InRoom) { Room = InRoom; }
 	/** The trace channel hulls, decks and buildings block for the boots ("Boots" in DefaultEngine.ini). */
 	static constexpr ECollisionChannel BootsChannel = ECC_GameTraceChannel1;
 	/** Feet on the floor: the root is HalfHeightCm up the body's axis. */

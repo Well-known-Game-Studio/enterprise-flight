@@ -11,6 +11,8 @@
 #include "../Impactor.h"
 #include "../GameClock.h"
 #include "../WarpDriveComponent.h"
+#include "../ShipInterior.h"
+#include "../StarshipPawn.h"
 #include "Engine/GameInstance.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -887,6 +889,81 @@ bool FSlonkImpactorTrackTest::RunTest(const FString& Parameters)
 	const FVector Far(-2.5e6 * 20 * 3600, 0, 0);
 	TestTrue(TEXT("on course from far"), AImpactor::TrackMissDistance(Far, FVector(2.5e6, 0, 0), Pos) < 1.0);
 	TestTrue(TEXT("pushed clear"), AImpactor::TrackMissDistance(Far, FVector(2.5e6, 9000, 0), Pos) > 6.0e8);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkInteriorRoomsTest, "Slonk.Interior.Rooms", SLONK_TEST_FLAGS)
+bool FSlonkInteriorRoomsTest::RunTest(const FString& Parameters)
+{
+	// Every room is named and decked; the lift stops at the corridor for the rooms off it and nowhere else, and the
+	// three off it share its deck.
+	for (int32 i = 0; i < (int32)EShipRoom::Count; ++i)
+	{
+		const EShipRoom R = (EShipRoom)i;
+		TestTrue(TEXT("named"), !UShipInteriorComponent::RoomName(R).IsEmpty());
+		TestTrue(TEXT("decked"), !UShipInteriorComponent::DeckOf(R).IsEmpty());
+		const EShipRoom Stop = UShipInteriorComponent::LiftStop(R);
+		TestTrue(TEXT("a stop has its own lift"), UShipInteriorComponent::IsLiftStop(Stop));
+		const bool bOff = R == EShipRoom::Sickbay || R == EShipRoom::Transporter || R == EShipRoom::RecDeck;
+		TestEqual(TEXT("off the corridor or not"), (int32)Stop, (int32)(bOff ? EShipRoom::Corridor : R));
+		if (bOff) { TestEqual(TEXT("on the corridor's deck"), UShipInteriorComponent::DeckOf(R), UShipInteriorComponent::DeckOf(EShipRoom::Corridor)); }
+	}
+	TestEqual(TEXT("the console's words"), (int32)AStarshipPawn::RoomFromWord(TEXT("torp")), (int32)EShipRoom::TorpedoBay);
+	TestEqual(TEXT("the console's words"), (int32)AStarshipPawn::RoomFromWord(TEXT("Mess")), (int32)EShipRoom::Mess);
+	TestEqual(TEXT("the console's words"), (int32)AStarshipPawn::RoomFromWord(TEXT("nowhere")), (int32)EShipRoom::Count);
+	// A deck by its letter names the lift's stop there: deck G is the corridor, not sickbay; deck C the mess.
+	TestEqual(TEXT("deck g"), (int32)AStarshipPawn::RoomFromWord(TEXT("deckg")), (int32)EShipRoom::Corridor);
+	TestEqual(TEXT("deck c"), (int32)AStarshipPawn::RoomFromWord(TEXT("deckc")), (int32)EShipRoom::Mess);
+	TestEqual(TEXT("deck z"), (int32)AStarshipPawn::RoomFromWord(TEXT("deckz")), (int32)EShipRoom::Count);
+	// The compartments the crew are placed in (and the hits find them in) are rooms of the interior.
+	for (const TCHAR* Name : { TEXT("Officers' mess"), TEXT("Rec deck"), TEXT("Crew quarters"), TEXT("Officers' quarters"), TEXT("Torpedo bay"), TEXT("Cargo bays"), TEXT("Sickbay"), TEXT("Main engineering"), TEXT("Main bridge"), TEXT("Shuttle bay") })
+	{
+		bool bFound = false;
+		for (int32 i = 0; i < (int32)EShipRoom::Count; ++i) { if (UShipInteriorComponent::RoomName((EShipRoom)i) == Name) { bFound = true; } }
+		TestTrue(*FString::Printf(TEXT("%s is a room"), Name), bFound);
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkCrewPlacesTest, "Slonk.Crew.Places", SLONK_TEST_FLAGS)
+bool FSlonkCrewPlacesTest::RunTest(const FString& Parameters)
+{
+	// Over a ship's day everyone off watch eats in the officers' mess or on the rec deck, sleeps in quarters and
+	// takes their ease on the rec deck or in quarters; every place the routine names is a room of the interior.
+	FSystems S;
+	FCrewShipState Clock;
+	TSet<FString> Places;
+	int32 Meals = 0, OfficersMeals = 0, Rec = 0, Sleep = 0;
+	for (int32 Hour = 0; Hour < 24; ++Hour)
+	{
+		S.Roster->DevAdvanceHours(1, Clock);
+		for (const FCrewMember& M : S.Roster->GetRoster())
+		{
+			switch (M.Activity)
+			{
+			case ECrewActivity::Mess:
+				TestTrue(TEXT("eats in a mess"), M.Where == TEXT("Officers' mess") || M.Where == TEXT("Rec deck"));
+				++Meals; if (M.Where == TEXT("Officers' mess")) { ++OfficersMeals; }
+				Places.Add(M.Where); break;
+			case ECrewActivity::Sleeping:
+				TestTrue(TEXT("sleeps in quarters"), M.Where.Contains(TEXT("quarters"))); ++Sleep; Places.Add(M.Where); break;
+			case ECrewActivity::Recreation:
+				if (M.Where == TEXT("Rec deck")) { ++Rec; } else { TestTrue(TEXT("or keeps to quarters"), M.Where.Contains(TEXT("quarters"))); }
+				Places.Add(M.Where); break;
+			default: break;
+			}
+		}
+	}
+	TestTrue(TEXT("meals taken"), Meals > 0);
+	TestTrue(TEXT("officers in their mess"), OfficersMeals > 0 && OfficersMeals < Meals);
+	TestTrue(TEXT("the rec deck used"), Rec > 0);
+	TestTrue(TEXT("sleep in quarters"), Sleep > 0);
+	for (const FString& P : Places)
+	{
+		bool bRoom = false;
+		for (int32 i = 0; i < (int32)EShipRoom::Count; ++i) { if (UShipInteriorComponent::RoomName((EShipRoom)i) == P) { bRoom = true; } }
+		TestTrue(*FString::Printf(TEXT("%s is a room of the interior"), *P), bRoom);
+	}
 	return true;
 }
 

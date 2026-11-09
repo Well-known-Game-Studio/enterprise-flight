@@ -309,6 +309,20 @@ def wall_screen(center, w, h, yaw, tex, group="Screens"):
     box("ScreenFrame", (cx + d[0] * 0.02, cy + d[1] * 0.02, cz), (0.04, w + 0.12, h + 0.12), M_PanelDark(), "Consoles", yaw=yaw)
     screen("Scr", (cx - d[0] * 0.005, cy - d[1] * 0.005, cz), w, h, M_Screen(tex), group, yaw=yaw)
 
+# The refit's corridor section (metres from the centre line): the deck grating, the lit lower panels leaning out
+# to the waist, the straight band, the upper panels leaning in to the narrow dark ceiling (The Motion Picture to
+# The Undiscovered Country; the waist is where a room's wall meets the corridor, back to back).
+CORR_F, CORR_W, CORR_C, CORR_Z1, CORR_Z2, CORR_H = 0.95, 1.2, 0.8, 0.95, 1.55, 2.5
+# Deck G's corridor: the athwartships leg (y) with its bays anchored at the junction with the forward leg, the
+# forward leg (x) in seven bays; the doors sit at bay centres, and the rooms' sets and the game put their doorways
+# at the same places (ShipInterior.cpp follows these numbers).
+CORR_A_Y0, CORR_A_Y1, CORR_A_ANCHOR, CORR_A_PITCH = -11.5, 2.1, -9.1, 2.24
+CORR_B_X0, CORR_B_X1, CORR_B_Y0, CORR_B_Y1 = 1.2, 18.2, -11.5, -9.1
+CORR_B_PITCH = (CORR_B_X1 - CORR_B_X0) / 7
+SICK_DOOR_Y = CORR_A_ANCHOR + 3.5 * CORR_A_PITCH          # -1.26: sickbay's doorway, to starboard
+REC_DOOR_Y = CORR_A_ANCHOR + 1.5 * CORR_A_PITCH           # -5.74: the rec deck's, to port
+TRANS_DOOR_X = CORR_B_X0 + 5.5 * CORR_B_PITCH             # 14.56: the transporter room's, off the forward leg
+
 # ---- room shell ------------------------------------------------------------------------------------------------
 class Room:
     def __init__(self, code, L, W, H):
@@ -318,8 +332,55 @@ class Room:
     def light(self, pos, energy, color=(0.95, 0.97, 1.0), size=0.8, kind='AREA'):
         self.lights.append((kind, pos, energy, color, size))
 
-def shell(R, wall_mat, floor_mat, ceil_mat, open_aft=False, floor=True, aft_trim=0.0):
-    """`aft_trim` shortens the floor, ceiling and side walls at the aft end (the bay stops at the hull's stern wall)."""
+def wall_run(name, axis, pos, a0, a1, z0, z1, thick, material, group, openings=()):
+    """A wall slab running along `axis` ('x' or 'y') at `pos` across it, from a0 to a1 along it and z0..z1 up, with
+    rectangular openings cut through it: each (centre along the run, width, height above z0). The slab is built
+    as the pieces round the openings (a lintel over each), so no booleans."""
+    pieces = []; a = a0
+    for (c, w, h) in sorted(openings):
+        if c - w / 2 > a: pieces.append((a, c - w / 2, z0, z1))
+        pieces.append((c - w / 2, c + w / 2, z0 + h, z1))
+        a = c + w / 2
+    if a < a1: pieces.append((a, a1, z0, z1))
+    out = []
+    for (s0, s1, b0, b1) in pieces:
+        if s1 - s0 < 1e-3 or b1 - b0 < 1e-3: continue
+        if axis == 'x': out.append(box(name, ((s0 + s1) / 2, pos, (b0 + b1) / 2), (s1 - s0, thick, b1 - b0), material, group))
+        else: out.append(box(name, (pos, (s0 + s1) / 2, (b0 + b1) / 2), (thick, s1 - s0, b1 - b0), material, group))
+    return out
+
+def doorway(axis, pos, at, inward, dw=1.3, dh=2.3, label="Doorway", depth=0.24, leaves=None):
+    """A door in a wall running along `axis` at `pos`, centred `at` along it: the dark jambs and head standing
+    proud of the wall on both faces, a metal sill, a lit strip each side on the room's face (`inward` is the sign
+    toward the room across the wall). With `leaves` the door is shut (two leaves of that material flush in the
+    frame, the wall behind them left solid); without, it is an open doorway and the wall must carry the opening
+    (see `wall_run` / `shell(openings=...)`)."""
+    def at_(a, c, z): return (a, c, z) if axis == 'x' else (c, a, z)
+    def sz_(a, c, z): return (a, c, z) if axis == 'x' else (c, a, z)
+    for s in (-1, 1):
+        box(label + "Jamb", at_(at + s * (dw / 2 + 0.08), pos, dh / 2 + 0.05), sz_(0.16, depth, dh + 0.1), M_PanelDark(), "Walls")
+        box(label + "Lamp", at_(at + s * (dw / 2 + 0.26), pos + inward * (depth / 2 + 0.02), dh / 2 + 0.1), sz_(0.06, 0.03, dh - 0.3), M_Strip(), "Lights")
+    box(label + "Head", at_(at, pos, dh + 0.1), sz_(dw + 0.32, depth, 0.2), M_PanelDark(), "Walls")
+    box(label + "Sill", at_(at, pos, 0.005), sz_(dw, depth, 0.01), M_Metal(), "Floors")
+    if leaves is not None:
+        box(label, at_(at, pos + inward * (depth / 2 - 0.03), dh / 2), sz_(dw, 0.06, dh), leaves, "Walls")
+        box(label + "Split", at_(at, pos + inward * (depth / 2 + 0.005), dh / 2), sz_(0.02, 0.01, dh), M_PanelDark(), "Walls")
+
+def extrude_x(name, outline, x0, x1, material, group, xf=None, bevel=0.0):
+    """A solid from a closed (y, z) section extruded along x0..x1, optionally through a transform."""
+    n = len(outline)
+    pts = [(x0, y, z) for (y, z) in outline] + [(x1, y, z) for (y, z) in outline]
+    if xf: pts = [xf(p) for p in pts]
+    faces = [tuple(range(n)), tuple(reversed(range(n, 2 * n)))]
+    for i in range(n):
+        j = (i + 1) % n
+        faces.append((i, n + i, n + j, j))
+    return recalc_outward(mesh_from(name, pts, faces, material, group, bevel=bevel))
+
+def shell(R, wall_mat, floor_mat, ceil_mat, open_aft=False, floor=True, aft_trim=0.0, openings=(), skip_walls=()):
+    """`aft_trim` shortens the floor, ceiling and side walls at the aft end (the bay stops at the hull's stern wall).
+    `openings` cuts doorways: (wall, position along it, width, height) with wall one of "+x" (forward), "-x",
+    "+y" (starboard), "-y"; `skip_walls` leaves walls out for the room to build its own (a window wall)."""
     L, W, H = R.L, R.W, R.H
     T = 0.12
     xa = -L / 2 + aft_trim if aft_trim > 0 else -L / 2 - T   # the aft end of the floor, ceiling and side walls
@@ -327,17 +388,17 @@ def shell(R, wall_mat, floor_mat, ceil_mat, open_aft=False, floor=True, aft_trim
     if floor:
         box("Floor", (cx, 0, -T / 2), (Lt, W + 2 * T, T), floor_mat, "Floors")
     box("Ceiling", (cx, 0, H + T / 2), (Lt, W + 2 * T, T), ceil_mat, "Ceiling")
-    box("WallFwd", (L / 2 + T / 2, 0, H / 2), (T, W + 2 * T, H), wall_mat, "Walls")
-    if not open_aft:
-        box("WallAft", (-L / 2 - T / 2, 0, H / 2), (T, W + 2 * T, H), wall_mat, "Walls")
-    for sgn in (-1, 1):
-        box("WallSide", (cx, sgn * (W / 2 + T / 2), H / 2), (Lt, T, H), wall_mat, "Walls")
-    # A dark skirting all round.
-    for sgn in (-1, 1):
-        box("Skirt", ((xa + L / 2) / 2 if aft_trim > 0 else 0, sgn * (W / 2 - 0.02), 0.18), (L / 2 - xa if aft_trim > 0 else L, 0.04, 0.36), M_PanelDark(), "Walls")
-    box("Skirt", (L / 2 - 0.02, 0, 0.18), (0.04, W, 0.36), M_PanelDark(), "Walls")
-    if not open_aft:
-        box("Skirt", (-L / 2 + 0.02, 0, 0.18), (0.04, W, 0.36), M_PanelDark(), "Walls")
+    def cuts(wall, h=None): return [(p, w, hh if h is None else h) for (wl, p, w, hh) in openings if wl == wall]
+    if "+x" not in skip_walls:
+        wall_run("WallFwd", 'y', L / 2 + T / 2, -W / 2 - T, W / 2 + T, 0, H, T, wall_mat, "Walls", cuts("+x"))
+        wall_run("Skirt", 'y', L / 2 - 0.02, -W / 2, W / 2, 0, 0.36, 0.04, M_PanelDark(), "Walls", cuts("+x", 0.36))
+    if not open_aft and "-x" not in skip_walls:
+        wall_run("WallAft", 'y', -L / 2 - T / 2, -W / 2 - T, W / 2 + T, 0, H, T, wall_mat, "Walls", cuts("-x"))
+        wall_run("Skirt", 'y', -L / 2 + 0.02, -W / 2, W / 2, 0, 0.36, 0.04, M_PanelDark(), "Walls", cuts("-x", 0.36))
+    for sgn, wall in ((-1, "-y"), (1, "+y")):
+        if wall in skip_walls: continue
+        wall_run("WallSide", 'x', sgn * (W / 2 + T / 2), xa, L / 2 + T, 0, H, T, wall_mat, "Walls", cuts(wall))
+        wall_run("Skirt", 'x', sgn * (W / 2 - 0.02), xa if aft_trim > 0 else -L / 2, L / 2, 0, 0.36, 0.04, M_PanelDark(), "Walls", cuts(wall, 0.36))
 
 def pilasters(R, pitch, walls=("+y", "-y", "+x", "-x"), width=0.36, depth=0.14, skip=()):
     """Lit pilasters along the walls every `pitch` metres: a grey rib with a white strip up its middle. `skip`
@@ -570,7 +631,7 @@ def build_sickbay():
     cabinet on the starboard wall and the canted lit panels of the forward bulkhead. Lift door aft, port."""
     R = Room("sick", 12.0, 9.0, 3.0)
     L, W, H = R.L, R.W, R.H
-    shell(R, M_PanelLight(), M_Carpet(), M_PanelGrey())
+    shell(R, M_PanelLight(), M_Carpet(), M_PanelGrey(), openings=[("-x", SICK_DOOR_Y, 1.3, 2.3)])
     # Ward beds.
     for bx in (-3.6, -1.2, 1.2):
         for s in (-1, 1):
@@ -653,45 +714,59 @@ def build_sickbay():
         for h in (-0.55, 0.0, 0.55):
             p = rot((-0.125, 0.0, h), pitch=-10.0)
             box("Louvre", (cx + p[0], y, cz + p[2]), (0.02, 1.3, 0.09), M_Soft(), "Lights", pitch=-10.0)
-    # A second door forward to the rest of the complex, and the lift aft.
+    # A second door forward to the rest of the complex, and the doorway aft onto deck G's corridor (the lift is
+    # down the corridor).
     lift_door(R, "+x", -2.0 + 0.0 if False else 4.1, mat_=M_PanelDark(), label="WardDoor")
-    pilasters(R, 2.0, walls=("+y", "-x"), skip=(("-x", -2.5),))
-    lift_door(R, "-x", -2.5)
+    pilasters(R, 2.0, walls=("+y", "-x"), skip=(("-x", SICK_DOOR_Y),))
+    doorway('y', -L / 2 - 0.06, SICK_DOOR_Y, 1, label="CorridorDoor")
     cove_ceiling(R, drop=0.32, width=0.9, panels=[(-2.5, -1.6), (-2.5, 1.6), (2.5, -1.6), (2.5, 1.6)], energy=16.0)
     return R
 
 # ---- shuttle bay -----------------------------------------------------------------------------------------------
 def shuttle(center, yaw=0.0, name="Galileo"):
-    """A Final Frontier-style shuttle on its skids: a long white body from a side profile, the windscreen let into
-    the slope of the nose, low pods set into the flanks, a roof pod, the port door over its step and a rear hatch;
-    built facing +x then yawed about `center`."""
+    """The Type-4 shuttle of The Final Frontier (the Galileo) on her skids: the long white cabin with its chamfered
+    lower chines and canted upper sides, the nose sloping down to the windscreen and back under the chin, the
+    raised roof deck with its spine, the flat sensor and drive pods beside the hull on short pylons, reaching
+    the deck (their forward faces lit, grilles aft), the bevelled aft door, the port door over its step forward, and the red
+    stripe along the flank; she stands on her pods; built facing +x then yawed about `center`."""
     cx, cy, cz = center
     def P(p): x, y, z = rot(p, yaw); return (cx + x, cy + y, cz + z)
-    body = [(-3.6, 0.62), (-3.6, 2.28), (-3.3, 2.4), (1.7, 2.4), (3.25, 1.6), (3.5, 1.15), (3.2, 0.62)]
-    extrude_y("Hull", body, -1.3, 1.3, M_HullWhite(), "Shuttle", xf=P, bevel=0.08)
-    # The pods sit low enough for a walker's knee to meet them (the deck walk traces at 45 cm).
-    pod = [(-2.9, 0.38), (-2.9, 1.02), (1.3, 1.02), (1.8, 0.7), (1.3, 0.38)]
-    for s_ in (-1, 1):
-        y0, y1 = (1.3, 1.95) if s_ > 0 else (-1.95, -1.3)
-        extrude_y("Pod", pod, y0, y1, M_HullWhite(), "Shuttle", xf=P, bevel=0.07)
-        box("PodGlow", P((-2.92, s_ * 1.62, 0.7)), (0.04, 0.5, 0.4), M_Core(), "Shuttle", yaw=yaw)
-        box("PodStripe", P((-0.6, s_ * 1.96, 0.88)), (4.0, 0.02, 0.06), M_StripBlue(), "Shuttle", yaw=yaw)
-        box("Stripe", P((-0.5, s_ * 1.315, 2.1)), (5.6, 0.02, 0.1), M_PaintRed(), "Shuttle", yaw=yaw)
-        box("Skid", P((-0.6, s_ * 0.9, 0.2)), (4.6, 0.28, 0.4), M_PanelDark(), "Shuttle", yaw=yaw)
+    # The cabin: one section from the aft door to the cockpit bulkhead.
+    sec = [(-1.25, 0.95), (-0.95, 0.55), (0.95, 0.55), (1.25, 0.95), (1.25, 1.95), (1.05, 2.35), (-1.05, 2.35), (-1.25, 1.95)]
+    extrude_x("Hull", sec, -3.7, 1.5, M_HullWhite(), "Shuttle", xf=P, bevel=0.05)
+    # The nose, a little narrower: the cockpit roof slopes to the windscreen, the chin slopes back under it.
+    nose = [(1.5, 0.55), (1.5, 2.35), (2.3, 2.3), (3.2, 1.75), (3.65, 1.25), (3.65, 1.0), (3.1, 0.55)]
+    extrude_y("Nose", nose, -1.1, 1.1, M_HullWhite(), "Shuttle", xf=P, bevel=0.07)
+    # The roof deck, its spine and the beacon.
+    box("RoofDeck", P((-1.2, 0.0, 2.45)), (4.6, 1.6, 0.2), M_HullWhite(), "Shuttle", yaw=yaw, bevel=0.06)
+    box("Spine", P((-1.0, 0.0, 2.62)), (3.4, 0.5, 0.16), M_HullGrey(), "Shuttle", yaw=yaw, bevel=0.05)
+    box("Beacon", P((0.9, 0.0, 2.73)), (0.14, 0.14, 0.06), M_Warn(), "Shuttle", yaw=yaw)
     # The windscreen on the nose slope, set just proud of it.
-    (x0, z0), (x1, z1) = (1.7, 2.4), (3.25, 1.6)
+    (x0, z0), (x1, z1) = (2.3, 2.3), (3.2, 1.75)
     ptc = math.degrees(math.atan2(z0 - z1, x1 - x0))
     nrm = rot((0.0, 0.0, 1.0), pitch=ptc)
     mx, mz = (x0 + x1) / 2, (z0 + z1) / 2
-    box("Windscreen", P((mx + nrm[0] * 0.02, 0.0, mz + nrm[2] * 0.02)), (1.3, 1.9, 0.04), M_Black(), "Shuttle", yaw=yaw, pitch=ptc)
-    box("RoofPod", P((-0.8, 0.0, 2.55)), (2.4, 1.4, 0.3), M_HullWhite(), "Shuttle", yaw=yaw, bevel=0.08)
-    box("Beacon", P((0.5, 0.0, 2.72)), (0.12, 0.12, 0.04), M_Warn(), "Shuttle", yaw=yaw)
-    box("RearHatch", P((-3.62, 0.0, 1.45)), (0.04, 1.8, 1.4), M_PanelDark(), "Shuttle", yaw=yaw)
-    box("PortDoor", P((-0.3, -1.315, 1.7)), (0.9, 0.03, 1.2), M_PanelDark(), "Shuttle", yaw=yaw)
-    for dz, h in ((0.0, 0.03), (1.2, 0.03)):
-        box("DoorEdge", P((-0.3, -1.325, 1.1 + dz)), (0.94, 0.01, h), M_Strip(), "Shuttle", yaw=yaw)
-    box("DoorStep", P((-0.3, -1.6, 1.0)), (0.9, 0.5, 0.06), M_PanelDark(), "Shuttle", yaw=yaw)
-    box("NoseLamp", P((3.46, 0.0, 0.9)), (0.04, 0.6, 0.08), M_Strip(), "Shuttle", yaw=yaw)
+    box("Windscreen", P((mx + nrm[0] * 0.02, 0.0, mz + nrm[2] * 0.02)), (1.0, 1.7, 0.04), M_Black(), "Shuttle", yaw=yaw, pitch=ptc)
+    # The pods, aft of the port door: they reach the deck and she stands on them (the Galileo had no landing gear
+    # of her own), low enough for a walker's knee to meet them (the deck walk traces at 45 cm).
+    for s_ in (-1, 1):
+        y = s_ * 1.95
+        box("Pod", P((-1.5, y, 0.35)), (4.0, 0.9, 0.7), M_HullWhite(), "Shuttle", yaw=yaw, bevel=0.1)
+        box("Pylon", P((-1.5, s_ * 1.22, 0.6)), (2.2, 0.6, 0.25), M_HullGrey(), "Shuttle", yaw=yaw, bevel=0.04)
+        box("PodSensor", P((0.52, y, 0.35)), (0.04, 0.6, 0.3), M_StripBlue(), "Shuttle", yaw=yaw)
+        box("PodGlow", P((-3.52, y, 0.35)), (0.04, 0.6, 0.4), M_Core(), "Shuttle", yaw=yaw)
+        box("PodStripe", P((-1.5, s_ * 2.41, 0.5)), (3.6, 0.02, 0.06), M_PaintRed(), "Shuttle", yaw=yaw)
+        box("Stripe", P((-0.6, s_ * 1.26, 1.95)), (4.4, 0.02, 0.1), M_PaintRed(), "Shuttle", yaw=yaw)
+        box("StripeGrey", P((-0.6, s_ * 1.26, 1.8)), (4.4, 0.02, 0.05), M_HullGrey(), "Shuttle", yaw=yaw)
+    # The aft door in its bevelled frame; the port door, forward, over its step.
+    box("AftFrame", P((-3.74, 0.0, 1.45)), (0.08, 2.1, 1.7), M_HullGrey(), "Shuttle", yaw=yaw, bevel=0.2)
+    box("AftDoor", P((-3.78, 0.0, 1.45)), (0.03, 1.7, 1.4), M_PanelDark(), "Shuttle", yaw=yaw, bevel=0.1)
+    # The port door on the flank's vertical run (z 0.95..1.95; above it the side cants in and a taller door would stand proud).
+    box("PortDoor", P((1.0, -1.27, 1.45)), (0.9, 0.04, 1.0), M_PanelDark(), "Shuttle", yaw=yaw)
+    for dz, h in ((0.0, 0.03), (1.0, 0.03)):
+        box("DoorEdge", P((1.0, -1.29, 0.95 + dz)), (0.94, 0.01, h), M_Strip(), "Shuttle", yaw=yaw)
+    box("DoorStep", P((1.0, -1.55, 0.88)), (0.9, 0.5, 0.06), M_PanelDark(), "Shuttle", yaw=yaw)
+    box("NoseLamp", P((3.6, 0.0, 0.78)), (0.04, 0.7, 0.08), M_Strip(), "Shuttle", yaw=yaw)
 
 
 # The stern cap behind the straight bay: the hull's clamshell door is a surface of revolution about a vertical axis
@@ -801,7 +876,7 @@ def build_transporter():
     R = Room("trans", 8.0, 7.0, 3.0)
     L, W, H = R.L, R.W, R.H
     PX, PY = -1.5, 0.0
-    shell(R, M_PanelGrey(), M_Carpet(), M_PanelGrey())
+    shell(R, M_PanelGrey(), M_Carpet(), M_PanelGrey(), openings=[("+y", TRANS_DOOR_X - 13.2, 1.3, 2.3)])
     # The pad: a two-step round platform, its top a pale glowing disc with the six stations and their rim.
     lathe("PadBase", [(0.0, 0.0), (2.1, 0.0), (2.1, 0.1), (1.82, 0.1), (1.82, 0.24), (0.0, 0.24)], (PX, PY, 0), M_PanelGrey(), "Pad", segments=64)
     disc("PadTop", (PX, PY, 0.245), 1.72, M_Pad(), "Pad", segments=64)
@@ -858,8 +933,8 @@ def build_transporter():
     for x in (0.4, 1.2, 2.0, 2.8):
         box("Locker", (x, -W / 2 + 0.25, 1.05), (0.7, 0.5, 2.1), M_PanelDark(), "Furniture", bevel=0.01)
         box("LockerSeam", (x, -W / 2 + 0.51, 1.05), (0.02, 0.01, 1.9), M_PanelGrey(), "Furniture")
-    pilasters(R, 2.0, walls=("+y", "+x"), skip=(("+y", 1.5),))
-    lift_door(R, "+y", 1.5)
+    pilasters(R, 2.0, walls=("+y", "+x"), skip=(("+y", TRANS_DOOR_X - 13.2),))
+    doorway('x', W / 2 + 0.06, TRANS_DOOR_X - 13.2, -1, label="CorridorDoor")   # onto deck G's corridor; the lift is along it
     radial_ceiling(R, (PX, PY), 1.9, ribs=8, energy=14.0, panels=[(2.5, -1.8), (2.5, 1.8), (0.6, -2.6), (0.6, 2.6)])
     return R
 
@@ -923,8 +998,471 @@ def build_airlock():
     cove_ceiling(R, drop=0.28, width=0.7, panels=[(-1.0, 0.0), (1.0, 0.0)], energy=12.0)
     return R
 
-ROOMS = {"eng": build_engineering, "sick": build_sickbay, "bay": build_shuttle_bay, "trans": build_transporter, "lock": build_airlock}
-MESH_NAMES = {"eng": "SM_RoomEngineering", "sick": "SM_RoomSickbay", "bay": "SM_RoomShuttleBay", "trans": "SM_RoomTransporter", "lock": "SM_RoomAirlock"}
+# ---- the crew's places (interiors round) -----------------------------------------------------------------------
+def M_CarpetGrey(): return mat("CarpetGrey", (0.30, 0.31, 0.34), 0.95)
+def M_CarpetRed(): return mat("CarpetRed", (0.30, 0.06, 0.06), 0.95)
+def M_Wood(): return mat("Wood", (0.36, 0.22, 0.12), 0.5)
+def M_Linen(): return mat("Linen", (0.78, 0.76, 0.70), 0.9)
+def M_Brass(): return mat("Brass", (0.75, 0.6, 0.3), 0.35, 0.8)
+def M_Torpedo(): return mat("TorpedoBlack", (0.03, 0.03, 0.035), 0.4, 0.3)
+def M_Grating(): return mat("Grating", (0.18, 0.19, 0.21), 0.6, 0.5)
+def M_Plant(): return mat("Plant", (0.12, 0.35, 0.14), 0.8)
+
+def corridor_leg(R, x0, x1, y0, y1, walls=("-x", "+x", "-y", "+y"), doors=None, anchor=None, pitch=2.24, lights=True, gap=None):
+    """One straight run of the refit's corridor between (x0,y0) and (x1,y1): the section above, built in bays of
+    `pitch` between frames (ribs following the section), each bay a lit lower panel under grey and pale panels, or
+    a door bay (a straight wall with the door set in it: `doors` maps a side wall to [(centre, kind)] with kind
+    "open" for a doorway onto a room, its opening cut, or "shut" for leaves). `anchor` is a bay boundary along the
+    run; `gap` = (a0, a1, side) leaves that stretch of a side wall out (the junction with another leg). The end
+    walls across the run are flat (the caller sets a lift door or a panel in them)."""
+    doors = doors or {}
+    along_y = (y1 - y0) >= (x1 - x0)
+    a0, a1 = (y0, y1) if along_y else (x0, x1)
+    cc = (x0 + x1) / 2 if along_y else (y0 + y1) / 2          # the centre line's cross coordinate
+    F, W, Cw, Z1, Z2, H, T = CORR_F, CORR_W, CORR_C, CORR_Z1, CORR_Z2, CORR_H, 0.12
+    mid = (a0 + a1) / 2
+    def pt(a, u, z): return (cc + u, a, z) if along_y else (a, cc + u, z)
+    def sz(la, th, hz): return (th, la, hz) if along_y else (la, th, hz)
+    def cant(name, a_mid, la, u_lo, z_lo, u_hi, z_hi, mat_, group, thick=0.04, s=1):
+        """A panel leaning from (u_lo, z_lo) to (u_hi, z_hi) across the section (u outward along side s)."""
+        ln = math.hypot(u_hi - u_lo, z_hi - z_lo); th = math.degrees(math.atan2(u_hi - u_lo, z_hi - z_lo))
+        um, zm = (u_lo + u_hi) / 2, (z_lo + z_hi) / 2
+        if along_y: box(name, pt(a_mid, s * um, zm), sz(la, thick, ln), mat_, group, pitch=s * th)
+        else: box(name, pt(a_mid, s * um, zm), sz(la, thick, ln), mat_, group, roll=-s * th)
+    # Floor and ceiling the length of the run.
+    box("Floor", pt(mid, 0, -T / 2), sz(a1 - a0, 2 * W + 2 * T, T), M_Grating(), "Floors")
+    box("Ceiling", pt(mid, 0, H + T / 2), sz(a1 - a0, 2 * Cw, T), M_PanelDark(), "Ceiling")
+    # Bays.
+    anchor = a0 if anchor is None else anchor
+    k0 = math.floor((a0 - anchor) / pitch + 1e-6); k1 = math.ceil((a1 - anchor) / pitch - 1e-6)
+    bounds = [max(a0, min(a1, anchor + k * pitch)) for k in range(k0, k1 + 1)]
+    bounds = [b for i, b in enumerate(bounds) if i == 0 or b - bounds[i - 1] > 0.05]
+    for s, wall in ((-1, "-x" if along_y else "-y"), (1, "+x" if along_y else "+y")):
+        if wall not in walls: continue
+        wall_doors = doors.get(wall, [])
+        for i in range(len(bounds) - 1):
+            b0, b1 = bounds[i], bounds[i + 1]; bm = (b0 + b1) / 2; la = b1 - b0 - 0.16
+            if gap and gap[2] == wall and b0 >= gap[0] - 0.05 and b1 <= gap[1] + 0.05: continue
+            door = next(((c, k) for (c, k) in wall_doors if b0 <= c <= b1), None)
+            if door is None:
+                # A wall bay: the lit lower panel in its grey surround, the straight band, the pale upper panel.
+                cant("LowerFrame", bm, la, F, 0.0, W, Z1, M_PanelGrey(), "Walls", s=s)
+                cant("LowerLit", bm, la - 0.24, F - 0.035, 0.12, W - 0.035, Z1 - 0.12, M_Soft(), "Lights", thick=0.02, s=s)
+                box("Band", pt(bm, s * (W + 0.02), (Z1 + Z2) / 2), sz(la, 0.04, Z2 - Z1), M_PanelGrey(), "Walls")
+                box("BandRail", pt(bm, s * (W - 0.01), Z1 + 0.08), sz(la, 0.03, 0.05), M_PanelDark(), "Walls")
+                cant("Upper", bm, la, W, Z2, Cw, H, M_PanelLight(), "Walls", s=s)
+            else:
+                # A door bay: a straight wall at the waist the full height, the door (open or shut) set in it, the
+                # floor and ceiling filled out to it.
+                c, kind = door
+                cuts = [(c, 1.3, 2.3)] if kind == "open" else []
+                wall_run("DoorWall", 'y' if along_y else 'x', cc + s * (W + T / 2), b0, b1, 0, H, T, M_PanelLight(), "Walls", cuts)
+                box("DoorFloor", pt(bm, s * (F + W) / 2, -0.005), sz(b1 - b0, W - F, 0.01), M_Grating(), "Floors")
+                box("DoorCeiling", pt(bm, s * (Cw + W) / 2, H - 0.02), sz(b1 - b0, W - Cw + 0.02, 0.04), M_PanelDark(), "Ceiling")
+                doorway('y' if along_y else 'x', cc + s * W, c, -s, depth=0.14 if kind == "shut" else 0.24, leaves=M_Burgundy() if kind == "shut" else None, label="CorrDoor")
+        # The frames between bays: ribs following the section, proud of the panels.
+        for i, b in enumerate(bounds):
+            if b <= a0 + 0.05 or b >= a1 - 0.05: continue
+            if gap and gap[2] == wall and gap[0] - 0.05 < b < gap[1] + 0.05: continue
+            cant("Rib", b, 0.16, F - 0.06, 0.0, W - 0.06, Z1, M_PanelGrey(), "Walls", thick=0.12, s=s)
+            box("Rib", pt(b, s * (W - 0.03), (Z1 + Z2) / 2), sz(0.16, 0.12, Z2 - Z1), M_PanelGrey(), "Walls")
+            cant("Rib", b, 0.16, W - 0.06, Z2, Cw - 0.06, H, M_PanelGrey(), "Walls", thick=0.12, s=s)
+    # Ceiling beams across at the frames, a light in each bay.
+    for i, b in enumerate(bounds):
+        if a0 + 0.05 < b < a1 - 0.05: box("CeilBeam", pt(b, 0, H - 0.06), sz(0.16, 2 * Cw - 0.1, 0.12), M_PanelGrey(), "Ceiling")
+        if i < len(bounds) - 1 and lights:
+            bm = (b + bounds[i + 1]) / 2
+            box("CeilLight", pt(bm, 0, H - 0.015), sz(0.6, 0.25, 0.03), M_Strip(), "Lights")
+            R.light(pt(bm, 0, H - 0.1), 10.0, size=0.6)
+            R.light(pt(bm, 0, 0.6), 14.0, size=1.6)
+    # The end walls across the run (flat; the caller sets what is in them).
+    for s, wall in ((-1, "-y" if along_y else "-x"), (1, "+y" if along_y else "+x")):
+        if wall not in walls: continue
+        a = a0 if s < 0 else a1
+        box("EndWall", pt(a + s * T / 2, 0, H / 2), sz(T, 2 * W + 2 * T, H), M_PanelLight(), "Walls")
+
+def torpedo(pos, yaw=0.0):
+    """A photon torpedo casing: the black elongated case with its red band, the white nose and the glow aft."""
+    cx, cy, cz = pos; d = ang(yaw)
+    box("Casing", (cx, cy, cz + 0.25), (2.1, 0.76, 0.5), M_Torpedo(), "Torpedoes", yaw=yaw, bevel=0.12)
+    box("CasingBand", (cx - d[0] * 0.5, cy - d[1] * 0.5, cz + 0.25), (0.12, 0.78, 0.52), M_PaintRed(), "Torpedoes", yaw=yaw, bevel=0.1)
+    box("Nose", (cx + d[0] * 1.0, cy + d[1] * 1.0, cz + 0.25), (0.3, 0.5, 0.34), M_HullWhite(), "Torpedoes", yaw=yaw, bevel=0.12)
+    box("CasingGlow", (cx - d[0] * 1.06, cy - d[1] * 1.06, cz + 0.25), (0.02, 0.4, 0.2), M_Core(), "Torpedoes", yaw=yaw)
+
+def lounge_chair(pos, yaw, mat_=None):
+    """A low white lounge chair with a raked back and arms, facing bearing `yaw`."""
+    x, y, z = pos; d = ang(yaw); mat_ = mat_ or M_PanelLight()
+    box("LoungeSeat", (x, y, z + 0.22), (0.8, 0.8, 0.44), mat_, "Furniture", yaw=yaw, bevel=0.06)
+    box("LoungeBack", (x - d[0] * 0.33, y - d[1] * 0.33, z + 0.72), (0.14, 0.8, 0.7), mat_, "Furniture", yaw=yaw, pitch=-14.0, bevel=0.05)
+    for s in (-1, 1):
+        box("LoungeArm", (x + d[1] * s * 0.45, y - d[0] * s * 0.45, z + 0.5), (0.8, 0.1, 0.3), mat_, "Furniture", yaw=yaw, bevel=0.04)
+
+def build_corridor():
+    """Deck G's corridor (the refit's, The Motion Picture to The Undiscovered Country): an L of the canted section
+    in bays between frames, the lit lower panels, the grated deck. The athwartships leg has sickbay's doorway to
+    starboard and the rec deck's to port, the lift in its forward end wall, shut doors between; the forward leg
+    along the port side has the transporter room's doorway and ends at the lit deck-configuration panel over its
+    console. Origin: the floor at the athwartships leg's centre line, abreast of the corridor's forward end."""
+    R = Room("corr", 2 * CORR_W, CORR_A_Y1 - CORR_A_Y0, CORR_H)
+    H = CORR_H
+    A = CORR_A_ANCHOR; P = CORR_A_PITCH
+    corridor_leg(R, -CORR_W, CORR_W, CORR_A_Y0, CORR_A_Y1, walls=("-x", "+x", "+y"), anchor=A, pitch=P,
+                 doors={"+x": [(SICK_DOOR_Y, "open"), (A + 0.5 * P, "shut")], "-x": [(REC_DOOR_Y, "open"), (A + 4.5 * P, "shut")]},
+                 gap=(CORR_B_Y0, CORR_B_Y1, "+x"))
+    PB = CORR_B_PITCH
+    corridor_leg(R, CORR_B_X0, CORR_B_X1, CORR_B_Y0, CORR_B_Y1, walls=("-y", "+y", "+x"), anchor=CORR_B_X0, pitch=PB,
+                 doors={"-y": [(TRANS_DOOR_X, "open"), (CORR_B_X0 + 1.5 * PB, "shut")], "+y": [(CORR_B_X0 + 3.5 * PB, "shut")]})
+    # The outer corner: the forward leg's port wall line carried across the athwartships leg's end, and a post
+    # where the two canted walls meet at the inner corner.
+    box("EndWall", (0.0, CORR_B_Y0 - 0.06, H / 2), (2 * CORR_W + 0.24, 0.12, H), M_PanelLight(), "Walls")
+    box("CornerPost", (CORR_W + 0.02, CORR_B_Y1 - 0.02, H / 2), (0.36, 0.36, H), M_PanelGrey(), "Walls")
+    # The lift in the forward end wall, the deck-configuration panel and its console shelf at the forward leg's end.
+    doorway('x', CORR_A_Y1, 0.0, -1, depth=0.14, leaves=M_Burgundy(), label="Lift")
+    box("LiftLabel", (0.0, CORR_A_Y1 - 0.08, 2.42), (0.6, 0.02, 0.08), M_Strip(), "Lights")
+    ym = (CORR_B_Y0 + CORR_B_Y1) / 2
+    wall_screen((CORR_B_X1 - 0.16, ym, 1.55), 1.5, 0.95, 0.0, "DeckConfig")
+    box("PanelShelf", (CORR_B_X1 - 0.3, ym, 0.95), (0.5, 1.6, 0.08), M_PanelDark(), "Furniture")
+    box("PanelKeys", (CORR_B_X1 - 0.32, ym, 0.995), (0.36, 1.2, 0.012), M_Buttons(), "Lights")
+    R.light((CORR_B_X1 - 0.8, ym, 1.6), 10.0, color=(0.6, 0.75, 1.0), size=0.6)
+    return R
+
+def build_rec_deck():
+    """The rec deck (The Motion Picture): a tall hall two decks high with the great screen on its aft wall, lit
+    columns between ribbed panels down both sides, a gallery round three sides on posts with its rails, a stair up
+    to it, tables and stools on the floor, the galley's dispensers along the port wall by the entrance. The
+    doorway from deck G's corridor is in the forward wall, to port of centre."""
+    R = Room("rec", 18.0, 14.0, 6.0)
+    L, W, H = R.L, R.W, R.H
+    shell(R, M_PanelLight(), M_CarpetGrey(), M_PanelDark(), openings=[("+x", REC_DOOR_Y + 2.0, 1.3, 2.3)])
+    doorway('y', L / 2 + 0.06, REC_DOOR_Y + 2.0, -1, label="CorridorDoor")
+    # The screen aft, its sill lit; the viewer stands before it (the Use spot).
+    wall_screen((-L / 2 + 0.16, 0.0, 3.0), 9.0, 4.0, 180.0, "Navigation")
+    box("ScreenSill", (-L / 2 + 0.35, 0, 0.9), (0.5, 9.6, 0.1), M_PanelDark(), "Furniture")
+    box("SillLamp", (-L / 2 + 0.6, 0, 0.86), (0.04, 9.4, 0.05), M_Soft(), "Lights")
+    R.light((-L / 2 + 1.5, 0, 3.0), 80.0, color=(0.6, 0.75, 1.0), size=3.0)
+    # The side walls: lit columns every three metres, ribbed panels between.
+    for s in (-1, 1):
+        for x in (-7, -4, -1, 2, 5):
+            box("Column", (x, s * (W / 2 - 0.2), H / 2), (0.6, 0.4, H), M_PanelLight(), "Walls")
+            box("ColumnLight", (x, s * (W / 2 - 0.41), 1.6), (0.3, 0.02, 2.4), M_Soft(), "Lights")
+            box("ColumnLight", (x, s * (W / 2 - 0.41), 4.6), (0.3, 0.02, 2.0), M_Soft(), "Lights")
+        for x in (-5.5, -2.5, 0.5, 3.5, 6.5):
+            for z in (1.2, 1.7, 2.2):
+                box("Rib", (x, s * (W / 2 - 0.03), z), (2.2, 0.06, 0.08), M_PanelGrey(), "Walls")
+    # The gallery round the sides and over the entrance, its fascia lit blue, rails at the knee and the hand; the
+    # starboard rail opens where the stair's landing meets the gallery.
+    GZ, GD = 3.0, 2.2
+    LANDING_X = 2.8
+    def rails(cx, cy, length, along_x, gap=None):
+        """Knee and hand rails with posts every two metres; `gap` = (a0, a1) along the run leaves an opening (the
+        stair landing's exit onto the gallery), rails split round it and no post in it."""
+        runs = [(-length / 2, length / 2)] if gap is None else [(-length / 2, gap[0]), (gap[1], length / 2)]
+        for (a0, a1) in runs:
+            am, la = (a0 + a1) / 2, a1 - a0
+            for z in (0.45, 1.0):
+                box("GalleryRail", (cx + (am if along_x else 0), cy + (0 if along_x else am), GZ + z), (la, 0.06, 0.06) if along_x else (0.06, la, 0.06), M_Metal(), "Rails")
+        n = int(length // 2)
+        for k in range(n + 1):
+            t = -length / 2 + length * k / max(n, 1)
+            if gap is not None and gap[0] - 0.03 < t < gap[1] + 0.03: continue
+            box("RailPost", (cx + (t if along_x else 0), cy + (0 if along_x else t), GZ + 0.5), (0.06, 0.06, 1.0), M_Metal(), "Rails")
+    for s in (-1, 1):
+        box("Gallery", (0.0, s * (W / 2 - GD / 2), GZ - 0.1), (L, GD, 0.2), M_PanelGrey(), "Floors")
+        box("GalleryFascia", (0, s * (W / 2 - GD - 0.02), GZ - 0.3), (L, 0.04, 0.6), M_PanelDark(), "Walls")
+        box("FasciaStrip", (0, s * (W / 2 - GD - 0.05), GZ - 0.55), (L - 0.4, 0.02, 0.06), M_StripBlue(), "Lights")
+        rails(0.0, s * (W / 2 - GD + 0.05), L - 0.4, True, gap=(LANDING_X - 0.5, LANDING_X + 0.5) if s > 0 else None)
+        for x in (-6, -2, 2, 6):
+            box("GalleryPost", (x, s * (W / 2 - GD + 0.15), GZ / 2 - 0.1), (0.2, 0.2, GZ - 0.2), M_PanelGrey(), "Walls")
+            R.light((x, s * (W / 2 - 1.1), GZ - 0.4), 25.0, size=1.0)
+    box("Gallery", (L / 2 - GD / 2, 0, GZ - 0.1), (GD, W - 2 * GD, 0.2), M_PanelGrey(), "Floors")
+    box("GalleryFascia", (L / 2 - GD - 0.02, 0, GZ - 0.3), (0.04, W - 2 * GD, 0.6), M_PanelDark(), "Walls")
+    rails(L / 2 - GD + 0.05, 0.0, W - 2 * GD - 0.4, False)
+    # The stair: a solid flight along the starboard side up to the gallery's edge, with a landing and a rail.
+    SY = 4.0
+    for i in range(15):
+        box("Step", (-2.0 + 0.3 * i + 0.15, SY, 0.1 * (i + 1)), (0.3, 1.2, 0.2 * (i + 1)), M_PanelGrey(), "Floors")
+    box("Landing", (LANDING_X, 4.4, 2.9), (0.6, 2.0, 0.2), M_PanelGrey(), "Floors")
+    box("StairRail", (0.25, SY - 0.6, 2.35), (5.4, 0.06, 0.06), M_Metal(), "Rails", pitch=-math.degrees(math.atan2(3.0, 4.5)))
+    box("StairRail", (0.25, SY - 0.6, 1.75), (5.4, 0.06, 0.06), M_Metal(), "Rails", pitch=-math.degrees(math.atan2(3.0, 4.5)))
+    for i in range(0, 15, 3):
+        box("StairPost", (-2.0 + 0.3 * i + 0.15, SY - 0.6, 0.2 * (i + 1) + 0.5), (0.06, 0.06, 1.0), M_Metal(), "Rails")
+    # Tables and stools on the floor, the galley's dispensers and counter to port by the door.
+    for (tx, ty) in ((-4.5, -3.0), (-4.5, 0.6), (-0.5, -3.5), (-0.5, 1.5), (3.5, -2.5), (3.5, 1.0)):
+        lathe("Table", [(0.0, 0.0), (0.08, 0.0), (0.08, 0.7), (0.55, 0.7), (0.55, 0.75), (0.0, 0.75)], (tx, ty, 0), M_PanelLight(), "Furniture", closed=True, segments=24)
+        for k in range(4):
+            c, s = ang(45 + 90 * k)
+            lathe("Stool", [(0.0, 0.0), (0.06, 0.0), (0.06, 0.42), (0.2, 0.42), (0.2, 0.48), (0.0, 0.48)], (tx + 0.85 * c, ty + 0.85 * s, 0), M_Seat(), "Furniture", closed=True, segments=16)
+    for k in range(5):
+        x = 6.5 - k * 0.9
+        box("Dispenser", (x, -W / 2 + 0.25, 1.2), (0.8, 0.46, 1.8), M_PanelGrey(), "Furniture", bevel=0.01)
+        box("DispenserHatch", (x, -W / 2 + 0.49, 1.35), (0.5, 0.02, 0.5), M_Buttons(), "Lights")
+    box("Counter", (4.7, -W / 2 + 0.6, 0.9), (4.8, 0.7, 0.08), M_Black(), "Furniture")
+    # The ceiling's light troughs.
+    for x in (-6, -2, 2, 6):
+        box("Trough", (x, 0, H - 0.05), (0.6, W - 1.0, 0.1), M_Soft(), "Lights")
+        R.light((x, 0, H - 0.3), 300.0, size=3.0)
+    return R
+
+def build_mess():
+    """The officers' mess (The Undiscovered Country's dinner): the long dark table and its chairs under round
+    ceiling lamps, slatted wall panels between lit strips, the sideboard to port, the display case of plates and
+    the ship's model lit behind glass on the forward wall. Lift door aft, in the middle."""
+    R = Room("mess", 11.0, 7.0, 2.8)
+    L, W, H = R.L, R.W, R.H
+    shell(R, M_PanelGrey(), M_Carpet(), M_PanelDark())
+    def slats(axis, pos, a0, a1, sgn, strips=True):
+        n = int((a1 - a0) // 1.8); start = a0 + ((a1 - a0) - n * 1.8) / 2 + 0.9
+        for k in range(n):
+            c = start + k * 1.8
+            for z in (0.55, 0.8, 1.05, 1.3, 1.55, 1.8, 2.05, 2.3):
+                if axis == 'x': box("Slat", (c, pos - sgn * 0.03, z), (1.5, 0.06, 0.1), M_PanelLight(), "Walls")
+                else: box("Slat", (pos - sgn * 0.03, c, z), (0.06, 1.5, 0.1), M_PanelLight(), "Walls")
+            if strips and k < n - 1:
+                e = c + 0.9
+                if axis == 'x': box("WallStrip", (e, pos - sgn * 0.03, 1.45), (0.06, 0.03, 2.0), M_Strip(), "Lights")
+                else: box("WallStrip", (pos - sgn * 0.03, e, 1.45), (0.03, 0.06, 2.0), M_Strip(), "Lights")
+    slats('x', W / 2, -L / 2 + 0.3, L / 2 - 0.3, 1)
+    slats('x', -W / 2, -L / 2 + 0.3, L / 2 - 0.3, -1)
+    slats('y', -L / 2, -W / 2 + 0.3, -1.0, -1); slats('y', -L / 2, 1.0, W / 2 - 0.3, -1)
+    # The table and twelve chairs; plates and glasses down it.
+    box("TableTop", (0.3, 0, 0.74), (6.6, 1.3, 0.06), M_Black(), "Furniture", bevel=0.01)
+    box("TableLip", (0.3, 0, 0.705), (6.6, 1.3, 0.02), M_Metal(), "Furniture")
+    box("TableBase", (0.3, 0, 0.36), (5.6, 0.6, 0.72), M_PanelDark(), "Furniture")
+    for k in range(5):
+        x = 0.3 - 2.4 + 1.2 * k
+        chair((x, -1.15, 0), 90.0); chair((x, 1.15, 0), -90.0)
+        for s in (-1, 1):
+            disc("Plate", (x, s * 0.42, 0.78), 0.16, M_PanelLight(), "Furniture", segments=24)
+            tube("Glass", (x + 0.3, s * 0.3, 0), 0.04, 0.77, 0.9, M_Glass(), "Glass", segments=12)
+    chair((0.3 + 3.9, 0, 0), 180.0); chair((0.3 - 3.9, 0, 0), 0.0)
+    for s in (-1, 1): lathe("Centrepiece", [(0.0, 0.0), (0.12, 0.0), (0.18, 0.2), (0.12, 0.3), (0.0, 0.3)], (0.3 + s * 1.5, 0, 0.77), M_Brass(), "Furniture", segments=16)
+    # Round ceiling lamps on their stems, warm.
+    for (x, y) in ((-3.0, -1.4), (-3.0, 1.4), (0.3, -1.4), (0.3, 1.4), (3.6, -1.4), (3.6, 1.4)):
+        lathe("Lamp", [(0.0, 0.0), (0.6, 0.0), (0.6, 0.08), (0.0, 0.08)], (x, y, H - 0.2), M_PanelLight(), "Lights", closed=True, segments=32)
+        disc("LampFace", (x, y, H - 0.205), 0.55, M_Soft(), "Lights", up=(0, 0, -1), segments=32)
+        tube("LampStem", (x, y, 0), 0.03, H - 0.12, H, M_Metal(), "Lights", segments=12)
+        R.light((x, y, H - 0.35), 25.0, color=(1.0, 0.92, 0.8), size=1.0)
+    # The sideboard to port with its service; the display case forward.
+    box("Sideboard", (-1.0, -W / 2 + 0.3, 0.45), (3.6, 0.56, 0.9), M_PanelDark(), "Furniture", bevel=0.01)
+    box("SideboardTop", (-1.0, -W / 2 + 0.3, 0.92), (3.7, 0.6, 0.04), M_Black(), "Furniture")
+    for k in range(4):
+        lathe("Decanter", [(0.0, 0.0), (0.1, 0.0), (0.1, 0.18), (0.04, 0.26), (0.04, 0.34), (0.0, 0.34)], (-2.2 + k * 0.8, -W / 2 + 0.3, 0.94), M_Glass(), "Glass", segments=16)
+    box("CaseBack", (L / 2 - 0.04, 0, 1.5), (0.06, 4.0, 2.2), M_PanelDark(), "Furniture")
+    box("CaseLit", (L / 2 - 0.08, 0, 1.6), (0.02, 3.8, 1.6), M_Soft(), "Lights")
+    for z in (0.95, 1.55, 2.15): box("CaseShelf", (L / 2 - 0.3, 0, z), (0.5, 4.0, 0.04), M_PanelLight(), "Furniture")
+    for k in range(6): disc("Plate", (L / 2 - 0.3, -1.6 + k * 0.64, 1.25), 0.18, M_PanelLight(), "Furniture", axis='x', up=(-1, 0, 0), segments=24)
+    box("ShipModel", (L / 2 - 0.3, 0, 1.85), (0.5, 0.9, 0.2), M_HullGrey(), "Furniture", bevel=0.05)
+    box("CaseGlass", (L / 2 - 0.56, 0, 1.6), (0.02, 4.0, 2.0), M_Glass(), "Glass")
+    for z in (0.58, 2.62): box("CaseFrame", (L / 2 - 0.3, 0, z), (0.56, 4.1, 0.06), M_PanelDark(), "Furniture")
+    R.light((L / 2 - 0.4, 0, 2.0), 12.0, size=0.5)
+    lift_door(R, "-x", 0.0)
+    cove_ceiling(R, drop=0.3, width=0.8, panels=(), energy=0.0)
+    return R
+
+def build_cabin():
+    """The captain's quarters (The Wrath of Khan): the window wall to port with its lit braces across three bays of
+    glass (space beyond: the hull is hidden indoors), the lower sitting area before it with two lounge chairs and
+    a low table, the raised floor behind carrying the desk and its viewer against the forward wall and the bunk to
+    starboard, the shelves of antiques aft. Lift door aft, starboard of centre; red carpet."""
+    R = Room("cabin", 9.0, 7.0, 2.8)
+    L, W, H = R.L, R.W, R.H
+    shell(R, M_PanelLight(), M_CarpetRed(), M_PanelLight(), skip_walls=("-y",))
+    # The window wall.
+    W2 = W / 2 + 0.06
+    box("WinSill", (0, -W2, 0.35), (L + 0.24, 0.12, 0.7), M_PanelLight(), "Walls")
+    box("WinHead", (0, -W2, H - 0.2), (L + 0.24, 0.12, 0.4), M_PanelLight(), "Walls")
+    for x in (-L / 2 - 0.06, -1.5, 1.5, L / 2 + 0.06):
+        box("WinPost", (x, -W2, 1.6), (0.3 if abs(x) > 4 else 0.24, 0.12, 1.8), M_PanelLight(), "Walls")
+    bl = math.hypot(1.3, 1.8); ba = math.degrees(math.atan2(1.3, 1.8))
+    for cx in (-3.0, 0.0, 3.0):
+        box("WinGlass", (cx, -W2, 1.6), (2.76, 0.02, 1.8), M_Glass(), "Glass")
+        for s in (-1, 1):
+            box("WinBrace", (cx + s * 0.65, -W2 + 0.04, 1.6), (0.08, 0.03, bl), M_Strip(), "Lights", pitch=s * ba)
+    box("SillTop", (0, -W2 + 0.1, 0.72), (L, 0.32, 0.04), M_PanelLight(), "Furniture")
+    # The raised floor aft and to starboard, its nosing lit; the sitting area below it at the window.
+    box("Dais", (1.0, 1.4, 0.125), (7.0, 4.2, 0.25), M_CarpetRed(), "Floors")
+    box("DaisNose", (1.0, -0.7, 0.23), (7.0, 0.04, 0.04), M_Strip(), "Lights")
+    box("DaisEnd", (-2.5, 1.4, 0.125), (0.04, 4.2, 0.25), M_Metal(), "Floors")
+    lounge_chair((-1.2, -2.0, 0.0), -90.0); lounge_chair((1.4, -2.0, 0.0), -90.0)
+    box("LowTable", (0.1, -2.6, 0.38), (1.2, 0.6, 0.03), M_Glass(), "Glass")
+    for s in (-1, 1): box("LowTableLeg", (0.1 + s * 0.5, -2.6, 0.18), (0.06, 0.5, 0.36), M_Metal(), "Furniture")
+    lathe("Pot", [(0.0, 0.0), (0.25, 0.0), (0.3, 0.5), (0.0, 0.5)], (-3.8, -2.6, 0), M_PanelDark(), "Furniture", segments=20)
+    lathe("Plant", [(0.0, 0.0), (0.45, 0.3), (0.5, 0.7), (0.3, 1.0), (0.0, 1.1)], (-3.8, -2.6, 0.5), M_Plant(), "Furniture", segments=16)
+    # The desk and its viewer against the forward wall (the Use spot before it), the chair.
+    DZ = 0.25
+    box("Desk", (L / 2 - 0.7, 1.4, DZ + 0.37), (0.9, 1.8, 0.74), M_PanelLight(), "Furniture", bevel=0.02)
+    box("DeskTop", (L / 2 - 0.7, 1.4, DZ + 0.76), (0.96, 1.86, 0.04), M_Black(), "Furniture", bevel=0.01)
+    box("Viewer", (L / 2 - 0.55, 1.4, DZ + 1.05), (0.1, 0.6, 0.45), M_Black(), "Furniture", pitch=10.0, bevel=0.01)
+    screen("Scr", (L / 2 - 0.61, 1.4, DZ + 1.05), 0.5, 0.36, M_Screen("Communications"), "Screens", yaw=0.0, pitch=10.0)
+    box("DeskTouch", (L / 2 - 0.85, 1.0, DZ + 0.785), (0.3, 0.4, 0.01), M_Buttons(), "Furniture")
+    chair((L / 2 - 1.6, 1.4, DZ), 0.0)
+    R.light((L / 2 - 1.0, 1.4, 1.8), 8.0, color=(0.6, 0.75, 1.0), size=0.5)
+    # The bunk to starboard under its lit panel.
+    box("Bed", (-1.0, W / 2 - 1.0, DZ + 0.3), (2.2, 1.8, 0.6), M_PanelLight(), "Furniture", bevel=0.03)
+    box("Cover", (-1.0, W / 2 - 1.0, DZ + 0.62), (2.1, 1.7, 0.08), M_Burgundy(), "Furniture", bevel=0.03)
+    box("Pillow", (-1.0, W / 2 - 0.35, DZ + 0.7), (1.6, 0.5, 0.12), M_Linen(), "Furniture", bevel=0.04)
+    box("BedPanel", (-1.0, W / 2 - 0.04, 1.9), (2.0, 0.04, 0.5), M_Soft(), "Lights")
+    R.light((-1.0, W / 2 - 1.0, 2.2), 10.0, color=(1.0, 0.92, 0.8), size=0.8)
+    # Shelves of antiques aft, port of the lift: books, a sextant, a model ship; a round mirror by the door.
+    for z in (DZ + 0.9, DZ + 1.4, DZ + 1.9): box("Shelf", (-L / 2 + 0.25, -0.3, z), (0.4, 2.6, 0.04), M_Wood(), "Furniture")
+    for k in range(9):
+        box("Book", (-L / 2 + 0.25, -1.4 + k * 0.14, DZ + 1.04), (0.22, 0.08, 0.24 + 0.03 * (k % 3)), (M_Burgundy(), M_PanelDark(), M_Wood())[k % 3], "Furniture")
+    box("Sextant", (-L / 2 + 0.25, 0.3, DZ + 1.52), (0.2, 0.25, 0.2), M_Brass(), "Furniture", bevel=0.05)
+    box("ModelShip", (-L / 2 + 0.25, -0.6, DZ + 2.02), (0.15, 0.9, 0.2), M_Wood(), "Furniture", bevel=0.03)
+    box("ShelfLamp", (-L / 2 + 0.12, -0.3, DZ + 2.3), (0.2, 2.6, 0.04), M_Soft(), "Lights")
+    R.light((-L / 2 + 0.8, -0.3, 1.9), 10.0, color=(1.0, 0.9, 0.75), size=0.8)
+    disc("Mirror", (-L / 2 + 0.03, 2.9, 1.6), 0.35, M_Glass(), "Glass", axis='x', up=(1, 0, 0), segments=32)
+    ring("MirrorRim", (-L / 2 + 0.03, 2.9, 1.6), 0.35, 0.39, -0.02, 0.02, M_Brass(), "Furniture", axis='x', segments=32)
+    lift_door(R, "-x", 1.5)
+    cove_ceiling(R, drop=0.3, width=0.8, panels=[(2.0, 1.2), (-1.5, 1.2)], energy=12.0)
+    return R
+
+def build_crew_quarters():
+    """Deck F, crew quarters: a cabin corridor of the refit's section athwartships, the lift at its starboard end,
+    cabin doors in alternate bays down both sides, the last cabin forward of the port end open: two bunks, a desk
+    with its viewer, a locker, a wash stand. Origin: the floor at the corridor's centre; the cabin lies forward of
+    the corridor at its port end."""
+    R = Room("crew", 2 * CORR_W, 16.0, CORR_H)
+    H = CORR_H; W = CORR_W
+    Y0, Y1, P = -8.0, 8.0, 2.0
+    CX0, CX1, CY0, CY1 = W, W + 4.2, -8.0, -4.0            # the open cabin: two bays wide
+    shut = [(-3.0, "shut"), (1.0, "shut"), (5.0, "shut")]
+    corridor_leg(R, -W, W, Y0, Y1, walls=("-x", "+x", "-y", "+y"), anchor=Y0, pitch=P,
+                 doors={"-x": [(-7.0, "shut"), (-3.0, "shut"), (1.0, "shut"), (5.0, "shut")], "+x": [(-7.0, "open")] + shut})
+    for y in (-7.0, -3.0, 1.0, 5.0):
+        box("CabinNumber", (-W + 0.02, y + 0.85, 1.9), (0.02, 0.3, 0.12), M_Buttons(), "Lights")
+        box("CabinNumber", (W - 0.02, y + 0.85, 1.9), (0.02, 0.3, 0.12), M_Buttons(), "Lights")
+    doorway('x', Y1, 0.0, -1, depth=0.14, leaves=M_Burgundy(), label="Lift")
+    box("LiftLabel", (0.0, Y1 - 0.08, 2.42), (0.6, 0.02, 0.08), M_Strip(), "Lights")
+    # The open cabin: its floor, ceiling and walls (the corridor's door wall is its aft side).
+    T = 0.12
+    box("Floor", ((CX0 + CX1) / 2, (CY0 + CY1) / 2, -T / 2), (CX1 - CX0, CY1 - CY0, T), M_CarpetGrey(), "Floors")
+    box("Ceiling", ((CX0 + CX1) / 2, (CY0 + CY1) / 2, 2.4 + T / 2), (CX1 - CX0, CY1 - CY0, T), M_PanelGrey(), "Ceiling")
+    wall_run("CabinWall", 'y', CX1 + T / 2, CY0 - T, CY1 + T, 0, 2.4, T, M_PanelLight(), "Walls")
+    wall_run("CabinWall", 'x', CY0 - T / 2, CX0, CX1 + T, 0, 2.4, T, M_PanelLight(), "Walls")
+    wall_run("CabinWall", 'x', CY1 + T / 2, CX0, CX1 + T, 0, 2.4, T, M_PanelLight(), "Walls")
+    mx, my = (CX0 + CX1) / 2, -7.0
+    for z in (0.35, 1.45):
+        box("Bunk", (CX1 - 0.5, my + 1.0, z), (1.0, 2.0, 0.16), M_PanelLight(), "Furniture", bevel=0.02)
+        box("Mattress", (CX1 - 0.5, my + 1.0, z + 0.14), (0.96, 1.96, 0.12), M_Linen(), "Furniture", bevel=0.03)
+        box("BunkCover", (CX1 - 0.5, my + 0.7, z + 0.2), (0.96, 1.3, 0.06), M_Burgundy(), "Furniture", bevel=0.02)
+        box("BunkPillow", (CX1 - 0.5, my + 1.75, z + 0.24), (0.7, 0.4, 0.1), M_Linen(), "Furniture", bevel=0.03)
+        box("BunkLamp", (CX1 - 0.04, my + 1.7, z + 0.9), (0.04, 0.4, 0.06), M_Soft(), "Lights")
+    box("BunkLadder", (CX1 - 1.02, my + 0.4, 0.9), (0.04, 0.4, 1.6), M_Metal(), "Furniture")
+    for z in (0.3, 0.6, 0.9, 1.2, 1.5): box("Rung", (CX1 - 1.02, my + 0.4, z), (0.03, 0.36, 0.03), M_Metal(), "Furniture")
+    box("Desk", (mx - 0.4, CY1 - 0.35, 0.37), (1.4, 0.6, 0.74), M_PanelLight(), "Furniture", bevel=0.02)
+    box("DeskTop", (mx - 0.4, CY1 - 0.35, 0.76), (1.46, 0.66, 0.04), M_Black(), "Furniture")
+    box("Viewer", (mx - 0.4, CY1 - 0.2, 1.05), (0.5, 0.1, 0.4), M_Black(), "Furniture", bevel=0.01)
+    screen("Scr", (mx - 0.4, CY1 - 0.26, 1.05), 0.42, 0.3, M_Screen("Science"), "Screens", yaw=90.0, pitch=8.0)
+    lathe("Stool", [(0.0, 0.0), (0.06, 0.0), (0.06, 0.42), (0.2, 0.42), (0.2, 0.48), (0.0, 0.48)], (mx - 0.4, CY1 - 1.0, 0), M_Seat(), "Furniture", closed=True, segments=16)
+    box("Locker", (CX0 + 0.4, CY0 + 0.4, 1.05), (0.7, 0.7, 2.1), M_PanelDark(), "Furniture", bevel=0.01)
+    box("LockerSeam", (CX0 + 0.4, CY0 + 0.76, 1.05), (0.02, 0.01, 1.9), M_PanelGrey(), "Furniture")
+    box("WashStand", (mx + 0.6, CY0 + 0.3, 0.45), (0.7, 0.5, 0.9), M_PanelLight(), "Furniture", bevel=0.02)
+    lathe("Basin", [(0.0, 0.0), (0.22, 0.0), (0.26, 0.1), (0.0, 0.1)], (mx + 0.6, CY0 + 0.3, 0.9), M_PanelLight(), "Furniture", segments=20)
+    disc("Mirror", (mx + 0.6, CY0 + 0.03, 1.6), 0.3, M_Glass(), "Glass", axis='y', up=(0, 1, 0), segments=32)
+    box("CabinLight", (mx, (CY0 + CY1) / 2, 2.38), (1.0, 0.5, 0.04), M_Soft(), "Lights")
+    R.light((mx, (CY0 + CY1) / 2, 2.2), 20.0, size=0.9)
+    return R
+
+def build_torpedo_bay():
+    """The torpedo bay in the neck (The Wrath of Khan, The Undiscovered Country): the loading track down the
+    middle to the two tube breeches in the forward bulkhead, a casing on its carriage, racks of casings two tiers
+    high along both walls, the catwalk along the port wall with its ladder, the control console aft facing the
+    track, red working lights. Lift door aft, starboard of centre."""
+    R = Room("torp", 16.0, 7.0, 4.5)
+    L, W, H = R.L, R.W, R.H
+    shell(R, M_PanelDark(), M_DeckPlate(), M_PanelDark())
+    # The track.
+    box("TrackBed", (0.5, 0, 0.2), (13.0, 1.4, 0.4), M_PanelGrey(), "Furniture")
+    for s in (-1, 1): box("Rail", (0.5, s * 0.5, 0.45), (13.0, 0.08, 0.1), M_Metal(), "Furniture")
+    for k in range(10):
+        for s in (-1, 1): box("Hazard", (-5.5 + k * 1.3, s * 0.95, 0.004), (0.5, 0.3, 0.008), M_PaintYellow(), "Floors", yaw=45.0)
+    box("Carriage", (1.0, 0, 0.6), (2.4, 1.0, 0.3), M_Metal(), "Furniture")
+    torpedo((1.0, 0, 0.75), 0.0)
+    # The breeches.
+    for y in (-1.0, 1.0):
+        ring("BreechRing", (L / 2 - 0.02, y, 1.1), 0.55, 0.7, -0.5, 0.0, M_Metal(), "Walls", axis='x', segments=40)
+        lathe("BreechDoor", [(0.0, -0.1), (0.55, -0.1), (0.55, -0.02), (0.0, -0.02)], (L / 2 - 0.02, y, 1.1), M_PanelGrey(), "Walls", axis='x', closed=True, segments=40)
+        ring("BreechGlow", (L / 2 - 0.3, y, 1.1), 0.56, 0.6, -0.02, 0.02, M_Warn(), "Lights", axis='x', segments=40)
+        box("BreechLamp", (L / 2 - 0.05, y, 2.1), (0.06, 0.3, 0.1), M_Warn(), "Lights")
+    box("TubeLabel", (L / 2 - 0.05, 0, 2.6), (0.06, 2.4, 0.3), M_Buttons(), "Lights")
+    box("LoadArm", (L / 2 - 1.2, 0, 2.2), (0.3, 2.6, 0.3), M_Metal(), "Furniture")
+    for y in (-1.0, 1.0): box("LoadPiston", (L / 2 - 1.2, y, 1.6), (0.2, 0.2, 1.0), M_Metal(), "Furniture")
+    # The racks.
+    for s in (-1, 1):
+        for z in (0.6, 1.6):
+            box("RackShelf", (-1.0, s * (W / 2 - 0.8), z - 0.3), (8.4, 1.3, 0.1), M_Metal(), "Furniture")
+            for k in range(4): torpedo((-4.0 + k * 2.2 + 0.1, s * (W / 2 - 0.8), z - 0.25), 0.0)
+        for x in (-5.2, -1.0, 3.2):
+            box("RackPost", (x, s * (W / 2 - 0.2), 1.2), (0.12, 0.12, 2.4), M_Metal(), "Furniture")
+            box("RackPost", (x, s * (W / 2 - 1.4), 1.2), (0.12, 0.12, 2.4), M_Metal(), "Furniture")
+    # The catwalk to port with its rails and ladder.
+    box("Catwalk", (-1.0, -W / 2 + 0.7, 2.45), (10.0, 1.3, 0.1), M_Grating(), "Floors")
+    for z in (0.45, 1.0): box("CatRail", (-1.0, -W / 2 + 1.38, 2.5 + z), (10.0, 0.06, 0.06), M_Metal(), "Rails")
+    for x in range(-5, 4, 2): box("CatPost", (x, -W / 2 + 1.38, 3.0), (0.06, 0.06, 1.0), M_Metal(), "Rails")
+    for s in (-1, 1): box("LadderStile", (4.2, -W / 2 + 1.1 + s * 0.25, 1.4), (0.05, 0.05, 2.5), M_Metal(), "Furniture")
+    for z in (0.3, 0.6, 0.9, 1.2, 1.5, 1.8, 2.1, 2.4): box("Rung", (4.2, -W / 2 + 1.1, z), (0.04, 0.5, 0.04), M_Metal(), "Furniture")
+    # The console aft facing the track (Use), the tactical screen on the aft wall.
+    console_desk((-6.2, 0, 0), 2.4, 0.8, 0.0, ("TorpedoBay", "Weapons"), screens=2)
+    wall_screen((-L / 2 + 0.16, -2.0, 2.0), 1.6, 0.9, 180.0, "Tactical")
+    # Lights: warm troughs down the ceiling, red lamps along the walls, the beams.
+    ceiling_beams(R, 2.6, 0.3)
+    for x in (-5.0, -1.5, 2.0, 5.5):
+        box("Trough", (x, 0, H - 0.05), (0.4, W - 1.0, 0.1), M_Soft(), "Lights")
+        R.light((x, 0, H - 0.3), 60.0, color=(1.0, 0.85, 0.8), size=2.0)
+    for s in (-1, 1):
+        for x in (-4.0, 0.0, 4.0): box("RedLamp", (x, s * (W / 2 - 0.03), 3.6), (0.3, 0.04, 0.08), M_Warn(), "Lights")
+    lift_door(R, "-x", 2.0)
+    return R
+
+def build_cargo_bay():
+    """The cargo bay (The Motion Picture): container stacks three high in their racks down both sides of the
+    aisle, the gantry crane across the bay on its rails with the hoist over the aisle, the cargo transporter's
+    wide pad at the aft end under its lattice, the manifest console by the lift (Use). Lift door forward,
+    starboard of centre."""
+    R = Room("cargo", 20.0, 12.0, 7.0)
+    L, W, H = R.L, R.W, R.H
+    shell(R, M_PanelGrey(), M_DeckPlate(), M_PanelDark())
+    bands = (M_PaintRed(), M_PaintYellow(), M_StripBlue(), M_PanelDark())
+    for s in (-1, 1):
+        for i in range(8):
+            x = -8.0 + i * 2.3
+            for tier in range(3):
+                if (i * 7 + tier * 3) % 5 == 4: continue
+                z = 1.05 + tier * 2.2
+                box("Container", (x, s * (W / 2 - 1.2), z), (2.0, 2.0, 2.0), M_HullGrey() if (i + tier) % 2 else M_PanelGrey(), "Cargo", bevel=0.04)
+                box("ContainerBand", (x, s * (W / 2 - 1.2), z), (2.02, 2.02, 0.2), bands[(i + tier) % 4], "Cargo")
+            for z in (2.2, 4.4): box("RackBeam", (x, s * (W / 2 - 1.2), z - 0.05), (2.3, 2.3, 0.1), M_Metal(), "Furniture")
+        for x in (-9.2, -4.6, 0.0, 4.6, 9.2):
+            for yy in (s * (W / 2 - 0.1), s * (W / 2 - 2.3)): box("RackPost", (x, yy, 3.3), (0.15, 0.15, 6.6), M_Metal(), "Furniture")
+        box("GantryRail", (0, s * (W / 2 - 2.5), 5.6), (L - 1.0, 0.2, 0.2), M_Metal(), "Furniture")
+    box("Gantry", (2.0, 0, 5.85), (0.6, W - 4.6, 0.5), M_PaintYellow(), "Furniture", bevel=0.03)
+    box("Hoist", (2.0, -1.0, 5.25), (0.5, 0.5, 0.7), M_PanelDark(), "Furniture")
+    box("HoistCable", (2.0, -1.0, 3.6), (0.04, 0.04, 2.6), M_Metal(), "Furniture")
+    box("HoistHook", (2.0, -1.0, 2.15), (0.2, 0.1, 0.3), M_Metal(), "Furniture")
+    # The cargo transporter aft.
+    PX = -L / 2 + 2.2
+    box("CargoPad", (PX, 0, 0.1), (3.6, 4.6, 0.2), M_PanelGrey(), "Pad")
+    for i in range(3):
+        for j in range(4): box("PadCell", (PX - 1.1 + i * 1.1, -1.65 + j * 1.1, 0.205), (0.9, 0.9, 0.01), M_Pad(), "Lights")
+    box("PadWall", (-L / 2 + 0.05, 0, 1.6), (0.06, 5.0, 2.6), M_Lattice(), "Lights")
+    for y in (-2.5, -1.25, 0.0, 1.25, 2.5): box("PadMullion", (-L / 2 + 0.1, y, 1.6), (0.12, 0.1, 2.7), M_Metal(), "Walls")
+    console_desk((-L / 2 + 4.6, 3.4, 0), 1.2, 0.7, 180.0, "Engineering")
+    R.light((PX, 0, 3.0), 60.0, color=(0.8, 0.88, 1.0), size=2.0)
+    # The manifest console by the lift (the person stands aft of it), the aisle line, deck lamps.
+    console_desk((L / 2 - 1.6, 0.6, 0), 1.6, 0.8, 0.0, ("MasterSituation", "Deflector"), screens=2)
+    box("AisleLine", (0, 0, 0.004), (18.0, 0.3, 0.008), M_PaintYellow(), "Floors")
+    for x in range(-8, 9, 4):
+        for s in (-1, 1): box("DeckLamp", (x, s * 2.6, 0.01), (0.25, 0.25, 0.02), M_StripBlue(), "Lights")
+    truss_ceiling(R, 4.0, depth=0.8, light_size=(2.0, 0.9), energy=150.0, runner_y=2.4)
+    pilasters(R, 5.0, walls=("+x", "-x"), skip=(("+x", 3.0),))
+    lift_door(R, "+x", 3.0)
+    return R
+
+ROOMS = {"eng": build_engineering, "sick": build_sickbay, "bay": build_shuttle_bay, "trans": build_transporter, "lock": build_airlock,
+         "corr": build_corridor, "rec": build_rec_deck, "mess": build_mess, "cabin": build_cabin, "crew": build_crew_quarters, "torp": build_torpedo_bay, "cargo": build_cargo_bay}
+MESH_NAMES = {"eng": "SM_RoomEngineering", "sick": "SM_RoomSickbay", "bay": "SM_RoomShuttleBay", "trans": "SM_RoomTransporter", "lock": "SM_RoomAirlock",
+              "corr": "SM_RoomCorridorG", "rec": "SM_RoomRecDeck", "mess": "SM_RoomMess", "cabin": "SM_RoomCabin", "crew": "SM_RoomCrewQuarters", "torp": "SM_RoomTorpedoBay", "cargo": "SM_RoomCargoBay"}
 
 # Preview cameras per room: (eye, target, lens mm), in the game frame.
 VIEWS = {
@@ -963,6 +1501,53 @@ VIEWS = {
         "high": ((6.0, -5.0, 5.5), (-0.8, 0.0, 0.8), 22),
     },
 }
+
+VIEWS.update({
+    "corr": {
+        "lift": ((0.0, 1.0, 1.65), (0.0, -9.0, 1.3), 20),
+        "sickdoor": ((-0.6, -4.5, 1.65), (1.2, -1.3, 1.2), 22),
+        "legb": ((2.0, -10.3, 1.65), (18.0, -10.3, 1.4), 22),
+        "panel": ((15.0, -10.3, 1.65), (18.2, -10.3, 1.5), 24),
+        "high": ((-6.0, -5.0, 8.0), (6.0, -6.0, 1.0), 22),
+    },
+    "rec": {
+        "door": ((8.0, -2.0, 1.65), (-8.0, 1.0, 2.5), 20),
+        "screen": ((2.0, 3.0, 1.65), (-9.0, 0.0, 3.0), 22),
+        "gallery": ((-7.5, 5.8, 4.7), (6.0, -3.0, 1.5), 20),
+        "stair": ((-5.0, -2.0, 1.65), (2.0, 4.5, 1.8), 22),
+        "high": ((-14.0, -12.0, 12.0), (0.0, 0.0, 1.5), 24),
+    },
+    "mess": {
+        "door": ((-4.6, 0.0, 1.65), (5.0, 0.0, 1.0), 20),
+        "head": ((4.8, 0.3, 1.6), (-4.0, 0.0, 0.9), 22),
+        "case": ((1.0, -2.8, 1.6), (5.5, 0.5, 1.5), 22),
+        "high": ((8.0, -7.0, 6.0), (0.0, 0.0, 0.8), 22),
+    },
+    "cabin": {
+        "door": ((-3.6, 1.5, 1.65), (3.0, -1.5, 1.0), 20),
+        "window": ((2.5, 2.5, 1.65), (-1.0, -3.4, 1.2), 20),
+        "desk": ((1.2, 1.4, 1.75), (4.5, 1.4, 1.2), 24),
+        "high": ((7.0, -7.0, 6.0), (0.0, 0.5, 0.8), 22),
+    },
+    "crew": {
+        "lift": ((0.0, 7.0, 1.65), (0.0, -8.0, 1.2), 20),
+        "cabindoor": ((-0.7, -3.8, 1.65), (1.3, -7.0, 1.1), 22),
+        "bunks": ((1.8, -4.4, 1.6), (5.3, -6.4, 0.9), 22),
+        "high": ((-5.0, -12.0, 8.0), (1.5, -3.0, 1.0), 22),
+    },
+    "torp": {
+        "lift": ((-7.0, 2.0, 1.65), (7.0, 0.0, 1.2), 20),
+        "track": ((-5.5, -0.9, 1.65), (8.0, 0.0, 1.1), 22),
+        "racks": ((3.0, 1.2, 1.6), (-6.0, -3.2, 1.2), 20),
+        "high": ((-12.0, -9.0, 9.0), (1.0, 0.0, 1.0), 22),
+    },
+    "cargo": {
+        "lift": ((9.0, 3.0, 1.65), (-9.0, 0.0, 2.0), 20),
+        "aisle": ((-3.0, 0.5, 1.65), (10.0, 0.5, 1.5), 22),
+        "pad": ((-3.0, -3.0, 1.65), (-9.5, 0.0, 1.2), 22),
+        "high": ((16.0, -14.0, 14.0), (0.0, 0.0, 2.0), 24),
+    },
+})
 
 def new_scene():
     bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -1013,7 +1598,7 @@ def export(path, only=None, exclude=()):
     bpy.ops.export_scene.fbx(filepath=path, use_selection=True, apply_unit_scale=True, global_scale=1.0, axis_forward='-Y', axis_up='Z', object_types={'MESH'}, use_mesh_modifiers=True, mesh_smooth_type='FACE', add_leaf_bones=False, bake_anim=False, path_mode='COPY', embed_textures=False)
 
 if __name__ == "__main__":
-    rooms = (arg("--room") or "eng,sick,bay,trans,lock").split(",")
+    rooms = (arg("--room") or "eng,sick,bay,trans,lock,corr,rec,mess,cabin,crew,torp,cargo").split(",")
     only = arg("--views"); only = set(only.split(",")) if only else None
     for code in rooms:
         new_scene()
