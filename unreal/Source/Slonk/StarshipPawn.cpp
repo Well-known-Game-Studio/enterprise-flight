@@ -1850,7 +1850,7 @@ void AStarshipPawn::ProcessDebugCommand()
 		else { DebugThrust = FVector(Arg(1, 0.f), Arg(2, 0.f), Arg(3, 0.f)); DebugThrustTime = Arg(4, 2.f); }
 	}
 	else if (Op == TEXT("impulse") && Movement) { Movement->SetThrottle(FMath::Clamp(Arg(1, 4.f), 1.f, 4.f) * 0.25f); }
-	else if (Op == TEXT("stop") && Movement) { Movement->SetThrottle(0.0); if (WarpDrive) { WarpDrive->DisengageWarp(); } }
+	else if (Op == TEXT("stop") && Movement) { SetAutopilot(0, 0.0, 0.f); Movement->SetThrottle(0.0); if (WarpDrive) { WarpDrive->DisengageWarp(); } }   // a stop ends the autopilot's leg too
 	else if (Op == TEXT("warp") && WarpDrive)
 	{
 		const FString Mode = ArgStr(1);
@@ -3660,8 +3660,19 @@ void AStarshipPawn::TickAutopilot(float DeltaTime)
 		AutopilotLogTimer = 1.f;
 		UE_LOG(LogTemp, Log, TEXT("autopilot %d: %.0f km, yaw %.2f pitch %.2f%s warp %d%s%s"), AutopilotState, Dist / 1.0e5, Yaw, Pitch, bAligned ? TEXT(" aligned") : TEXT(""), bAtWarp ? 1 : 0, Block ? (bClimb ? TEXT(" climbing out of ") : TEXT(" aiming past ")) : TEXT(""), Block ? *Block->GetName() : TEXT(""));
 	}
+	// An impulse leg already at its standoff is done, whatever stands nearby: within a per cent of the standoff (or
+	// a kilometre), since the ease-in approaches it asymptotically.
+	if (AutopilotState == 2 && Dist - AutopilotStandoffCm <= FMath::Max(1.0e5, AutopilotStandoffCm * 0.01))
+	{
+		Movement->SetThrottle(0.0);
+		SetAutopilot(0, 0.0, 0.f);
+		return;
+	}
 	if (bClimb)
 	{
+		// At warp the field carries the ship on whatever the impulse throttle says: drop out first. Not the leg's
+		// own standoff drop, so once the path is clear the leg goes to warp again.
+		if (bAtWarp) { WarpDrive->DisengageWarp(); WarpDrive->CruiseSpeedResponse = 1.5f; return; }
 		// The climb-out: at up to three thousand km/s, braking to arrive at the goal, once the nose is near it.
 		const double V = FMath::Min(3.0e8, 0.9 * FMath::Sqrt(2.0 * Movement->ImpulseAcceleration * FVector::Dist(Goal, Here)));
 		Movement->SetThrottle(FMath::Abs(Yaw) < 8.0 && FMath::Abs(Pitch) < 8.0 ? FMath::Pow(V / Movement->FullImpulseSpeed, 1.0 / FMath::Max((double)Movement->ThrottleExponent, 0.1)) : 0.0);
@@ -3729,14 +3740,7 @@ void AStarshipPawn::TickAutopilot(float DeltaTime)
 	// Impulse: brake at nine tenths of the drive's acceleration from as fast as that allows (the speed that
 	// stops in the remaining distance), and ease the last stretch over AutopilotSeconds; the throttle is the
 	// inverse of the movement's power law.
-	// Done within a per cent of the standoff (or a kilometre): the ease-in approaches it asymptotically.
-	const double Remaining = Dist - AutopilotStandoffCm;
-	if (Remaining <= FMath::Max(1.0e5, AutopilotStandoffCm * 0.01))
-	{
-		Movement->SetThrottle(0.0);
-		SetAutopilot(0, 0.0, 0.f);
-		return;
-	}
+	const double Remaining = Dist - AutopilotStandoffCm;   // past the standoff was dealt with above
 	const double VBrake = 0.9 * FMath::Sqrt(2.0 * Movement->ImpulseAcceleration * Remaining);
 	const double V = FMath::Min3(VBrake, Remaining / AutopilotSeconds, Movement->FullImpulseSpeed);
 	Movement->SetThrottle(FMath::Pow(V / Movement->FullImpulseSpeed, 1.0 / FMath::Max((double)Movement->ThrottleExponent, 0.1)));
