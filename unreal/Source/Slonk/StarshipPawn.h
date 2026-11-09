@@ -770,6 +770,8 @@ private:
 	double AutopilotStandoffCm = 0.0;
 	float AutopilotSeconds = 5.f;
 	bool bAutopilotWarpEngaged = false;
+	/** The autopilot itself dropped out of warp (at the standoff), as against the governor or the player. */
+	bool bAutopilotDropped = false;
 	FVector2D AutopilotPrevError = FVector2D::ZeroVector;
 	float AutopilotLogTimer = 0.f;
 	/** The factor a warp leg cruises at, picked when the leg begins (0 = not yet). */

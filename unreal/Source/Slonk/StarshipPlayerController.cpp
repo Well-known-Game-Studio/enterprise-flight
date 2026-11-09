@@ -598,6 +598,8 @@ void AStarshipPlayerController::OnWarpToggle()
 {
 	if (AStarshipPawn* Ship = GetStarship())
 	{
+		// The player taking the drive back ends the autopilot's leg: left on, it would go to warp again.
+		if (Ship->AutopilotState != 0) { Ship->SetAutopilot(0, 0.0, 0.f); }
 		if (Ship->WarpDrive)
 		{
 			Ship->WarpDrive->ToggleWarp();
