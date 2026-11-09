@@ -261,11 +261,12 @@ void AShuttlecraftPawn::SetupRunningLights()
 	TArray<FRunningLight> Lights;
 	if (ShuttleMesh.LoadSynchronous())
 	{
-		// On the model: the pods' outer flanks, the roof pod's beacon, the stern above the hatch.
-		Lights.Add(FRunningLight(FVector(-50.f, -197.f, -80.f), RL::PortRed(), ERunningLightMode::Blink, 1.3f, 0.f, 4.f));
-		Lights.Add(FRunningLight(FVector(-50.f, 197.f, -80.f), RL::StarboardGreen(), ERunningLightMode::Blink, 1.3f, 0.f, 4.f));
+		// On the Type-4 model (the pawn's frame is her centre, 1.5 m up the set: pawn z = set z - 150): the pods'
+		// forward outer corners, the spine's crest, and the roof deck's aft edge over the hatch.
+		Lights.Add(FRunningLight(FVector(40.f, -243.f, -60.f), RL::PortRed(), ERunningLightMode::Blink, 1.3f, 0.f, 4.f));
+		Lights.Add(FRunningLight(FVector(40.f, 243.f, -60.f), RL::StarboardGreen(), ERunningLightMode::Blink, 1.3f, 0.f, 4.f));
 		Lights.Add(FRunningLight(FVector(-100.f, 0.f, 125.f), RL::StrobeWhite(), ERunningLightMode::Blink, 1.9f, 0.5f, 4.f));
-		Lights.Add(FRunningLight(FVector(-513.f, 0.f, 85.f), RL::StrobeWhite(), ERunningLightMode::Blink, 1.9f, 0.f, 4.f));
+		Lights.Add(FRunningLight(FVector(-345.f, 0.f, 108.f), RL::StrobeWhite(), ERunningLightMode::Blink, 1.9f, 0.f, 4.f));
 	}
 	else
 	{
@@ -284,20 +285,21 @@ void AShuttlecraftPawn::SetupThrusters()
 	TArray<FRcsNozzle> Nozzles;
 	if (ShuttleMesh.LoadSynchronous())
 	{
-		// On the model: pairs at the pods' ends on the flanks, on the roof and under the hull, and fore and aft.
-		for (float FX : { -430.f, 120.f })
+		// On the Type-4 model (pawn z = set z - 150): pairs on the pods' outer faces at their ends, on the roof deck
+		// and under the chines, and on the nose and the aft door's frame.
+		for (float FX : { -330.f, 30.f })
 		{
 			for (float S : { -1.f, 1.f })
 			{
-				Nozzles.Add(FRcsNozzle(FVector(FX, S * 196.f, -80.f), FVector(0.f, S, 0.f), 0.7f));
-				Nozzles.Add(FRcsNozzle(FVector(FX, S * 90.f, 91.f), FVector::UpVector, 0.6f));
-				Nozzles.Add(FRcsNozzle(FVector(FX, S * 90.f, -88.f), FVector::DownVector, 0.6f));
+				Nozzles.Add(FRcsNozzle(FVector(FX, S * 242.f, -75.f), FVector(0.f, S, 0.f), 0.7f));
+				Nozzles.Add(FRcsNozzle(FVector(FX, S * 60.f, 106.f), FVector::UpVector, 0.6f));
+				Nozzles.Add(FRcsNozzle(FVector(FX, S * 70.f, -96.f), FVector::DownVector, 0.6f));
 			}
 		}
 		for (float S : { -1.f, 1.f })
 		{
-			Nozzles.Add(FRcsNozzle(FVector(200.f, S * 45.f, -40.f), FVector::ForwardVector, 0.6f));
-			Nozzles.Add(FRcsNozzle(FVector(-512.f, S * 50.f, -5.f), FVector::BackwardVector, 0.6f));
+			Nozzles.Add(FRcsNozzle(FVector(366.f, S * 45.f, -38.f), FVector::ForwardVector, 0.6f));
+			Nozzles.Add(FRcsNozzle(FVector(-380.f, S * 60.f, -5.f), FVector::BackwardVector, 0.6f));
 		}
 	}
 	else

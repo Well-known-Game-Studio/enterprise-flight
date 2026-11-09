@@ -727,8 +727,8 @@ def shuttle(center, yaw=0.0, name="Galileo"):
     """The Type-4 shuttle of The Final Frontier (the Galileo) on her skids: the long white cabin with its chamfered
     lower chines and canted upper sides, the nose sloping down to the windscreen and back under the chin, the
     raised roof deck with its spine, the flat sensor and drive pods slung low beside the hull on short pylons
-    (their forward faces lit, grilles aft), the bevelled aft door, the port door over its step forward, and the
-    red stripe along the flank; built facing +x then yawed about `center`."""
+    (their forward faces lit, grilles aft), the bevelled aft door, the port door over its step forward, four landing
+    struts on pads, and the red stripe along the flank; built facing +x then yawed about `center`."""
     cx, cy, cz = center
     def P(p): x, y, z = rot(p, yaw); return (cx + x, cy + y, cz + z)
     # The cabin: one section from the aft door to the cockpit bulkhead.
@@ -757,14 +757,18 @@ def shuttle(center, yaw=0.0, name="Galileo"):
         box("PodStripe", P((-1.5, s_ * 2.41, 0.95)), (3.6, 0.02, 0.06), M_PaintRed(), "Shuttle", yaw=yaw)
         box("Stripe", P((-0.6, s_ * 1.26, 1.95)), (4.4, 0.02, 0.1), M_PaintRed(), "Shuttle", yaw=yaw)
         box("StripeGrey", P((-0.6, s_ * 1.26, 1.8)), (4.4, 0.02, 0.05), M_HullGrey(), "Shuttle", yaw=yaw)
-        box("Skid", P((-0.8, s_ * 0.7, 0.28)), (4.2, 0.26, 0.56), M_PanelDark(), "Shuttle", yaw=yaw)
+        # Four landing struts on their pads under the chines (the Galileo stood on legs, not skids).
+        for sx in (-2.6, 0.8):
+            box("Strut", P((sx, s_ * 0.75, 0.31)), (0.18, 0.18, 0.5), M_HullGrey(), "Shuttle", yaw=yaw)
+            box("Pad", P((sx, s_ * 0.75, 0.03)), (0.5, 0.4, 0.06), M_PanelDark(), "Shuttle", yaw=yaw, bevel=0.01)
     # The aft door in its bevelled frame; the port door, forward, over its step.
     box("AftFrame", P((-3.74, 0.0, 1.45)), (0.08, 2.1, 1.7), M_HullGrey(), "Shuttle", yaw=yaw, bevel=0.2)
     box("AftDoor", P((-3.78, 0.0, 1.45)), (0.03, 1.7, 1.4), M_PanelDark(), "Shuttle", yaw=yaw, bevel=0.1)
-    box("PortDoor", P((1.0, -1.27, 1.5)), (0.9, 0.04, 1.3), M_PanelDark(), "Shuttle", yaw=yaw)
-    for dz, h in ((0.0, 0.03), (1.3, 0.03)):
-        box("DoorEdge", P((1.0, -1.29, 0.85 + dz)), (0.94, 0.01, h), M_Strip(), "Shuttle", yaw=yaw)
-    box("DoorStep", P((1.0, -1.55, 0.78)), (0.9, 0.5, 0.06), M_PanelDark(), "Shuttle", yaw=yaw)
+    # The port door on the flank's vertical run (z 0.95..1.95; above it the side cants in and a taller door would stand proud).
+    box("PortDoor", P((1.0, -1.27, 1.45)), (0.9, 0.04, 1.0), M_PanelDark(), "Shuttle", yaw=yaw)
+    for dz, h in ((0.0, 0.03), (1.0, 0.03)):
+        box("DoorEdge", P((1.0, -1.29, 0.95 + dz)), (0.94, 0.01, h), M_Strip(), "Shuttle", yaw=yaw)
+    box("DoorStep", P((1.0, -1.55, 0.88)), (0.9, 0.5, 0.06), M_PanelDark(), "Shuttle", yaw=yaw)
     box("NoseLamp", P((3.6, 0.0, 0.78)), (0.04, 0.7, 0.08), M_Strip(), "Shuttle", yaw=yaw)
 
 
