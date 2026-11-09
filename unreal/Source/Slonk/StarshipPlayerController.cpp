@@ -578,6 +578,8 @@ void AStarshipPlayerController::OnAllStop()
 	if (APersonPawn* Person = GetPerson()) { Person->Brake(); return; }
 	if (AStarshipPawn* Ship = GetStarship())
 	{
+		// All stop ends the autopilot's leg: left on, it would go to warp again once the drive was idle.
+		if (Ship->AutopilotState != 0) { Ship->SetAutopilot(0, 0.0, 0.f); }
 		Ship->Movement->SetThrottle(0.0);
 		if (Ship->WarpDrive && Ship->WarpDrive->IsWarpEngaged())
 		{
@@ -598,6 +600,8 @@ void AStarshipPlayerController::OnWarpToggle()
 {
 	if (AStarshipPawn* Ship = GetStarship())
 	{
+		// The player taking the drive back ends the autopilot's leg: left on, it would go to warp again.
+		if (Ship->AutopilotState != 0) { Ship->SetAutopilot(0, 0.0, 0.f); }
 		if (Ship->WarpDrive)
 		{
 			Ship->WarpDrive->ToggleWarp();

@@ -1850,7 +1850,7 @@ void AStarshipPawn::ProcessDebugCommand()
 		else { DebugThrust = FVector(Arg(1, 0.f), Arg(2, 0.f), Arg(3, 0.f)); DebugThrustTime = Arg(4, 2.f); }
 	}
 	else if (Op == TEXT("impulse") && Movement) { Movement->SetThrottle(FMath::Clamp(Arg(1, 4.f), 1.f, 4.f) * 0.25f); }
-	else if (Op == TEXT("stop") && Movement) { Movement->SetThrottle(0.0); if (WarpDrive) { WarpDrive->DisengageWarp(); } }
+	else if (Op == TEXT("stop") && Movement) { SetAutopilot(0, 0.0, 0.f); Movement->SetThrottle(0.0); if (WarpDrive) { WarpDrive->DisengageWarp(); } }   // a stop ends the autopilot's leg too
 	else if (Op == TEXT("warp") && WarpDrive)
 	{
 		const FString Mode = ArgStr(1);
@@ -3613,7 +3613,7 @@ void AStarshipPawn::SetAutopilot(int32 Mode, double StandoffKm, float Seconds)
 	AutopilotState = Mode;
 	AutopilotStandoffCm = StandoffKm * 1.0e5;
 	AutopilotSeconds = FMath::Max(Seconds, 0.5f);
-	bAutopilotWarpEngaged = false;
+	bAutopilotWarpEngaged = false; bAutopilotDropped = false;
 	AutopilotCruiseFactor = 0.f; AutopilotScale0 = 0.f;
 	if (Mode == 1 && WarpDrive)
 	{
@@ -3646,11 +3646,66 @@ void AStarshipPawn::TickAutopilot(float DeltaTime)
 	const double Dist = Rel.Size();
 	NavDistanceKm = (float)(Dist / 1.0e5);
 	if (AutopilotState == 0 || !Movement || Dist < 1.0) { return; }
-	// Hold the nose on the target: the bearing error in the ship's frame drives the steering.
 	const FVector D = Rel / Dist;
-	const double Yaw = FMath::RadiansToDegrees(FMath::Atan2(FVector::DotProduct(D, GetActorRightVector()), FVector::DotProduct(D, GetActorForwardVector())));
-	const double Pitch = FMath::RadiansToDegrees(FMath::Asin(FMath::Clamp(FVector::DotProduct(D, GetActorUpVector()), -1.0, 1.0)));
 	const bool bAtWarp = WarpDrive && WarpDrive->IsWarpEngaged();
+	const double C = 2.99792458e10;
+	// A body on the straight path to the target (the path within 1.3 radii of its centre, the governor's threat
+	// radius, and the body short of the destination): the ship aims for the point beside it where the path would
+	// pass closest, pushed out to 1.6 radii, until the path is clear, and then for the target again. Near the body
+	// (within four radii of its centre) it climbs out to that point on impulse, since a warp field there is
+	// throttled by the governor and drops out; far from it the aim alone does, at warp or impulse alike. (An
+	// impulse climb-out from far away never ends: beside a giant a billion km off, the goal differs from the
+	// target by a hundredth of a degree, so the path stays blocked while the ship crawls on at impulse.)
+	AActor* Block = nullptr; FVector BlockC = FVector::ZeroVector; double BlockR = 0.0, BlockT = TNumericLimits<double>::Max();
+	auto Test = [&](AActor* A, double Rad)
+	{
+		// The destination itself, and anything at its distance, is not in the way. The margin is in radii, not
+		// centimetres: at light-year range Dist - 1 cm is the same double as Dist.
+		if (A == O.Actor) { return; }
+		const FVector Cc = A->GetActorLocation();
+		const double Tt = FMath::Clamp(FVector::DotProduct(Cc - Here, D), 0.0, Dist);
+		if (Tt < 1.0 || Tt > Dist - Rad * 2.0) { return; }
+		const FVector Pp = Here + D * Tt;
+		if (FVector::Dist(Pp, Cc) < Rad * 1.3 && Tt < BlockT) { Block = A; BlockC = Cc; BlockR = Rad; BlockT = Tt; }
+	};
+	for (TActorIterator<APlanetBody> It(GetWorld()); It; ++It) { Test(*It, It->GetRadiusCm()); }
+	for (TActorIterator<AStarBody> It(GetWorld()); It; ++It) { Test(*It, It->GetRadiusCm()); }
+	FVector Aim = D, Goal = O.Location;
+	bool bClimb = false;
+	if (Block)
+	{
+		FVector Away = (Here + D * BlockT - BlockC).GetSafeNormal();
+		if (Away.IsNearlyZero()) { Away = FVector::CrossProduct(D, FVector::UpVector).GetSafeNormal(); }
+		Goal = BlockC + Away * (BlockR * 1.6);
+		Aim = (Goal - Here).GetSafeNormal();
+		const double Rh = FVector::Dist(Here, BlockC);
+		bClimb = Rh < BlockR * 4.0;
+		if (bClimb)
+		{
+			// From close in, the straight line to the goal can itself cross the body (from directly behind it, it
+			// passes at nine tenths of a radius, and the governor brakes the ship to a crawl at the surface).
+			// Inside the governor's radius the climb goes out and across together; outside it the aim swings off
+			// the body's centre to the tangent that passes the governor's radius, until the goal is in the clear.
+			const double Safe = BlockR * 1.3;
+			const FVector Out = (Here - BlockC).GetSafeNormal();
+			const FVector Across = (Aim - Out * FVector::DotProduct(Aim, Out)).GetSafeNormal();
+			if (Rh < Safe * 1.05) { Aim = (Out + (Across.IsNearlyZero() ? Away : Across)).GetSafeNormal(); }
+			else
+			{
+				const double Toward = FVector::DotProduct(Aim, -Out);
+				if (Toward > 0.0 && Rh * FMath::Sqrt(FMath::Max(1.0 - Toward * Toward, 0.0)) < Safe)
+				{
+					const FVector Side = Across.IsNearlyZero() ? Away : Across;
+					const double Ang = FMath::Asin(FMath::Clamp(Safe / Rh, 0.0, 1.0));
+					Aim = (-Out * FMath::Cos(Ang) + Side * FMath::Sin(Ang)).GetSafeNormal();
+				}
+			}
+		}
+	}
+	// Hold the nose on the aim: the bearing error in the ship's frame drives the steering.
+	const double Yaw = FMath::RadiansToDegrees(FMath::Atan2(FVector::DotProduct(Aim, GetActorRightVector()), FVector::DotProduct(Aim, GetActorForwardVector())));
+	const double Pitch = FMath::RadiansToDegrees(FMath::Asin(FMath::Clamp(FVector::DotProduct(Aim, GetActorUpVector()), -1.0, 1.0)));
+	const double TargetYaw = FMath::RadiansToDegrees(FMath::Atan2(FVector::DotProduct(D, GetActorRightVector()), FVector::DotProduct(D, GetActorForwardVector())));
 	// Proportional on the bearing error with a derivative term against the turn rate, so the nose settles instead
 	// of hunting about the target; the movement scales steering down at warp, so the gain goes up there.
 	const double Gain = bAtWarp ? 0.3 : 0.1;
@@ -3664,55 +3719,41 @@ void AStarshipPawn::TickAutopilot(float DeltaTime)
 	if (AutopilotLogTimer <= 0.f)
 	{
 		AutopilotLogTimer = 1.f;
-		UE_LOG(LogTemp, Log, TEXT("autopilot %d: %.0f km, yaw %.2f pitch %.2f%s warp %d"), AutopilotState, Dist / 1.0e5, Yaw, Pitch, bAligned ? TEXT(" aligned") : TEXT(""), bAtWarp ? 1 : 0);
+		UE_LOG(LogTemp, Log, TEXT("autopilot %d: %.0f km, yaw %.2f pitch %.2f%s warp %d%s%s"), AutopilotState, Dist / 1.0e5, Yaw, Pitch, bAligned ? TEXT(" aligned") : TEXT(""), bAtWarp ? 1 : 0, Block ? (bClimb ? TEXT(" climbing out of ") : TEXT(" aiming past ")) : TEXT(""), Block ? *Block->GetName() : TEXT(""));
 	}
-	const double C = 2.99792458e10;
-	// A body on the straight path to the target: at warp it throttles the field and the drive drops out, on
-	// impulse the governor stops the ship short of it. Steer for the point beside the body where the path would
-	// pass closest, pushed out to 1.6 radii, at up to three thousand km/s, until the path is clear.
-	auto ClimbOut = [&]() -> bool
+	// A warp leg whose drive is idle: dropped at the standoff by its own hand, or thrown out within reach of it, it
+	// is the impulse approach from here, decided ahead of the arrival test and the climb-out so a finished leg
+	// stops; thrown out anywhere else (the governor at a body, the player), it goes to warp again once clear.
+	if (AutopilotState == 1 && WarpDrive && !bAtWarp)
 	{
-		AActor* Block = nullptr; FVector BlockP = FVector::ZeroVector; double BlockR = 0.0, BlockT = TNumericLimits<double>::Max();
-		auto Test = [&](AActor* A, double Rad)
-		{
-			// The destination itself, and anything at its distance, is not in the way. The margin is in radii,
-			// not centimetres: at light-year range Dist - 1 cm is the same double as Dist.
-			if (A == O.Actor) { return; }
-			const FVector Cc = A->GetActorLocation();
-			const double Tt = FMath::Clamp(FVector::DotProduct(Cc - Here, D), 0.0, Dist);
-			if (Tt < 1.0 || Tt > Dist - Rad * 2.0) { return; }
-			const FVector Pp = Here + D * Tt;
-			if (FVector::Dist(Pp, Cc) < Rad * 1.3 && Tt < BlockT) { Block = A; BlockP = Pp; BlockR = Rad; BlockT = Tt; }
-		};
-		for (TActorIterator<APlanetBody> It(GetWorld()); It; ++It) { Test(*It, It->GetRadiusCm()); }
-		for (TActorIterator<AStarBody> It(GetWorld()); It; ++It) { Test(*It, It->GetRadiusCm()); }
-		if (!Block) { return false; }
-		const FVector Cc = Block->GetActorLocation();
-		FVector Away = (BlockP - Cc).GetSafeNormal();
-		if (Away.IsNearlyZero()) { Away = FVector::CrossProduct(D, FVector::UpVector).GetSafeNormal(); }
-		const FVector Goal = Cc + Away * (BlockR * 1.6);
-		const FVector Climb = (Goal - Here).GetSafeNormal();
-		const double CYaw = FMath::RadiansToDegrees(FMath::Atan2(FVector::DotProduct(Climb, GetActorRightVector()), FVector::DotProduct(Climb, GetActorForwardVector())));
-		const double CPitch = FMath::RadiansToDegrees(FMath::Asin(FMath::Clamp(FVector::DotProduct(Climb, GetActorUpVector()), -1.0, 1.0)));
-		Movement->SetSteeringInput((float)FMath::Clamp(CPitch * Gain, -1.0, 1.0), (float)FMath::Clamp(CYaw * Gain, -1.0, 1.0), 0.f);
+		const double DropCoverCm = C * 0.7;   // the 1.2 s drop from warp 1 covers about half a light-second
+		const bool bOwnDrop = bAutopilotWarpEngaged && bAutopilotDropped;
+		bAutopilotWarpEngaged = false;
+		if (bOwnDrop || Dist < AutopilotStandoffCm + DropCoverCm) { AutopilotState = 2; AutopilotSeconds = 0.5f; }
+	}
+	// An impulse leg already at its standoff is done, whatever stands nearby: within a per cent of the standoff (or
+	// a kilometre), since the ease-in approaches it asymptotically.
+	if (AutopilotState == 2 && Dist - AutopilotStandoffCm <= FMath::Max(1.0e5, AutopilotStandoffCm * 0.01))
+	{
+		Movement->SetThrottle(0.0);
+		SetAutopilot(0, 0.0, 0.f);
+		return;
+	}
+	if (bClimb)
+	{
+		// At warp the field carries the ship on whatever the impulse throttle says: drop out first. Not the leg's
+		// own standoff drop, so once the path is clear the leg goes to warp again.
+		if (bAtWarp) { WarpDrive->DisengageWarp(); WarpDrive->CruiseSpeedResponse = 1.5f; return; }
+		// The climb-out: at up to three thousand km/s, braking to arrive at the goal, once the nose is near it.
 		const double V = FMath::Min(3.0e8, 0.9 * FMath::Sqrt(2.0 * Movement->ImpulseAcceleration * FVector::Dist(Goal, Here)));
-		Movement->SetThrottle(FMath::Abs(CYaw) < 8.0 && FMath::Abs(CPitch) < 8.0 ? FMath::Pow(V / Movement->FullImpulseSpeed, 1.0 / FMath::Max((double)Movement->ThrottleExponent, 0.1)) : 0.0);
-		return true;
-	};
+		Movement->SetThrottle(FMath::Abs(Yaw) < 8.0 && FMath::Abs(Pitch) < 8.0 ? FMath::Pow(V / Movement->FullImpulseSpeed, 1.0 / FMath::Max((double)Movement->ThrottleExponent, 0.1)) : 0.0);
+		return;
+	}
 	if (AutopilotState == 1 && WarpDrive)
 	{
-		// The 1.2 s drop from warp 1 covers about half a light-second; disengage that far out.
-		const double DropCoverCm = C * 0.7;
 		if (!bAtWarp)
 		{
-			if (bAutopilotWarpEngaged)
-			{
-				// Dropped out at the standoff: ease the rest of the way on impulse.
-				AutopilotState = 2; AutopilotSeconds = 0.5f; bAutopilotWarpEngaged = false;
-				return;
-			}
-			if (Dist < AutopilotStandoffCm + DropCoverCm) { AutopilotState = 2; AutopilotSeconds = 0.5f; return; }
-			if (ClimbOut()) { return; }
+			// The drive idle and the leg still a warp leg (see above): go to warp once the nose is on the aim.
 			if (bAligned)
 			{
 				Movement->SetThrottle(0.0);
@@ -3722,7 +3763,7 @@ void AStarshipPawn::TickAutopilot(float DeltaTime)
 				// far that the drop fires at hundreds of c and lands tens of millions of km short. 4 tracks it.
 				WarpDrive->CruiseSpeedResponse = 4.f;
 				WarpDrive->EngageWarp();
-				bAutopilotWarpEngaged = true;
+				bAutopilotWarpEngaged = true; bAutopilotDropped = false;
 			}
 			return;
 		}
@@ -3755,21 +3796,13 @@ void AStarshipPawn::TickAutopilot(float DeltaTime)
 		// target is behind us we have passed it: drop at once. The frames are the world's seconds long.
 		const double Speed = FMath::Max(WarpDrive->GetCurrentWarpSpeed(), C);
 		const double DropAt = FMath::Max(C * 0.45, Speed * 1.2 * 0.3 + Speed * UGameClockSubsystem::Sim(this, DeltaTime) * 2.0);
-		if (Dist < AutopilotStandoffCm + DropAt || FMath::Abs(Yaw) > 90.0) { WarpDrive->DisengageWarp(); WarpDrive->CruiseSpeedResponse = 1.5f; }
+		if (Dist < AutopilotStandoffCm + DropAt || FMath::Abs(TargetYaw) > 90.0) { WarpDrive->DisengageWarp(); WarpDrive->CruiseSpeedResponse = 1.5f; bAutopilotDropped = true; }
 		return;
 	}
 	// Impulse: brake at nine tenths of the drive's acceleration from as fast as that allows (the speed that
 	// stops in the remaining distance), and ease the last stretch over AutopilotSeconds; the throttle is the
 	// inverse of the movement's power law.
-	// Done within a per cent of the standoff (or a kilometre): the ease-in approaches it asymptotically.
-	const double Remaining = Dist - AutopilotStandoffCm;
-	if (Remaining <= FMath::Max(1.0e5, AutopilotStandoffCm * 0.01))
-	{
-		Movement->SetThrottle(0.0);
-		SetAutopilot(0, 0.0, 0.f);
-		return;
-	}
-	if (ClimbOut()) { return; }
+	const double Remaining = Dist - AutopilotStandoffCm;   // past the standoff was dealt with above
 	const double VBrake = 0.9 * FMath::Sqrt(2.0 * Movement->ImpulseAcceleration * Remaining);
 	const double V = FMath::Min3(VBrake, Remaining / AutopilotSeconds, Movement->FullImpulseSpeed);
 	Movement->SetThrottle(FMath::Pow(V / Movement->FullImpulseSpeed, 1.0 / FMath::Max((double)Movement->ThrottleExponent, 0.1)));
