@@ -10,7 +10,10 @@ room, corridor and officers' mess of VI; the rec deck and cargo bay of The Motio
 II; the torpedo bay of II and VI. Geometry is authored in the game's frame (x forward, y starboard, z up, metres,
 origin on the floor at the room's centre; a corridor's at its first leg's centre line) and the room boxes match
 `UShipInteriorComponent`. Rooms off a corridor have open doorways (`doorway`) where their lift doors were: the shell
-carries the opening (`shell(openings=...)`) and the corridor's wall stands back to back with the room's.
+carries the opening (`shell(openings=...)`) and the corridor's wall stands back to back with the room's. The
+corridor's athwartships leg is open at its port end: the ship's plan (`ShipPlan.cpp`) carries the corridor on from
+there in the same section (`corridor_leg`'s constants are the kit's), so the set's frame and the generated one meet
+flush.
 
     /Applications/Blender.app/Contents/MacOS/Blender -b --factory-startup --python build_rooms.py -- --render --export [--room=eng,sick,bay,trans,lock,corr,rec,mess,cabin,crew,torp,cargo] [--views=a,b]
 

@@ -12,6 +12,7 @@
 #include "../GameClock.h"
 #include "../WarpDriveComponent.h"
 #include "../ShipInterior.h"
+#include "../ShipPlan.h"
 #include "../StarshipPawn.h"
 #include "Engine/GameInstance.h"
 
@@ -895,9 +896,15 @@ bool FSlonkImpactorTrackTest::RunTest(const FString& Parameters)
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkInteriorRoomsTest, "Slonk.Interior.Rooms", SLONK_TEST_FLAGS)
 bool FSlonkInteriorRoomsTest::RunTest(const FString& Parameters)
 {
-	// Every room is named and decked; the lift stops at the corridor for the rooms off it and nowhere else, and the
-	// three off it share its deck.
-	for (int32 i = 0; i < (int32)EShipRoom::Count; ++i)
+	// Every signature room is named and decked; the lift stops at the corridor for the rooms off it and nowhere
+	// else, and the three off it share its deck. The plan's kinds have generic names and no deck of their own.
+	for (int32 i = SlonkSignatureRooms; i < (int32)EShipRoom::Count; ++i)
+	{
+		TestTrue(TEXT("a kind is named"), !UShipInteriorComponent::RoomName((EShipRoom)i).IsEmpty());
+		TestTrue(TEXT("a kind has no deck"), UShipInteriorComponent::DeckOf((EShipRoom)i).IsEmpty());
+		TestFalse(TEXT("a kind is no lift stop"), UShipInteriorComponent::IsLiftStop((EShipRoom)i));
+	}
+	for (int32 i = 0; i < SlonkSignatureRooms; ++i)
 	{
 		const EShipRoom R = (EShipRoom)i;
 		TestTrue(TEXT("named"), !UShipInteriorComponent::RoomName(R).IsEmpty());
@@ -919,9 +926,145 @@ bool FSlonkInteriorRoomsTest::RunTest(const FString& Parameters)
 	for (const TCHAR* Name : { TEXT("Officers' mess"), TEXT("Rec deck"), TEXT("Crew quarters"), TEXT("Officers' quarters"), TEXT("Torpedo bay"), TEXT("Cargo bays"), TEXT("Sickbay"), TEXT("Main engineering"), TEXT("Main bridge"), TEXT("Shuttle bay") })
 	{
 		bool bFound = false;
-		for (int32 i = 0; i < (int32)EShipRoom::Count; ++i) { if (UShipInteriorComponent::RoomName((EShipRoom)i) == Name) { bFound = true; } }
+		for (int32 i = 0; i < SlonkSignatureRooms; ++i) { if (UShipInteriorComponent::RoomName((EShipRoom)i) == Name) { bFound = true; } }
 		TestTrue(*FString::Printf(TEXT("%s is a room"), Name), bFound);
 	}
+	return true;
+}
+
+namespace
+{
+	/** Whether two of the plan's rooms (oriented boxes in the deck's plane) overlap once each is shrunk by a margin:
+	 *  the separating-axis test over the four edge normals. */
+	bool BoxesOverlap(const FPlanRoom& A, const FPlanRoom& B, double Shrink)
+	{
+		auto Axes = [](const FPlanRoom& R, FVector2D Out[2]) { Out[0] = FVector2D(FMath::Cos(R.Yaw), FMath::Sin(R.Yaw)); Out[1] = FVector2D(-Out[0].Y, Out[0].X); };
+		FVector2D AA[2], BA[2]; Axes(A, AA); Axes(B, BA);
+		const FVector2D D(B.Center.X - A.Center.X, B.Center.Y - A.Center.Y);
+		const double AH[2] = { A.Half.X - Shrink, A.Half.Y - Shrink }, BH[2] = { B.Half.X - Shrink, B.Half.Y - Shrink };
+		for (const FVector2D* Set : { AA, BA })
+		{
+			for (int32 k = 0; k < 2; ++k)
+			{
+				const FVector2D Ax = Set[k];
+				const double RA = FMath::Abs(FVector2D::DotProduct(Ax, AA[0])) * AH[0] + FMath::Abs(FVector2D::DotProduct(Ax, AA[1])) * AH[1];
+				const double RB = FMath::Abs(FVector2D::DotProduct(Ax, BA[0])) * BH[0] + FMath::Abs(FVector2D::DotProduct(Ax, BA[1])) * BH[1];
+				if (FMath::Abs(FVector2D::DotProduct(Ax, D)) > RA + RB) { return false; }
+			}
+		}
+		return true;
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkInteriorPlanTest, "Slonk.Interior.Plan", SLONK_TEST_FLAGS)
+bool FSlonkInteriorPlanTest::RunTest(const FString& Parameters)
+{
+	// The ship's plan at her real size: decks A to U, corridors and rooms inside the hull, stops to ride between.
+	FShipPlan P;
+	TArray<FPlanReserved> Reserved;
+	{
+		// The signature rooms as Build() places them (sickbay, the transporter room and deck G's corridor matter
+		// most: the plan must keep clear of them and join the corridor's open end).
+		auto R = [&](const TCHAR* N, FVector C, FVector H) { FPlanReserved K; K.Name = N; K.Box = FBox(C - H, C + H); Reserved.Add(K); };
+		R(TEXT("Sickbay"), FVector(6600, 0, 1600), FVector(600, 450, 150));
+		R(TEXT("Transporter room"), FVector(7200, -1500, 1600), FVector(400, 350, 150));
+		R(TEXT("Deck G corridor"), FVector(5880, -470, 1580), FVector(120, 680, 130));
+		R(TEXT("Deck G corridor"), FVector(6850, -1030, 1580), FVector(850, 120, 130));
+		R(TEXT("Rec deck"), FVector(4710, -200, 1750), FVector(900, 700, 300));
+		R(TEXT("Officers' mess"), FVector(8050, 0, 2710), FVector(550, 350, 140));
+		R(TEXT("Officers' quarters"), FVector(9800, -500, 2430), FVector(450, 350, 140));
+		R(TEXT("Crew quarters"), FVector(11010, 0, 1860), FVector(340, 800, 130));
+		R(TEXT("Airlock"), FVector(7625, -500, 3000), FVector(300, 250, 150));
+		R(TEXT("Main engineering"), FVector(-900, 0, -1081), FVector(800, 500, 225));
+		R(TEXT("Cargo bays"), FVector(-2500, 0, -2236), FVector(1000, 600, 350));
+		R(TEXT("Shuttle bay"), FVector(-5030, 0, -1676), FVector(1300, 800, 270));
+		R(TEXT("Torpedo bay"), FVector(2269, 0, -323), FVector(800, 350, 225));
+	}
+	SlonkPlan::Build(P, 1.0, Reserved);
+	TestEqual(TEXT("decks A to J, the dorsal's five, N to U"), P.Decks.Num(), 23);
+	for (TCHAR L = 'A'; L <= 'U'; ++L)
+	{
+		const bool bAny = P.DeckIndex(L, EDeckSection::Saucer) != INDEX_NONE || P.DeckIndex(L, EDeckSection::Dorsal) != INDEX_NONE || P.DeckIndex(L, EDeckSection::Secondary) != INDEX_NONE;
+		TestTrue(*FString::Printf(TEXT("deck %c exists"), L), bAny);
+	}
+	TestEqual(TEXT("g is the saucer's"), P.DeckFromWord(TEXT("deck g")), P.DeckIndex('G', EDeckSection::Saucer));
+	TestEqual(TEXT("l is the dorsal's"), P.DeckFromWord(TEXT("l")), P.DeckIndex('L', EDeckSection::Dorsal));
+	TestEqual(TEXT("dorsal i"), P.DeckFromWord(TEXT("dorsal i")), P.DeckIndex('I', EDeckSection::Dorsal));
+	TestEqual(TEXT("i is the saucer's first"), P.DeckFromWord(TEXT("i")), P.DeckIndex('I', EDeckSection::Saucer));
+	TestEqual(TEXT("no deck z"), P.DeckFromWord(TEXT("z")), (int32)INDEX_NONE);
+	// Decks stack: each section's floors fall letter by letter, 2.5 m rooms fitting between.
+	for (int32 i = 1; i < P.Decks.Num(); ++i)
+	{
+		if (P.Decks[i].Section != P.Decks[i - 1].Section) { continue; }
+		TestTrue(TEXT("floors fall with the letters"), P.Decks[i].Floor + 250.0 <= P.Decks[i - 1].Floor + 1.0);
+	}
+	TestTrue(TEXT("a real ship's worth of corridor"), P.Stretches.Num() >= 60);
+	TestTrue(TEXT("hundreds of rooms"), P.Rooms.Num() >= 600);
+	// Every stop stands inside its deck's hull and is named; the shafts the plan promises exist.
+	TSet<FString> Shafts;
+	for (const FPlanStop& S : P.Stops)
+	{
+		Shafts.Add(S.Shaft);
+		TestTrue(TEXT("a stop has a deck"), P.Decks.IsValidIndex(S.Deck));
+		TestTrue(TEXT("a stop is named"), !S.Name.IsEmpty());
+		TestTrue(TEXT("a stop stands on its deck's floor"), FMath::IsNearlyEqual(S.Car.Z, P.Decks[S.Deck].Floor, 1.0));
+	}
+	for (const TCHAR* Sh : { TEXT("Main"), TEXT("Aft"), TEXT("Dorsal"), TEXT("Rim 1"), TEXT("Rim 4") }) { TestTrue(*FString::Printf(TEXT("shaft %s"), Sh), Shafts.Contains(Sh)); }
+	// The dorsal shaft runs from the saucer's plate decks through the neck to the bottom of the secondary hull.
+	int32 DorsalStops = 0; double DorsalLo = 1e9, DorsalHi = -1e9;
+	for (const FPlanStop& S : P.Stops) { if (S.Shaft == TEXT("Dorsal")) { ++DorsalStops; DorsalLo = FMath::Min(DorsalLo, S.Car.Z); DorsalHi = FMath::Max(DorsalHi, S.Car.Z); } }
+	TestTrue(TEXT("the dorsal shaft serves many decks"), DorsalStops >= 12);
+	TestTrue(TEXT("from the plate decks"), DorsalHi > 1700.0);
+	TestTrue(TEXT("to deck U"), DorsalLo < -3200.0);
+	// Rooms keep inside the hull and clear of the signature rooms and of each other.
+	int32 Overlaps = 0, Outside = 0, Reserve = 0;
+	for (int32 i = 0; i < P.Rooms.Num(); ++i)
+	{
+		const FPlanRoom& R = P.Rooms[i];
+		const FDeckSpec& D = P.Decks[R.Deck];
+		for (int32 c = 0; c < 4; ++c)
+		{
+			if (D.Radius > 0.0) { if (FVector::Dist2D(R.Corners[c], FVector(P.SaucerX, 0, 0)) > D.Radius + 1.0) { ++Outside; } }
+			else if (R.Corners[c].X < D.XMin - 1.0 || R.Corners[c].X > D.XMax + 1.0 || FMath::Abs(R.Corners[c].Y) > D.HalfBeam + 1.0) { ++Outside; }
+		}
+		for (const FPlanReserved& K : Reserved) { if (K.Box.Intersect(R.Bounds.ExpandBy(-5.0))) { ++Reserve; } }
+		for (int32 j = i + 1; j < P.Rooms.Num(); ++j)
+		{
+			if (P.Rooms[j].Deck != R.Deck || !R.Bounds.Intersect(P.Rooms[j].Bounds)) { continue; }
+			// Wedge rooms share party walls: their oriented boxes may touch, not overlap by more than the wall.
+			if (BoxesOverlap(R, P.Rooms[j], 20.0)) { ++Overlaps; if (Overlaps <= 5) { AddInfo(FString::Printf(TEXT("overlap: %s / %s"), *R.Name, *P.Rooms[j].Name)); } }
+		}
+	}
+	TestEqual(TEXT("no room pokes out of the hull"), Outside, 0);
+	TestEqual(TEXT("no room in a set's box"), Reserve, 0);
+	TestEqual(TEXT("no two rooms share floor"), Overlaps, 0);
+	// Deck F holds the enlisted quarters by the hundred; deck G the labs and the brig; H the hull locks.
+	int32 Enlisted = 0, Labs = 0, Brig = 0, Locks = 0;
+	for (const FPlanRoom& R : P.Rooms)
+	{
+		if (R.Name.StartsWith(TEXT("Enlisted quarters"))) { ++Enlisted; }
+		if (R.Kind == EShipRoom::Lab && P.Decks[R.Deck].Letter == 'G') { ++Labs; }
+		if (R.Kind == EShipRoom::Brig) { ++Brig; }
+		if (R.Kind == EShipRoom::Hatch && P.Decks[R.Deck].Letter == 'H') { ++Locks; }
+	}
+	TestTrue(TEXT("enlisted quarters"), Enlisted >= 120);
+	TestTrue(TEXT("labs on G"), Labs >= 8);
+	TestEqual(TEXT("eight brig cells"), Brig, 8);
+	TestTrue(TEXT("hull locks on H"), Locks >= 4);
+	// The ride: longer between far stops, never instant.
+	const FPlanStop* A = nullptr; const FPlanStop* B = nullptr; const FPlanStop* C = nullptr;
+	for (const FPlanStop& S : P.Stops) { if (S.Shaft == TEXT("Dorsal")) { if (P.Decks[S.Deck].Letter == 'U') { A = &S; } if (P.Decks[S.Deck].Letter == 'T') { B = &S; } if (P.Decks[S.Deck].Letter == 'H') { C = &S; } } }
+	if (A && B && C)
+	{
+		const double Short = FShipPlan::TravelSeconds(*A, *B), Long = FShipPlan::TravelSeconds(*A, *C);
+		TestTrue(TEXT("a deck takes a few seconds"), Short > 2.5 && Short < 6.0);
+		TestTrue(TEXT("the length of the ship takes longer"), Long > Short + 4.0);
+	}
+	else { AddError(TEXT("dorsal stops on U, T and H")); }
+	// Every passage links to another (no stretch stands alone) except the deck's trunks with a single run.
+	int32 Alone = 0;
+	for (const FPlanStretch& S : P.Stretches) { if (S.Links.Num() == 0) { ++Alone; } }
+	TestTrue(TEXT("few lone passages (the neck's and the trunks')"), Alone <= 14);
 	return true;
 }
 
@@ -961,7 +1104,7 @@ bool FSlonkCrewPlacesTest::RunTest(const FString& Parameters)
 	for (const FString& P : Places)
 	{
 		bool bRoom = false;
-		for (int32 i = 0; i < (int32)EShipRoom::Count; ++i) { if (UShipInteriorComponent::RoomName((EShipRoom)i) == P) { bRoom = true; } }
+		for (int32 i = 0; i < SlonkSignatureRooms; ++i) { if (UShipInteriorComponent::RoomName((EShipRoom)i) == P) { bRoom = true; } }
 		TestTrue(*FString::Printf(TEXT("%s is a room of the interior"), *P), bRoom);
 	}
 	return true;

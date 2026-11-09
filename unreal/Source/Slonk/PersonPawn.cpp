@@ -1,4 +1,5 @@
 #include "PersonPawn.h"
+#include "ShipInterior.h"
 
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
@@ -346,6 +347,7 @@ void APersonPawn::BeginEVA(AStarshipPawn* FromCraft, const FTransform& Airlock, 
 {
 	if (Frame == EPersonFrame::Deck) { SetCameraMode(CameraBeforeDeck); }
 	Room = EShipRoom::Count;
+	Place = INDEX_NONE;
 	bBeamedDown = false;
 	Craft = FromCraft;
 	SetActorLocationAndRotation(Airlock.GetLocation(), Airlock.GetRotation(), false, nullptr, ETeleportType::TeleportPhysics);
@@ -447,9 +449,31 @@ FString APersonPawn::UseHint() const
 void APersonPawn::PlaceAboard(AStarshipPawn* Ship, EShipRoom InRoom, const FTransform& FeetWorld)
 {
 	if (!Ship) { return; }
+	PlaceAboard(Ship, Ship->Interior ? Ship->Interior->IndexOf(InRoom) : INDEX_NONE, FeetWorld);
+	Room = InRoom;
+}
+
+FString APersonPawn::PlaceName() const
+{
+	const AStarshipPawn* C = Craft.Get();
+	const FString N = C && C->Interior ? C->Interior->NameOf(Place) : FString();
+	return N.IsEmpty() ? UShipInteriorComponent::RoomName(Room) : N;
+}
+
+FString APersonPawn::PlaceDeck() const
+{
+	const AStarshipPawn* C = Craft.Get();
+	const FString D = C && C->Interior ? C->Interior->DeckOfPlace(Place) : FString();
+	return D.IsEmpty() ? UShipInteriorComponent::DeckOf(Room) : D;
+}
+
+void APersonPawn::PlaceAboard(AStarshipPawn* Ship, int32 PlaceIndex, const FTransform& FeetWorld)
+{
+	if (!Ship) { return; }
 	Craft = Ship;
 	HullCraft = Ship;
-	Room = InRoom;
+	Place = PlaceIndex;
+	Room = Ship->Interior ? Ship->Interior->KindOf(PlaceIndex) : EShipRoom::Count;
 	bBeamedDown = false;
 	if (Frame != EPersonFrame::Deck)
 	{
@@ -546,7 +570,7 @@ FString APersonPawn::FrameDescription() const
 	case EPersonFrame::Hull:
 		return bGrounded ? FString::Printf(TEXT("ON THE HULL  %s   boots holding"), H ? *H->GetCraftName().ToUpper() : TEXT("")) : FString::Printf(TEXT("FLOATING BESIDE  %s"), H ? *H->GetCraftName().ToUpper() : TEXT(""));
 	case EPersonFrame::Deck:
-		return FString::Printf(TEXT("ABOARD  %s   %s"), H ? *H->GetCraftName().ToUpper() : TEXT(""), *UShipInteriorComponent::RoomName(Room).ToUpper());
+		return FString::Printf(TEXT("ABOARD  %s   %s"), H ? *H->GetCraftName().ToUpper() : TEXT(""), *PlaceName().ToUpper());
 	case EPersonFrame::Ground:
 		if (bGrounded) { return FString::Printf(TEXT("ON THE GROUND  %s"), P ? *P->GetDisplayName().ToUpper() : TEXT("")); }
 		return FString::Printf(TEXT("%s  %s"), P && FVector::DotProduct(Velocity, (GetActorLocation() - P->GetActorLocation()).GetSafeNormal()) > 0.0 ? TEXT("RISING") : TEXT("FALLING"), P ? *P->GetDisplayName().ToUpper() : TEXT(""));
