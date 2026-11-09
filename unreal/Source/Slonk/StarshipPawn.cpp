@@ -3660,6 +3660,16 @@ void AStarshipPawn::TickAutopilot(float DeltaTime)
 		AutopilotLogTimer = 1.f;
 		UE_LOG(LogTemp, Log, TEXT("autopilot %d: %.0f km, yaw %.2f pitch %.2f%s warp %d%s%s"), AutopilotState, Dist / 1.0e5, Yaw, Pitch, bAligned ? TEXT(" aligned") : TEXT(""), bAtWarp ? 1 : 0, Block ? (bClimb ? TEXT(" climbing out of ") : TEXT(" aiming past ")) : TEXT(""), Block ? *Block->GetName() : TEXT(""));
 	}
+	// A warp leg whose drive is idle: dropped at the standoff by its own hand, or thrown out within reach of it, it
+	// is the impulse approach from here, decided ahead of the arrival test and the climb-out so a finished leg
+	// stops; thrown out anywhere else (the governor at a body, the player), it goes to warp again once clear.
+	if (AutopilotState == 1 && WarpDrive && !bAtWarp)
+	{
+		const double DropCoverCm = C * 0.7;   // the 1.2 s drop from warp 1 covers about half a light-second
+		const bool bOwnDrop = bAutopilotWarpEngaged && bAutopilotDropped;
+		bAutopilotWarpEngaged = false;
+		if (bOwnDrop || Dist < AutopilotStandoffCm + DropCoverCm) { AutopilotState = 2; AutopilotSeconds = 0.5f; }
+	}
 	// An impulse leg already at its standoff is done, whatever stands nearby: within a per cent of the standoff (or
 	// a kilometre), since the ease-in approaches it asymptotically.
 	if (AutopilotState == 2 && Dist - AutopilotStandoffCm <= FMath::Max(1.0e5, AutopilotStandoffCm * 0.01))
@@ -3680,18 +3690,9 @@ void AStarshipPawn::TickAutopilot(float DeltaTime)
 	}
 	if (AutopilotState == 1 && WarpDrive)
 	{
-		// The 1.2 s drop from warp 1 covers about half a light-second; disengage that far out.
-		const double DropCoverCm = C * 0.7;
 		if (!bAtWarp)
 		{
-			if (bAutopilotWarpEngaged)
-			{
-				bAutopilotWarpEngaged = false;
-				// Dropped out at the standoff: ease the rest of the way on impulse. Thrown out of warp anywhere
-				// else (the governor at a body in the way, the player): go again once the path is clear.
-				if (bAutopilotDropped || Dist < AutopilotStandoffCm + DropCoverCm) { AutopilotState = 2; AutopilotSeconds = 0.5f; return; }
-			}
-			if (Dist < AutopilotStandoffCm + DropCoverCm) { AutopilotState = 2; AutopilotSeconds = 0.5f; return; }
+			// The drive idle and the leg still a warp leg (see above): go to warp once the nose is on the aim.
 			if (bAligned)
 			{
 				Movement->SetThrottle(0.0);
