@@ -153,6 +153,8 @@ public:
 	// ---- On foot ----
 	/** The crew member out of the craft (null while everyone is aboard). */
 	UPROPERTY(BlueprintReadOnly, Category = "Person") TWeakObjectPtr<APersonPawn> ActivePerson;
+	/** Stepped into the car: the deck buttons come up once the rider is clear of the doors' sensor. */
+	bool bLiftPanelPending = false;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Person") TSubclassOf<APersonPawn> PersonClass;
 	/** F: open the airlock and step out onto the hull (or, from a landed shuttle, onto the ground). */
 	UFUNCTION(BlueprintCallable, Category = "Person") bool StepOutside();

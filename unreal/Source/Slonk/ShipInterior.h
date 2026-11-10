@@ -118,6 +118,10 @@ public:
 	// ---- the turbolift -------------------------------------------------------------------------------------
 	/** The car's place (a room like any other while it stands at a stop). */
 	int32 LiftPlace() const { return LiftPlaceIndex; }
+	/** Whether feet in the craft's frame stand in the car's doorway: past the sensor line, half a metre from the
+	 *  centre toward the doors (the leaves meet 98 cm out). The doors will not shut on them, and the deck buttons
+	 *  wait until they are clear of it. */
+	bool InCarDoorway(const FVector& FeetInCraft) const;
 	/** The stop a walker in a place would take: the place's own, else the nearest on its deck; INDEX_NONE if none. */
 	int32 StopFor(int32 Place, const FVector& Feet) const;
 	/** The stop whose door is within reach of a point in a place, or INDEX_NONE. */

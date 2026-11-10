@@ -3119,7 +3119,18 @@ void AStarshipPawn::PersonMoved(APersonPawn* Person)
 	const int32 At = Interior->RoomAt(Feet, Person->GetPlace());
 	if (At == INDEX_NONE || At == Person->GetPlace())
 	{
-		if (Person == ActivePerson.Get()) { Interior->UpdateLive(Feet); }
+		if (Person == ActivePerson.Get())
+		{
+			Interior->UpdateLive(Feet);
+			// In the car and past the doors' sensor: the deck buttons come up (a deck chosen from the doorway would
+			// only have the doors open again).
+			if (bLiftPanelPending && Person->GetPlace() == Interior->LiftPlace() && !Interior->InCarDoorway(Feet))
+			{
+				bLiftPanelPending = false;
+				AStarshipPlayerController* PC = Cast<AStarshipPlayerController>(Person->GetController());
+				if (USlonkUIRoot* UI = PC ? PC->GetUIRoot() : nullptr) { UI->TogglePanel(UTurboliftPanel::StaticClass()); }
+			}
+		}
 		return;
 	}
 	Person->SetPlace(At, Interior->KindOf(At));
@@ -3128,12 +3139,8 @@ void AStarshipPawn::PersonMoved(APersonPawn* Person)
 		SetInteriorPlace(At);
 		ScreenMessage(FString::Printf(TEXT("%s, deck %s"), *Interior->NameOf(At), *Interior->DeckOfPlace(At)), FColor::Cyan, 2.5f);
 		UE_LOG(LogTemp, Log, TEXT("Person into %s"), *Interior->NameOf(At));
-		// Stepping into the car: the deck buttons come up.
-		if (At == Interior->LiftPlace())
-		{
-			AStarshipPlayerController* PC = Cast<AStarshipPlayerController>(Person->GetController());
-			if (USlonkUIRoot* UI = PC ? PC->GetUIRoot() : nullptr) { UI->TogglePanel(UTurboliftPanel::StaticClass()); }
-		}
+		// Stepping into the car: the deck buttons come up once the rider is clear of the doorway (above).
+		bLiftPanelPending = At == Interior->LiftPlace();
 	}
 }
 

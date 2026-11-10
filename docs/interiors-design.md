@@ -136,7 +136,7 @@ to E and I, the aft shaft at the core corridor's end on F, G and H, four rim sha
 junctions of the outer ring, the dorsal shaft from the plate decks down the neck to deck U) and the sets' shut
 lift doors. F at one of the plan's doors brings the car (a round car with doors of its own behind the landing's,
 both pairs opening onto the corridor; at a set's stop only the car's close its gap); step
-in and the deck buttons come up; choose, and the doors shut, the car travels (8 m/s up and down, 15 m/s along,
+in and, once you are clear of the doors' sensor, the deck buttons come up; choose, and the doors shut, the car travels (8 m/s up and down, 15 m/s along,
 the decks called off on the screen as it passes them), the car and whoever still stands in it arrive at the stop
 and the doors open. The doors have a sensor: step back into the doorway, or out, while they shut and they open
 again and the ride is off; a rider who is not in the car when it arrives is left where they are. A car called

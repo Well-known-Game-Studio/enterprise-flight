@@ -1305,9 +1305,15 @@ void UShipInteriorComponent::DrawRoom(FZone& Z, const FPlanRoom& R, double Floor
 	for (const FVector& Cn : R.Corners) { Wide = FMath::Max(Wide, FMath::Abs(Q.UnrotateVector(Cn - R.Center).Y)); }
 	const double Nudge = 0.3 * (double)((R.Stretch + (int32)(R.Center.X * 0.01)) % 3);
 	const bool bSoft = R.Kind == EShipRoom::Cabin || R.Kind == EShipRoom::Office || R.Kind == EShipRoom::Lounge;
-	const FVector FloorC(R.Center.X, R.Center.Y, Floor - 3.0 - Nudge);
-	Inst(Z, FloorC, FVector(R.Half.X * 2 + 12.0, Wide * 2 + 12.0, 4.0), Q, bSoft ? Carpet : DeckPlate, true);
-	Inst(Z, FVector(R.Center.X, R.Center.Y, Floor + H + 4.0 + Nudge), FVector(R.Half.X * 2 + 12.0, Wide * 2 + 12.0, 4.0), Q, PanelGrey, false);
+	// On the inside of a small ring the front wall bows out toward the corridor past the box's front (the chord
+	// between the corner bays; 45 cm on a lobby ring), and the doorway with it: the slabs reach out that far too,
+	// so the step through the door finds floor.
+	const FVector In = Q.GetForwardVector();
+	const double Bow = FMath::Max(0.0, FVector::DotProduct(R.Center - In * R.Half.X - R.Door, In)) + 6.0;
+	const FVector SlabC = R.Center - In * (Bow / 2);
+	const FVector SlabSize(R.Half.X * 2 + Bow + 12.0, Wide * 2 + 12.0, 4.0);
+	Inst(Z, FVector(SlabC.X, SlabC.Y, Floor - 3.0 - Nudge), SlabSize, Q, bSoft ? Carpet : DeckPlate, true);
+	Inst(Z, FVector(SlabC.X, SlabC.Y, Floor + H + 4.0 + Nudge), SlabSize, Q, PanelGrey, false);
 	// Lights.
 	const int32 N = R.Half.Y > 300.0 ? 2 : 1;
 	for (int32 k = 0; k < N; ++k)
@@ -1620,6 +1626,13 @@ void UShipInteriorComponent::SetCarShown(bool bShown)
 	SetCarDoor(CarDoorOpen);   // the leaves keep their own showing: open ones are out of sight behind the panels
 }
 
+bool UShipInteriorComponent::InCarDoorway(const FVector& FeetInCraft) const
+{
+	if (!Plan.Stops.IsValidIndex(CarStop)) { return false; }
+	const FPlanStop& At = Plan.Stops[CarStop];
+	return FVector::DotProduct(FeetInCraft - At.Car, At.Facing.GetSafeNormal2D()) > 50.0;
+}
+
 void UShipInteriorComponent::SetCarDoor(float Open)
 {
 	CarDoorOpen = FMath::Clamp(Open, 0.f, 1.f);
@@ -1751,7 +1764,8 @@ bool UShipInteriorComponent::Ride(APersonPawn* Who, int32 ToStop)
 	Rider = Who;
 	RideTo = ToStop;
 	RideDuration = FShipPlan::TravelSeconds(Plan.Stops[CarStop], Plan.Stops[ToStop]);
-	RidePhase = ERide::Closing; RideT = 0.0; PassedDeck = INDEX_NONE;
+	// Doors already shut (a fade into the car at a set's stop) have nothing to close: straight off.
+	RidePhase = CarDoorOpen > 0.01f ? ERide::Closing : ERide::Travelling; RideT = 0.0; PassedDeck = INDEX_NONE;
 	SetComponentTickEnabled(true);
 	UE_LOG(LogTemp, Log, TEXT("Turbolift: %s -> %s, %.1f s"), *Plan.Stops[CarStop].Name, *Plan.Stops[ToStop].Name, RideDuration);
 	return true;
@@ -1786,9 +1800,7 @@ void UShipInteriorComponent::TickRide(float DeltaTime)
 		{
 			// The doors' sensor: a rider who steps back into the doorway, or out of the car, while they shut has
 			// them open again and the ride is off; the car waits open as it did before.
-			const FPlanStop& At = Plan.Stops[CarStop];
-			// (the car's leaves meet 98 cm out and stop a walker's capsule half a metre from the centre: that is the doorway)
-			const bool bInDoorway = Aboard(Who) && FVector::DotProduct(Who->FeetInCraft() - At.Car, At.Facing.GetSafeNormal2D()) > 50.0;
+			const bool bInDoorway = Aboard(Who) && InCarDoorway(Who->FeetInCraft());
 			if (!Aboard(Who) || bInDoorway)
 			{
 				UE_LOG(LogTemp, Log, TEXT("Turbolift: the rider %s; the doors open again"), bInDoorway ? TEXT("stands in the doorway") : TEXT("left the car"));
