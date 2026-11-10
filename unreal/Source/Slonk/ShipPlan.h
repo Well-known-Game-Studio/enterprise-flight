@@ -116,6 +116,8 @@ struct FPlanRoom
 	FVector Door = FVector::ZeroVector;
 	FVector DoorIn = FVector::ZeroVector;
 	int32 Stretch = -1;
+	/** The bay of its passage the doorway is in (the zone that draws the room). */
+	int32 Bay = -1;
 	/** Two party walls; the room's own back wall; the front wall is the passage's flat bay. */
 	FBox Bounds = FBox(ForceInit);
 };

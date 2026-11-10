@@ -2588,7 +2588,13 @@ bool AStarshipPawn::HandleCraftCommand(const FString& Op, const TArray<FString>&
 				const FShipPlan& Plan = Interior->GetPlan();
 				int32 Stop = INDEX_NONE;
 				FString Num = W; if (Num.RemoveFromStart(TEXT("stop"))) { Stop = FCString::Atoi(*Num); }
-				else if (const int32 Deck = Plan.DeckFromWord(W); Deck != INDEX_NONE) { const TArray<int32> On = Plan.StopsOnDeck(Deck, P->FeetInCraft()); if (On.Num()) { Stop = On[0]; } }
+				else if (const int32 Deck = Plan.DeckFromWord(W); Deck != INDEX_NONE)
+				{
+					// The deck's nearest corridor door; a set's shut door only where the deck has no corridor of the plan's.
+					const TArray<int32> On = Plan.StopsOnDeck(Deck, P->FeetInCraft());
+					for (int32 S : On) { if (Plan.Stops[S].bWalkIn) { Stop = S; break; } }
+					if (Stop == INDEX_NONE && On.Num()) { Stop = On[0]; }
+				}
 				if (Plan.Stops.IsValidIndex(Stop) && Plan.Stops[Stop].bWalkIn)
 				{
 					const FTransform Door = Interior->StopDoor(Stop);
@@ -2596,6 +2602,17 @@ bool AStarshipPawn::HandleCraftCommand(const FString& Op, const TArray<FString>&
 					P->PlaceAboard(this, Pl, Door * CraftFrame());
 					SetInteriorPlace(Pl);
 					UE_LOG(LogTemp, Log, TEXT("Walked to stop %d %s (place %s)"), Stop, *Plan.Stops[Stop].Name, *Interior->NameOf(Pl));
+				}
+				else if (Plan.Stops.IsValidIndex(Stop))
+				{
+					// A set's stop: stand at the set's lift door, inside it.
+					const int32 Pl = Interior->IndexOf(Plan.Stops[Stop].Room);
+					if (const FShipRoom* R = Interior->Place(Pl))
+					{
+						P->PlaceAboard(this, Pl, R->Lift * CraftFrame());
+						SetInteriorPlace(Pl);
+						UE_LOG(LogTemp, Log, TEXT("Walked to %s (stop %d)"), *R->Name, Stop);
+					}
 				}
 				else
 				{
@@ -3043,7 +3060,11 @@ bool AStarshipPawn::LiftToDeck(APersonPawn* Person, int32 Deck)
 		ScreenMessage(FString::Printf(TEXT("Turbolift: no stop on deck %s"), Plan.Decks.IsValidIndex(Deck) ? *Plan.Decks[Deck].Label() : TEXT("?")), FColor::Orange);
 		return false;
 	}
-	return LiftTo(Person, On[0]);
+	// The nearest of the deck's corridor doors, to walk out of; a set's shut door (a fade) only where the deck has
+	// no corridor of the plan's.
+	int32 Stop = On[0];
+	for (int32 S : On) { if (Plan.Stops[S].bWalkIn) { Stop = S; break; } }
+	return LiftTo(Person, Stop);
 }
 
 bool AStarshipPawn::LiftTo(APersonPawn* Person, int32 Stop)

@@ -135,8 +135,21 @@ int32 UShipInteriorComponent::IndexOf(EShipRoom Which) const
 	return INDEX_NONE;
 }
 
-bool UShipInteriorComponent::InRoom(const FShipRoom& R, const FVector& P, double Tol)
+bool UShipInteriorComponent::InRoom(const FShipRoom& R, const FVector& P, double Tol) const
 {
+	if (R.Stretch != INDEX_NONE && R.PlanRoom == INDEX_NONE && R.Id != EShipRoom::Turbolift && Plan.Stretches.IsValidIndex(R.Stretch))
+	{
+		// A passage: its bays as oriented rectangles, the section's waist and a hand below the floor.
+		using namespace SlonkPlan;
+		const FPlanStretch& S = Plan.Stretches[R.Stretch];
+		for (const FPlanBay& B : S.Bays)
+		{
+			const FVector D = B.Dir(); const FVector L = P - B.P0;
+			const double Along = L.X * D.X + L.Y * D.Y, Across = FMath::Abs(-L.X * D.Y + L.Y * D.X);
+			if (Along >= -Tol && Along <= B.Length() + Tol && Across <= CorrW + 12.0 + Tol && L.Z >= -40.0 - Tol && L.Z <= CorrH + Tol) { return true; }
+		}
+		return false;
+	}
 	if (!R.Half.IsNearlyZero())
 	{
 		FVector L = P - R.Center;
@@ -483,7 +496,7 @@ void UShipInteriorComponent::Build()
 	if (!Ship || !GetWorld() || !GetWorld()->IsGameWorld()) { return; }
 	for (USceneComponent* P : AllPieces) { if (P) { P->DestroyComponent(); } }
 	AllPieces.Reset(); Materials.Reset(); Rooms.Reset(); PieceCount = 0; BayShuttlePieces.Reset(); BayShuttle = nullptr;
-	Zones.Reset(); LampPool.Reset(); StopDoors.Reset(); CarPieces.Reset(); CarSolids.Reset(); CarRoot = nullptr;
+	Zones.Reset(); StretchZone0.Reset(); LampPool.Reset(); StopDoors.Reset(); CarPieces.Reset(); CarSolids.Reset(); CarRoot = nullptr;
 	RidePhase = ERide::Idle; CarStop = RideTo = INDEX_NONE; LiftPlaceIndex = INDEX_NONE; LastLiveFeet = FVector(1e9, 1e9, 1e9);
 
 	PanelGrey = MakeLit(TEXT("PanelGrey"), FLinearColor(0.62f, 0.63f, 0.66f), 0.75f);
@@ -776,7 +789,9 @@ void UShipInteriorComponent::BuildCorridor(FShipRoom& R)
 	// the forward leg; the forward leg: the transporter room's doorway to port, open at its aft (-x) end.
 	Leg(C - H, C + H, false, false, false, true, { -126.0, (LegB.Min.Y + LegB.Max.Y) / 2 }, { -574.0 }, {});
 	Leg(LegB.Min, LegB.Max, false, true, false, false, {}, {}, { TrX });
-	Box(FVector(C.X, LegB.Min.Y - T / 2, C.Z), FVector(2 * H.X + 2 * T, T, 2 * H.Z), PanelGrey);   // the outer corner
+	// No wall across the athwartships leg's port end: like the authored set's, it stands open for the plan's
+	// passage that carries the corridor on from there (ShipPlan.cpp).
+	Box(FVector(C.X + H.X + T / 2, LegB.Min.Y - T / 2, C.Z), FVector(T, T, 2 * H.Z), PanelGrey);   // the post at the outer corner
 	// The lift door in the forward end wall; the doorways' frames (the openings are in the rooms beyond, whose
 	// walls stand back to back with these: the frames mark them).
 	const FVector LiftDoor(C.X, C.Y + H.Y, Floor);
@@ -956,21 +971,27 @@ void UShipInteriorComponent::UpdateLive(const FVector& Feet)
 	if (FVector::DistSquared(Feet, LastLiveFeet) < FMath::Square(250.0)) { return; }
 	LastLiveFeet = Feet;
 	const FShipRoom* Here = Place(ShownPlace);
-	// The zones in sight: within the live radius on this deck (a storey either way), the one the walker is in and
-	// those it joins always; solid only close by.
-	TSet<int32> Must;
-	if (Here && Here->Stretch != INDEX_NONE)
+	// The zones in sight: within the live radius on this deck (a storey either way); solid only close by. The
+	// zone under the walker's feet always, whatever the distance test makes of a box they stand in the middle of.
+	int32 Must = INDEX_NONE;
+	if (Here && Here->Stretch != INDEX_NONE && Plan.Stretches.IsValidIndex(Here->Stretch))
 	{
-		Must.Add(Here->Stretch);
-		for (int32 L : Plan.Stretches[Here->Stretch].Links) { Must.Add(L); }
+		int32 Bay = Plan.Rooms.IsValidIndex(Here->PlanRoom) ? Plan.Rooms[Here->PlanRoom].Bay : INDEX_NONE;
+		if (Bay == INDEX_NONE)
+		{
+			double Best = 1e30;
+			const TArray<FPlanBay>& Bays = Plan.Stretches[Here->Stretch].Bays;
+			for (int32 b = 0; b < Bays.Num(); ++b) { const double D2 = FVector::DistSquared2D(Bays[b].Mid(), Feet); if (D2 < Best) { Best = D2; Bay = b; } }
+		}
+		Must = ZoneOf(Here->Stretch, Bay);
 	}
 	for (int32 i = 0; i < Zones.Num(); ++i)
 	{
 		FZone& Z = Zones[i];
 		const double D2 = Z.Bounds.ComputeSquaredDistanceToPoint(Feet);
 		const bool bLevel = FMath::Abs(Z.Bounds.Min.Z - Feet.Z) < 150.0;   // this deck's zones only
-		const bool bShow = Must.Contains(i) || (bLevel && D2 < FMath::Square((double)LiveRadiusCm));
-		const bool bSolid = Must.Contains(i) || (bLevel && D2 < FMath::Square((double)SolidRadiusCm));
+		const bool bShow = i == Must || (bLevel && D2 < FMath::Square((double)LiveRadiusCm));
+		const bool bSolid = i == Must || (bLevel && D2 < FMath::Square((double)SolidRadiusCm));
 		SetZoneShown(i, bShow, bSolid);
 	}
 	PlaceLamps(Feet);
@@ -1056,10 +1077,25 @@ void UShipInteriorComponent::BuildPlan(double X)
 		FShipRoom Car; Car.Id = EShipRoom::Turbolift; Car.Index = Rooms.Num(); Car.Name = TEXT("Turbolift"); Car.Half = FVector(130.0, 130.0, CorrH / 2);
 		LiftPlaceIndex = Rooms.Add(Car);
 	}
-	// Zones: one per stretch, its bounds taking in its rooms.
-	Zones.SetNum(Plan.Stretches.Num());
-	for (int32 s = 0; s < Plan.Stretches.Num(); ++s) { Zones[s].Deck = Plan.Stretches[s].Deck; Zones[s].Bounds = Plan.Stretches[s].Bounds; }
-	for (const FPlanRoom& Pr : Plan.Rooms) { if (Zones.IsValidIndex(Pr.Stretch)) { Zones[Pr.Stretch].Bounds += Pr.Bounds; } }
+	// Zones: a stretch in runs of ZoneBays bays (a ring of 168 is fourteen zones, a spoke one), each taking in
+	// the rooms whose doorways are in its bays; the bounds are what the live radii are measured to.
+	Zones.Reset(); StretchZone0.Init(INDEX_NONE, Plan.Stretches.Num());
+	for (int32 s = 0; s < Plan.Stretches.Num(); ++s)
+	{
+		const FPlanStretch& St = Plan.Stretches[s];
+		const double Floor = Plan.Decks[St.Deck].Floor;
+		StretchZone0[s] = Zones.Num();
+		for (int32 b0 = 0; b0 < St.Bays.Num(); b0 += ZoneBays)
+		{
+			FZone Z; Z.Deck = St.Deck; Z.Stretch = s; Z.Bay0 = b0; Z.Bay1 = FMath::Min(b0 + ZoneBays, St.Bays.Num());
+			FBox B(ForceInit);
+			for (int32 b = Z.Bay0; b < Z.Bay1; ++b) { B += St.Bays[b].P0; B += St.Bays[b].P1; }
+			Z.Bounds = B.ExpandBy(FVector(CorrW, CorrW, 0.0)) + FVector(B.Min.X, B.Min.Y, Floor + CorrH);
+			Z.Bounds.Min.Z = Floor;
+			Zones.Add(Z);
+		}
+	}
+	for (const FPlanRoom& Pr : Plan.Rooms) { const int32 Zi = ZoneOf(Pr.Stretch, Pr.Bay); if (Zones.IsValidIndex(Zi)) { Zones[Zi].Bounds += Pr.Bounds; } }
 	BuildCar();
 	UE_LOG(LogTemp, Log, TEXT("Interior: the plan has %d decks, %d stretches, %d rooms, %d stops (%d places)"), Plan.Decks.Num(), Plan.Stretches.Num(), Plan.Rooms.Num(), Plan.Stops.Num(), Rooms.Num());
 }
@@ -1112,11 +1148,11 @@ void UShipInteriorComponent::Cant(FZone& Z, const FRunFrameRef& Fr, double Along
 	Inst(Z, Fr.At(Along, Sign * (ULo + UHi) / 2, (ZLo + ZHi) / 2), FVector(Length, Thick, Ln), Fr.Lean(Sign * (UHi - ULo), ZHi - ZLo), Mat, bSolid);
 }
 
-void UShipInteriorComponent::MakeStopDoor(int32 Stop, int32 Stretch, const FVector& Center, const FVector& Along, const FQuat& Rot)
+void UShipInteriorComponent::MakeStopDoor(int32 Stop, int32 Zone, const FVector& Center, const FVector& Along, const FQuat& Rot)
 {
 	using namespace SlonkPlan;
 	if (!GetOwner() || Stop == INDEX_NONE) { return; }
-	FStopDoor D; D.Along = Along.GetSafeNormal2D(); D.Stretch = Stretch;
+	FStopDoor D; D.Along = Along.GetSafeNormal2D(); D.Zone = Zone;
 	for (int32 k = 0; k < 2; ++k)
 	{
 		D.Shut[k] = Center + D.Along * ((k == 0 ? -1.0 : 1.0) * DoorW / 4);
@@ -1215,12 +1251,12 @@ void UShipInteriorComponent::DrawBay(FZone& Z, const FPlanStretch& S, int32 i, d
 		else if (Kind == EPlanWall::Lift)
 		{
 			Inst(Z, Fr.At(0, Sg * (W - 14.0), DoorH + 24.0), FVector(60.0, 2.0, 8.0), Fr.Q, StripWhite, false);
-			MakeStopDoor(B.Stop[s], &S - Plan.Stretches.GetData(), Fr.At(0, Sg * (W + 3.0), DoorH / 2), Fr.D, Fr.Q);
+			MakeStopDoor(B.Stop[s], (int32)(&Z - Zones.GetData()), Fr.At(0, Sg * (W + 3.0), DoorH / 2), Fr.D, Fr.Q);
 		}
 	}
 }
 
-void UShipInteriorComponent::DrawEndWall(FZone& Z, int32 Stretch, const FPlanBay& B, bool bAtStart, double Floor, int32 Stop)
+void UShipInteriorComponent::DrawEndWall(FZone& Z, const FPlanBay& B, bool bAtStart, double Floor, int32 Stop)
 {
 	using namespace SlonkPlan;
 	const double W = CorrW, H = CorrH, T = 12.0;
@@ -1243,7 +1279,7 @@ void UShipInteriorComponent::DrawEndWall(FZone& Z, int32 Stretch, const FPlanBay
 	Inst(Z, Fw.At(0, 0, DoorH + 10.0), FVector(DoorW + 32.0, 24.0, 20.0), Fw.Q, PanelDark, false);
 	Inst(Z, Fw.At(0, 0, 0.5), FVector(DoorW, 24.0, 1.0), Fw.Q, Metal, false);
 	Inst(Z, Fw.At(0, -Uo * 14.0, DoorH + 24.0), FVector(60.0, 2.0, 8.0), Fw.Q, StripWhite, false);
-	MakeStopDoor(Stop, Stretch, Fw.At(0, -Uo * 3.0, DoorH / 2), Fw.D, Fw.Q);
+	MakeStopDoor(Stop, (int32)(&Z - Zones.GetData()), Fw.At(0, -Uo * 3.0, DoorH / 2), Fw.D, Fw.Q);
 }
 
 void UShipInteriorComponent::DrawRoom(FZone& Z, const FPlanRoom& R, double Floor)
@@ -1438,14 +1474,22 @@ void UShipInteriorComponent::Furnish(FZone& Z, const FPlanRoom& R, double Floor)
 	}
 }
 
-void UShipInteriorComponent::BuildZone(int32 s)
+int32 UShipInteriorComponent::ZoneOf(int32 Stretch, int32 Bay) const
 {
-	if (!Zones.IsValidIndex(s) || Zones[s].bBuilt) { return; }
-	FZone& Z = Zones[s];
+	if (!StretchZone0.IsValidIndex(Stretch) || Bay < 0) { return INDEX_NONE; }
+	const int32 Zi = StretchZone0[Stretch] + Bay / ZoneBays;
+	return Zones.IsValidIndex(Zi) && Zones[Zi].Stretch == Stretch ? Zi : INDEX_NONE;
+}
+
+void UShipInteriorComponent::BuildZone(int32 Zi)
+{
+	if (!Zones.IsValidIndex(Zi) || Zones[Zi].bBuilt) { return; }
+	FZone& Z = Zones[Zi];
 	Z.bBuilt = true;
+	const int32 s = Z.Stretch;
 	const FPlanStretch& S = Plan.Stretches[s];
 	const double Floor = Plan.Decks[S.Deck].Floor;
-	for (int32 i = 0; i < S.Bays.Num(); ++i) { DrawBay(Z, S, i, Floor); }
+	for (int32 i = Z.Bay0; i < Z.Bay1; ++i) { DrawBay(Z, S, i, Floor); }
 	// End walls, with a lift door where a stop stands past the end.
 	auto EndStop = [&](const FVector& E)
 	{
@@ -1461,10 +1505,10 @@ void UShipInteriorComponent::BuildZone(int32 s)
 	};
 	if (S.Bays.Num())
 	{
-		if (S.bEnd0) { DrawEndWall(Z, s, S.Bays[0], true, Floor, EndStop(S.Bays[0].P0)); }
-		if (S.bEnd1) { DrawEndWall(Z, s, S.Bays.Last(), false, Floor, EndStop(S.Bays.Last().P1)); }
+		if (S.bEnd0 && Z.Bay0 == 0) { DrawEndWall(Z, S.Bays[0], true, Floor, EndStop(S.Bays[0].P0)); }
+		if (S.bEnd1 && Z.Bay1 == S.Bays.Num()) { DrawEndWall(Z, S.Bays.Last(), false, Floor, EndStop(S.Bays.Last().P1)); }
 	}
-	for (const FPlanRoom& R : Plan.Rooms) { if (R.Stretch == s) { DrawRoom(Z, R, Floor); } }
+	for (const FPlanRoom& R : Plan.Rooms) { if (R.Stretch == s && R.Bay >= Z.Bay0 && R.Bay < Z.Bay1) { DrawRoom(Z, R, Floor); } }
 }
 
 void UShipInteriorComponent::SetZoneShown(int32 s, bool bShow, bool bSolid)
@@ -1485,7 +1529,7 @@ void UShipInteriorComponent::SetZoneShown(int32 s, bool bShow, bool bSolid)
 	{
 		for (auto& It : StopDoors)
 		{
-			if (It.Value.Stretch != s) { continue; }
+			if (It.Value.Zone != s) { continue; }
 			const bool bShut = It.Value.Open < 0.98f;
 			for (UStaticMeshComponent* Leaf : It.Value.Leaf)
 			{
@@ -1579,6 +1623,7 @@ void UShipInteriorComponent::MoveCarTo(int32 Stop)
 	if (FShipRoom* Car = Rooms.IsValidIndex(LiftPlaceIndex) ? &Rooms[LiftPlaceIndex] : nullptr)
 	{
 		Car->Center = S.Car + FVector(0, 0, SlonkPlan::CorrH / 2);
+		Car->Yaw = FMath::Atan2(S.Facing.Y, S.Facing.X);   // the box turned with the doors, not the deck's axes
 		Car->Deck = Plan.Decks.IsValidIndex(S.Deck) ? Plan.Decks[S.Deck].Label() : FString();
 		Car->Stop = Stop;
 		Car->Lift = InteriorSpot(S.Car, S.Facing);
@@ -1593,7 +1638,7 @@ void UShipInteriorComponent::SetStopDoor(int32 Stop, float Open)
 	if (!D) { return; }
 	D->Open = FMath::Clamp(Open, 0.f, 1.f);
 	const bool bShut = D->Open < 0.98f;
-	const FZone* Z = Zones.IsValidIndex(D->Stretch) ? &Zones[D->Stretch] : nullptr;
+	const FZone* Z = Zones.IsValidIndex(D->Zone) ? &Zones[D->Zone] : nullptr;
 	for (int32 k = 0; k < 2; ++k)
 	{
 		UStaticMeshComponent* Leaf = D->Leaf[k];
@@ -1657,6 +1702,7 @@ bool UShipInteriorComponent::OpenLift(int32 Stop)
 	{
 		if (CarStop != INDEX_NONE && CarStop != Stop) { SetStopDoor(CarStop, 0.f); }   // the doors it stood open at shut behind it
 		MoveCarTo(Stop); SetCarShown(true);
+		RidePhase = ERide::Idle;   // whatever it stood at before, this stop's doors have still to open
 	}
 	if (RidePhase == ERide::Open) { IdleT = 0.0; return true; }
 	RidePhase = ERide::Opening; RideT = 0.0;
@@ -1695,6 +1741,7 @@ void UShipInteriorComponent::TickRide(float DeltaTime)
 	const double DoorSeconds = 0.7;
 	AStarshipPawn* Ship = Cast<AStarshipPawn>(GetOwner());
 	APersonPawn* Who = Rider.Get();
+	auto Aboard = [this](const APersonPawn* P) { return P && P->IsAboard() && P->GetPlace() == LiftPlaceIndex; };
 	switch (RidePhase)
 	{
 	case ERide::Idle:
@@ -1714,6 +1761,20 @@ void UShipInteriorComponent::TickRide(float DeltaTime)
 	case ERide::Closing:
 		RideT += DeltaTime;
 		SetStopDoor(CarStop, 1.f - (float)(RideT / DoorSeconds));
+		if (RideTo != INDEX_NONE && Who)
+		{
+			// The doors' sensor: a rider who steps back into the doorway, or out of the car, while they shut has
+			// them open again and the ride is off; the car waits open as it did before.
+			const FPlanStop& At = Plan.Stops[CarStop];
+			const bool bInDoorway = Aboard(Who) && FVector::DotProduct(Who->FeetInCraft() - At.Car, At.Facing.GetSafeNormal2D()) > 100.0;
+			if (!Aboard(Who) || bInDoorway)
+			{
+				UE_LOG(LogTemp, Log, TEXT("Turbolift: the rider %s; the doors open again"), bInDoorway ? TEXT("stands in the doorway") : TEXT("left the car"));
+				RideTo = INDEX_NONE; Rider = nullptr;
+				RidePhase = ERide::Opening; RideT = FMath::Clamp(DoorSeconds - RideT, 0.0, DoorSeconds);
+				return;
+			}
+		}
 		if (RideT < DoorSeconds) { return; }
 		SetStopDoor(CarStop, 0.f);
 		if (RideTo == INDEX_NONE) { SetCarShown(false); RidePhase = ERide::Idle; return; }
@@ -1737,9 +1798,12 @@ void UShipInteriorComponent::TickRide(float DeltaTime)
 			}
 		}
 		if (RideT < RideDuration) { return; }
-		// Arrival: the car and whoever stands in it move to the stop; the doors open where they are the plan's.
+		// Arrival: the car moves to the stop, and whoever still stands in it with it; the doors open where they
+		// are the plan's. A rider who is no longer in the car (left it, or is away) is not touched and the shown
+		// interior stays theirs.
+		const bool bRider = Aboard(Who) && Ship;
 		FVector Off = FVector::ZeroVector; FQuat Heading = FQuat::Identity;
-		if (Who && Who->IsAboard() && Who->GetPlace() == LiftPlaceIndex && Ship)
+		if (bRider)
 		{
 			Off = Who->FeetInCraft() - From.Car;
 			Off.Z = 0.0;   // on the car's floor, whatever they stood on when they boarded
@@ -1747,17 +1811,16 @@ void UShipInteriorComponent::TickRide(float DeltaTime)
 		}
 		const FQuat Turn = FQuat::FindBetweenNormals(From.Facing.GetSafeNormal2D(), To.Facing.GetSafeNormal2D());
 		MoveCarTo(RideTo);
-		FVector Feet = To.Car;
-		if (Who && Ship)
+		if (bRider)
 		{
-			Feet = To.Car + Turn.RotateVector(Off);
+			const FVector Feet = To.Car + Turn.RotateVector(Off);
 			Who->PlaceAboard(Ship, LiftPlaceIndex, FTransform(Turn * Heading, Feet) * Ship->CraftFrame());
+			Ship->SetInteriorPlace(LiftPlaceIndex);
 		}
-		if (Ship) { Ship->SetInteriorPlace(LiftPlaceIndex); } else { ShowPlace(LiftPlaceIndex, &Feet); }
 		RideTo = INDEX_NONE;
 		if (To.bWalkIn) { RidePhase = ERide::Opening; RideT = 0.0; }
 		else { RidePhase = ERide::Idle; SetCarShown(false); }
-		if (OnArrived) { OnArrived(CarStop, Who); }
+		if (OnArrived) { OnArrived(CarStop, bRider ? Who : nullptr); }
 		return;
 	}
 	case ERide::Opening:

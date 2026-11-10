@@ -217,11 +217,15 @@ private:
 	/** The primitive room's doorway (no leaves) in the wall at a pawn-space point, the frame proud of it. */
 	void DoorFrame(const FVector& Door, const FVector& Normal);
 	/** Whether a pawn-space point is within a place's boxes, with a tolerance in cm. */
-	static bool InRoom(const FShipRoom& R, const FVector& P, double Tol);
+	/** Whether a point (pawn space) is in a place, a tolerance out from its walls: a passage by its bays as they
+	 *  lie (an axis box round a bay on the diagonal would bulge a metre past its wall), a room by its oriented box. */
+	bool InRoom(const FShipRoom& R, const FVector& P, double Tol) const;
 
 	// ---- the plan's zones ------------------------------------------------------------------------------------
 	/** One stretch of the plan and its rooms, drawn from instanced boxes (one component per material) the first
 	 *  time it comes into view; its solids are a second, unseen set of instances that block the Boots channel. */
+	/** A run of up to ZoneBays bays of one stretch with the rooms off them: what is built, shown and made solid
+	 *  together. A ring is many zones, so only the arc near the walker is live. */
 	struct FZone
 	{
 		TMap<UMaterialInterface*, UInstancedStaticMeshComponent*> Visual, VisualCyl;
@@ -229,20 +233,25 @@ private:
 		TArray<FVector> Lamps;
 		FBox Bounds = FBox(ForceInit);
 		int32 Deck = INDEX_NONE;
+		int32 Stretch = INDEX_NONE, Bay0 = 0, Bay1 = 0;   // bays [Bay0, Bay1) of the stretch
 		bool bBuilt = false, bShown = false, bSolidOn = false;
 	};
+	static constexpr int32 ZoneBays = 12;
 	TArray<FZone> Zones;
+	/** The first zone of each stretch; its bays' zones follow in order. */
+	TArray<int32> StretchZone0;
+	int32 ZoneOf(int32 Stretch, int32 Bay) const;
 	TArray<TObjectPtr<UPointLightComponent>> LampPool;
 	FVector LastLiveFeet = FVector(1e9, 1e9, 1e9);
 	void BuildPlan(double Scale);
-	void BuildZone(int32 Stretch);
+	void BuildZone(int32 Zone);
 	/** An instanced box (or cylinder) in a zone: centre and size in pawn space, a rotation; solid ones also block the boots. */
 	void Inst(FZone& Z, const FVector& Center, const FVector& Size, const FQuat& Rot, UMaterialInterface* Mat, bool bSolid, bool bCylinder = false);
 	void DrawBay(FZone& Z, const FPlanStretch& S, int32 BayIndex, double Floor);
-	void DrawEndWall(FZone& Z, int32 Stretch, const FPlanBay& Bay, bool bAtStart, double Floor, int32 Stop);
+	void DrawEndWall(FZone& Z, const FPlanBay& Bay, bool bAtStart, double Floor, int32 Stop);
 	/** A canted panel across a run's section, from (across lo, z lo) to (across hi, z hi) on one side. */
 	void Cant(FZone& Z, const struct FRunFrameRef& Fr, double Along, double Length, double Sign, double ULo, double ZLo, double UHi, double ZHi, UMaterialInterface* Mat, double Thick, bool bSolid);
-	void MakeStopDoor(int32 Stop, int32 Stretch, const FVector& Center, const FVector& Along, const FQuat& Rot);
+	void MakeStopDoor(int32 Stop, int32 Zone, const FVector& Center, const FVector& Along, const FQuat& Rot);
 	void DrawRoom(FZone& Z, const FPlanRoom& R, double Floor);
 	void Furnish(FZone& Z, const FPlanRoom& R, double Floor);
 	void SetZoneShown(int32 Stretch, bool bShown, bool bSolid);
@@ -262,7 +271,7 @@ private:
 	TArray<TWeakObjectPtr<USceneComponent>> CarPieces;
 	TArray<TWeakObjectPtr<UPrimitiveComponent>> CarSolids;
 	/** The stop doors of the plan's stops: two leaves each, slid open while the car stands there. */
-	struct FStopDoor { UStaticMeshComponent* Leaf[2] = { nullptr, nullptr }; FVector Shut[2]; FVector Along; float Open = 0.f; int32 Stretch = INDEX_NONE; };
+	struct FStopDoor { UStaticMeshComponent* Leaf[2] = { nullptr, nullptr }; FVector Shut[2]; FVector Along; float Open = 0.f; int32 Zone = INDEX_NONE; };
 	TMap<int32, FStopDoor> StopDoors;
 	void BuildCar();
 	void MoveCarTo(int32 Stop);

@@ -101,9 +101,12 @@ ring. Deck F, G and H: an outer ring at r 60 m (168 bays) and an inner ring at r
 between them, three long spokes from the inner ring in toward the core, and the L of the deck G set (generated
 on F and H, so the aft lift shaft runs through all three) with its arc to the inner ring. Decks C, D, E and I: a
 lobby ring at r 10 m round the core (the main shaft's door aft), E with a second ring at r 22 m and four spokes.
-Deck B: a straight along the bridge module. The dorsal's decks: a fore-and-aft corridor down the neck. The
-secondary hull: a trunk corridor on the centre line each deck, jogging to starboard round main engineering (O)
-and the cargo bay (S), ending at the hangar's forward wall (Q); the dorsal shaft's door in its port wall.
+Deck B: a straight along the bridge module. The dorsal's decks I to K: a fore-and-aft corridor down the neck
+(L and M are the torpedo bay's set, two decks tall). The secondary hull: a trunk corridor on the centre line each
+deck with the dorsal shaft's door in its starboard wall. The sets stand two decks tall, so the trunk jogs to
+starboard round main engineering on N and O and round the cargo bay on R and S (a forward leg, a cross passage
+from its last bay, the bypass, a cross passage back to the aft leg, every junction a T on a bay's middle), ends
+at the cargo bay's forward wall on Q and at the hangar's on P.
 
 **Rooms.** The signature rooms keep their sets. The rest are generated off the corridors from the plans' lists:
 a room takes whole bays of a passage (two for quarters, three for labs, up to six for a lounge), its frontage
@@ -119,24 +122,32 @@ rooms, workshops and physics labs; the secondary hull the plans' engineering roo
 garden and pool, the reactor rooms on U. Every room is a place of its own, named ("Enlisted quarters F-37"),
 shown on the HUD as the feet cross its sill.
 
-**Zones.** Every stretch of corridor with its rooms is a zone of instanced boxes (one component per material,
-plus an unseen set that blocks the boots), built the first time it comes within 60 m of the walker on their deck
-and shown while it is; solid within 14 m. A pool of point lights goes to the nearest lamps. Zones away from the
-walker are hidden again, so the hull's walkers and the airlock trace meet no wall that is not around them.
+**Zones.** A stretch of corridor is drawn in zones of twelve bays (27 m; a ring of 168 bays is fourteen
+zones, a spoke one) with the rooms whose doorways are in those bays, each a set of instanced boxes (one
+component per material, plus an unseen set that blocks the boots), built the first time it comes within 60 m of
+the walker on their deck and shown while it is; solid within 14 m, and the zone under the feet always. A pool of
+point lights goes to the nearest lamps. Zones away from the walker are hidden again, so the hull's walkers and
+the airlock trace meet no wall that is not around them. A walker's place is tested against the bays as they lie
+(oriented rectangles), not boxes round them: on the diagonal of a ring an axis box would hold them a metre past
+the wall, and the car would open late.
 
 **The turbolift.** The stops are a list: the plan's own lift doors (the main shaft aft of the lobby rings on B
 to E and I, the aft shaft at the core corridor's end on F, G and H, four rim shafts beside the diagonal
 junctions of the outer ring, the dorsal shaft from the plate decks down the neck to deck U) and the sets' shut
 lift doors. F at one of the plan's doors brings the car (a round car, its doors opening onto the corridor); step
 in and the deck buttons come up; choose, and the doors shut, the car travels (8 m/s up and down, 15 m/s along,
-the decks called off on the screen as it passes them), the car and whoever stands in it arrive at the stop and
-the doors open. A set's shut door is a fade's worth of walk into or out of the car. `ship lift deck <letter>`
-(`dorsal l` for the neck's), `ship lift stop <n>`; `ship walkto deck <letter>` to its first stop's door, `ship
-walkto <a word of a room's name>`.
+the decks called off on the screen as it passes them), the car and whoever still stands in it arrive at the stop
+and the doors open. The doors have a sensor: step back into the doorway, or out, while they shut and they open
+again and the ride is off; a rider who is not in the car when it arrives is left where they are. A car called
+to another door while it stands open goes there and opens. A set's shut door is a fade's worth of walk into or
+out of the car. `ship lift deck <letter>` goes to the deck's nearest corridor door (a set's door only where the
+deck has none; `dorsal k` for the neck's), `ship lift stop <n>`; `ship walkto deck <letter>` to that door, `ship
+walkto <a word of a place's name>`.
 
 **Tests.** `Slonk.Interior.Plan` builds the plan headless and checks the decks, that every room keeps inside the
-hull and clear of the sets and of each other, that the shafts exist and the dorsal one spans the ship, and that
-rides take their time.
+hull and clear of the sets and of each other, that no passage runs through a set at any height the set reaches
+or crosses another passage or a room (junctions abut at the wall plane), that the bypasses open at both ends and
+link up, that the shafts exist and the dorsal one spans the ship, and that rides take their time.
 
 ## 8. Later
 

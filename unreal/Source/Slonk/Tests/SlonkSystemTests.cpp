@@ -934,14 +934,16 @@ bool FSlonkInteriorRoomsTest::RunTest(const FString& Parameters)
 
 namespace
 {
-	/** Whether two of the plan's rooms (oriented boxes in the deck's plane) overlap once each is shrunk by a margin:
-	 *  the separating-axis test over the four edge normals. */
-	bool BoxesOverlap(const FPlanRoom& A, const FPlanRoom& B, double Shrink)
+	/** An oriented box in a deck's plane: a room, a bay's footprint, or a set's box (yaw 0). */
+	struct FObb { FVector2D C; double HX, HY, Yaw; };
+	/** Whether two oriented boxes overlap once each is shrunk by a margin: the separating-axis test over the
+	 *  four edge normals. */
+	bool ObbOverlap(const FObb& A, const FObb& B, double Shrink)
 	{
-		auto Axes = [](const FPlanRoom& R, FVector2D Out[2]) { Out[0] = FVector2D(FMath::Cos(R.Yaw), FMath::Sin(R.Yaw)); Out[1] = FVector2D(-Out[0].Y, Out[0].X); };
+		auto Axes = [](const FObb& R, FVector2D Out[2]) { Out[0] = FVector2D(FMath::Cos(R.Yaw), FMath::Sin(R.Yaw)); Out[1] = FVector2D(-Out[0].Y, Out[0].X); };
 		FVector2D AA[2], BA[2]; Axes(A, AA); Axes(B, BA);
-		const FVector2D D(B.Center.X - A.Center.X, B.Center.Y - A.Center.Y);
-		const double AH[2] = { A.Half.X - Shrink, A.Half.Y - Shrink }, BH[2] = { B.Half.X - Shrink, B.Half.Y - Shrink };
+		const FVector2D D = B.C - A.C;
+		const double AH[2] = { A.HX - Shrink, A.HY - Shrink }, BH[2] = { B.HX - Shrink, B.HY - Shrink };
 		for (const FVector2D* Set : { AA, BA })
 		{
 			for (int32 k = 0; k < 2; ++k)
@@ -954,6 +956,13 @@ namespace
 		}
 		return true;
 	}
+	FObb RoomObb(const FPlanRoom& R) { return { FVector2D(R.Center.X, R.Center.Y), R.Half.X, R.Half.Y, R.Yaw }; }
+	/** A bay's footprint: its length along, the section's waist across. */
+	FObb BayObb(const FPlanBay& B) { const FVector D = B.Dir(); return { FVector2D(B.Mid().X, B.Mid().Y), B.Length() / 2, SlonkPlan::CorrW, FMath::Atan2(D.Y, D.X) }; }
+	FObb BoxObb(const FBox& B) { return { FVector2D((B.Min.X + B.Max.X) / 2, (B.Min.Y + B.Max.Y) / 2), (B.Max.X - B.Min.X) / 2, (B.Max.Y - B.Min.Y) / 2, 0.0 }; }
+	bool BoxesOverlap(const FPlanRoom& A, const FPlanRoom& B, double Shrink) { return ObbOverlap(RoomObb(A), RoomObb(B), Shrink); }
+	/** Whether a passage's section at a deck's floor passes through a box's height (the sets stand two decks tall in places). */
+	bool CrossesHeight(const FBox& K, double Floor) { return K.Min.Z < Floor + SlonkPlan::CorrH - 5.0 && K.Max.Z > Floor + 5.0; }
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkInteriorPlanTest, "Slonk.Interior.Plan", SLONK_TEST_FLAGS)
@@ -1038,6 +1047,51 @@ bool FSlonkInteriorPlanTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("no room pokes out of the hull"), Outside, 0);
 	TestEqual(TEXT("no room in a set's box"), Reserve, 0);
 	TestEqual(TEXT("no two rooms share floor"), Overlaps, 0);
+	// The passages too: no bay runs through a set's box at any height the set reaches (engineering, the hangar
+	// and the cargo bay stand two decks tall), none crosses another passage's bays (junctions abut at the wall
+	// plane, they do not overlap), and none cuts through a room off another passage.
+	int32 BayReserve = 0, BayCross = 0, BayRoom = 0;
+	for (int32 s = 0; s < P.Stretches.Num(); ++s)
+	{
+		const FPlanStretch& S = P.Stretches[s];
+		const double Floor = P.Decks[S.Deck].Floor;
+		for (const FPlanBay& B : S.Bays)
+		{
+			const FObb Bo = BayObb(B);
+			for (const FPlanReserved& K : Reserved)
+			{
+				if (CrossesHeight(K.Box, Floor) && ObbOverlap(Bo, BoxObb(K.Box), 5.0)) { ++BayReserve; if (BayReserve <= 8) { AddInfo(FString::Printf(TEXT("passage in a set: deck %s %s through %s at (%.0f, %.0f)"), *P.Decks[S.Deck].Label(), *S.Name, *K.Name, B.Mid().X, B.Mid().Y)); } }
+			}
+			for (int32 t = s + 1; t < P.Stretches.Num(); ++t)
+			{
+				const FPlanStretch& T = P.Stretches[t];
+				if (T.Deck != S.Deck || !S.Bounds.Intersect(T.Bounds)) { continue; }
+				for (const FPlanBay& C : T.Bays)
+				{
+					if (ObbOverlap(Bo, BayObb(C), 20.0)) { ++BayCross; if (BayCross <= 8) { AddInfo(FString::Printf(TEXT("passages cross: deck %s %s / %s at (%.0f, %.0f)"), *P.Decks[S.Deck].Label(), *S.Name, *T.Name, B.Mid().X, B.Mid().Y)); } }
+				}
+			}
+			for (const FPlanRoom& R : P.Rooms)
+			{
+				if (R.Deck != S.Deck || R.Stretch == s || !S.Bounds.Intersect(R.Bounds)) { continue; }
+				if (ObbOverlap(Bo, RoomObb(R), 20.0)) { ++BayRoom; if (BayRoom <= 8) { AddInfo(FString::Printf(TEXT("passage through a room: deck %s %s / %s at (%.0f, %.0f)"), *P.Decks[S.Deck].Label(), *S.Name, *R.Name, B.Mid().X, B.Mid().Y)); } }
+			}
+		}
+	}
+	TestEqual(TEXT("no passage runs through a set"), BayReserve, 0);
+	TestEqual(TEXT("no two passages cross"), BayCross, 0);
+	TestEqual(TEXT("no passage runs through a room"), BayRoom, 0);
+	// The bypasses on N, O, R and S: every junction is on a bay whose side stands open, and the run links up.
+	int32 Bypasses = 0;
+	for (const FPlanStretch& S : P.Stretches)
+	{
+		if (S.Name != TEXT("bypass")) { continue; }
+		++Bypasses;
+		TestTrue(TEXT("a bypass opens at its first bay"), S.Bays.Num() > 2 && S.Bays[0].Side[0] == EPlanWall::Open);
+		TestTrue(TEXT("a bypass opens at its last bay"), S.Bays.Num() > 2 && S.Bays.Last().Side[0] == EPlanWall::Open);
+		TestEqual(TEXT("a bypass joins both cross passages"), S.Links.Num(), 2);
+	}
+	TestEqual(TEXT("four bypasses"), Bypasses, 4);
 	// Deck F holds the enlisted quarters by the hundred; deck G the labs and the brig; H the hull locks.
 	int32 Enlisted = 0, Labs = 0, Brig = 0, Locks = 0;
 	for (const FPlanRoom& R : P.Rooms)

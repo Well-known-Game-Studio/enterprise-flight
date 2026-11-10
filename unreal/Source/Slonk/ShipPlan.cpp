@@ -327,6 +327,7 @@ namespace
 			Room.Center.Z = Floor(S.Deck) + CorrH / 2;
 			Room.Door = S.Bays[Mid].Mid() + S.Bays[Mid].SideDir(Side) * CorrW; Room.Door.Z = Floor(S.Deck);
 			Room.DoorIn = S.Bays[Mid].SideDir(Side);
+			Room.Bay = Mid;
 			// Corners: the front two at the wall; the back two along the party walls (radial on a ring).
 			Room.Corners[0] = F0; Room.Corners[1] = F1;
 			if (bWedge)
@@ -535,10 +536,11 @@ namespace
 			RoomsAlong(L, 0, { { TEXT("Lower sensor array"), EShipRoom::Equipment, 3, -1 } }, RoomDepth, true);
 		}
 
-		/** A fore-and-aft corridor on the centre line (or offset) with the dorsal shaft's door in its port wall. */
+		/** A fore-and-aft corridor on the centre line (or offset), from X1 aft to X0, with the dorsal shaft's door
+		 *  in its starboard wall. Heading aft, side 0 is to port (-y) and side 1 to starboard (+y). */
 		int32 Trunk(int32 Deck, const FString& Name, double X0, double X1, double Y, bool bDorsalLift, bool bEnd0 = true, bool bEnd1 = true)
 		{
-			const int32 S = Straight(Deck, Name, FVector(X1 * X, Y * X, 0), FVector(X0 * X, Y * X, 0), bEnd0, bEnd1);   // heading aft: side 1 is to port
+			const int32 S = Straight(Deck, Name, FVector(X1 * X, Y * X, 0), FVector(X0 * X, Y * X, 0), bEnd0, bEnd1);
 			if (bDorsalLift) { Lift(S, BayNear(S, FVector(2309.0 * X, Y * X, 0)), 1, TEXT("Dorsal")); }
 			return S;
 		}
@@ -549,8 +551,8 @@ namespace
 			const FNeck Necks[] = {
 				{ 'I', { { TEXT("Observation lounge"), EShipRoom::Lounge, 3, 1 }, { TEXT("Engineering equipment"), EShipRoom::Equipment, 2, -1 } }, { { TEXT("Observation lounge"), EShipRoom::Lounge, 3, 1 }, { TEXT("Engineering equipment"), EShipRoom::Equipment, 2, -1 } } },
 				{ 'J', { { TEXT("Engineering equipment"), EShipRoom::Equipment, 2, -1 } }, { { TEXT("Engineering equipment"), EShipRoom::Equipment, 2, -1 } } },
-				{ 'K', { { TEXT("Observation lounge"), EShipRoom::Lounge, 3, 1 }, { TEXT("Shield generator room"), EShipRoom::Equipment, 3, -1 } }, { { TEXT("Shield generator room"), EShipRoom::Equipment, 3, -1 } } },
-				{ 'L', { { TEXT("Torpedo casing storage"), EShipRoom::Store, 3, 2 }, { TEXT("Torpedo exhaust ducting"), EShipRoom::Equipment, 2, -1 } }, { { TEXT("Warhead locker"), EShipRoom::Armoury, 3, 1 }, { TEXT("Torpedo casing storage"), EShipRoom::Store, 3, -1 } } },
+				{ 'K', { { TEXT("Observation lounge"), EShipRoom::Lounge, 3, 1 }, { TEXT("Torpedo casing storage"), EShipRoom::Store, 3, 1 }, { TEXT("Shield generator room"), EShipRoom::Equipment, 3, -1 } }, { { TEXT("Warhead locker"), EShipRoom::Armoury, 3, 1 }, { TEXT("Shield generator room"), EShipRoom::Equipment, 3, -1 } } },
+				// Deck L has no corridor of its own: the torpedo bay (its set, two decks tall from M) fills the neck there.
 			};
 			for (const FNeck& N : Necks)
 			{
@@ -560,64 +562,69 @@ namespace
 			}
 		}
 
-		/** A trunk that jogs round a room on the centre line: forward leg, cross passage to starboard, bypass,
-		 *  cross passage back, aft leg; `XF` is where the forward leg ends and `XA` where the aft leg resumes. */
+		/** A trunk that jogs round a set on the centre line: the forward leg ends at `XF`, a cross passage runs
+		 *  to starboard from its last bay, the bypass heads aft at `Yb`, a second cross passage comes back to the
+		 *  aft leg, which resumes at `XA`. Every junction is a T on a bay's middle: the cross passages leave the
+		 *  trunks' last and first bays through their starboard walls (side 1 heading aft) and meet the bypass's
+		 *  first and last bays through their inboard walls (side 0), the bypass laid out so those bays' middles
+		 *  lie on the cross passages' axes. */
 		void Bypass(int32 Deck, double X1, double XF, double XA, double X0, double Yb, const TArray<FRoomSpec>& Stbd, const TArray<FRoomSpec>& Port)
 		{
 			const double W = CorrW;
-			const int32 Fwd = Trunk(Deck, TEXT("forward trunk"), XF - W / X, X1, 0.0, true, true, true);
-			// The forward leg's last bay opens to starboard (side 0 when heading aft) onto the cross passage.
-			const int32 Cross1 = P.Stretches.Num();
-			const FVector C1 = Open(Fwd, P.Stretches[Fwd].Bays.Num() - 1, 0, Cross1);
-			Straight(Deck, TEXT("cross passage"), FVector(XF * X, C1.Y, 0), FVector(XF * X, (Yb * X) + W, 0), false, true);
-			const int32 Byp = P.Stretches.Num();
-			const FVector B0 = Open(Cross1, P.Stretches[Cross1].Bays.Num() - 1, 1, Byp);   // heading starboard: side 1 is aft
-			Straight(Deck, TEXT("bypass"), FVector(B0.X, Yb * X, 0), FVector(XA * X + W, Yb * X, 0), false, true);
-			const int32 Cross2 = P.Stretches.Num();
-			const FVector C2 = Open(Byp, P.Stretches[Byp].Bays.Num() - 1, 1, Cross2);     // heading aft: side 1 is port
-			Straight(Deck, TEXT("cross passage"), FVector(XA * X, C2.Y, 0), FVector(XA * X, -W, 0), false, true);
-			const int32 Aft = P.Stretches.Num();
-			const FVector A0 = Open(Cross2, P.Stretches[Cross2].Bays.Num() - 1, 0, Aft);   // heading port: side 0 is aft
-			Straight(Deck, TEXT("aft trunk"), FVector(A0.X, 0, 0), FVector(X0 * X, 0, 0), false, true);
-			RoomsAlong(Fwd, 0, Stbd); RoomsAlong(Fwd, 1, Port);
-			RoomsAlong(Byp, 0, Stbd); RoomsAlong(Aft, 0, Stbd); RoomsAlong(Aft, 1, Port);
+			const int32 Fwd = Trunk(Deck, TEXT("forward trunk"), XF, X1, 0.0, true, true, true);
+			const int32 Aft = Trunk(Deck, TEXT("aft trunk"), X0, XA, 0.0, false, true, true);
+			const int32 Cross1 = P.Stretches.Num(), Byp = Cross1 + 1, Cross2 = Cross1 + 2;
+			const FVector C1 = Open(Fwd, P.Stretches[Fwd].Bays.Num() - 1, 1, Cross1);   // on the starboard wall, abreast of the last bay's middle
+			const FVector A0 = Open(Aft, 0, 1, Cross2);                                 // the same at the aft leg's first bay
+			const double Yin = Yb * X - W;                                               // the bypass's inboard wall
+			Straight(Deck, TEXT("cross passage"), C1, FVector(C1.X, Yin, 0), false, false);
+			P.Stretches[Cross1].Links.AddUnique(Byp);
+			// The bypass's pitch is chosen so a bay's middle falls on each cross passage's axis: N bays over the
+			// span between the axes plus one, its ends half a bay beyond them, closed by end walls at the corners.
+			const double Span = C1.X - A0.X;
+			const int32 N = FMath::Max(2, FMath::RoundToInt(Span / CorrPitch) + 1);
+			const double Pitch = Span / (N - 1);
+			Straight(Deck, TEXT("bypass"), FVector(C1.X + Pitch / 2, Yb * X, 0), FVector(A0.X - Pitch / 2, Yb * X, 0), true, true);
+			Open(Byp, 0, 0, Cross1);
+			Open(Byp, P.Stretches[Byp].Bays.Num() - 1, 0, Cross2);
+			Straight(Deck, TEXT("cross passage"), A0, FVector(A0.X, Yin, 0), false, false);
+			P.Stretches[Cross2].Links.AddUnique(Byp);
+			RoomsAlong(Fwd, 1, Stbd); RoomsAlong(Fwd, 0, Port);
+			RoomsAlong(Byp, 1, Stbd);   // outboard of the bypass; inboard is the set it goes round
+			RoomsAlong(Aft, 1, Stbd); RoomsAlong(Aft, 0, Port);
 		}
 
 		void Secondary()
 		{
 			const TArray<FRoomSpec> Eng = { { TEXT("Engineering systems room"), EShipRoom::Equipment, 3, -1 } };
-			// N.
-			{
-				const int32 D = P.DeckIndex('N', EDeckSection::Secondary);
-				const int32 S = Trunk(D, TEXT("trunk corridor"), -4800.0, 2600.0, 0.0, true);
-				RoomsAlong(S, 0, { { TEXT("Engineering systems room"), EShipRoom::Equipment, 3, 3 }, { TEXT("Engineering workshop"), EShipRoom::Workshop, 3, -1 } });
-				RoomsAlong(S, 1, Eng);
-			}
+			// N: main engineering's set stands two decks tall from O, so the trunk jogs round its upper half here too.
+			Bypass(P.DeckIndex('N', EDeckSection::Secondary), 2600.0, 500.0, -2100.0, -4800.0, 800.0,
+				   { { TEXT("Engineering systems room"), EShipRoom::Equipment, 3, 3 }, { TEXT("Engineering workshop"), EShipRoom::Workshop, 3, -1 } },
+				   Eng);
 			// O: the trunk jogs to starboard round main engineering (its own set, its lift door the trunk's end).
 			Bypass(P.DeckIndex('O', EDeckSection::Secondary), 3400.0, 500.0, -2100.0, -6100.0, 800.0,
 				   { { TEXT("Flight control"), EShipRoom::Office, 4, 1 }, { TEXT("Dilithium chamber access"), EShipRoom::Equipment, 3, 1 }, { TEXT("Nacelle energy conduit room"), EShipRoom::Equipment, 3, -1 } },
 				   { { TEXT("Nacelle energy conduit room"), EShipRoom::Equipment, 3, -1 } });
 			// P.
 			{
+				// The hangar's set rises from Q through P: the trunk ends at its forward wall, the gallery looking over it.
 				const int32 D = P.DeckIndex('P', EDeckSection::Secondary);
-				const int32 S = Trunk(D, TEXT("trunk corridor"), -6100.0, 3600.0, 0.0, true);
+				const int32 S = Trunk(D, TEXT("trunk corridor"), -3500.0, 3600.0, 0.0, true);
 				RoomsAlong(S, 0, { { TEXT("Maneuvering thruster control"), EShipRoom::Equipment, 3, 1 }, { TEXT("Briefing room 2"), EShipRoom::Office, 4, 1 }, { TEXT("Engineering office"), EShipRoom::Office, 2, 4 }, { TEXT("Engineer's lounge"), EShipRoom::Lounge, 3, 2 }, { TEXT("Hangar control gallery"), EShipRoom::Office, 4, -1 } });
 				RoomsAlong(S, 1, { { TEXT("Nanotech workshop"), EShipRoom::Workshop, 3, 1 }, { TEXT("Diagnostic workshop"), EShipRoom::Workshop, 3, 1 }, { TEXT("Shipfitting workshop"), EShipRoom::Workshop, 4, 1 }, { TEXT("Electronic workshop"), EShipRoom::Workshop, 3, 1 }, { TEXT("Engineer's dining mess"), EShipRoom::Lounge, 4, 1 }, { TEXT("Engineering store"), EShipRoom::Store, 2, -1 } });
 			}
-			// Q: ends short of the hangar's forward wall (its set's lift door is the hangar's stop).
+			// Q: ends short of the cargo bay's set, whose hold rises from S through Q's floor (the hangar beyond
+			// it is reached by its own set's lift door).
 			{
 				const int32 D = P.DeckIndex('Q', EDeckSection::Secondary);
-				const int32 S = Trunk(D, TEXT("trunk corridor"), -3200.0, 3600.0, 0.0, true);
+				const int32 S = Trunk(D, TEXT("trunk corridor"), -1350.0, 3600.0, 0.0, true);
 				RoomsAlong(S, 0, { { TEXT("Ship's power distribution"), EShipRoom::Equipment, 3, 2 }, { TEXT("Docking port 4"), EShipRoom::Hatch, 2, 1 }, { TEXT("Cargo high-bay"), EShipRoom::Hold, 4, -1 } });
 				RoomsAlong(S, 1, { { TEXT("Damage control locker"), EShipRoom::Store, 2, 1 }, { TEXT("Docking port 5"), EShipRoom::Hatch, 2, 1 }, { TEXT("Cargo high-bay"), EShipRoom::Hold, 4, -1 } });
 			}
-			// R.
-			{
-				const int32 D = P.DeckIndex('R', EDeckSection::Secondary);
-				const int32 S = Trunk(D, TEXT("trunk corridor"), -6000.0, 3400.0, 0.0, true);
-				RoomsAlong(S, 0, { { TEXT("Deflector beam emitter room"), EShipRoom::Equipment, 4, 1 }, { TEXT("Environmental control"), EShipRoom::Equipment, 3, 2 }, { TEXT("Parking bay 1"), EShipRoom::Hold, 5, 1 }, { TEXT("Cargo mid-bay"), EShipRoom::Hold, 4, -1 } });
-				RoomsAlong(S, 1, { { TEXT("Observation lounge"), EShipRoom::Lounge, 3, 2 }, { TEXT("Travel pod parking"), EShipRoom::Hold, 4, 1 }, { TEXT("Cargo mid-bay"), EShipRoom::Hold, 4, -1 } });
-			}
+			// R: the trunk jogs round the cargo bay's set (its hold is two decks tall from S).
+			Bypass(P.DeckIndex('R', EDeckSection::Secondary), 3400.0, -900.0, -3700.0, -6000.0, 800.0,
+				   { { TEXT("Deflector beam emitter room"), EShipRoom::Equipment, 4, 1 }, { TEXT("Environmental control"), EShipRoom::Equipment, 3, 2 }, { TEXT("Parking bay 1"), EShipRoom::Hold, 5, 1 }, { TEXT("Cargo mid-bay"), EShipRoom::Hold, 4, -1 } },
+				   { { TEXT("Observation lounge"), EShipRoom::Lounge, 3, 2 }, { TEXT("Travel pod parking"), EShipRoom::Hold, 4, 1 }, { TEXT("Cargo mid-bay"), EShipRoom::Hold, 4, -1 } });
 			// S: the trunk jogs round the cargo bay (its set).
 			Bypass(P.DeckIndex('S', EDeckSection::Secondary), 3600.0, -900.0, -3700.0, -4400.0, 800.0,
 				   { { TEXT("Fusion reactor control"), EShipRoom::Equipment, 3, 1 }, { TEXT("Secondary hull bridge"), EShipRoom::Office, 4, 1 }, { TEXT("Cargo transporter"), EShipRoom::TransporterRoom, 3, 2 }, { TEXT("Parking bay 2"), EShipRoom::Hold, 4, -1 } },
