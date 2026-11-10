@@ -1081,6 +1081,19 @@ bool FSlonkInteriorPlanTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("no passage runs through a set"), BayReserve, 0);
 	TestEqual(TEXT("no two passages cross"), BayCross, 0);
 	TestEqual(TEXT("no passage runs through a room"), BayRoom, 0);
+	// The car behind every corridor door stands clear of the rooms beside it (a party wall through the car).
+	int32 RoomInCar = 0;
+	for (const FPlanStop& St : P.Stops)
+	{
+		if (!St.bWalkIn) { continue; }
+		const FObb Car = { FVector2D(St.Car.X, St.Car.Y), 133.0, 133.0, FMath::Atan2(St.Facing.Y, St.Facing.X) };
+		for (const FPlanRoom& R : P.Rooms)
+		{
+			if (R.Deck != St.Deck) { continue; }
+			if (ObbOverlap(Car, RoomObb(R), 0.0)) { ++RoomInCar; if (RoomInCar <= 8) { AddInfo(FString::Printf(TEXT("room through a car: %s / %s at (%.0f, %.0f)"), *St.Name, *R.Name, St.Car.X, St.Car.Y)); } }
+		}
+	}
+	TestEqual(TEXT("no room wall through a car"), RoomInCar, 0);
 	// The bypasses on N, O, R and S: every junction is on a bay whose side stands open, and the run links up.
 	int32 Bypasses = 0;
 	for (const FPlanStretch& S : P.Stretches)

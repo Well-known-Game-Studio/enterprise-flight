@@ -134,20 +134,23 @@ the wall, and the car would open late.
 **The turbolift.** The stops are a list: the plan's own lift doors (the main shaft aft of the lobby rings on B
 to E and I, the aft shaft at the core corridor's end on F, G and H, four rim shafts beside the diagonal
 junctions of the outer ring, the dorsal shaft from the plate decks down the neck to deck U) and the sets' shut
-lift doors. F at one of the plan's doors brings the car (a round car, its doors opening onto the corridor); step
+lift doors. F at one of the plan's doors brings the car (a round car with doors of its own behind the landing's,
+both pairs opening onto the corridor; at a set's stop only the car's close its gap); step
 in and the deck buttons come up; choose, and the doors shut, the car travels (8 m/s up and down, 15 m/s along,
 the decks called off on the screen as it passes them), the car and whoever still stands in it arrive at the stop
 and the doors open. The doors have a sensor: step back into the doorway, or out, while they shut and they open
 again and the ride is off; a rider who is not in the car when it arrives is left where they are. A car called
-to another door while it stands open goes there and opens. A set's shut door is a fade's worth of walk into or
+to another door while it stands open goes there and opens, and the doors it stood open at shut behind it. The
+bays either side of a lift door take no room (a cabin's party wall would run through the car, which stands
+127 cm round and 140 behind the wall). A set's shut door is a fade's worth of walk into or
 out of the car. `ship lift deck <letter>` goes to the deck's nearest corridor door (a set's door only where the
 deck has none; `dorsal k` for the neck's), `ship lift stop <n>`; `ship walkto deck <letter>` to that door, `ship
 walkto <a word of a place's name>`.
 
 **Tests.** `Slonk.Interior.Plan` builds the plan headless and checks the decks, that every room keeps inside the
 hull and clear of the sets and of each other, that no passage runs through a set at any height the set reaches
-or crosses another passage or a room (junctions abut at the wall plane), that the bypasses open at both ends and
-link up, that the shafts exist and the dorsal one spans the ship, and that rides take their time.
+or crosses another passage or a room (junctions abut at the wall plane), that no room reaches into the car behind
+a corridor door, that the bypasses open at both ends and link up, that the shafts exist and the dorsal one spans the ship, and that rides take their time.
 
 ## 8. Later
 

@@ -270,6 +270,14 @@ private:
 	UPROPERTY() TObjectPtr<USceneComponent> CarRoot;
 	TArray<TWeakObjectPtr<USceneComponent>> CarPieces;
 	TArray<TWeakObjectPtr<UPrimitiveComponent>> CarSolids;
+	/** The car's own doors: two leaves across its gap, inside the posts, that shut for the ride (and stand shut at a
+	 *  set's stop, where no landing doors cover the gap) and slide apart behind the wall panels at a landing. */
+	static constexpr double CarR = 127.0, CarDoorX = 98.0, CarLeafW = 66.0;
+	UStaticMeshComponent* CarLeaf[2] = { nullptr, nullptr };
+	float CarDoorOpen = 0.f;
+	void SetCarDoor(float Open);
+	/** The landing's doors and the car's together. */
+	void SetDoors(float Open) { SetStopDoor(CarStop, Open); SetCarDoor(Open); }
 	/** The stop doors of the plan's stops: two leaves each, slid open while the car stands there. */
 	struct FStopDoor { UStaticMeshComponent* Leaf[2] = { nullptr, nullptr }; FVector Shut[2]; FVector Along; float Open = 0.f; int32 Zone = INDEX_NONE; };
 	TMap<int32, FStopDoor> StopDoors;

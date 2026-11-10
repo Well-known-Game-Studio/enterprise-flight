@@ -278,9 +278,10 @@ namespace
 		{
 			FPlanStretch& S = P.Stretches[Stretch];
 			const int32 N = S.Bays.Num();
-			// A bay can front a room if its side is still panel, it is not beside a junction on that side (the
-			// other passage's walls pass there), it lies clear of an open end by a room's depth (the rooms of the
-			// passage beyond stand there), and, off a ring, it does not turn (party walls would splay).
+			// A bay can front a room if its side is still panel, it is not beside a junction or a lift door on that
+			// side (the other passage's walls pass there; the car, 127 cm round and 140 behind the wall, would have
+			// the party wall through it), it lies clear of an open end by a room's depth (the rooms of the passage
+			// beyond stand there), and, off a ring, it does not turn (party walls would splay).
 			double Along = 0.0; TArray<double> Start; Start.Reserve(N);
 			for (const FPlanBay& B : S.Bays) { Start.Add(Along); Along += B.Length(); }
 			const double Total = Along;
@@ -289,7 +290,7 @@ namespace
 				if (S.Bays[k].Side[Side] != EPlanWall::Panel) { return false; }
 				if (!bWedge && FMath::Abs(S.Bays[k].TurnIn) > 0.05) { return false; }
 				if (k + 1 < N && FMath::Abs(S.Bays[k + 1].TurnIn) > 0.05 && !bWedge) { return false; }
-				for (int32 n : { k - 1, k + 1 }) { if (S.Bays.IsValidIndex(n) && S.Bays[n].Side[Side] == EPlanWall::Open) { return false; } }
+				for (int32 n : { k - 1, k + 1 }) { if (S.Bays.IsValidIndex(n) && (S.Bays[n].Side[Side] == EPlanWall::Open || S.Bays[n].Side[Side] == EPlanWall::Lift)) { return false; } }
 				if (!S.bEnd0 && Start[k] < Depth + 20.0) { return false; }
 				if (!S.bEnd1 && Total - (Start[k] + S.Bays[k].Length()) < Depth + 20.0) { return false; }
 				return true;

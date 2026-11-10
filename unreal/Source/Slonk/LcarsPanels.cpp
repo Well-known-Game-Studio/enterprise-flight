@@ -836,6 +836,9 @@ void UTurboliftPanel::BuildContent()
 	const FVector Feet = Me && Me->IsAboard() ? Me->FeetInCraft() : FVector::ZeroVector;
 	const FString HereDeck = Me ? Me->PlaceDeck() : FString();
 	AddLine(Content, TEXT("Decks"), 13.f, Lcars::Dim, true, true, 8.f);
+	// Twenty-three rows outgrow the content box: they scroll, and a headline wraps in the width left beside its button.
+	UScrollBox* Rows = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass());
+	if (UVerticalBoxSlot* S = Content->AddChildToVerticalBox(Rows)) { S->SetSize(FSlateChildSize(ESlateSizeRule::Fill)); }
 	for (int32 d = 0; d < Plan.Decks.Num(); ++d)
 	{
 		const FDeckSpec& D = Plan.Decks[d];
@@ -857,10 +860,10 @@ void UTurboliftPanel::BuildContent()
 				if (P && Craft) { Craft->LiftToDeck(P, d); }
 			}, D.Label());
 		}
-		USizeBox* Tx = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass()); Tx->SetWidthOverride(760.f);
-		Tx->AddChild(Lcars::MakeText(WidgetTree, D.Headline, 12.f, bStops ? FLinearColor::White : FLinearColor(1, 1, 1, 0.45f), false, false));
-		if (UHorizontalBoxSlot* Sl = Row->AddChildToHorizontalBox(Tx)) { Sl->SetPadding(FMargin(12.f, 4.f, 0.f, 0.f)); }
-		if (UVerticalBoxSlot* VS = Content->AddChildToVerticalBox(Row)) { VS->SetPadding(FMargin(0.f, 1.f, 0.f, 1.f)); }
+		UTextBlock* Tx = Lcars::MakeText(WidgetTree, D.Headline, 12.f, bStops ? FLinearColor::White : FLinearColor(1, 1, 1, 0.45f), false, false);
+		Tx->SetAutoWrapText(true);
+		if (UHorizontalBoxSlot* Sl = Row->AddChildToHorizontalBox(Tx)) { Sl->SetSize(FSlateChildSize(ESlateSizeRule::Fill)); Sl->SetPadding(FMargin(12.f, 4.f, 8.f, 0.f)); }
+		if (UScrollBoxSlot* VS = Cast<UScrollBoxSlot>(Rows->AddChild(Row))) { VS->SetPadding(FMargin(0.f, 1.f, 0.f, 1.f)); }
 	}
 	AddRow(Content, TEXT(""), TEXT("A deck's button takes the nearest shaft there. F at any lift door brings you back here."), FLinearColor(1, 1, 1, 0.6f), 12.f);
 }

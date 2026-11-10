@@ -496,7 +496,7 @@ void UShipInteriorComponent::Build()
 	if (!Ship || !GetWorld() || !GetWorld()->IsGameWorld()) { return; }
 	for (USceneComponent* P : AllPieces) { if (P) { P->DestroyComponent(); } }
 	AllPieces.Reset(); Materials.Reset(); Rooms.Reset(); PieceCount = 0; BayShuttlePieces.Reset(); BayShuttle = nullptr;
-	Zones.Reset(); StretchZone0.Reset(); LampPool.Reset(); StopDoors.Reset(); CarPieces.Reset(); CarSolids.Reset(); CarRoot = nullptr;
+	Zones.Reset(); StretchZone0.Reset(); LampPool.Reset(); StopDoors.Reset(); CarPieces.Reset(); CarSolids.Reset(); CarRoot = nullptr; CarLeaf[0] = CarLeaf[1] = nullptr; CarDoorOpen = 0.f;
 	RidePhase = ERide::Idle; CarStop = RideTo = INDEX_NONE; LiftPlaceIndex = INDEX_NONE; LastLiveFeet = FVector(1e9, 1e9, 1e9);
 
 	PanelGrey = MakeLit(TEXT("PanelGrey"), FLinearColor(0.62f, 0.63f, 0.66f), 0.75f);
@@ -1581,7 +1581,7 @@ void UShipInteriorComponent::BuildCar()
 	CarRoot->SetMobility(EComponentMobility::Movable);
 	CarRoot->RegisterComponent();
 	AllPieces.Add(CarRoot);
-	const double H = CorrH, R = 127.0;
+	const double H = CorrH, R = CarR;
 	const int32 First = AllPieces.Num();
 	auto Solidify = [&](UStaticMeshComponent* C, bool bSolid) { if (C) { CarPieces.Add(C); if (bSolid) { CarSolids.Add(C); } } };
 	// Twelve wall panels round the car with the door's gap forward (+X), posts at the gap, the floor, the ceiling
@@ -1599,6 +1599,11 @@ void UShipInteriorComponent::BuildCar()
 		const double Ar = FMath::DegreesToRadians(30.0 * Sg);
 		Solidify(Piece(CubeMesh, FVector(R * FMath::Cos(Ar), R * FMath::Sin(Ar), H / 2), FVector(14.0, 14.0, H), FRotator(0.f, (float)(30.0 * Sg), 0.f), PanelDark, true, CarRoot), true);
 	}
+	for (int32 k = 0; k < 2; ++k)
+	{
+		CarLeaf[k] = Piece(CubeMesh, FVector(CarDoorX, (k == 0 ? -1.0 : 1.0) * CarLeafW / 2, H / 2), FVector(4.0, CarLeafW, H - 2.0), FRotator::ZeroRotator, Burgundy, true, CarRoot);
+		Solidify(CarLeaf[k], true);
+	}
 	Solidify(Piece(CylinderMesh, FVector(0, 0, -4.0), FVector(2 * R + 46.0, 2 * R + 46.0, 8.0), FRotator::ZeroRotator, Carpet, true, CarRoot), true);
 	Solidify(Piece(CylinderMesh, FVector(0, 0, H + 4.0), FVector(2 * R + 14.0, 2 * R + 14.0, 8.0), FRotator::ZeroRotator, PanelGrey, false, CarRoot), false);
 	Solidify(Piece(CylinderMesh, FVector(0, 0, H - 1.5), FVector(110.0, 110.0, 3.0), FRotator::ZeroRotator, StripWhite, false, CarRoot), false);
@@ -1612,6 +1617,21 @@ void UShipInteriorComponent::SetCarShown(bool bShown)
 	bCarShown = bShown;
 	for (const TWeakObjectPtr<USceneComponent>& P : CarPieces) { if (USceneComponent* C = P.Get()) { C->SetVisibility(bShown); } }
 	for (const TWeakObjectPtr<UPrimitiveComponent>& P : CarSolids) { if (UPrimitiveComponent* C = P.Get()) { C->SetCollisionEnabled(bShown ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision); } }
+	SetCarDoor(CarDoorOpen);   // the leaves keep their own showing: open ones are out of sight behind the panels
+}
+
+void UShipInteriorComponent::SetCarDoor(float Open)
+{
+	CarDoorOpen = FMath::Clamp(Open, 0.f, 1.f);
+	const bool bShut = CarDoorOpen < 0.98f;
+	for (int32 k = 0; k < 2; ++k)
+	{
+		UStaticMeshComponent* Leaf = CarLeaf[k];
+		if (!Leaf) { continue; }
+		Leaf->SetRelativeLocation(FVector(CarDoorX, (k == 0 ? -1.0 : 1.0) * (CarLeafW / 2 + CarDoorOpen * (CarLeafW + 6.0)), SlonkPlan::CorrH / 2));
+		Leaf->SetVisibility(bShut && bCarShown);
+		Leaf->SetCollisionEnabled(bShut && bCarShown ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
+	}
 }
 
 void UShipInteriorComponent::MoveCarTo(int32 Stop)
@@ -1701,7 +1721,7 @@ bool UShipInteriorComponent::OpenLift(int32 Stop)
 	if (CarStop != Stop || !bCarShown)
 	{
 		if (CarStop != INDEX_NONE && CarStop != Stop) { SetStopDoor(CarStop, 0.f); }   // the doors it stood open at shut behind it
-		MoveCarTo(Stop); SetCarShown(true);
+		MoveCarTo(Stop); SetCarShown(true); SetCarDoor(0.f);
 		RidePhase = ERide::Idle;   // whatever it stood at before, this stop's doors have still to open
 	}
 	if (RidePhase == ERide::Open) { IdleT = 0.0; return true; }
@@ -1714,9 +1734,10 @@ void UShipInteriorComponent::BoardAndRide(APersonPawn* Who, int32 FromStop, int3
 {
 	AStarshipPawn* Ship = Cast<AStarshipPawn>(GetOwner());
 	if (!Ship || !Who || !Plan.Stops.IsValidIndex(FromStop)) { return; }
+	if (CarStop != INDEX_NONE && CarStop != FromStop) { SetStopDoor(CarStop, 0.f); }   // the doors it stood open at shut behind it
 	MoveCarTo(FromStop);
 	SetCarShown(true);
-	SetStopDoor(FromStop, 0.f);
+	SetDoors(0.f);   // a set's stop has no landing doors: the car's own close its gap
 	const FPlanStop& S = Plan.Stops[FromStop];
 	Who->PlaceAboard(Ship, LiftPlaceIndex, InteriorSpot(S.Car, S.Facing) * Ship->CraftFrame());
 	// The car is the place shown now: the room left behind (the bridge set's floor among them) lets go of the feet.
@@ -1760,13 +1781,14 @@ void UShipInteriorComponent::TickRide(float DeltaTime)
 	}
 	case ERide::Closing:
 		RideT += DeltaTime;
-		SetStopDoor(CarStop, 1.f - (float)(RideT / DoorSeconds));
+		SetDoors(1.f - (float)(RideT / DoorSeconds));
 		if (RideTo != INDEX_NONE && Who)
 		{
 			// The doors' sensor: a rider who steps back into the doorway, or out of the car, while they shut has
 			// them open again and the ride is off; the car waits open as it did before.
 			const FPlanStop& At = Plan.Stops[CarStop];
-			const bool bInDoorway = Aboard(Who) && FVector::DotProduct(Who->FeetInCraft() - At.Car, At.Facing.GetSafeNormal2D()) > 100.0;
+			// (the car's leaves meet 98 cm out and stop a walker's capsule half a metre from the centre: that is the doorway)
+			const bool bInDoorway = Aboard(Who) && FVector::DotProduct(Who->FeetInCraft() - At.Car, At.Facing.GetSafeNormal2D()) > 50.0;
 			if (!Aboard(Who) || bInDoorway)
 			{
 				UE_LOG(LogTemp, Log, TEXT("Turbolift: the rider %s; the doors open again"), bInDoorway ? TEXT("stands in the doorway") : TEXT("left the car"));
@@ -1776,7 +1798,7 @@ void UShipInteriorComponent::TickRide(float DeltaTime)
 			}
 		}
 		if (RideT < DoorSeconds) { return; }
-		SetStopDoor(CarStop, 0.f);
+		SetDoors(0.f);
 		if (RideTo == INDEX_NONE) { SetCarShown(false); RidePhase = ERide::Idle; return; }
 		RidePhase = ERide::Travelling; RideT = 0.0;
 		return;
@@ -1825,9 +1847,9 @@ void UShipInteriorComponent::TickRide(float DeltaTime)
 	}
 	case ERide::Opening:
 		RideT += DeltaTime;
-		SetStopDoor(CarStop, (float)(RideT / DoorSeconds));
+		SetDoors((float)(RideT / DoorSeconds));
 		if (RideT < DoorSeconds) { return; }
-		SetStopDoor(CarStop, 1.f);
+		SetDoors(1.f);
 		RidePhase = ERide::Open; IdleT = 0.0;
 		return;
 	}

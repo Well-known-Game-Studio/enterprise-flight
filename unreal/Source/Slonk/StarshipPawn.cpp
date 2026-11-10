@@ -2573,7 +2573,9 @@ bool AStarshipPawn::HandleCraftCommand(const FString& Op, const TArray<FString>&
 			FString W; for (int32 i = 1; i < Args.Num(); ++i) { W += Args[i].ToLower(); }
 			if (W == TEXT("lift") || W == TEXT("use"))
 			{
-				if (P->IsAboard() && RoomSpots(P->GetRoom(), Lift, Use, Label)) { P->PlaceAboard(this, P->GetRoom(), (W == TEXT("lift") ? Lift : Use) * CraftFrame()); }
+				// The place underfoot (a generated cabin among them), not the first room of its kind.
+				const FVector Feet = P->IsAboard() ? P->FeetInCraft() : FVector::ZeroVector;
+				if (P->IsAboard() && PlaceSpots(P->GetPlace(), P->GetRoom(), Lift, Use, Label, &Feet)) { P->PlaceAboard(this, P->GetPlace(), (W == TEXT("lift") ? Lift : Use) * CraftFrame()); }
 			}
 			else if (const EShipRoom Room = (W.StartsWith(TEXT("deck")) || W.StartsWith(TEXT("dorsal"))) ? EShipRoom::Count : RoomFromWord(W); Room != EShipRoom::Count && Room != EShipRoom::Bridge && P->IsAboard() && RoomSpots(Room, Lift, Use, Label))
 			{
@@ -2605,11 +2607,13 @@ bool AStarshipPawn::HandleCraftCommand(const FString& Op, const TArray<FString>&
 				}
 				else if (Plan.Stops.IsValidIndex(Stop))
 				{
-					// A set's stop: stand at the set's lift door, inside it.
+					// A set's stop: stand at the set's lift door, inside it (the bridge's is read off its set, the
+					// placeholder room carries no spot of its own).
 					const int32 Pl = Interior->IndexOf(Plan.Stops[Stop].Room);
-					if (const FShipRoom* R = Interior->Place(Pl))
+					const FVector Feet = P->FeetInCraft();
+					if (const FShipRoom* R = PlaceSpots(Pl, Plan.Stops[Stop].Room, Lift, Use, Label, &Feet))
 					{
-						P->PlaceAboard(this, Pl, R->Lift * CraftFrame());
+						P->PlaceAboard(this, Pl, Lift * CraftFrame());
 						SetInteriorPlace(Pl);
 						UE_LOG(LogTemp, Log, TEXT("Walked to %s (stop %d)"), *R->Name, Stop);
 					}
