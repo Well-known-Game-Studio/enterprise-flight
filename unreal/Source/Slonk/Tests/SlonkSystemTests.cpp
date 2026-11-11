@@ -1029,6 +1029,14 @@ bool FSlonkCrewWalkersTest::RunTest(const FString& Parameters)
 	FPlanRoute R4;
 	TestTrue(TEXT("shared door routes"), Router.Route(DeckO, FVector(100, 0, 0), EngStop, DeckO, FVector(200, 0, 0), EngStop, R4));
 	TestTrue(TEXT("a walk, not a ride"), R4.Legs.Num() == 1 && !R4.Legs[0].bLift);
+	// Deck G has no walk-in stop: its passage's rooms walk to the passage's open end on the authored corridor.
+	{
+		const int32 DeckG = P.DeckIndex('G', EDeckSection::Saucer);
+		TestTrue(TEXT("deck G rides from the corridor's door"), !Router.DeckHasStop(DeckG));
+		const FPlanRoom* GR = nullptr; for (const FPlanRoom& R : P.Rooms) { if (R.Deck == DeckG) { GR = &R; break; } }
+		TArray<FVector> Along;
+		TestTrue(TEXT("a deck G room reaches the passage's open end"), GR && !P.Stretches[GR->Stretch].bEnd0 && Router.Walk(Router.NodeOf(GR->Stretch, GR->Bay), Router.NodeOf(GR->Stretch, 0), Along) && Along.Num() >= 1);
+	}
 	// Every room on a deck with walk-in stops reaches one on foot.
 	int32 Cut = 0, Tried = 0;
 	for (const FPlanRoom& R : P.Rooms)

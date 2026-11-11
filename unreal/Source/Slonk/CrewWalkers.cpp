@@ -227,18 +227,16 @@ FVector UCrewWalkersComponent::SpotIn(int32 Place, int32 Seed, double& OutYaw) c
 	FRandomStream Rs((int32)H);
 	if (R->IsSignature())
 	{
-		// Along the line from the lift door to the room's thing, a little to either side; the sets' floors are
-		// clear there. A set whose two spots coincide takes a few paces in from the door instead.
+		// The clear floor inside the door: a pace to three in, a little to either side. The sets' furniture stands
+		// further in (the mess's table, the cabins off the crew quarters' passage), so the straight walk from the
+		// door to the spot crosses nothing.
 		const FVector L = LiftSpot(Place);
-		const FVector U = R->Use.GetLocation().IsNearlyZero() ? L : R->Use.GetLocation();
 		FVector Fwd = R->Lift.GetRotation().GetForwardVector().GetSafeNormal2D();
 		if (Fwd.IsNearlyZero()) { Fwd = FVector(1, 0, 0); }
 		const FVector Side(-Fwd.Y, Fwd.X, 0.0);
-		FVector P;
-		if (FVector::Dist2D(L, U) < 100.0) { P = L + Fwd * (150.0 + 400.0 * Rs.FRand()) + Side * Rs.FRandRange(-90.0, 90.0); }
-		else { P = L + (U - L) * (0.3 + 0.6 * Rs.FRand()) + Side * Rs.FRandRange(-90.0, 90.0); }
+		FVector P = L + Fwd * (60.0 + 200.0 * Rs.FRand()) + Side * Rs.FRandRange(-100.0, 100.0);
 		P.Z = L.Z;
-		OutYaw = R->Use.GetRotation().Rotator().Yaw;
+		OutYaw = FMath::RadiansToDegrees(FMath::Atan2(Fwd.Y, Fwd.X));
 		return P;
 	}
 	// A generated room: anywhere in the middle of its box, facing into the room (its +X runs from the door in).
@@ -272,39 +270,80 @@ void UCrewWalkersComponent::AlongCorridor(const FShipRoom& C, const FVector& Fro
 	Out.Add(To);
 }
 
-void UCrewWalkersComponent::SetExit(int32 Place, const FVector& From, TArray<FVector>& Out) const
+bool UCrewWalkersComponent::ViaCorridor(int32 Place) const
 {
-	// Out of a set to the lift door it rides from: its own (a pace inside the door), or deck G's corridor's for
-	// the rooms off that corridor: through the room's doorway onto the corridor's centre line, along the leg and
-	// round its corner to the lift.
+	UShipInteriorComponent* I = Interior();
+	const FShipRoom* R = I ? I->Place(Place) : nullptr;
+	return R && R->IsSignature() && (R->Id == EShipRoom::Corridor || UShipInteriorComponent::LiftStop(R->Id) == EShipRoom::Corridor);
+}
+
+bool UCrewWalkersComponent::OnPassageDeck(int32 Place) const
+{
+	UShipInteriorComponent* I = Interior();
+	const FShipRoom* R = I ? I->Place(Place) : nullptr;
+	return R && !R->IsSignature() && R->PlanRoom != INDEX_NONE && Router && !Router->DeckHasStop(DeckOfPlace(Place));
+}
+
+void UCrewWalkersComponent::SetToCorridor(int32 Place, const FVector& From, TArray<FVector>& Out) const
+{
+	// Out of a room off deck G's corridor: spot → the doorway (the spot stands 90 cm inside it) → the corridor's
+	// centre line. The corridor itself: to its centre line where it stands.
 	UShipInteriorComponent* I = Interior();
 	const FShipRoom* R = I ? I->Place(Place) : nullptr;
 	if (!R) { return; }
 	Out.Add(From);
-	const EShipRoom Via = UShipInteriorComponent::LiftStop(R->Id);
-	if (Via != R->Id)
-	{
-		const FVector L = LiftSpot(Place);
-		const FVector In = R->Lift.GetRotation().GetForwardVector().GetSafeNormal2D();
-		const FVector Door = L - In * 90.0;   // the spot stands 90 cm inside the doorway
-		Out.Add(L); Out.Add(Door);
-		if (const FShipRoom* C = I->Room(Via))
-		{
-			const FVector P = CorridorPoint(*C, Door);
-			Out.Add(P);
-			AlongCorridor(*C, P, C->Lift.GetLocation(), Out);
-		}
-	}
-	else if (R->Id == EShipRoom::Corridor)
+	if (R->Id == EShipRoom::Corridor)
 	{
 		const FVector P = CorridorPoint(*R, From);
 		if (FVector::DistSquared2D(P, From) > FMath::Square(30.0)) { Out.Add(P); }
-		AlongCorridor(*R, P, R->Lift.GetLocation(), Out);
+		return;
 	}
-	else
+	const FVector L = LiftSpot(Place);
+	const FVector In = R->Lift.GetRotation().GetForwardVector().GetSafeNormal2D();
+	const FVector Door = L - In * 90.0;
+	Out.Add(L); Out.Add(Door);
+	if (const FShipRoom* C = I->Room(EShipRoom::Corridor)) { Out.Add(CorridorPoint(*C, Door)); }
+}
+
+void UCrewWalkersComponent::SetExit(int32 Place, const FVector& From, TArray<FVector>& Out) const
+{
+	// Out of a set to the lift door it rides from: its own (a pace inside the door), or deck G's corridor's for
+	// the rooms off that corridor: through the doorway onto the centre line, along the leg and round its corner.
+	UShipInteriorComponent* I = Interior();
+	const FShipRoom* R = I ? I->Place(Place) : nullptr;
+	if (!R) { return; }
+	if (ViaCorridor(Place))
 	{
-		Out.Add(LiftSpot(Place));
+		SetToCorridor(Place, From, Out);
+		if (const FShipRoom* C = I->Room(EShipRoom::Corridor)) { AlongCorridor(*C, Out.Last(), C->Lift.GetLocation(), Out); }
+		return;
 	}
+	Out.Add(From);
+	Out.Add(LiftSpot(Place));
+}
+
+bool UCrewWalkersComponent::PassageToCorridor(int32 Place, const FVector& From, TArray<FVector>& Out) const
+{
+	// From a room off deck G's generated passage along it to its open end, where the authored corridor begins.
+	UShipInteriorComponent* I = Interior();
+	const FShipRoom* R = I ? I->Place(Place) : nullptr;
+	if (!R || !Router || !OnPassageDeck(Place)) { return false; }
+	const FShipPlan& P = I->GetPlan();
+	const FPlanRoom& Pr = P.Rooms[R->PlanRoom];
+	const FPlanStretch& S = P.Stretches[Pr.Stretch];
+	if (S.Bays.Num() == 0 || S.bEnd0) { return false; }
+	TArray<FVector> Along;
+	if (!Router->Walk(Router->NodeOf(Pr.Stretch, Pr.Bay), Router->NodeOf(Pr.Stretch, 0), Along)) { return false; }
+	Out.Add(From); Out.Add(Pr.Door); Out.Append(Along); Out.Add(S.Bays[0].P0);
+	return true;
+}
+
+bool UCrewWalkersComponent::CorridorToPassage(int32 Place, const FVector& To, TArray<FVector>& Out) const
+{
+	TArray<FVector> Back;
+	if (!PassageToCorridor(Place, To, Back)) { return false; }
+	for (int32 i = Back.Num() - 1; i >= 0; --i) { Out.Add(Back[i]); }
+	return true;
 }
 
 void UCrewWalkersComponent::SetEntry(int32 Place, const FVector& To, TArray<FVector>& Out) const
@@ -328,19 +367,58 @@ bool UCrewWalkersComponent::PlanRoute(FCrewWalker& W, int32 ToPlace)
 	W.bOffstage = false;
 	auto Arrive = [&]() { W.Place = ToPlace; W.Target = ToPlace; W.Pos = Spot; W.Spot = Spot; W.Yaw = SpotYaw; W.SpotYaw = SpotYaw; };
 	if (!A || W.Place == ToPlace) { Arrive(); return true; }   // from nowhere, or a new spot in the same room
-	// The ends: a set rides from its own door; a plan room is left and entered by its doorway.
-	const int32 FromStop = A->IsSignature() ? StopOfPlace(W.Place) : INDEX_NONE;
-	const int32 ToStop = B->IsSignature() ? StopOfPlace(ToPlace) : INDEX_NONE;
+	++Planned;
+	auto Fail = [&]() { ++Fallbacks; Arrive(); return false; };
+	// Deck G's generated passage has no lift: its rooms reach the authored corridor's door on foot, and the sets
+	// off that corridor on foot the same way, through the corridor.
+	const FShipRoom* Corr = I->Room(EShipRoom::Corridor);
+	const bool bAOnG = OnPassageDeck(W.Place), bBOnG = OnPassageDeck(ToPlace);
+	if (Corr && ((bAOnG && ViaCorridor(ToPlace)) || (ViaCorridor(W.Place) && bBOnG)))
+	{
+		TArray<FVector> Pts;
+		if (bAOnG)
+		{
+			if (!PassageToCorridor(W.Place, W.Pos, Pts)) { return Fail(); }
+			TArray<FVector> In; SetToCorridor(ToPlace, Spot, In);   // spot → door → the corridor's centre line
+			AlongCorridor(*Corr, Pts.Last(), In.Last(), Pts);
+			for (int32 i = In.Num() - 2; i >= 0; --i) { Pts.Add(In[i]); }
+		}
+		else
+		{
+			SetToCorridor(W.Place, W.Pos, Pts);
+			TArray<FVector> OutP;
+			if (!CorridorToPassage(ToPlace, Spot, OutP)) { return Fail(); }
+			AlongCorridor(*Corr, Pts.Last(), OutP[0], Pts);
+			for (int32 i = 1; i < OutP.Num(); ++i) { Pts.Add(OutP[i]); }
+		}
+		FPlanRouteLeg L; L.Points = Pts; W.Route.Legs.Add(L);
+		W.Target = ToPlace; W.Spot = Spot; W.SpotYaw = SpotYaw; W.Leg = 0; W.Point = 1; W.bMoving = true;
+		return true;
+	}
+	// The ends: a set rides from its own door; a plan room is left and entered by its doorway; a room off deck
+	// G's passage rides from the corridor's door, reached along the passage.
+	const bool bAByCorr = bAOnG && !bBOnG && Corr, bBByCorr = bBOnG && !bAOnG && Corr;
+	const int32 FromStop = A->IsSignature() ? StopOfPlace(W.Place) : bAByCorr ? Corr->Stop : INDEX_NONE;
+	const int32 ToStop = B->IsSignature() ? StopOfPlace(ToPlace) : bBByCorr ? Corr->Stop : INDEX_NONE;
 	const int32 FromDeck = DeckOfPlace(W.Place), ToDeck = DeckOfPlace(ToPlace);
-	if (FromDeck == INDEX_NONE || ToDeck == INDEX_NONE || (A->IsSignature() && FromStop == INDEX_NONE) || (B->IsSignature() && ToStop == INDEX_NONE)) { Arrive(); return false; }
+	if (FromDeck == INDEX_NONE || ToDeck == INDEX_NONE || (A->IsSignature() && FromStop == INDEX_NONE) || (B->IsSignature() && ToStop == INDEX_NONE)) { return Fail(); }
 	TArray<FVector> Pre, Post;
 	FVector From, To;
 	if (A->IsSignature()) { SetExit(W.Place, W.Pos, Pre); From = Pre.Last(); }
+	else if (bAByCorr) { if (!PassageToCorridor(W.Place, W.Pos, Pre)) { return Fail(); } AlongCorridor(*Corr, Pre.Last(), Corr->Lift.GetLocation(), Pre); From = Pre.Last(); }
 	else { From = P.Rooms.IsValidIndex(A->PlanRoom) ? P.Rooms[A->PlanRoom].Door : W.Pos; Pre = { W.Pos, From }; }
 	if (B->IsSignature()) { SetEntry(ToPlace, Spot, Post); To = Post[0]; }
+	else if (bBByCorr)
+	{
+		TArray<FVector> OutP;
+		if (!CorridorToPassage(ToPlace, Spot, OutP)) { return Fail(); }
+		Post.Add(Corr->Lift.GetLocation()); AlongCorridor(*Corr, Post.Last(), OutP[0], Post);
+		for (int32 i = 1; i < OutP.Num(); ++i) { Post.Add(OutP[i]); }
+		To = Post[0];
+	}
 	else { To = P.Rooms.IsValidIndex(B->PlanRoom) ? P.Rooms[B->PlanRoom].Door : Spot; Post = { To, Spot }; }
 	FPlanRoute R;
-	if (!Router->Route(FromDeck, From, FromStop, ToDeck, To, ToStop, R) || R.Legs.Num() == 0) { Arrive(); return false; }
+	if (!Router->Route(FromDeck, From, FromStop, ToDeck, To, ToStop, R) || R.Legs.Num() == 0) { return Fail(); }
 	// The way through the rooms at either end joins the first and last legs on foot (or stands as legs of its
 	// own when the route begins or ends in a lift: a set's door).
 	if (R.Legs[0].bLift) { FPlanRouteLeg L; L.Points = Pre; R.Legs.Insert(L, 0); }
@@ -419,10 +497,11 @@ void UCrewWalkersComponent::Sync(bool bAll)
 		W.bReplan = false; --Budget;
 		const int32 P = PlaceFor(W.Where, W.Member);
 		if (P == INDEX_NONE) { Release(W); W.bOffstage = true; W.bMoving = false; W.bInLift = false; W.Place = INDEX_NONE; W.Target = INDEX_NONE; continue; }
-		if ((W.bMoving && P == W.Target) || (!W.bMoving && P == W.Place)) { continue; }
+		if (!bAll && ((W.bMoving && P == W.Target) || (!W.bMoving && P == W.Place))) { continue; }
 		if (bAll || W.Place == INDEX_NONE) { W.Place = INDEX_NONE; PlanRoute(W, P); }   // settle: straight there
 		else { PlanRoute(W, P); }
 	}
+	if (Planned > 0) { UE_LOG(LogTemp, Log, TEXT("Crew walkers: %d routes planned, %d fell back to arriving at once"), Planned, Fallbacks); Planned = Fallbacks = 0; }
 	if (bAll)
 	{
 		int32 Off = 0; TMap<FString, int32> Nowhere;

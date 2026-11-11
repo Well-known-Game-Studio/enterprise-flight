@@ -187,6 +187,8 @@ public:
 	int32 NodeNear(int32 Deck, const FVector& P, double Reach = 600.0) const;
 	/** The bay a walk-in stop's door is in; INDEX_NONE for a set's stop. */
 	int32 NodeOfStop(int32 Stop) const;
+	/** Whether a deck has a stop that is walked into (deck G's passages ride from the authored corridor's door). */
+	bool DeckHasStop(int32 Deck) const;
 	/** Where to stand at a stop's door, in the passage (a set's: its car's place). */
 	FVector DoorOf(int32 Stop) const;
 	/** The points from one bay to another along the passages (same deck), false if unconnected. */

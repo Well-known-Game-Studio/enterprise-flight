@@ -862,6 +862,12 @@ int32 FPlanRouter::NodeOfStop(int32 Stop) const
 	return NodeNear(St.Deck, St.Car + St.Facing.GetSafeNormal2D() * (SlonkPlan::CorrW + 140.0 * Plan.Scale));
 }
 
+bool FPlanRouter::DeckHasStop(int32 Deck) const
+{
+	for (const FPlanStop& St : Plan.Stops) { if (St.Deck == Deck && St.bWalkIn) { return true; } }
+	return false;
+}
+
 FVector FPlanRouter::DoorOf(int32 Stop) const
 {
 	if (!Plan.Stops.IsValidIndex(Stop)) { return FVector::ZeroVector; }

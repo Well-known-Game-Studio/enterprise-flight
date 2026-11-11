@@ -121,9 +121,19 @@ private:
 	/** Deck G's corridor: the nearest point of its centre lines, and the way along them (round the corner). */
 	FVector CorridorPoint(const FShipRoom& C, const FVector& P) const;
 	void AlongCorridor(const FShipRoom& C, const FVector& From, const FVector& To, TArray<FVector>& Out) const;
-	/** The way out of a set from a point in it to its lift door, and the way in from the door to a point. */
+	/** Out of a set to the corridor's centre line by its doorway (the rooms off deck G's corridor), or to its own
+	 *  lift spot; then the way out of a set to the lift door it rides from, and the way in from the door. */
+	void SetToCorridor(int32 Place, const FVector& From, TArray<FVector>& Out) const;
 	void SetExit(int32 Place, const FVector& From, TArray<FVector>& Out) const;
 	void SetEntry(int32 Place, const FVector& To, TArray<FVector>& Out) const;
+	/** Deck G's generated passage has no lift of its own: from a room off it, along the passage to its open end
+	 *  on the authored corridor (and the reverse). Empty when the place is not such a room. */
+	bool PassageToCorridor(int32 Place, const FVector& From, TArray<FVector>& Out) const;
+	bool CorridorToPassage(int32 Place, const FVector& To, TArray<FVector>& Out) const;
+	/** Whether a place is a generated room on a deck without a walk-in stop, or a set reached by deck G's corridor. */
+	bool OnPassageDeck(int32 Place) const;
+	bool ViaCorridor(int32 Place) const;
+	int32 Fallbacks = 0, Planned = 0;
 	bool Rendered(const FCrewWalker& W) const;
 	ACrewFigure* Acquire(FCrewWalker& W);
 	void Release(FCrewWalker& W);

@@ -181,7 +181,10 @@ the car's travel time. On one deck the walk is on foot where the passages join; 
 nearest walk-in stops at either end; a set is left and entered by its own shut door (its stop, not walked into),
 and the three rooms off deck G's corridor by that corridor's door: out through the room's doorway onto the
 corridor's centre line, along the leg and round its corner (two rooms off the same door walk between them, no
-ride). A ring's seam is an edge like any other. The rides are not the player's car: the walker is in a lift
+ride). Deck G's generated passage has no lift of its own: its rooms walk the passage to its open end on the
+authored corridor and ride from that corridor's door, or walk on through the corridor to the rooms off it. A
+ring's seam is an edge like any other. In a set the crew stand on the clear floor just inside the door, a pace
+to three in, where no furniture stands between the door and them. The rides are not the player's car: the walker is in a lift
 for the leg's seconds and steps out of the destination's door, so the car the player rides is never
 commandeered. A walker on its way finishes the route before taking a new place (a route from mid-passage would
 start at the old room's door).
