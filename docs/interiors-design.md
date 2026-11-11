@@ -159,10 +159,45 @@ hull and clear of the sets and of each other, that no passage runs through a set
 or crosses another passage or a room (junctions abut at the wall plane), that no room reaches into the car behind
 a corridor door, that the bypasses open at both ends and link up, that the shafts exist and the dorsal one spans the ship, and that rides take their time.
 
-## 8. Later
+## 8. Crew on shifts
 
-Figures on their shifts (the roster's placement read into the rooms, walking the corridor graph between
-watches); sliding doors that open as you come; the sets' lift doors as doorways onto the plan's corridors (the
+The roster places every member of the crew each hour of the ship's day (`UCrewRosterSubsystem::Place`, §3):
+their posting on watch, the mess, their quarters, the rec deck, sickbay. `UCrewWalkersComponent` on the ship reads
+that placement into the plan and walks them there. Each person is a walker (`FCrewWalker`): where they stand in
+the ship's frame, the place they are in, the one they are bound for and the route between, simulated for the
+whole complement all the time, which costs a position along a polyline each. The roster's compartment names
+map to places by a table (`PlaceFor`): a set where one stands for the compartment (sickbay, main engineering, the
+shuttle bay, the cargo bay, the torpedo bay, the rec deck, the officers' mess, the crew quarters), and the plan's
+rooms by name otherwise (the computer core, phaser control, the security complex, the reactor rooms, environmental
+control, the quarters by rank...), a compartment with many rooms spreading its people over them by a hash of who
+they are, so everyone has a cabin and a lab of their own. The nacelles, the shore and an away team are nowhere on
+the plan, and nobody is drawn standing on the bridge, where the seated officers already are.
+
+**Routes.** `FPlanRouter` (ShipPlan.h) makes a graph of the plan: every bay a node, consecutive bays and the
+junctions between linked passages the edges (an open end meeting an open side bay at the wall plane, or two
+open ends meeting), Dijkstra between them. A route (`FPlanRoute`) is legs on foot (points on the floor, bay
+middle to bay middle, through a room's doorway at either end) and rides in a lift between two stops, which take
+the car's travel time. On one deck the walk is on foot where the passages join; between decks it goes by the
+nearest walk-in stops at either end; a set is left and entered by its own shut door (its stop, not walked into),
+and the three rooms off deck G's corridor by that corridor's door, round its corner from the transporter room.
+The rides are not the player's car: the walker is in a lift for the leg's seconds and steps out of the
+destination's door, so the car the player rides is never commandeered.
+
+**Figures.** The walkers within the interior's live radius of the player on foot, on the same deck, are given
+figures from a pool of `MaxFigures` (24), nearest first: `ACrewFigure`, the mannequin with the person's
+locomotion blend (standing or walking by the speed), dressed by the crew material in the maroon jacket with a
+skin and hair of their own, a cap for hair, no collision, posed from the walker's feet in the craft's frame every
+frame. With the captain in the chair there are no figures; the walk goes on regardless, so stepping out of the
+lift finds the shift where it should be. A watch change moves a third of the ship at once: the component replans
+two dozen routes a half-second, and settles everyone straight to their places when a session starts or the
+clock is jumped (`ship crew walkers settle`). Console: `ship crew walkers` (counts and the nearest ten, with where
+they are bound), `ship crew walkers <id>` (one's route), `ship crew figures on|off`. The test
+`Slonk.Crew.Walkers` routes along a deck, between decks and from a set's door, and has every room on a deck with
+stops reach one.
+
+## 9. Later
+
+Sliding doors that open as you come; the sets' lift doors as doorways onto the plan's corridors (the
 mess, the cabin, the crew quarters, the torpedo bay, engineering, the bay and the cargo bay are reached by lift
 only); the brig and the armoury as rooms with a use; the observation lounge in the neck; the captain's quarters
 as a place to sleep the clock forward; tuning the rings' radii and bay counts if the walks prove too long.

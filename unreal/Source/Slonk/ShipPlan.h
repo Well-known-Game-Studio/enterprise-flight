@@ -157,6 +157,55 @@ struct FShipPlan
 	static double TravelSeconds(const FPlanStop& A, const FPlanStop& B);
 };
 
+/** A leg of a route through the plan: on foot along points on the floor (pawn space, bay middle to bay middle),
+ *  or a ride in a lift between two stops taking so many seconds. */
+struct FPlanRouteLeg
+{
+	bool bLift = false;
+	TArray<FVector> Points;
+	int32 FromStop = INDEX_NONE, ToStop = INDEX_NONE;
+	double Seconds = 0.0;
+};
+
+struct FPlanRoute
+{
+	TArray<FPlanRouteLeg> Legs;
+	/** The distance on foot, cm. */
+	double Walked() const;
+};
+
+/** Paths through the plan's passages for whoever walks them: every bay a node, consecutive bays and the
+ *  junctions between linked passages the edges, Dijkstra between them; across decks by the nearest walk-in
+ *  stops, and from a set's own shut door (a stop that is not walked into) straight by lift. */
+class SLONK_API FPlanRouter
+{
+public:
+	explicit FPlanRouter(const FShipPlan& InPlan);
+	int32 NumNodes() const { return Nodes.Num(); }
+	int32 NodeOf(int32 Stretch, int32 Bay) const;
+	/** The bay nearest a point on a deck, within Reach of its middle; INDEX_NONE if none. */
+	int32 NodeNear(int32 Deck, const FVector& P, double Reach = 600.0) const;
+	/** The bay a walk-in stop's door is in; INDEX_NONE for a set's stop. */
+	int32 NodeOfStop(int32 Stop) const;
+	/** Where to stand at a stop's door, in the passage (a set's: its car's place). */
+	FVector DoorOf(int32 Stop) const;
+	/** The points from one bay to another along the passages (same deck), false if unconnected. */
+	bool Walk(int32 A, int32 B, TArray<FVector>& OutPoints) const;
+	/** A route from a point (or a set's stop, when FromStop names one that is not walked into) to another, on
+	 *  foot where the passages join, else by lift between the nearest stops. False when no way exists. */
+	bool Route(int32 FromDeck, const FVector& From, int32 FromStop, int32 ToDeck, const FVector& To, int32 ToStop, FPlanRoute& Out) const;
+
+private:
+	const FShipPlan& Plan;
+	struct FNode { int32 Stretch = 0, Bay = 0; FVector Mid; TArray<TPair<int32, double>> Edges; };
+	TArray<FNode> Nodes;
+	TArray<int32> First;   // the first node of each stretch
+	void Dijkstra(int32 Start, TArray<double>& Dist, TArray<int32>& Prev) const;
+	/** The walk-in stop on the start's deck nearest it along the passages, with the distance; INDEX_NONE if none. */
+	int32 NearestStop(int32 Start, double& OutDist) const;
+	void Trace(const TArray<int32>& Prev, int32 From, int32 To, TArray<FVector>& OutPoints) const;
+};
+
 /** A room the plan must keep clear of (a signature room's box, with its name). */
 struct FPlanReserved
 {

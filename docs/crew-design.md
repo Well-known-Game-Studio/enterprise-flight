@@ -94,7 +94,7 @@ quarters, mess and recreation. The hour is the simulation step: every crew membe
 experience, memories decaying, a mood recomputed, a roll for a personal moment); the day step writes the first
 officer's morale summary to the bridge log, re-evaluates desires and promotions due, and saves.
 
-**Where they are.** The hourly step places every person in a compartment: their posting while on watch, their
+**Where they are** (walked in the flesh since the crew-shifts round: `docs/interiors-design.md` §8)**.** The hourly step places every person in a compartment: their posting while on watch, their
 quarters, the mess, the rec deck, sickbay or the shuttle bay otherwise, by routine and need. That table is what a
 later round reads to put figures in the rooms as they are built, and it is what the damage model reads now to
 decide who was in the compartment that was hit.

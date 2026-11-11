@@ -57,6 +57,7 @@
 #include "WarpStreaksComponent.h"
 #include "BridgeInteriorComponent.h"
 #include "ShipInterior.h"
+#include "CrewWalkers.h"
 #include "TransporterEffect.h"
 #include "PhotonTorpedo.h"
 #include "Camera/PlayerCameraManager.h"
@@ -151,6 +152,7 @@ AStarshipPawn::AStarshipPawn()
 	BridgeInterior->SetVisibility(false, true);
 	Interior = CreateDefaultSubobject<UShipInteriorComponent>(TEXT("Interior"));
 	Interior->SetupAttachment(CollisionBox);
+	Walkers = CreateDefaultSubobject<UCrewWalkersComponent>(TEXT("CrewWalkers"));
 	ShownRoom = EShipRoom::Count;
 
 	DistantStars = CreateDefaultSubobject<UDistantStarsComponent>(TEXT("DistantStars"));
@@ -3594,6 +3596,11 @@ void AStarshipPawn::DrawPlanSkeleton() const
 	}
 }
 
+bool AStarshipPawn::HasCrewModel() const
+{
+	return Systems && Systems->bCrewModel;
+}
+
 void AStarshipPawn::HandleCrewCommand(const TArray<FString>& Args)
 {
 	UCrewRosterSubsystem* R = GetGameInstance() ? GetGameInstance()->GetSubsystem<UCrewRosterSubsystem>() : nullptr;
@@ -3615,6 +3622,26 @@ void AStarshipPawn::HandleCrewCommand(const TArray<FString>& Args)
 	};
 	auto Rest = [&](int32 From) { FString S; for (int32 i = From; i < Args.Num(); ++i) { S += (S.IsEmpty() ? TEXT("") : TEXT(" ")) + Args[i]; } return S; };
 	FString Reply;
+	if (What == TEXT("walkers"))
+	{
+		// The crew about the ship: `ship crew walkers` for the nearest, `ship crew walkers <id>` for one's route,
+		// `ship crew walkers settle` to put everyone at their hour's place at once.
+		if (!Walkers) { Say(TEXT("No walkers"), FColor::Orange); return; }
+		if (Word(2) == TEXT("settle")) { Walkers->Settle(); Say(TEXT("Crew: everyone to their places")); return; }
+		if (Args.IsValidIndex(2) && Args[2].IsNumeric()) { const FString Rt = Walkers->DescribeRoute(FCString::Atoi(*Args[2])); UE_LOG(LogTemp, Log, TEXT("Crew walker %s: %s"), *Args[2], *Rt); Say(Rt, FColor::White, 20.f); return; }
+		int32 Off = 0; for (const FCrewWalker& W : Walkers->GetWalkers()) { if (W.bOffstage) { ++Off; } }
+		const APersonPawn* P = ActivePerson.Get();
+		const FVector Feet = P && P->IsAboard() ? P->FeetInCraft() : FVector::ZeroVector;
+		const FString Status = FString::Printf(TEXT("Crew walkers: %d, %d walking, %d in lifts, %d off the plan, %d figures shown%s"), Walkers->GetWalkers().Num(), Walkers->NumMoving(), Walkers->NumInLift(), Off, Walkers->FiguresShown(), *Walkers->Describe(Feet, 10));
+		UE_LOG(LogTemp, Log, TEXT("%s"), *Status);
+		Say(Status, FColor::White, 20.f);
+		return;
+	}
+	if (What == TEXT("figures"))
+	{
+		if (Walkers) { Walkers->bFigures = Word(2) != TEXT("off") && Word(2) != TEXT("0"); Say(FString::Printf(TEXT("Crew figures %s"), Walkers->bFigures ? TEXT("on") : TEXT("off"))); }
+		return;
+	}
 	if (What.IsEmpty() || What == TEXT("status"))
 	{
 		Say(FString::Printf(TEXT("Crew: stardate %s %02d:00 (%s watch), %d aboard, %d lost, morale %d%%, trust %+.0f, cohesion %d%%, %d in trouble. ship crew list|show|trouble|..."), *R->StardateText(), R->GetHourOfDay(), *UCrewRosterSubsystem::WatchName(R->WatchOnDuty()), R->CountAboard(), R->GetLost().Num(), FMath::RoundToInt(R->Morale() * 100.f), R->MeanTrust() * 100.f, FMath::RoundToInt(R->Cohesion() * 100.f), R->InTrouble().Num()));

@@ -19,6 +19,7 @@ class UStarshipWeaponsComponent;
 class UWarpStreaksComponent;
 class UBridgeInteriorComponent;
 class UShipInteriorComponent;
+class UCrewWalkersComponent;
 class UBayDoorsComponent;
 struct FShipRoom;
 enum class EShipRoom : uint8;
@@ -182,6 +183,10 @@ public:
 	/** The turbolift to a deck: the stop there nearest the shaft the rider is in. */
 	bool LiftToDeck(APersonPawn* Person, int32 Deck);
 	APersonPawn* GetActivePerson() const { return ActivePerson.Get(); }
+	UShipInteriorComponent* GetInterior() const { return Interior; }
+	UCrewWalkersComponent* GetWalkers() const { return Walkers; }
+	/** Whether this craft carries the crew model (the roster lives aboard the player's ship, not the shuttle). */
+	bool HasCrewModel() const;
 	/** The person's feet have moved: if they have crossed into another room, follow them (the room shown, the HUD). */
 	void PersonMoved(APersonPawn* Person);
 	/** A room from a console word (bridge, eng, sick, bay, trans, air, corr, rec, mess, quarters, crew, torp, cargo). */
@@ -306,6 +311,7 @@ public:
 	/** The rooms you can walk to by turbolift (the bridge is BridgeInterior's set). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|Cameras")
 	TObjectPtr<UShipInteriorComponent> Interior;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UCrewWalkersComponent> Walkers;
 	UPROPERTY() TObjectPtr<UBayDoorsComponent> BayDoors;
 	FTimerHandle BayDoorTimer;
 	bool bBayDoorsWereClosed = true;
