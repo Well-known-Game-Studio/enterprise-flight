@@ -76,10 +76,16 @@ public:
 	FString UseHint() const;
 	/** Stand aboard the ship in one of its rooms: feet at the given world transform (Z up), the ship's frame from now on. */
 	void PlaceAboard(AStarshipPawn* Ship, EShipRoom InRoom, const FTransform& FeetWorld);
+	/** The same, in any of the ship's places by index (the plan's corridors and rooms, the turbolift's car). */
+	void PlaceAboard(AStarshipPawn* Ship, int32 PlaceIndex, const FTransform& FeetWorld);
 	bool IsAboard() const { return Frame == EPersonFrame::Deck; }
 	EShipRoom GetRoom() const { return Room; }
-	/** The ship moves the person's room as their feet cross into another (AStarshipPawn::PersonMoved). */
-	void SetRoom(EShipRoom InRoom) { Room = InRoom; }
+	int32 GetPlace() const { return Place; }
+	/** The ship moves the person's place as their feet cross into another (AStarshipPawn::PersonMoved). */
+	void SetPlace(int32 InPlace, EShipRoom Kind) { Place = InPlace; Room = Kind; }
+	/** The place underfoot by name, and its deck, for the HUD. */
+	FString PlaceName() const;
+	FString PlaceDeck() const;
 	/** The trace channel hulls, decks and buildings block for the boots ("Boots" in DefaultEngine.ini). */
 	static constexpr ECollisionChannel BootsChannel = ECC_GameTraceChannel1;
 	/** Feet on the floor: the root is HalfHeightCm up the body's axis. */
@@ -144,8 +150,9 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Person") TWeakObjectPtr<AStarshipPawn> Craft;
 	UPROPERTY(BlueprintReadOnly, Category = "Person") TWeakObjectPtr<AStarshipPawn> HullCraft;
 	UPROPERTY(BlueprintReadOnly, Category = "Person") TWeakObjectPtr<APlanetBody> GroundPlanet;
-	/** The room we stand in while aboard. */
+	/** The kind of place we stand in while aboard, and the place itself (an index into the ship's interior). */
 	UPROPERTY(BlueprintReadOnly, Category = "Person") EShipRoom Room = EShipRoom::Count;
+	int32 Place = INDEX_NONE;
 	/** Put down by the transporter: F beams back up while the ship is in range. */
 	UPROPERTY(BlueprintReadOnly, Category = "Person") bool bBeamedDown = false;
 	FString FrameDescription() const;

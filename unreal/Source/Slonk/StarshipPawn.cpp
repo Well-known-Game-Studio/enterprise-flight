@@ -10,6 +10,7 @@
 #include "StarSystem.h"
 #include "SpaceVessel.h"
 #include "EngineUtils.h"
+#include "DrawDebugHelpers.h"
 #include "SlonkGameMode.h"
 #include "FloatingOriginComponent.h"
 #include "Engine/BlendableInterface.h"
@@ -787,6 +788,41 @@ void AStarshipPawn::ApplyHullDimensions()
 void AStarshipPawn::BeginPlay()
 {
 	Super::BeginPlay();
+	if (Interior)
+	{
+		// The turbolift's arrivals: at one of the plan's doors the rider walks out; at a set's shut door a fade
+		// puts them by it. The decks called off on the way show on the screen.
+		TWeakObjectPtr<AStarshipPawn> Self(this);
+		Interior->OnLiftMessage = [Self](const FString& M) { if (Self.IsValid()) { Self->ScreenMessage(M, FColor::Cyan, 1.2f); } };
+		Interior->OnArrived = [Self](int32 Stop, APersonPawn* Who)
+		{
+			AStarshipPawn* S = Self.Get();
+			if (!S || !S->Interior) { return; }
+			const FShipPlan& Plan = S->Interior->GetPlan();
+			if (!Plan.Stops.IsValidIndex(Stop)) { return; }
+			const FPlanStop& St = Plan.Stops[Stop];
+			const FString Deck = Plan.Decks.IsValidIndex(St.Deck) ? Plan.Decks[St.Deck].Label() : TEXT("?");
+			if (St.bWalkIn)
+			{
+				S->ScreenMessage(FString::Printf(TEXT("Deck %s. %s."), *Deck, *St.Name), FColor::Cyan, 5.f);
+				UE_LOG(LogTemp, Log, TEXT("Turbolift: arrived at %s"), *St.Name);
+				return;
+			}
+			TWeakObjectPtr<APersonPawn> P(Who);
+			const EShipRoom Room = St.Room;
+			S->FadeThen([Self, P, Room, Deck]()
+			{
+				AStarshipPawn* S2 = Self.Get(); APersonPawn* W = P.Get();
+				if (!S2 || !W) { return; }
+				FTransform L, U; FString Lb;
+				if (!S2->RoomSpots(Room, L, U, Lb)) { return; }
+				W->PlaceAboard(S2, Room, L * S2->CraftFrame());
+				S2->SetInteriorRoom(Room);
+				S2->ScreenMessage(FString::Printf(TEXT("Deck %s. %s."), *Deck, *UShipInteriorComponent::RoomName(Room)), FColor::Cyan, 5.f);
+				UE_LOG(LogTemp, Log, TEXT("Turbolift: %s"), *UShipInteriorComponent::RoomName(Room));
+			});
+		};
+	}
 	// The warp view parameters must see this frame's camera: the spring arm applies its lag in its own tick
 	// (post-physics) and the camera manager reads the camera components after every tick group, so push them
 	// from a post-update tick that waits for the arm and cameras.
@@ -1408,9 +1444,20 @@ void AStarshipPawn::ApplyViewVisibility()
 
 void AStarshipPawn::SetInteriorRoom(EShipRoom Room)
 {
-	ShownRoom = Room;
-	if (Interior) { Interior->ShowRoom(Room == EShipRoom::Bridge ? EShipRoom::Count : Room); }
-	if (BridgeInterior) { BridgeInterior->SetWalkCollision(Room == EShipRoom::Bridge); }
+	SetInteriorPlace(Interior && Room != EShipRoom::Count ? Interior->IndexOf(Room) : INDEX_NONE);
+}
+
+void AStarshipPawn::SetInteriorPlace(int32 Place)
+{
+	ShownPlace = Place;
+	ShownRoom = Interior ? Interior->KindOf(Place) : EShipRoom::Count;
+	if (Interior)
+	{
+		const APersonPawn* P = ActivePerson.Get();
+		const FVector Feet = P && P->IsAboard() ? P->FeetInCraft() : FVector::ZeroVector;
+		Interior->ShowPlace(ShownRoom == EShipRoom::Bridge ? INDEX_NONE : Place, P && P->IsAboard() ? &Feet : nullptr);
+	}
+	if (BridgeInterior) { BridgeInterior->SetWalkCollision(ShownRoom == EShipRoom::Bridge); }
 	ApplyViewVisibility();
 }
 
@@ -1508,6 +1555,12 @@ void AStarshipPawn::Tick(float DeltaTime)
 	{
 		DebugLookTime -= DeltaTime;
 		FreeLookAngles = DebugLook;
+	}
+	if (PlanDrawTime > 0.f)
+	{
+		PlanDrawTime -= DeltaTime;
+		DrawPlanSkeleton();
+		if (PlanDrawTime <= 0.f && bPlanDrawHidden) { SetActorHiddenInGame(false); bPlanDrawHidden = false; }
 	}
 	if (DebugVerticalTime > 0.f && Movement)
 	{
@@ -2527,23 +2580,92 @@ bool AStarshipPawn::HandleCraftCommand(const FString& Op, const TArray<FString>&
 			FString W; for (int32 i = 1; i < Args.Num(); ++i) { W += Args[i].ToLower(); }
 			if (W == TEXT("lift") || W == TEXT("use"))
 			{
-				if (P->IsAboard() && RoomSpots(P->GetRoom(), Lift, Use, Label)) { P->PlaceAboard(this, P->GetRoom(), (W == TEXT("lift") ? Lift : Use) * CraftFrame()); }
+				// The place underfoot (a generated cabin among them), not the first room of its kind.
+				const FVector Feet = P->IsAboard() ? P->FeetInCraft() : FVector::ZeroVector;
+				if (P->IsAboard() && PlaceSpots(P->GetPlace(), P->GetRoom(), Lift, Use, Label, &Feet)) { P->PlaceAboard(this, P->GetPlace(), (W == TEXT("lift") ? Lift : Use) * CraftFrame()); }
 			}
-			else if (const EShipRoom Room = RoomFromWord(W); Room != EShipRoom::Count && Room != EShipRoom::Bridge && P->IsAboard() && RoomSpots(Room, Lift, Use, Label))
+			else if (const EShipRoom Room = (W.StartsWith(TEXT("deck")) || W.StartsWith(TEXT("dorsal"))) ? EShipRoom::Count : RoomFromWord(W); Room != EShipRoom::Count && Room != EShipRoom::Bridge && P->IsAboard() && RoomSpots(Room, Lift, Use, Label))
 			{
 				P->PlaceAboard(this, Room, Lift * CraftFrame());
 				SetInteriorRoom(Room);
 				UE_LOG(LogTemp, Log, TEXT("Walked to %s"), *UShipInteriorComponent::RoomName(Room));
 			}
+			else if (Interior && P->IsAboard())
+			{
+				// A deck ("walkto deck f", "walkto dorsal l"): the door of its first stop; or a stop by number
+				// ("walkto stop 12"); or a place by a word of its name ("walkto biochem").
+				const FShipPlan& Plan = Interior->GetPlan();
+				int32 Stop = INDEX_NONE;
+				FString Num = W; if (Num.RemoveFromStart(TEXT("stop"))) { Stop = FCString::Atoi(*Num); }
+				else if (const int32 Deck = Plan.DeckFromWord(W); Deck != INDEX_NONE)
+				{
+					// The deck's nearest corridor door; a set's shut door only where the deck has no corridor of the plan's.
+					const TArray<int32> On = Plan.StopsOnDeck(Deck, P->FeetInCraft());
+					for (int32 S : On) { if (Plan.Stops[S].bWalkIn) { Stop = S; break; } }
+					if (Stop == INDEX_NONE && On.Num()) { Stop = On[0]; }
+				}
+				if (Plan.Stops.IsValidIndex(Stop) && Plan.Stops[Stop].bWalkIn)
+				{
+					const FTransform Door = Interior->StopDoor(Stop);
+					const int32 Pl = Interior->RoomAt(Door.GetLocation());
+					P->PlaceAboard(this, Pl, Door * CraftFrame());
+					SetInteriorPlace(Pl);
+					UE_LOG(LogTemp, Log, TEXT("Walked to stop %d %s (place %s)"), Stop, *Plan.Stops[Stop].Name, *Interior->NameOf(Pl));
+				}
+				else if (Plan.Stops.IsValidIndex(Stop))
+				{
+					// A set's stop: stand at the set's lift door, inside it (the bridge's is read off its set, the
+					// placeholder room carries no spot of its own).
+					const int32 Pl = Interior->IndexOf(Plan.Stops[Stop].Room);
+					const FVector Feet = P->FeetInCraft();
+					if (const FShipRoom* R = PlaceSpots(Pl, Plan.Stops[Stop].Room, Lift, Use, Label, &Feet))
+					{
+						P->PlaceAboard(this, Pl, Lift * CraftFrame());
+						SetInteriorPlace(Pl);
+						UE_LOG(LogTemp, Log, TEXT("Walked to %s (stop %d)"), *R->Name, Stop);
+					}
+				}
+				else
+				{
+					for (int32 i = 0; i < Interior->NumPlaces(); ++i)
+					{
+						const FShipRoom* R = Interior->Place(i);
+						if (!R || R->IsSignature() || R->Id == EShipRoom::Turbolift || !R->Name.Replace(TEXT(" "), TEXT("")).ToLower().Contains(W)) { continue; }
+						P->PlaceAboard(this, i, R->Lift * CraftFrame());
+						SetInteriorPlace(i);
+						UE_LOG(LogTemp, Log, TEXT("Walked to %s"), *R->Name);
+						break;
+					}
+				}
+			}
 		}
+		return true;
+	}
+	if (Op == TEXT("plan") && Args.Num() > 1 && Args[1].ToLower() == TEXT("draw"))
+	{
+		// `plan draw <secs> [hide]`: the plan's skeleton over the ship for a while; `hide` takes the hull away.
+		PlanDrawTime = Args.Num() > 2 ? FCString::Atof(*Args[2]) : 10.f;
+		const bool bHide = Args.Num() > 3 && Args[3].ToLower() == TEXT("hide");
+		if (bHide != bPlanDrawHidden) { SetActorHiddenInGame(bHide); bPlanDrawHidden = bHide; }
+		if (PlanDrawTime <= 0.f && bPlanDrawHidden) { SetActorHiddenInGame(false); bPlanDrawHidden = false; }
 		return true;
 	}
 	if (Op == TEXT("lift") && Args.Num() > 1)
 	{
-		// The room in one word or two: "lift deck g" names the deck.
+		// The room in one word or two: "lift deck g" names the deck; "lift stop 12" a stop of the plan.
 		FString W; for (int32 i = 1; i < Args.Num(); ++i) { W += Args[i].ToLower(); }
+		APersonPawn* P = ActivePerson.Get();
+		if (!P) { return true; }
+		FString Num = W;
+		if (Num.RemoveFromStart(TEXT("stop"))) { LiftTo(P, FCString::Atoi(*Num)); return true; }
+		// A deck's letter goes to the plan's stop there; a room's word to the room's set.
+		if (Interior && (W.StartsWith(TEXT("deck")) || W.StartsWith(TEXT("dorsal"))))
+		{
+			const int32 Deck = Interior->GetPlan().DeckFromWord(W);
+			if (Deck != INDEX_NONE) { LiftToDeck(P, Deck); return true; }
+		}
 		const EShipRoom Room = RoomFromWord(W);
-		if (APersonPawn* P = ActivePerson.Get()) { if (Room != EShipRoom::Count) { MoveToRoom(P, Room); } }
+		if (Room != EShipRoom::Count) { MoveToRoom(P, Room); return true; }
 		return true;
 	}
 	if (Op == TEXT("beam") && Args.Num() > 1)
@@ -2728,6 +2850,15 @@ const FShipRoom* AStarshipPawn::RoomSpots(EShipRoom Room, FTransform& Lift, FTra
 	Lift = R->Lift;
 	Use = R->Use;
 	Label = R->UseLabel;
+	return R;
+}
+
+const FShipRoom* AStarshipPawn::PlaceSpots(int32 Place, EShipRoom Room, FTransform& Lift, FTransform& Use, FString& Label, const FVector* Near) const
+{
+	if ((int32)Room < SlonkSignatureRooms) { return RoomSpots(Room, Lift, Use, Label, Near); }
+	const FShipRoom* R = Interior ? Interior->Place(Place) : nullptr;
+	if (!R) { return nullptr; }
+	Lift = R->Lift; Use = R->Use; Label = R->UseLabel;
 	return R;
 }
 
@@ -2923,48 +3054,109 @@ EShipRoom AStarshipPawn::RoomFromWord(const FString& Word)
 
 bool AStarshipPawn::MoveToRoom(APersonPawn* Person, EShipRoom Asked)
 {
-	if (!Person || Person != ActivePerson.Get() || !Person->IsAboard()) { return false; }
+	if (!Person || !Interior) { return false; }
+	// The lift stops where it has a door: a room off a corridor is reached along it.
+	const EShipRoom Room = UShipInteriorComponent::LiftStop(Asked);
+	const FShipRoom* R = Interior->Room(Room);
+	if (!R || R->Stop == INDEX_NONE) { return false; }
+	if (Person->IsAboard() && UShipInteriorComponent::LiftStop(Person->GetRoom()) == Room && Person->GetRoom() != EShipRoom::Turbolift)
+	{
+		ScreenMessage(Room == Asked ? TEXT("You are already there") : *FString::Printf(TEXT("%s is along this corridor"), *UShipInteriorComponent::RoomName(Asked)), FColor::Orange);
+		return false;
+	}
+	if (Room != Asked) { ScreenMessage(FString::Printf(TEXT("%s is along the corridor from the lift"), *UShipInteriorComponent::RoomName(Asked)), FColor::Cyan, 4.f); }
+	return LiftTo(Person, R->Stop);
+}
+
+bool AStarshipPawn::LiftToDeck(APersonPawn* Person, int32 Deck)
+{
+	if (!Person || !Interior || !Person->IsAboard()) { return false; }
+	const FShipPlan& Plan = Interior->GetPlan();
+	const int32 Here = Interior->StopFor(Person->GetPlace(), Person->FeetInCraft());
+	const FVector From = Plan.Stops.IsValidIndex(Here) ? Plan.Stops[Here].Car : Person->FeetInCraft();
+	const TArray<int32> On = Plan.StopsOnDeck(Deck, From);
+	if (!On.Num())
+	{
+		ScreenMessage(FString::Printf(TEXT("Turbolift: no stop on deck %s"), Plan.Decks.IsValidIndex(Deck) ? *Plan.Decks[Deck].Label() : TEXT("?")), FColor::Orange);
+		return false;
+	}
+	// The nearest of the deck's corridor doors, to walk out of; a set's shut door (a fade) only where the deck has
+	// no corridor of the plan's.
+	int32 Stop = On[0];
+	for (int32 S : On) { if (Plan.Stops[S].bWalkIn) { Stop = S; break; } }
+	return LiftTo(Person, Stop);
+}
+
+bool AStarshipPawn::LiftTo(APersonPawn* Person, int32 Stop)
+{
+	if (!Person || Person != ActivePerson.Get() || !Person->IsAboard() || !Interior) { return false; }
+	const FShipPlan& Plan = Interior->GetPlan();
+	if (!Plan.Stops.IsValidIndex(Stop)) { return false; }
 	if (bTransporting)
 	{
 		ScreenMessage(TEXT("Turbolift: the transporter has you, hold still"), FColor::Orange);
 		return false;
 	}
-	// The lift stops where it has a door: a room off a corridor is reached along it.
-	const EShipRoom Room = UShipInteriorComponent::LiftStop(Asked);
-	FTransform Lift, Use; FString Label;
-	if (!RoomSpots(Room, Lift, Use, Label)) { return false; }
-	if (Room == UShipInteriorComponent::LiftStop(Person->GetRoom()))
+	if (Interior->IsRiding())
 	{
-		ScreenMessage(Room == Asked ? TEXT("You are already there") : *FString::Printf(TEXT("%s is along this corridor"), *UShipInteriorComponent::RoomName(Asked)), FColor::Orange);
+		ScreenMessage(TEXT("Turbolift: the car is under way"), FColor::Orange);
 		return false;
 	}
+	// Already in the car: it goes from where it stands.
+	if (Person->GetPlace() == Interior->LiftPlace())
+	{
+		if (Interior->LiftAtStop() == Stop) { ScreenMessage(TEXT("You are already there"), FColor::Orange); return false; }
+		return Interior->Ride(Person, Stop);
+	}
+	const int32 From = Interior->StopFor(Person->GetPlace(), Person->FeetInCraft());
+	if (From == INDEX_NONE)
+	{
+		ScreenMessage(TEXT("Turbolift: no lift door on this deck"), FColor::Orange);
+		return false;
+	}
+	if (From == Stop) { ScreenMessage(TEXT("You are already there"), FColor::Orange); return false; }
 	TWeakObjectPtr<APersonPawn> P(Person);
-	FadeThen([this, P, Room, Asked]()
+	TWeakObjectPtr<UShipInteriorComponent> Int(Interior);
+	auto Board = [P, Int, From, Stop]()
 	{
 		APersonPawn* Who = P.Get();
-		if (!Who) { return; }
-		FTransform L, U; FString Lb;
-		if (!RoomSpots(Room, L, U, Lb)) { return; }
-		Who->PlaceAboard(this, Room, L * CraftFrame());
-		SetInteriorRoom(Room);
-		const FString Where = Room == Asked ? UShipInteriorComponent::RoomName(Room) : FString::Printf(TEXT("%s: %s is along the corridor"), *UShipInteriorComponent::RoomName(Room), *UShipInteriorComponent::RoomName(Asked));
-		ScreenMessage(FString::Printf(TEXT("Deck %s. %s."), *UShipInteriorComponent::DeckOf(Room), *Where), FColor::Cyan, 5.f);
-		UE_LOG(LogTemp, Log, TEXT("Turbolift: %s"), *Where);
-	});
+		if (Who && Int.IsValid()) { Int->BoardAndRide(Who, From, Stop); }
+	};
+	// Through the plan's own lift doors the car is simply boarded; a set's shut door is a fade's worth of walk.
+	if (Plan.Stops[From].bWalkIn) { Board(); }
+	else { FadeThen(Board); }
 	return true;
 }
 
 void AStarshipPawn::PersonMoved(APersonPawn* Person)
 {
 	if (!Person || !Interior || !Person->IsAboard() || Person->GetRoom() == EShipRoom::Bridge) { return; }
-	const EShipRoom At = Interior->RoomAt(Person->FeetInCraft(), Person->GetRoom());
-	if (At == EShipRoom::Count || At == Person->GetRoom()) { return; }
-	Person->SetRoom(At);
+	const FVector Feet = Person->FeetInCraft();
+	const int32 At = Interior->RoomAt(Feet, Person->GetPlace());
+	if (At == INDEX_NONE || At == Person->GetPlace())
+	{
+		if (Person == ActivePerson.Get())
+		{
+			Interior->UpdateLive(Feet);
+			// In the car and past the doors' sensor: the deck buttons come up (a deck chosen from the doorway would
+			// only have the doors open again).
+			if (bLiftPanelPending && Person->GetPlace() == Interior->LiftPlace() && !Interior->InCarDoorway(Feet))
+			{
+				bLiftPanelPending = false;
+				AStarshipPlayerController* PC = Cast<AStarshipPlayerController>(Person->GetController());
+				if (USlonkUIRoot* UI = PC ? PC->GetUIRoot() : nullptr) { UI->TogglePanel(UTurboliftPanel::StaticClass()); }
+			}
+		}
+		return;
+	}
+	Person->SetPlace(At, Interior->KindOf(At));
 	if (Person == ActivePerson.Get())
 	{
-		SetInteriorRoom(At);
-		ScreenMessage(FString::Printf(TEXT("%s, deck %s"), *UShipInteriorComponent::RoomName(At), *UShipInteriorComponent::DeckOf(At)), FColor::Cyan, 2.5f);
-		UE_LOG(LogTemp, Log, TEXT("Person into %s"), *UShipInteriorComponent::RoomName(At));
+		SetInteriorPlace(At);
+		ScreenMessage(FString::Printf(TEXT("%s, deck %s"), *Interior->NameOf(At), *Interior->DeckOfPlace(At)), FColor::Cyan, 2.5f);
+		UE_LOG(LogTemp, Log, TEXT("Person into %s"), *Interior->NameOf(At));
+		// Stepping into the car: the deck buttons come up once the rider is clear of the doorway (above).
+		bLiftPanelPending = At == Interior->LiftPlace();
 	}
 }
 
@@ -3075,7 +3267,7 @@ bool AStarshipPawn::PersonUse(APersonPawn* Person)
 	FTransform Lift, Use; FString Label;
 	const EShipRoom Room = Person->GetRoom();
 	const FVector Feet = Person->FeetInCraft();
-	if (!RoomSpots(Room, Lift, Use, Label, &Feet)) { return false; }
+	if (!PlaceSpots(Person->GetPlace(), Room, Lift, Use, Label, &Feet)) { return false; }
 	const double DUse = FVector::Dist(Feet, Use.GetLocation());
 	const double DLift = FVector::Dist(Feet, Lift.GetLocation());
 	const double Reach = 220.0;
@@ -3083,6 +3275,18 @@ bool AStarshipPawn::PersonUse(APersonPawn* Person)
 	const bool bLift = UShipInteriorComponent::IsLiftStop(Room);
 	AStarshipPlayerController* PC = Cast<AStarshipPlayerController>(Person->GetController());
 	USlonkUIRoot* UI = PC ? PC->GetUIRoot() : nullptr;
+	// In the car, or at one of the plan's lift doors: the car comes (or the deck buttons, once inside).
+	if (Room == EShipRoom::Turbolift) { if (UI) { UI->TogglePanel(UTurboliftPanel::StaticClass()); } return true; }
+	if (!UShipInteriorComponent::IsLiftStop(Room) && Interior)
+	{
+		const int32 Stop = Interior->StopAtDoor(Person->GetPlace(), Feet, Reach);
+		if (Stop != INDEX_NONE)
+		{
+			if (Interior->IsRiding()) { ScreenMessage(TEXT("Turbolift: the car is under way"), FColor::Orange); return false; }
+			if (Interior->LiftAtStop() == Stop && !Interior->IsRiding() && Interior->OpenLift(Stop)) { ScreenMessage(TEXT("Turbolift: step in"), FColor::Cyan, 2.f); return true; }
+			if (Interior->OpenLift(Stop)) { ScreenMessage(TEXT("Turbolift: the car is here, step in"), FColor::Cyan, 3.f); return true; }
+		}
+	}
 	if (DUse <= Reach && (!bLift || DUse <= DLift))
 	{
 		switch (Room)
@@ -3117,7 +3321,10 @@ FString AStarshipPawn::PersonUseHint(const APersonPawn* Person) const
 	if (!Person || !Person->IsAboard()) { return FString(); }
 	FTransform Lift, Use; FString Label;
 	const FVector Feet = Person->FeetInCraft();
-	if (!RoomSpots(Person->GetRoom(), Lift, Use, Label, &Feet)) { return FString(); }
+	if (!PlaceSpots(Person->GetPlace(), Person->GetRoom(), Lift, Use, Label, &Feet)) { return FString(); }
+	if (Person->GetRoom() == EShipRoom::Turbolift) { return TEXT("F  choose a deck"); }
+	if (!UShipInteriorComponent::IsLiftStop(Person->GetRoom()) && Interior && Interior->StopAtDoor(Person->GetPlace(), Feet) != INDEX_NONE) { return TEXT("F  turbolift"); }
+	if ((int32)Person->GetRoom() >= SlonkSignatureRooms) { return FString(); }
 	const double DUse = FVector::Dist(Feet, Use.GetLocation());
 	const double DLift = FVector::Dist(Feet, Lift.GetLocation());
 	const bool bLift = UShipInteriorComponent::IsLiftStop(Person->GetRoom());
@@ -3277,6 +3484,114 @@ bool AStarshipPawn::LaunchShuttle()
 namespace
 {
 	bool ParseDepartmentSafe(const FString& Word, ECrewDepartment& Out) { return !Word.IsEmpty() && UCrewRosterSubsystem::ParseDepartment(Word, Out); }
+}
+
+void AStarshipPawn::DrawPlanSkeleton() const
+{
+	// The plan as lines in the ship's frame, one frame at a time: each bay's floor outline (white; a junction's
+	// open side dashed by its absence), each room's floor polygon (yellow) with its doorway (green), each stop's
+	// car (magenta) and the shafts joining them, and each deck's hull outline at its floor (grey): the saucer's
+	// radius about its centre, the dorsal's and secondary hull's boxes. Over the hull it draws in the foreground.
+	UWorld* World = GetWorld();
+	if (!World || !Interior) { return; }
+	const FShipPlan& P = Interior->GetPlan();
+	const FTransform F = CraftFrame();
+	const uint8 Depth = bPlanDrawHidden ? SDPG_World : SDPG_Foreground;
+	auto Line = [&](const FVector& A, const FVector& B, const FColor& C, float Thick = 0.f)
+	{
+		DrawDebugLine(World, F.TransformPosition(A), F.TransformPosition(B), C, false, -1.f, Depth, Thick);
+	};
+	const FColor Bay(230, 230, 230), Room(255, 200, 40), Door(80, 255, 80), Lift(255, 60, 255), Hull(110, 130, 160);
+	for (const FPlanStretch& S : P.Stretches)
+	{
+		for (int32 i = 0; i < S.Bays.Num(); ++i)
+		{
+			const FPlanBay& B = S.Bays[i];
+			const FVector R = B.SideDir(0) * SlonkPlan::CorrW;
+			Line(B.P0 + R, B.P1 + R, Bay);
+			Line(B.P0 - R, B.P1 - R, Bay);
+			if (i == 0 || B.TurnIn != 0.0) { Line(B.P0 + R, B.P0 - R, Bay); }
+			if (i == S.Bays.Num() - 1) { Line(B.P1 + R, B.P1 - R, Bay); }
+		}
+	}
+	for (const FPlanRoom& R : P.Rooms)
+	{
+		for (int32 k = 0; k < 4; ++k) { Line(R.Corners[k], R.Corners[(k + 1) % 4], Room); }
+		Line(R.Door, R.Door + R.DoorIn.GetSafeNormal() * 60.0, Door, 2.f);
+	}
+	TMap<FString, TArray<FVector>> Shafts;
+	for (const FPlanStop& St : P.Stops)
+	{
+		const FVector Up(0, 0, 1);
+		DrawDebugCircle(World, F.TransformPosition(St.Car + Up * 10.0), 127.0, 16, Lift, false, -1.f, Depth, 2.f,
+			F.TransformVectorNoScale(FVector(1, 0, 0)), F.TransformVectorNoScale(FVector(0, 1, 0)), false);
+		Line(St.Car, St.Car + St.Facing.GetSafeNormal2D() * 160.0, Lift, 2.f);
+		// The sets' own stops carry no shaft name: they are doors, not a shaft to draw.
+		if (!St.Shaft.IsEmpty()) { Shafts.FindOrAdd(St.Shaft).Add(St.Car); }
+	}
+	for (const auto& Pair : Shafts)
+	{
+		// A shaft is drawn as a column through its stops' mean footprint, with a tie from each stop; a group
+		// whose stops stand further apart than a car's width is not one shaft but a name shared along the ship.
+		if (Pair.Value.Num() < 2) { continue; }
+		FVector Base = FVector::ZeroVector; double Lo = Pair.Value[0].Z, Hi = Pair.Value[0].Z;
+		for (const FVector& V : Pair.Value) { Base += V; Lo = FMath::Min(Lo, V.Z); Hi = FMath::Max(Hi, V.Z); }
+		Base /= Pair.Value.Num();
+		bool bAligned = true;
+		for (const FVector& V : Pair.Value) { if (FVector::Dist2D(V, Base) > 300.0) { bAligned = false; break; } }
+		if (!bAligned) { continue; }
+		for (const FVector& V : Pair.Value) { Line(V, FVector(Base.X, Base.Y, V.Z), Lift); }
+		Line(FVector(Base.X, Base.Y, Lo), FVector(Base.X, Base.Y, Hi), Lift, 3.f);
+	}
+	// The saucer's measured section (SaucerSkin) as four meridians and the rim's top and underside rings, so the
+	// decks read against the skin; each deck's reach as a circle at its floor.
+	{
+		const double RimR = 7250.0 * P.Scale;
+		for (int32 m = 0; m < 4; ++m)
+		{
+			const double A = m * PI / 2;
+			const FVector Dir(FMath::Cos(A), FMath::Sin(A), 0.0);
+			FVector PrevU, PrevT; bool bPrev = false;
+			for (double r = 0.0; r <= RimR + 1.0; r += 100.0 * P.Scale)
+			{
+				double Under, Top; SlonkPlan::SaucerSkin(FMath::Min(r, RimR), P.Scale, Under, Top);
+				const FVector U = FVector(P.SaucerX, 0, 0) + Dir * FMath::Min(r, RimR) + FVector(0, 0, Under);
+				const FVector T = FVector(P.SaucerX, 0, 0) + Dir * FMath::Min(r, RimR) + FVector(0, 0, Top);
+				if (bPrev) { Line(PrevU, U, Hull); Line(PrevT, T, Hull); }
+				PrevU = U; PrevT = T; bPrev = true;
+			}
+			Line(PrevU, PrevT, Hull);
+		}
+		const int32 N = 96;
+		for (double z : { 1434.0 * P.Scale, 2048.0 * P.Scale })
+		{
+			for (int32 i = 0; i < N; ++i)
+			{
+				const double A0 = 2.0 * PI * i / N, A1 = 2.0 * PI * (i + 1) / N;
+				const double r = z < 1500.0 * P.Scale ? 6800.0 * P.Scale : 7250.0 * P.Scale;
+				Line(FVector(P.SaucerX + r * FMath::Cos(A0), r * FMath::Sin(A0), z), FVector(P.SaucerX + r * FMath::Cos(A1), r * FMath::Sin(A1), z), Hull);
+			}
+		}
+	}
+	for (const FDeckSpec& D : P.Decks)
+	{
+		if (D.Section == EDeckSection::Saucer)
+		{
+			const int32 N = 96;
+			for (int32 i = 0; i < N; ++i)
+			{
+				const double A0 = 2.0 * PI * i / N, A1 = 2.0 * PI * (i + 1) / N;
+				Line(FVector(P.SaucerX + D.Radius * FMath::Cos(A0), D.Radius * FMath::Sin(A0), D.Floor),
+					FVector(P.SaucerX + D.Radius * FMath::Cos(A1), D.Radius * FMath::Sin(A1), D.Floor), Hull);
+			}
+		}
+		else
+		{
+			const FVector C[4] = { FVector(D.XMin, -D.HalfBeam, D.Floor), FVector(D.XMax, -D.HalfBeam, D.Floor),
+				FVector(D.XMax, D.HalfBeam, D.Floor), FVector(D.XMin, D.HalfBeam, D.Floor) };
+			for (int32 k = 0; k < 4; ++k) { Line(C[k], C[(k + 1) % 4], Hull); }
+		}
+	}
 }
 
 void AStarshipPawn::HandleCrewCommand(const TArray<FString>& Args)

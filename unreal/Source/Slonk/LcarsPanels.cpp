@@ -794,17 +794,19 @@ void UTurboliftPanel::BuildContent()
 {
 	AddSidebarButton(TEXT("Close"), Lcars::Orange, [this]() { Close(); });
 	APersonPawn* Me = Cast<APersonPawn>(GetOwningPlayerPawn());
+	AStarshipPawn* Ship = Me ? Me->Craft.Get() : nullptr;
+	UShipInteriorComponent* In = Ship ? Ship->Interior.Get() : nullptr;
 	const EShipRoom Here = Me ? Me->GetRoom() : EShipRoom::Count;
+	// The sidebar: the rooms with sets of their own, deck by deck (sickbay, the transporter room and the rec deck
+	// open off deck G's corridor, which is their stop).
 	struct FStop { EShipRoom Room; const TCHAR* Label; FLinearColor Color; };
-	// The stops, deck by deck: the rooms with a lift door. Sickbay, the transporter room and the rec deck open off
-	// deck G's corridor, which is their stop.
 	const FStop Stops[] = {
 		{ EShipRoom::Bridge, TEXT("Bridge"), Lcars::Peach },
 		{ EShipRoom::Airlock, TEXT("Airlock"), Lcars::Lavender },
 		{ EShipRoom::Mess, TEXT("Officers' Mess"), Lcars::Tan },
 		{ EShipRoom::Quarters, TEXT("Quarters"), Lcars::Lilac },
 		{ EShipRoom::CrewQuarters, TEXT("Crew Quarters"), Lcars::Periwinkle },
-		{ EShipRoom::Corridor, TEXT("Deck G"), Lcars::Sky },
+		{ EShipRoom::Corridor, TEXT("Sickbay Corridor"), Lcars::Sky },
 		{ EShipRoom::TorpedoBay, TEXT("Torpedo Bay"), Lcars::Red },
 		{ EShipRoom::Engineering, TEXT("Engineering"), Lcars::Gold },
 		{ EShipRoom::ShuttleBay, TEXT("Shuttle Bay"), Lcars::Lilac },
@@ -817,21 +819,53 @@ void UTurboliftPanel::BuildContent()
 		AddSidebarButton(S.Label, Room == HereStop ? Lcars::Tan : S.Color, [this, Room]()
 		{
 			APersonPawn* P = Cast<APersonPawn>(GetOwningPlayerPawn());
-			AStarshipPawn* Ship = P ? P->Craft.Get() : nullptr;
+			AStarshipPawn* Craft = P ? P->Craft.Get() : nullptr;
 			Close();
-			if (P && Ship) { Ship->MoveToRoom(P, Room); }
+			if (P && Craft) { Craft->MoveToRoom(P, Room); }
 		});
 	}
-	AddRow(Content, TEXT("You are on"), Here != EShipRoom::Count ? FString::Printf(TEXT("deck %s, %s"), *UShipInteriorComponent::DeckOf(Here), *UShipInteriorComponent::RoomName(Here)) : FString(TEXT("-")), Lcars::Peach, 16.f);
-	for (const FStop& S : Stops)
+	AddRow(Content, TEXT("You are on"), Me && Me->IsAboard() ? FString::Printf(TEXT("deck %s, %s"), *Me->PlaceDeck(), *Me->PlaceName()) : FString(TEXT("-")), Lcars::Peach, 16.f);
+	if (!In)
 	{
-		FString What = UShipInteriorComponent::RoomName(S.Room);
-		if (S.Room == EShipRoom::Airlock) { What = TEXT("Airlock: the staging area under the saucer hatch"); }
-		else if (S.Room == EShipRoom::Corridor) { What = TEXT("Deck G: sickbay, the transporter room and the rec deck off the corridor"); }
-		else if (S.Room == EShipRoom::Quarters) { What = TEXT("Senior officers' quarters: the captain's cabin"); }
-		AddRow(Content, FString::Printf(TEXT("Deck %s"), *UShipInteriorComponent::DeckOf(S.Room)), What, S.Room == HereStop ? Lcars::Tan : FLinearColor::White, 14.f);
+		AddRow(Content, TEXT(""), TEXT("Choose a room on the left."), FLinearColor(1, 1, 1, 0.6f), 12.f);
+		return;
 	}
-	AddRow(Content, TEXT(""), TEXT("Choose a deck on the left. F at any lift door brings you back here."), FLinearColor(1, 1, 1, 0.6f), 12.f);
+	// The decks, A to U: a button for each the car stops at, the plans' word on what is there; the deck underfoot
+	// in tan, one without a stop greyed.
+	const FShipPlan& Plan = In->GetPlan();
+	const FVector Feet = Me && Me->IsAboard() ? Me->FeetInCraft() : FVector::ZeroVector;
+	const FString HereDeck = Me ? Me->PlaceDeck() : FString();
+	AddLine(Content, TEXT("Decks"), 13.f, Lcars::Dim, true, true, 8.f);
+	// Twenty-three rows outgrow the content box: they scroll, and a headline wraps in the width left beside its button.
+	UScrollBox* Rows = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass());
+	if (UVerticalBoxSlot* S = Content->AddChildToVerticalBox(Rows)) { S->SetSize(FSlateChildSize(ESlateSizeRule::Fill)); }
+	for (int32 d = 0; d < Plan.Decks.Num(); ++d)
+	{
+		const FDeckSpec& D = Plan.Decks[d];
+		const bool bStops = Plan.StopsOnDeck(d, Feet).Num() > 0;
+		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+		USizeBox* Bx = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+		Bx->SetWidthOverride(120.f); Bx->SetHeightOverride(26.f);
+		const FLinearColor Color = !bStops ? Lcars::Darker(Lcars::Periwinkle, 0.45f) : D.Label() == HereDeck ? Lcars::Tan : (D.Section == EDeckSection::Saucer ? Lcars::Sky : D.Section == EDeckSection::Dorsal ? Lcars::Lilac : Lcars::Gold);
+		UButton* B = Lcars::MakeButton(WidgetTree, D.Label().ToUpper(), Color);
+		Bx->AddChild(B);
+		Row->AddChildToHorizontalBox(Bx);
+		if (bStops)
+		{
+			Bind(B, [this, d]()
+			{
+				APersonPawn* P = Cast<APersonPawn>(GetOwningPlayerPawn());
+				AStarshipPawn* Craft = P ? P->Craft.Get() : nullptr;
+				Close();
+				if (P && Craft) { Craft->LiftToDeck(P, d); }
+			}, D.Label());
+		}
+		UTextBlock* Tx = Lcars::MakeText(WidgetTree, D.Headline, 12.f, bStops ? FLinearColor::White : FLinearColor(1, 1, 1, 0.45f), false, false);
+		Tx->SetAutoWrapText(true);
+		if (UHorizontalBoxSlot* Sl = Row->AddChildToHorizontalBox(Tx)) { Sl->SetSize(FSlateChildSize(ESlateSizeRule::Fill)); Sl->SetPadding(FMargin(12.f, 4.f, 8.f, 0.f)); }
+		if (UScrollBoxSlot* VS = Cast<UScrollBoxSlot>(Rows->AddChild(Row))) { VS->SetPadding(FMargin(0.f, 1.f, 0.f, 1.f)); }
+	}
+	AddRow(Content, TEXT(""), TEXT("A deck's button takes the nearest shaft there. F at any lift door brings you back here."), FLinearColor(1, 1, 1, 0.6f), 12.f);
 }
 
 void UMedicalPanel::Refresh()

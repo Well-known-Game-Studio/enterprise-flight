@@ -1112,9 +1112,9 @@ def build_corridor():
     PB = CORR_B_PITCH
     corridor_leg(R, CORR_B_X0, CORR_B_X1, CORR_B_Y0, CORR_B_Y1, walls=("-y", "+y", "+x"), anchor=CORR_B_X0, pitch=PB,
                  doors={"-y": [(TRANS_DOOR_X, "open"), (CORR_B_X0 + 1.5 * PB, "shut")], "+y": [(CORR_B_X0 + 3.5 * PB, "shut")]})
-    # The outer corner: the forward leg's port wall line carried across the athwartships leg's end, and a post
-    # where the two canted walls meet at the inner corner.
-    box("EndWall", (0.0, CORR_B_Y0 - 0.06, H / 2), (2 * CORR_W + 0.24, 0.12, H), M_PanelLight(), "Walls")
+    # The outer corner: the athwartships leg's port end stays open (the ship's plan carries the corridor on from
+    # there, ShipPlan.cpp's core spoke, its first frame covering the seam), and a post where the two canted walls meet at
+    # the inner corner.
     box("CornerPost", (CORR_W + 0.02, CORR_B_Y1 - 0.02, H / 2), (0.36, 0.36, H), M_PanelGrey(), "Walls")
     # The lift in the forward end wall, the deck-configuration panel and its console shelf at the forward leg's end.
     doorway('x', CORR_A_Y1, 0.0, -1, depth=0.14, leaves=M_Burgundy(), label="Lift")

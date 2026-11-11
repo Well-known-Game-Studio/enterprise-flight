@@ -153,6 +153,8 @@ public:
 	// ---- On foot ----
 	/** The crew member out of the craft (null while everyone is aboard). */
 	UPROPERTY(BlueprintReadOnly, Category = "Person") TWeakObjectPtr<APersonPawn> ActivePerson;
+	/** Stepped into the car: the deck buttons come up once the rider is clear of the doors' sensor. */
+	bool bLiftPanelPending = false;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Person") TSubclassOf<APersonPawn> PersonClass;
 	/** F: open the airlock and step out onto the hull (or, from a landed shuttle, onto the ground). */
 	UFUNCTION(BlueprintCallable, Category = "Person") bool StepOutside();
@@ -173,9 +175,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Person") bool StandUp();
 	/** Back in the chair: the person is removed, the captain has the conn. */
 	void SitDown(APersonPawn* Person);
-	/** The turbolift: to a room, or Airlock to go out onto the hull. */
 	/** The turbolift to a room: it stops where it has a door (a room off a corridor is reached along it). */
 	bool MoveToRoom(APersonPawn* Person, EShipRoom Room);
+	/** The turbolift to one of the plan's stops: the car comes, the doors shut, the decks go by, the doors open. */
+	bool LiftTo(APersonPawn* Person, int32 Stop);
+	/** The turbolift to a deck: the stop there nearest the shaft the rider is in. */
+	bool LiftToDeck(APersonPawn* Person, int32 Deck);
+	APersonPawn* GetActivePerson() const { return ActivePerson.Get(); }
 	/** The person's feet have moved: if they have crossed into another room, follow them (the room shown, the HUD). */
 	void PersonMoved(APersonPawn* Person);
 	/** A room from a console word (bridge, eng, sick, bay, trans, air, corr, rec, mess, quarters, crew, torp, cargo). */
@@ -193,6 +199,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Person") float TransporterSeconds = 1.7f;
 	FString PersonUseHint(const APersonPawn* Person) const;
 	EShipRoom GetShownRoom() const { return ShownRoom; }
+	int32 GetShownPlace() const { return ShownPlace; }
+	/** The ship's frame (rotation and position, no scale): the interior and the people aboard live in it. */
+	FTransform CraftFrame() const { return FTransform(GetActorQuat(), GetActorLocation()); }
 
 	/** Brightness of the star sphere, 0..1: the game mode fades it into a daylit sky. */
 	void SetStarFieldFade(float Fade);
@@ -447,7 +456,7 @@ public:
 
 	/** Bridge camera position relative to the ship root (cm). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cameras")
-	FVector BridgeCameraOffset = FVector(6500.0, 0.0, 2900.0);
+	FVector BridgeCameraOffset = FVector(7790.0, 0.0, 3335.0);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cameras")
 	float BridgeFOV = 92.f;
@@ -734,8 +743,9 @@ private:
 
 	int32 ThrusterMaterialIndex = INDEX_NONE;
 	EStarshipCameraMode CameraMode = EStarshipCameraMode::Chase;
-	/** The room someone is walking (Count: nobody is inside). */
+	/** The kind of place someone is walking (Count: nobody is inside), and the place itself. */
 	EShipRoom ShownRoom;
+	int32 ShownPlace = INDEX_NONE;
 	FTimerHandle LiftTimer;
 	FTimerHandle TransportTimer;
 	FTimerHandle TransportFadeTimer;
@@ -743,13 +753,18 @@ private:
 	/** Spawn the person standing in a room, at its lift door or its thing to use, possessed. */
 	APersonPawn* PutAboard(EShipRoom Room, bool bAtUse);
 	void SetInteriorRoom(EShipRoom Room);
+public:
+	/** Show the interior round a place (the room's kind decides the hull's and the bridge set's visibility). */
+	void SetInteriorPlace(int32 Place);
+private:
 	/** Hull, running lights, the bridge set and the rooms, for the camera mode and whoever is inside. */
 	void ApplyViewVisibility();
 	/** A room's lift and use spots in the ship's own frame (feet transforms), and the word for the use; null when
 	 *  the room has none. Near, also in the ship's frame, picks the nearer of two lifts. */
 	const FShipRoom* RoomSpots(EShipRoom Room, FTransform& Lift, FTransform& Use, FString& Label, const FVector* Near = nullptr) const;
+	/** The same for any place by index: a generated room's doorway spot, the car's. */
+	const FShipRoom* PlaceSpots(int32 Place, EShipRoom Room, FTransform& Lift, FTransform& Use, FString& Label, const FVector* Near = nullptr) const;
 	/** The ship's frame as the person keeps it: rotation and location, no scale. */
-	FTransform CraftFrame() const { return FTransform(GetActorQuat(), GetActorLocation()); }
 	/** The player's HUD: through our controller, or the player's while they are on foot or in the shuttle from here. */
 	class AStarshipHUD* PlayerHUD() const;
 	/** Black out, do the thing, fade back: the lift ride, the transporter. */
@@ -798,6 +813,11 @@ private:
 	void TickAutopilot(float DeltaTime);
 	FVector2D DebugLook = FVector2D::ZeroVector;
 	float DebugLookTime = 0.f;
+	/** `ship plan draw <secs> [hide]`: the plan's skeleton (every bay, room, lift shaft and each deck's hull
+	 *  outline) as debug lines for a while, the hull hidden meanwhile when asked, for checking the plan's fit. */
+	float PlanDrawTime = 0.f;
+	bool bPlanDrawHidden = false;
+	void DrawPlanSkeleton() const;
 	float DebugVertical = 0.f;
 	float DebugVerticalTime = 0.f;
 	FVector DebugThrust = FVector::ZeroVector;

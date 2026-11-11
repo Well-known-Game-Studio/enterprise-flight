@@ -68,22 +68,101 @@ corridor's panel, the torpedo bay's consoles and the cargo bay's gantry.
 ## 6. Console
 
 `ship lift <bridge|airlock|mess|quarters|crew|sick|trans|rec|torp|eng|bay|cargo>` or `ship lift deck <letter>`
-(the lift's stop on that deck: the corridor for G, and for sick, trans, rec); `ship walkto <room>` (dev: straight
-to a room's inner door, for tests); `ship walkto use|lift` as before. `ship person status` logs the room
-underfoot. F (use) opens the turbolift only in a room with a lift door: at a doorway onto the corridor it does
-nothing, and the hint names the doorway instead.
+(the nearest stop on that deck; §7); `ship walkto <room>` (dev: straight to a room's inner door, for tests);
+`ship walkto use|lift` as before. `ship person status` logs the room underfoot. F (use) opens the turbolift only
+at a lift door: at a doorway onto the corridor it does nothing, and the hint names the doorway instead.
 
-## 7. Later
+## 7. The ship's plan
 
-The next round is the ship's plan: the decks A to U as data (each deck's outline from the hull, its corridor
-graph, its rooms and its lift stops, from the Strategic Design plans the compartment map already follows), a
-corridor kit grown from `corridor_leg` with curved bays and junctions (ring corridors and radial spokes in the
-saucer, the neck's vertical trunk with its landings, engineering's long fore-and-aft corridor with cross passages),
-the signature rooms kept as authored sets and the repeated ones (cabins, labs, stores, workshops) from small kits
-by size, turbolift shafts from the network diagram with cars that travel, and the whole laid out at the ship's
-real size first: everything else in the game is full scale, so the corridors are as long as the plans make them,
-and if the walks prove too long the radii and bay counts are tuned afterwards rather than compressed from the
-start. The neighbour mechanism keeps only the stretch around the player live; bays become instanced meshes.
-After that the figures on their shifts (the roster's placement read into the rooms, walking the corridor graph
-between watches); sliding doors that open as you come; the brig and the armoury; the observation lounge in the
-neck; the captain's quarters as a place to sleep the clock forward.
+The decks A to U as data at the ship's real size (`ShipPlan.h/.cpp`), drawn round the signature rooms from
+instanced boxes as the walker comes near, with a turbolift car that travels between the stops. Nothing is
+compressed: the saucer's rings are as long as the plans make them (the outer ring of deck F is 377 m round), and
+if the walks prove too long the radii and bay counts are tuned afterwards.
+
+**The decks.** Measured off the hull the game flies (`tools/plan/measure_hull.py`): the saucer's plate is 11.4 m
+thick from z 1144 to 2200 out to its rim, the superstructure steps up to the bridge module, the lower dome falls
+to the sensor dome; the neck is 12 m wide and 21 m long; the secondary hull runs 28 m deep. The floors sit on three
+grids, each 2.5 m of room with the structure between: the saucer at 2.8 m from the bridge module's floor (A 31.3 m
+over the hull's centre, B, C, D and E in the superstructure to r 32 m, F the plate deck out to the rim, G and H
+under the plate in the lower dome, I and J lower still), the dorsal at 2.8 m from the torpedo bay set (its I to M), the secondary hull at 3.2 m
+from the hangar deck (N to U). The bridge set now stands in the bridge module at the top of the saucer, the
+airlock's staging area to port of deck B's corridor, the officers' mess inside deck C's lobby ring, the captain's
+cabin outside deck D's, the cargo bay forward on deck S. Each deck carries the plans' headline (the turbolift
+panel shows it) and its hull limit (a radius about the saucer's centre, or a box), inside which the generator
+keeps every room. The saucer's skin is a measured section too (`SaucerSkin`: the underside and the top by
+radius, taken off the mesh's forward half where nothing but saucer lies): a saucer room's floor must lie above
+the one and its ceiling below the other, and the plan test holds every saucer bay and room to it. That section
+is what puts only F in the plate: the mesh's rim is 6.1 m thick and the plate inboard of it 5 m, one 2.8 m deck's
+worth, where the published plans draw F, G and H across it (the refit's rim is an 8 m ring of two decks in the
+references). G's and H's rings once hung a metre and more below the underside.
+
+**Corridors.** The kit is the refit section the deck G set uses (`corridor_leg`: the grated deck, the lit lower
+panels leaning out to the waist, the band, the pale upper panels leaning in to the narrow dark ceiling), built
+in bays of 2.24 m between frames. A ring is a polygon of bays on a radius, each turning 360/N degrees at a frame
+whose rib widens to cover the wedge the turn opens; a spoke is a straight between two rings, opening a bay of
+each (a junction is a bay with no wall on that side, the spoke's floor beginning at the wall plane); an arc of
+bays turning five degrees each swings the deck G set's opened port end round to run out radially to the inner
+ring. Deck F: an outer ring at r 60 m (168 bays) and an inner ring at r 47 m (132), eight short spokes between
+them, three long spokes from the inner ring in toward the core, and the L of the deck G set generated on F (so
+the aft lift shaft lines up with G's) with its arc to the inner ring. Deck G: the set, its opened port end run on
+as a straight passage to r 32 m with the labs and the security complex either side (the dome's skin at this floor
+allows no ring the set's end could turn onto). Decks C, D, E, H and I: a lobby ring at r 10 m round the core (the
+main shaft's door aft), E with a second ring at r 22 m and four spokes.
+Deck B: a straight along the bridge module. The dorsal's decks I to K: a fore-and-aft corridor down the neck
+(L and M are the torpedo bay's set, two decks tall). The secondary hull: a trunk corridor on the centre line each
+deck with the dorsal shaft's door in its starboard wall. The sets stand two decks tall, so the trunk jogs to
+starboard round main engineering on N and O and round the cargo bay on R and S (a forward leg, a cross passage
+from its last bay, the bypass, a cross passage back to the aft leg, every junction a T on a bay's middle), ends
+at the cargo bay's forward wall on Q and at the hangar's on P.
+
+**Rooms.** The signature rooms keep their sets. The rest are generated off the corridors from the plans' lists:
+a room takes whole bays of a passage (two for quarters, three for labs, up to six for a lounge), its frontage
+becoming flat wall with the doorway in the middle bay, party walls radial on a ring (the rooms are wedges) and a
+back wall at the room's depth of 4.8 m; a room that would meet a set's box or the hull is left out, the bays
+staying panelled. Twelve kits furnish them by kind: quarters (the bunk, the desk and viewer, the locker), labs
+(benches and screens, the cabinet), stores (shelving and crates), workshops, offices, lounges (loungers before a
+screen), transporter rooms (the round platform and its pads), brig cells (a force field in the doorway),
+armouries, holds (container stacks), hull locks (the round hatch), equipment rooms (cabinets, a lit conduit).
+Deck F holds the enlisted quarters by the hundred on both sides of its rings; G the labs, the transporter rooms,
+the junior officers' quarters, the holds and the security complex with its eight cells; H the hull locks, phaser
+rooms, workshops and physics labs; the secondary hull the plans' engineering rooms, hangar gallery, botanical
+garden and pool, the reactor rooms on U. Every room is a place of its own, named ("Enlisted quarters F-37"),
+shown on the HUD as the feet cross its sill.
+
+**Zones.** A stretch of corridor is drawn in zones of twelve bays (27 m; a ring of 168 bays is fourteen
+zones, a spoke one) with the rooms whose doorways are in those bays, each a set of instanced boxes (one
+component per material, plus an unseen set that blocks the boots), built the first time it comes within 60 m of
+the walker on their deck and shown while it is; solid within 14 m, and the zone under the feet always. A pool of
+point lights goes to the nearest lamps. Zones away from the walker are hidden again, so the hull's walkers and
+the airlock trace meet no wall that is not around them. A walker's place is tested against the bays as they lie
+(oriented rectangles), not boxes round them: on the diagonal of a ring an axis box would hold them a metre past
+the wall, and the car would open late.
+
+**The turbolift.** The stops are a list: the plan's own lift doors (the main shaft aft of the lobby rings on B
+to E, H and I, the aft shaft at the core corridor's end on F, four rim shafts beside the diagonal junctions of
+the outer ring, the dorsal shaft from the plate deck down the neck to deck U) and the sets' shut
+lift doors. F at one of the plan's doors brings the car (a round car with doors of its own behind the landing's,
+both pairs opening onto the corridor; at a set's stop only the car's close its gap); step
+in and, once you are clear of the doors' sensor, the deck buttons come up; choose, and the doors shut, the car travels (8 m/s up and down, 15 m/s along,
+the decks called off on the screen as it passes them), the car and whoever still stands in it arrive at the stop
+and the doors open. The doors have a sensor: step back into the doorway, or out, while they shut and they open
+again and the ride is off; a rider who is not in the car when it arrives is left where they are. A car called
+to another door while it stands open goes there and opens, and the doors it stood open at shut behind it. The
+bays either side of a lift door take no room (a cabin's party wall would run through the car, which stands
+127 cm round and 140 behind the wall). A set's shut door is a fade's worth of walk into or
+out of the car. `ship lift deck <letter>` goes to the deck's nearest corridor door (a set's door only where the
+deck has none; `dorsal k` for the neck's), `ship lift stop <n>`; `ship walkto deck <letter>` to that door, `ship
+walkto <a word of a place's name>`.
+
+**Tests.** `Slonk.Interior.Plan` builds the plan headless and checks the decks, that every room keeps inside the
+hull and clear of the sets and of each other, that no passage runs through a set at any height the set reaches
+or crosses another passage or a room (junctions abut at the wall plane), that no room reaches into the car behind
+a corridor door, that the bypasses open at both ends and link up, that the shafts exist and the dorsal one spans the ship, and that rides take their time.
+
+## 8. Later
+
+Figures on their shifts (the roster's placement read into the rooms, walking the corridor graph between
+watches); sliding doors that open as you come; the sets' lift doors as doorways onto the plan's corridors (the
+mess, the cabin, the crew quarters, the torpedo bay, engineering, the bay and the cargo bay are reached by lift
+only); the brig and the armoury as rooms with a use; the observation lounge in the neck; the captain's quarters
+as a place to sleep the clock forward; tuning the rings' radii and bay counts if the walks prove too long.

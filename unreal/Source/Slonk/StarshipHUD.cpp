@@ -486,7 +486,7 @@ void AStarshipHUD::DrawPersonHUD(const APersonPawn* Person, UFont* Font, UFont* 
 	{
 		// Walking the decks: where we are, who has the ship, how she is, and what F does here.
 		DrawText(FString::Printf(TEXT("ABOARD   %s"), Craft ? *Craft->GetCraftName().ToUpper() : TEXT("")), Accent, X, Y, Font, UIScale); Y += Line * 1.4f;
-		DrawText(FString::Printf(TEXT("%s   DECK %s"), *UShipInteriorComponent::RoomName(Person->GetRoom()).ToUpper(), *UShipInteriorComponent::DeckOf(Person->GetRoom())), Accent, X, Y, Font, UIScale); Y += Line;
+		DrawText(FString::Printf(TEXT("%s   DECK %s"), *Person->PlaceName().ToUpper(), *Person->PlaceDeck().ToUpper()), Accent, X, Y, Font, UIScale); Y += Line;
 		if (Craft && Craft->Systems)
 		{
 			DrawText(FString::Printf(TEXT("CONN     %s has the conn"), *Craft->Systems->ConnName()), Dim, X, Y, Font, UIScale); Y += Line;
