@@ -275,6 +275,24 @@ The Star Trek VI bridge is built from code in Blender (`blender/bridge-st6`) and
 
 https://github.com/user-attachments/assets/28b77f79-c31d-487a-ac32-dce1ff09c396
 
+The plan's skeleton beside the ship, every bay, room and lift shaft drawn as lines with the saucer's measured section (`ship plan draw`), then drawn through the hull. The hull mesh's saucer plate is 5 m thick, one deck's worth, where the published plans draw three, so only deck F runs out to the rim; G and H keep to the lower dome.
+
+https://github.com/user-attachments/assets/324cc4f9-d1d0-43f8-a0d6-229c8f22a928
+
+https://github.com/user-attachments/assets/390b75a6-5065-4572-a760-b9a782c1b2c9
+
+Walking it: the turbolift from the bridge down to deck F and out along the core corridor into the arc; the outer ring round its curve; a corridor lift door called, the ride to deck O and the trunk aft; deck O's bypass junction; stepping back into the car's doorway as the doors shut, then the ride to G.
+
+https://github.com/user-attachments/assets/d9b1eea4-6bd3-45a7-8fea-17435e94ad92
+
+https://github.com/user-attachments/assets/d15b2e8b-3ce0-4983-8ca6-124efe9f1e8d
+
+https://github.com/user-attachments/assets/54c2cae3-3afb-49d2-81d5-3d539d1159cc
+
+https://github.com/user-attachments/assets/1e400784-28ef-4c2f-aa62-a075fca010fe
+
+https://github.com/user-attachments/assets/56729b38-52b7-4a1f-b5b3-bfd0ff541275
+
 ## LCARS panels
 
 Escape opens the main computer: an Okudagram panel built with the engine's CommonUI plugin, elbows, pills and all, with the ship's status and the way to the other panels. M opens stellar cartography, a full-screen star chart of the system: drag to pan, wheel to zoom about the cursor, right-drag to tilt and turn; click a body or one of the other systems listed at the top right to select it, double-click or Set Course to make it the nav target, Autopilot to go there. The nav filter (I, or the drop-down at the chart's top right) hides kinds from the map and from the click alike, so a world is easy to pick out from under a nebula. The chart has three scopes, on tabs above the map or the 1, 2 and 3 keys: Sector shows the neighbouring suns about the current star with their distances, in their own colours and with stems to the plane; System is the planets, belt and traffic about the star; Local centres one world, the selected planet (or a selected moon's primary, or the one nearest the ship), drawn at true size with its moons on their orbits and whatever else lies within four hundred radii. The grid rings are labelled in km, AU or light-years to suit. The chart marks catalogued bodies with a tick and shows a scanned body's readings when you hover it. `/` opens the science log as a window with every record and its discoveries, H the controls list. Panels take the mouse and pause the ship's controls while they are up; Escape or the gamepad's B closes the one on top. Settings, from the main computer, picks the panels' typeface, the engine's Roboto or Antonio, the condensed face in the spirit of the real displays, and flips the HUD overlays; the typeface is kept between sessions. Where the on-screen key list used to be there is now one line of hints, and the minimap's toggle lives in the chart's sidebar.
