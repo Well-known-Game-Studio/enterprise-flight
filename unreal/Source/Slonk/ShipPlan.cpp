@@ -770,6 +770,17 @@ FPlanRouter::FPlanRouter(const FShipPlan& InPlan) : Plan(InPlan)
 			Nodes[First[s] + b].Edges.Add(TPair<int32, double>(First[s] + b - 1, L));
 		}
 	}
+	// A ring closes on itself: its last bay's end is its first bay's start, and the seam is an edge like any other.
+	for (int32 s = 0; s < Plan.Stretches.Num(); ++s)
+	{
+		const FPlanStretch& S = Plan.Stretches[s];
+		if (S.Bays.Num() >= 3 && !S.bEnd0 && !S.bEnd1 && FVector::DistSquared2D(S.Bays[0].P0, S.Bays.Last().P1) < FMath::Square(50.0))
+		{
+			const int32 A = First[s], B = First[s] + S.Bays.Num() - 1;
+			const double L = FMath::Max(FVector::Dist2D(Nodes[A].Mid, Nodes[B].Mid), 1.0);
+			Nodes[A].Edges.Add(TPair<int32, double>(B, L)); Nodes[B].Edges.Add(TPair<int32, double>(A, L));
+		}
+	}
 	// Junctions: an open end of one passage meets an open side bay of the other at its wall plane (or the two
 	// meet end to end). The links are mutual, so each pair is seen from both sides; join the nearest once.
 	auto OpenEnds = [&](int32 s, TArray<TPair<int32, FVector>>& Out)
@@ -941,7 +952,12 @@ bool FPlanRouter::Route(int32 FromDeck, const FVector& From, int32 FromStop, int
 		TArray<double> Dist; TArray<int32> Prev; Dijkstra(NodeOfStop(StopB), Dist, Prev);
 		Trace(Prev, NodeOfStop(StopB), B, FromDoor);
 	}
-	if (StopA == StopB && !bFromSet && !bToSet) { return false; }
+	if (StopA == StopB)
+	{
+		// Two rooms off the same set door (sickbay and the rec deck off deck G's corridor) are a walk, not a ride.
+		if (bFromSet && bToSet) { FPlanRouteLeg L; L.Points.Add(From); L.Points.Add(To); Out.Legs.Add(L); return true; }
+		return false;
+	}
 	if (!bFromSet) { FPlanRouteLeg L; L.Points.Add(From); L.Points.Append(ToDoor); L.Points.Add(DoorOf(StopA)); Out.Legs.Add(L); }
 	{ FPlanRouteLeg L; L.bLift = true; L.FromStop = StopA; L.ToStop = StopB; L.Seconds = FShipPlan::TravelSeconds(Plan.Stops[StopA], Plan.Stops[StopB]); Out.Legs.Add(L); }
 	if (!bToSet) { FPlanRouteLeg L; L.Points.Add(DoorOf(StopB)); L.Points.Append(FromDoor); L.Points.Add(To); Out.Legs.Add(L); }

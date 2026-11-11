@@ -8,6 +8,7 @@
 #include "GameFramework/Actor.h"
 #include "Components/ActorComponent.h"
 #include "ShipPlan.h"
+#include "ShipInterior.h"
 #include "CrewWalkers.generated.h"
 
 class USkeletalMeshComponent;
@@ -115,6 +116,11 @@ private:
 	FVector SpotIn(int32 Place, int32 Seed, double& OutYaw) const;
 	int32 DeckOfPlace(int32 Place) const;
 	int32 StopOfPlace(int32 Place) const;
+	/** A set's spot by its lift door (its stop's car where the spots were never set). */
+	FVector LiftSpot(int32 Place) const;
+	/** Deck G's corridor: the nearest point of its centre lines, and the way along them (round the corner). */
+	FVector CorridorPoint(const FShipRoom& C, const FVector& P) const;
+	void AlongCorridor(const FShipRoom& C, const FVector& From, const FVector& To, TArray<FVector>& Out) const;
 	/** The way out of a set from a point in it to its lift door, and the way in from the door to a point. */
 	void SetExit(int32 Place, const FVector& From, TArray<FVector>& Out) const;
 	void SetEntry(int32 Place, const FVector& To, TArray<FVector>& Out) const;

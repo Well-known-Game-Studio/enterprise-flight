@@ -1017,6 +1017,18 @@ bool FSlonkCrewWalkersTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("from a set's door"), Router.Route(DeckO, FVector::ZeroVector, EngStop, DeckF, FB->Door, INDEX_NONE, R3));
 	TestEqual(TEXT("lift then walk"), R3.Legs.Num(), 2);
 	if (R3.Legs.Num() == 2) { TestTrue(TEXT("the ride first"), R3.Legs[0].bLift && R3.Legs[0].FromStop == EngStop && !R3.Legs[1].bLift); }
+	// A ring's seam is an edge: its last bay is one step from its first.
+	{
+		int32 Outer = INDEX_NONE;
+		for (int32 st = 0; st < P.Stretches.Num(); ++st) { if (P.Stretches[st].Deck == DeckF && P.Stretches[st].Name == TEXT("outer ring")) { Outer = st; break; } }
+		TArray<FVector> Seam;
+		TestTrue(TEXT("the outer ring's seam joins"), Outer != INDEX_NONE && Router.Walk(Router.NodeOf(Outer, 0), Router.NodeOf(Outer, P.Stretches[Outer].Bays.Num() - 1), Seam));
+		TestTrue(TEXT("across the seam in a step"), Seam.Num() == 2);
+	}
+	// Two rooms off the same set door walk between them, no ride.
+	FPlanRoute R4;
+	TestTrue(TEXT("shared door routes"), Router.Route(DeckO, FVector(100, 0, 0), EngStop, DeckO, FVector(200, 0, 0), EngStop, R4));
+	TestTrue(TEXT("a walk, not a ride"), R4.Legs.Num() == 1 && !R4.Legs[0].bLift);
 	// Every room on a deck with walk-in stops reaches one on foot.
 	int32 Cut = 0, Tried = 0;
 	for (const FPlanRoom& R : P.Rooms)

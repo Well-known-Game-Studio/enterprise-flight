@@ -179,9 +179,12 @@ open ends meeting), Dijkstra between them. A route (`FPlanRoute`) is legs on foo
 middle to bay middle, through a room's doorway at either end) and rides in a lift between two stops, which take
 the car's travel time. On one deck the walk is on foot where the passages join; between decks it goes by the
 nearest walk-in stops at either end; a set is left and entered by its own shut door (its stop, not walked into),
-and the three rooms off deck G's corridor by that corridor's door, round its corner from the transporter room.
-The rides are not the player's car: the walker is in a lift for the leg's seconds and steps out of the
-destination's door, so the car the player rides is never commandeered.
+and the three rooms off deck G's corridor by that corridor's door: out through the room's doorway onto the
+corridor's centre line, along the leg and round its corner (two rooms off the same door walk between them, no
+ride). A ring's seam is an edge like any other. The rides are not the player's car: the walker is in a lift
+for the leg's seconds and steps out of the destination's door, so the car the player rides is never
+commandeered. A walker on its way finishes the route before taking a new place (a route from mid-passage would
+start at the old room's door).
 
 **Figures.** The walkers within the interior's live radius of the player on foot, on the same deck, are given
 figures from a pool of `MaxFigures` (24), nearest first: `ACrewFigure`, the mannequin with the person's

@@ -204,6 +204,19 @@ int32 UCrewWalkersComponent::DeckOfPlace(int32 Place) const
 	return P.Stops.IsValidIndex(St) ? P.Stops[St].Deck : INDEX_NONE;
 }
 
+FVector UCrewWalkersComponent::LiftSpot(int32 Place) const
+{
+	// A set's spot by its lift door, 90 cm inside it; the bridge's spots are the pawn's to set once its set stands,
+	// so until then (and for any set without them) its stop's car, which the interior lays at the room's door.
+	UShipInteriorComponent* I = Interior();
+	const FShipRoom* R = I ? I->Place(Place) : nullptr;
+	if (!R) { return FVector::ZeroVector; }
+	const FVector L = R->Lift.GetLocation();
+	if (!L.IsNearlyZero()) { return L; }
+	const int32 St = StopOfPlace(Place);
+	return I->GetPlan().Stops.IsValidIndex(St) ? I->GetPlan().Stops[St].Car : R->Center;
+}
+
 FVector UCrewWalkersComponent::SpotIn(int32 Place, int32 Seed, double& OutYaw) const
 {
 	UShipInteriorComponent* I = Interior();
@@ -216,8 +229,10 @@ FVector UCrewWalkersComponent::SpotIn(int32 Place, int32 Seed, double& OutYaw) c
 	{
 		// Along the line from the lift door to the room's thing, a little to either side; the sets' floors are
 		// clear there. A set whose two spots coincide takes a few paces in from the door instead.
-		const FVector L = R->Lift.GetLocation(), U = R->Use.GetLocation();
-		const FVector Fwd = R->Lift.GetRotation().GetForwardVector().GetSafeNormal2D();
+		const FVector L = LiftSpot(Place);
+		const FVector U = R->Use.GetLocation().IsNearlyZero() ? L : R->Use.GetLocation();
+		FVector Fwd = R->Lift.GetRotation().GetForwardVector().GetSafeNormal2D();
+		if (Fwd.IsNearlyZero()) { Fwd = FVector(1, 0, 0); }
 		const FVector Side(-Fwd.Y, Fwd.X, 0.0);
 		FVector P;
 		if (FVector::Dist2D(L, U) < 100.0) { P = L + Fwd * (150.0 + 400.0 * Rs.FRand()) + Side * Rs.FRandRange(-90.0, 90.0); }
@@ -233,10 +248,35 @@ FVector UCrewWalkersComponent::SpotIn(int32 Place, int32 Seed, double& OutYaw) c
 	return R->Center + Q.RotateVector(Local);
 }
 
+FVector UCrewWalkersComponent::CorridorPoint(const FShipRoom& C, const FVector& P) const
+{
+	// The nearest point of deck G's corridor's centre lines to P: the athwartships leg (the place's own box) and
+	// the forward leg (its first further box).
+	const double Z = C.Lift.GetLocation().Z;
+	FVector A(C.Center.X, FMath::Clamp(P.Y, C.Center.Y - C.Half.Y, C.Center.Y + C.Half.Y), Z);
+	if (C.Legs.Num() == 0) { return A; }
+	const FBox& L = C.Legs[0];
+	const FVector B(FMath::Clamp(P.X, L.Min.X, L.Max.X), (L.Min.Y + L.Max.Y) * 0.5, Z);
+	return FVector::DistSquared2D(A, P) <= FVector::DistSquared2D(B, P) ? A : B;
+}
+
+void UCrewWalkersComponent::AlongCorridor(const FShipRoom& C, const FVector& From, const FVector& To, TArray<FVector>& Out) const
+{
+	// From one point on the corridor's centre lines to another: round the corner when they lie on different legs.
+	if (C.Legs.Num())
+	{
+		const double LegY = (C.Legs[0].Min.Y + C.Legs[0].Max.Y) * 0.5;
+		auto OnForwardLeg = [&](const FVector& P) { return FMath::Abs(P.Y - LegY) < 60.0 && P.X > C.Center.X + 60.0; };
+		if (OnForwardLeg(From) != OnForwardLeg(To)) { Out.Add(FVector(C.Center.X, LegY, C.Lift.GetLocation().Z)); }
+	}
+	Out.Add(To);
+}
+
 void UCrewWalkersComponent::SetExit(int32 Place, const FVector& From, TArray<FVector>& Out) const
 {
-	// Out of a set to the lift door it rides from: its own, or deck G's corridor's for the rooms off that
-	// corridor (round its corner from the transporter room's leg).
+	// Out of a set to the lift door it rides from: its own (a pace inside the door), or deck G's corridor's for
+	// the rooms off that corridor: through the room's doorway onto the corridor's centre line, along the leg and
+	// round its corner to the lift.
 	UShipInteriorComponent* I = Interior();
 	const FShipRoom* R = I ? I->Place(Place) : nullptr;
 	if (!R) { return; }
@@ -244,17 +284,26 @@ void UCrewWalkersComponent::SetExit(int32 Place, const FVector& From, TArray<FVe
 	const EShipRoom Via = UShipInteriorComponent::LiftStop(R->Id);
 	if (Via != R->Id)
 	{
-		Out.Add(R->Lift.GetLocation());   // the room's own door onto the corridor
+		const FVector L = LiftSpot(Place);
+		const FVector In = R->Lift.GetRotation().GetForwardVector().GetSafeNormal2D();
+		const FVector Door = L - In * 90.0;   // the spot stands 90 cm inside the doorway
+		Out.Add(L); Out.Add(Door);
 		if (const FShipRoom* C = I->Room(Via))
 		{
-			if (R->Id == EShipRoom::Transporter && C->Legs.Num()) { Out.Add(FVector(C->Center.X, (C->Legs[0].Min.Y + C->Legs[0].Max.Y) * 0.5, C->Lift.GetLocation().Z)); }
-			Out.Add(C->Lift.GetLocation());
+			const FVector P = CorridorPoint(*C, Door);
+			Out.Add(P);
+			AlongCorridor(*C, P, C->Lift.GetLocation(), Out);
 		}
+	}
+	else if (R->Id == EShipRoom::Corridor)
+	{
+		const FVector P = CorridorPoint(*R, From);
+		if (FVector::DistSquared2D(P, From) > FMath::Square(30.0)) { Out.Add(P); }
+		AlongCorridor(*R, P, R->Lift.GetLocation(), Out);
 	}
 	else
 	{
-		if (R->Id == EShipRoom::Corridor && R->Legs.Num() && From.X > R->Center.X + 200.0) { Out.Add(FVector(R->Center.X, (R->Legs[0].Min.Y + R->Legs[0].Max.Y) * 0.5, R->Lift.GetLocation().Z)); }
-		Out.Add(R->Lift.GetLocation());
+		Out.Add(LiftSpot(Place));
 	}
 }
 
@@ -364,12 +413,15 @@ void UCrewWalkersComponent::Sync(bool bAll)
 	for (FCrewWalker& W : Walkers)
 	{
 		if (!W.bReplan || Budget <= 0) { continue; }
+		// A walker on its way finishes the route first (a route from mid-passage would start at the old room's
+		// door, through whatever lies between); the new place waits for the next sync after arrival.
+		if (W.bMoving && !bAll) { continue; }
 		W.bReplan = false; --Budget;
 		const int32 P = PlaceFor(W.Where, W.Member);
 		if (P == INDEX_NONE) { Release(W); W.bOffstage = true; W.bMoving = false; W.bInLift = false; W.Place = INDEX_NONE; W.Target = INDEX_NONE; continue; }
 		if ((W.bMoving && P == W.Target) || (!W.bMoving && P == W.Place)) { continue; }
 		if (bAll || W.Place == INDEX_NONE) { W.Place = INDEX_NONE; PlanRoute(W, P); }   // settle: straight there
-		else { if (W.bMoving) { W.Place = W.bInLift ? W.Target : W.Place; } PlanRoute(W, P); }
+		else { PlanRoute(W, P); }
 	}
 	if (bAll)
 	{
