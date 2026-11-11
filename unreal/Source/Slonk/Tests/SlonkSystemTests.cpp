@@ -965,6 +965,93 @@ namespace
 	bool CrossesHeight(const FBox& K, double Floor) { return K.Min.Z < Floor + SlonkPlan::CorrH - 5.0 && K.Max.Z > Floor + 5.0; }
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkCrewWalkersTest, "Slonk.Crew.Walkers", SLONK_TEST_FLAGS)
+bool FSlonkCrewWalkersTest::RunTest(const FString& Parameters)
+{
+	// Routes through the plan for the crew on their shifts: along a deck on foot, between decks by the nearest
+	// stops, from a set's own door straight by lift; every room on a deck with stops reaches one.
+	FShipPlan P;
+	TArray<FPlanReserved> Reserved;
+	{
+		auto R = [&](const TCHAR* N, FVector C, FVector H) { FPlanReserved K; K.Name = N; K.Box = FBox(C - H, C + H); Reserved.Add(K); };
+		R(TEXT("Sickbay"), FVector(6600, 0, 1600), FVector(600, 450, 150));
+		R(TEXT("Transporter room"), FVector(7200, -1500, 1600), FVector(400, 350, 150));
+		R(TEXT("Deck G corridor"), FVector(5880, -470, 1580), FVector(120, 680, 130));
+		R(TEXT("Deck G corridor"), FVector(6850, -1030, 1580), FVector(850, 120, 130));
+		R(TEXT("Rec deck"), FVector(4710, -200, 1750), FVector(900, 700, 300));
+	}
+	SlonkPlan::Build(P, 1.0, Reserved);
+	// A set's door as the interior adds it: engineering's shut lift door on deck O.
+	const int32 DeckO = P.DeckIndex('O', EDeckSection::Secondary), DeckF = P.DeckIndex('F', EDeckSection::Saucer);
+	int32 EngStop = INDEX_NONE;
+	{ FPlanStop S; S.Name = TEXT("Main engineering"); S.Deck = DeckO; S.bWalkIn = false; S.Shaft = TEXT("Set"); S.Car = FVector(-100, 0, P.Decks[DeckO].Floor); S.Facing = FVector(1, 0, 0); EngStop = P.Stops.Add(S); }
+	FPlanRouter Router(P);
+	TestTrue(TEXT("hundreds of bays as nodes"), Router.NumNodes() > 500);
+	AddInfo(FString::Printf(TEXT("%d nodes"), Router.NumNodes()));
+	auto RoomOn = [&](int32 Deck, int32 Skip) -> const FPlanRoom* { int32 n = 0; for (const FPlanRoom& R : P.Rooms) { if (R.Deck == Deck && n++ == Skip) { return &R; } } return nullptr; };
+	const FPlanRoom* FA = RoomOn(DeckF, 0); const FPlanRoom* FB = RoomOn(DeckF, 120);
+	const FPlanRoom* OA = RoomOn(DeckO, 2);
+	if (!FA || !FB || !OA) { AddError(TEXT("rooms on F and O")); return false; }
+	auto Contiguous = [&](const FPlanRoute& R) { for (const FPlanRouteLeg& L : R.Legs) { for (int32 i = 1; i < L.Points.Num(); ++i) { if (FVector::Dist2D(L.Points[i - 1], L.Points[i]) > 700.0) { return false; } } } return true; };
+	// Along deck F on foot, bay to bay.
+	FPlanRoute R1;
+	TestTrue(TEXT("a walk along deck F"), Router.Route(DeckF, FA->Door, INDEX_NONE, DeckF, FB->Door, INDEX_NONE, R1));
+	TestEqual(TEXT("one leg on foot"), R1.Legs.Num(), 1);
+	TestTrue(TEXT("a real distance"), R1.Walked() > 2000.0);
+	TestTrue(TEXT("no leap between points"), Contiguous(R1));
+	// Deck F to deck O: foot, lift, foot.
+	FPlanRoute R2;
+	TestTrue(TEXT("F to O routes"), Router.Route(DeckF, FA->Door, INDEX_NONE, DeckO, OA->Door, INDEX_NONE, R2));
+	TestEqual(TEXT("walk, lift, walk"), R2.Legs.Num(), 3);
+	if (R2.Legs.Num() == 3)
+	{
+		TestTrue(TEXT("the middle leg is the lift"), R2.Legs[1].bLift && !R2.Legs[0].bLift && !R2.Legs[2].bLift);
+		TestTrue(TEXT("the lift takes seconds"), R2.Legs[1].Seconds > 2.0);
+		TestTrue(TEXT("both stops are walked into"), P.Stops[R2.Legs[1].FromStop].bWalkIn && P.Stops[R2.Legs[1].ToStop].bWalkIn);
+		TestTrue(TEXT("the first leg starts at the room's door"), R2.Legs[0].Points.Num() && R2.Legs[0].Points[0].Equals(FA->Door, 1.0));
+		TestTrue(TEXT("the last leg ends at the room's door"), R2.Legs[2].Points.Num() && R2.Legs[2].Points.Last().Equals(OA->Door, 1.0));
+	}
+	TestTrue(TEXT("no leap between points across decks"), Contiguous(R2));
+	// From engineering's shut door: by lift at once, then on foot.
+	FPlanRoute R3;
+	TestTrue(TEXT("from a set's door"), Router.Route(DeckO, FVector::ZeroVector, EngStop, DeckF, FB->Door, INDEX_NONE, R3));
+	TestEqual(TEXT("lift then walk"), R3.Legs.Num(), 2);
+	if (R3.Legs.Num() == 2) { TestTrue(TEXT("the ride first"), R3.Legs[0].bLift && R3.Legs[0].FromStop == EngStop && !R3.Legs[1].bLift); }
+	// A ring's seam is an edge: its last bay is one step from its first.
+	{
+		int32 Outer = INDEX_NONE;
+		for (int32 st = 0; st < P.Stretches.Num(); ++st) { if (P.Stretches[st].Deck == DeckF && P.Stretches[st].Name == TEXT("outer ring")) { Outer = st; break; } }
+		TArray<FVector> Seam;
+		TestTrue(TEXT("the outer ring's seam joins"), Outer != INDEX_NONE && Router.Walk(Router.NodeOf(Outer, 0), Router.NodeOf(Outer, P.Stretches[Outer].Bays.Num() - 1), Seam));
+		TestTrue(TEXT("across the seam in a step"), Seam.Num() == 2);
+	}
+	// Two rooms off the same set door walk between them, no ride.
+	FPlanRoute R4;
+	TestTrue(TEXT("shared door routes"), Router.Route(DeckO, FVector(100, 0, 0), EngStop, DeckO, FVector(200, 0, 0), EngStop, R4));
+	TestTrue(TEXT("a walk, not a ride"), R4.Legs.Num() == 1 && !R4.Legs[0].bLift);
+	// Deck G has no walk-in stop: its passage's rooms walk to the passage's open end on the authored corridor.
+	{
+		const int32 DeckG = P.DeckIndex('G', EDeckSection::Saucer);
+		TestTrue(TEXT("deck G rides from the corridor's door"), !Router.DeckHasStop(DeckG));
+		const FPlanRoom* GR = nullptr; for (const FPlanRoom& R : P.Rooms) { if (R.Deck == DeckG) { GR = &R; break; } }
+		TArray<FVector> Along;
+		TestTrue(TEXT("a deck G room reaches the passage's open end"), GR && !P.Stretches[GR->Stretch].bEnd0 && Router.Walk(Router.NodeOf(GR->Stretch, GR->Bay), Router.NodeOf(GR->Stretch, 0), Along) && Along.Num() >= 1);
+	}
+	// Every room on a deck with walk-in stops reaches one on foot.
+	int32 Cut = 0, Tried = 0;
+	for (const FPlanRoom& R : P.Rooms)
+	{
+		bool bStops = false; for (const FPlanStop& S : P.Stops) { if (S.Deck == R.Deck && S.bWalkIn) { bStops = true; break; } }
+		if (!bStops || (Tried++ % 3) != 0) { continue; }
+		const int32 N = Router.NodeNear(R.Deck, R.Door);
+		if (N == INDEX_NONE) { ++Cut; if (Cut <= 5) { AddInfo(FString::Printf(TEXT("no bay near %s's door"), *R.Name)); } continue; }
+		FPlanRoute Rr;
+		if (!Router.Route(R.Deck, R.Door, INDEX_NONE, DeckF, FA->Door, INDEX_NONE, Rr)) { ++Cut; if (Cut <= 5) { AddInfo(FString::Printf(TEXT("no route from %s (deck %s)"), *R.Name, *P.Decks[R.Deck].Label())); } }
+	}
+	TestEqual(TEXT("every room reaches a lift"), Cut, 0);
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkInteriorPlanTest, "Slonk.Interior.Plan", SLONK_TEST_FLAGS)
 bool FSlonkInteriorPlanTest::RunTest(const FString& Parameters)
 {

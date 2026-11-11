@@ -741,3 +741,231 @@ void SlonkPlan::Build(FShipPlan& P, double X, const TArray<FPlanReserved>& Reser
 	B.Dorsal(); B.Secondary();
 	B.Finish();
 }
+
+// ---- routes through the plan ---------------------------------------------------------------------------------
+
+double FPlanRoute::Walked() const
+{
+	double D = 0.0;
+	for (const FPlanRouteLeg& L : Legs) { for (int32 i = 1; i < L.Points.Num(); ++i) { D += FVector::Dist2D(L.Points[i - 1], L.Points[i]); } }
+	return D;
+}
+
+FPlanRouter::FPlanRouter(const FShipPlan& InPlan) : Plan(InPlan)
+{
+	using namespace SlonkPlan;
+	First.SetNum(Plan.Stretches.Num());
+	for (int32 s = 0; s < Plan.Stretches.Num(); ++s)
+	{
+		First[s] = Nodes.Num();
+		const FPlanStretch& S = Plan.Stretches[s];
+		for (int32 b = 0; b < S.Bays.Num(); ++b)
+		{
+			FNode N; N.Stretch = s; N.Bay = b; N.Mid = S.Bays[b].Mid(); Nodes.Add(N);
+		}
+		for (int32 b = 1; b < S.Bays.Num(); ++b)
+		{
+			const double L = FVector::Dist2D(S.Bays[b - 1].Mid(), S.Bays[b].Mid());
+			Nodes[First[s] + b - 1].Edges.Add(TPair<int32, double>(First[s] + b, L));
+			Nodes[First[s] + b].Edges.Add(TPair<int32, double>(First[s] + b - 1, L));
+		}
+	}
+	// A ring closes on itself: its last bay's end is its first bay's start, and the seam is an edge like any other.
+	for (int32 s = 0; s < Plan.Stretches.Num(); ++s)
+	{
+		const FPlanStretch& S = Plan.Stretches[s];
+		if (S.Bays.Num() >= 3 && !S.bEnd0 && !S.bEnd1 && FVector::DistSquared2D(S.Bays[0].P0, S.Bays.Last().P1) < FMath::Square(50.0))
+		{
+			const int32 A = First[s], B = First[s] + S.Bays.Num() - 1;
+			const double L = FMath::Max(FVector::Dist2D(Nodes[A].Mid, Nodes[B].Mid), 1.0);
+			Nodes[A].Edges.Add(TPair<int32, double>(B, L)); Nodes[B].Edges.Add(TPair<int32, double>(A, L));
+		}
+	}
+	// Junctions: an open end of one passage meets an open side bay of the other at its wall plane (or the two
+	// meet end to end). The links are mutual, so each pair is seen from both sides; join the nearest once.
+	auto OpenEnds = [&](int32 s, TArray<TPair<int32, FVector>>& Out)
+	{
+		const FPlanStretch& S = Plan.Stretches[s];
+		if (S.Bays.Num() == 0) { return; }
+		if (!S.bEnd0) { Out.Add(TPair<int32, FVector>(First[s], S.Bays[0].P0)); }
+		if (!S.bEnd1) { Out.Add(TPair<int32, FVector>(First[s] + S.Bays.Num() - 1, S.Bays.Last().P1)); }
+	};
+	auto Join = [&](int32 A, int32 B)
+	{
+		for (const TPair<int32, double>& E : Nodes[A].Edges) { if (E.Key == B) { return; } }
+		const double L = FMath::Max(FVector::Dist2D(Nodes[A].Mid, Nodes[B].Mid), 1.0);
+		Nodes[A].Edges.Add(TPair<int32, double>(B, L)); Nodes[B].Edges.Add(TPair<int32, double>(A, L));
+	};
+	for (int32 s = 0; s < Plan.Stretches.Num(); ++s)
+	{
+		const FPlanStretch& S = Plan.Stretches[s];
+		for (int32 t : S.Links)
+		{
+			if (!Plan.Stretches.IsValidIndex(t) || t < s) { continue; }
+			const FPlanStretch& T = Plan.Stretches[t];
+			TArray<TPair<int32, FVector>> EndsS, EndsT; OpenEnds(s, EndsS); OpenEnds(t, EndsT);
+			bool bJoined = false;
+			// An end of T into a side of S, and the other way round.
+			for (int32 pass = 0; pass < 2 && !bJoined; ++pass)
+			{
+				const TArray<TPair<int32, FVector>>& Ends = pass == 0 ? EndsT : EndsS;
+				const int32 Host = pass == 0 ? s : t;
+				const FPlanStretch& H = Plan.Stretches[Host];
+				for (const TPair<int32, FVector>& E : Ends)
+				{
+					int32 BestBay = INDEX_NONE; double Best = FMath::Square(300.0);
+					for (int32 b = 0; b < H.Bays.Num(); ++b)
+					{
+						for (int32 side = 0; side < 2; ++side)
+						{
+							if (H.Bays[b].Side[side] != EPlanWall::Open) { continue; }
+							const double D2 = FVector::DistSquared2D(H.Bays[b].Mid() + H.Bays[b].SideDir(side) * CorrW, E.Value);
+							if (D2 < Best) { Best = D2; BestBay = b; }
+						}
+					}
+					if (BestBay != INDEX_NONE) { Join(First[Host] + BestBay, E.Key); bJoined = true; }
+				}
+			}
+			// End to end (a corridor run on into an arc).
+			if (!bJoined)
+			{
+				for (const TPair<int32, FVector>& A : EndsS) { for (const TPair<int32, FVector>& B : EndsT) { if (FVector::DistSquared2D(A.Value, B.Value) < FMath::Square(300.0)) { Join(A.Key, B.Key); bJoined = true; } } }
+			}
+		}
+	}
+}
+
+int32 FPlanRouter::NodeOf(int32 Stretch, int32 Bay) const
+{
+	return Plan.Stretches.IsValidIndex(Stretch) && Plan.Stretches[Stretch].Bays.IsValidIndex(Bay) ? First[Stretch] + Bay : INDEX_NONE;
+}
+
+int32 FPlanRouter::NodeNear(int32 Deck, const FVector& P, double Reach) const
+{
+	int32 Best = INDEX_NONE; double BestD = FMath::Square(Reach);
+	for (int32 n = 0; n < Nodes.Num(); ++n)
+	{
+		if (Plan.Stretches[Nodes[n].Stretch].Deck != Deck) { continue; }
+		const double D2 = FVector::DistSquared2D(Nodes[n].Mid, P);
+		if (D2 < BestD) { BestD = D2; Best = n; }
+	}
+	return Best;
+}
+
+int32 FPlanRouter::NodeOfStop(int32 Stop) const
+{
+	if (!Plan.Stops.IsValidIndex(Stop) || !Plan.Stops[Stop].bWalkIn) { return INDEX_NONE; }
+	const FPlanStop& St = Plan.Stops[Stop];
+	if (!Plan.Stretches.IsValidIndex(St.Stretch)) { return INDEX_NONE; }
+	const FPlanStretch& S = Plan.Stretches[St.Stretch];
+	for (int32 b = 0; b < S.Bays.Num(); ++b) { if (S.Bays[b].Stop[0] == Stop || S.Bays[b].Stop[1] == Stop) { return First[St.Stretch] + b; } }
+	return NodeNear(St.Deck, St.Car + St.Facing.GetSafeNormal2D() * (SlonkPlan::CorrW + 140.0 * Plan.Scale));
+}
+
+bool FPlanRouter::DeckHasStop(int32 Deck) const
+{
+	for (const FPlanStop& St : Plan.Stops) { if (St.Deck == Deck && St.bWalkIn) { return true; } }
+	return false;
+}
+
+FVector FPlanRouter::DoorOf(int32 Stop) const
+{
+	if (!Plan.Stops.IsValidIndex(Stop)) { return FVector::ZeroVector; }
+	const FPlanStop& St = Plan.Stops[Stop];
+	// A pace into the passage from the leaves (the car stands CorrW + 140 behind the bay's middle).
+	return St.bWalkIn ? St.Car + St.Facing.GetSafeNormal2D() * (150.0 * Plan.Scale) : St.Car;
+}
+
+void FPlanRouter::Dijkstra(int32 Start, TArray<double>& Dist, TArray<int32>& Prev) const
+{
+	Dist.Init(1e30, Nodes.Num()); Prev.Init(INDEX_NONE, Nodes.Num());
+	if (!Nodes.IsValidIndex(Start)) { return; }
+	struct FItem { double D; int32 N; bool operator<(const FItem& O) const { return D < O.D; } };
+	TArray<FItem> Heap; Heap.HeapPush({ 0.0, Start });
+	Dist[Start] = 0.0;
+	while (Heap.Num())
+	{
+		FItem It; Heap.HeapPop(It, EAllowShrinking::No);
+		if (It.D > Dist[It.N]) { continue; }
+		for (const TPair<int32, double>& E : Nodes[It.N].Edges)
+		{
+			const double ND = It.D + E.Value;
+			if (ND < Dist[E.Key]) { Dist[E.Key] = ND; Prev[E.Key] = It.N; Heap.HeapPush({ ND, E.Key }); }
+		}
+	}
+}
+
+void FPlanRouter::Trace(const TArray<int32>& Prev, int32 From, int32 To, TArray<FVector>& OutPoints) const
+{
+	TArray<int32> Chain;
+	for (int32 n = To; n != INDEX_NONE; n = Prev[n]) { Chain.Add(n); if (n == From) { break; } }
+	for (int32 i = Chain.Num() - 1; i >= 0; --i) { OutPoints.Add(Nodes[Chain[i]].Mid); }
+}
+
+bool FPlanRouter::Walk(int32 A, int32 B, TArray<FVector>& OutPoints) const
+{
+	if (!Nodes.IsValidIndex(A) || !Nodes.IsValidIndex(B)) { return false; }
+	TArray<double> Dist; TArray<int32> Prev; Dijkstra(A, Dist, Prev);
+	if (Dist[B] >= 1e29) { return false; }
+	Trace(Prev, A, B, OutPoints);
+	return true;
+}
+
+int32 FPlanRouter::NearestStop(int32 Start, double& OutDist) const
+{
+	TArray<double> Dist; TArray<int32> Prev; Dijkstra(Start, Dist, Prev);
+	int32 Best = INDEX_NONE; OutDist = 1e30;
+	for (int32 st = 0; st < Plan.Stops.Num(); ++st)
+	{
+		const int32 N = NodeOfStop(st);
+		if (N != INDEX_NONE && Dist[N] < OutDist) { OutDist = Dist[N]; Best = st; }
+	}
+	return Best;
+}
+
+bool FPlanRouter::Route(int32 FromDeck, const FVector& From, int32 FromStop, int32 ToDeck, const FVector& To, int32 ToStop, FPlanRoute& Out) const
+{
+	Out.Legs.Reset();
+	const bool bFromSet = Plan.Stops.IsValidIndex(FromStop) && !Plan.Stops[FromStop].bWalkIn;
+	const bool bToSet = Plan.Stops.IsValidIndex(ToStop) && !Plan.Stops[ToStop].bWalkIn;
+	const int32 A = bFromSet ? INDEX_NONE : NodeNear(FromDeck, From);
+	const int32 B = bToSet ? INDEX_NONE : NodeNear(ToDeck, To);
+	if ((!bFromSet && A == INDEX_NONE) || (!bToSet && B == INDEX_NONE)) { return false; }
+	// On foot the whole way when the passages join.
+	if (!bFromSet && !bToSet && FromDeck == ToDeck)
+	{
+		TArray<FVector> Pts;
+		if (Walk(A, B, Pts))
+		{
+			FPlanRouteLeg L; L.Points.Add(From); L.Points.Append(Pts); L.Points.Add(To); Out.Legs.Add(L);
+			return true;
+		}
+	}
+	// Else by lift: from the set's own door, or the nearest walk-in stop along the passages; the same at the end.
+	int32 StopA = FromStop, StopB = ToStop;
+	TArray<FVector> ToDoor, FromDoor;
+	if (!bFromSet)
+	{
+		double D; StopA = NearestStop(A, D);
+		if (StopA == INDEX_NONE) { return false; }
+		TArray<double> Dist; TArray<int32> Prev; Dijkstra(A, Dist, Prev);
+		Trace(Prev, A, NodeOfStop(StopA), ToDoor);
+	}
+	if (!bToSet)
+	{
+		double D; StopB = NearestStop(B, D);
+		if (StopB == INDEX_NONE) { return false; }
+		TArray<double> Dist; TArray<int32> Prev; Dijkstra(NodeOfStop(StopB), Dist, Prev);
+		Trace(Prev, NodeOfStop(StopB), B, FromDoor);
+	}
+	if (StopA == StopB)
+	{
+		// Two rooms off the same set door (sickbay and the rec deck off deck G's corridor) are a walk, not a ride.
+		if (bFromSet && bToSet) { FPlanRouteLeg L; L.Points.Add(From); L.Points.Add(To); Out.Legs.Add(L); return true; }
+		return false;
+	}
+	if (!bFromSet) { FPlanRouteLeg L; L.Points.Add(From); L.Points.Append(ToDoor); L.Points.Add(DoorOf(StopA)); Out.Legs.Add(L); }
+	{ FPlanRouteLeg L; L.bLift = true; L.FromStop = StopA; L.ToStop = StopB; L.Seconds = FShipPlan::TravelSeconds(Plan.Stops[StopA], Plan.Stops[StopB]); Out.Legs.Add(L); }
+	if (!bToSet) { FPlanRouteLeg L; L.Points.Add(DoorOf(StopB)); L.Points.Append(FromDoor); L.Points.Add(To); Out.Legs.Add(L); }
+	return true;
+}
