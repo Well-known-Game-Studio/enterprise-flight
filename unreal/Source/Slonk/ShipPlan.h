@@ -175,6 +175,9 @@ namespace SlonkPlan
 
 	/** The decks of the 1701-A, floors in pawn cm at scale 1 (305 m). */
 	void DeckTable(TArray<FDeckSpec>& Out, double Scale);
+	/** The saucer's skin at a radius from its centre (pawn cm at the scale): the underside's and the top's heights,
+	 *  measured off the hull mesh in its forward half. A floor must lie above the one and a ceiling below the other. */
+	void SaucerSkin(double R, double Scale, double& Under, double& Top);
 	/** Build the plan at a scale (the ship's length over 305 m) around the signature rooms' boxes. */
 	void Build(FShipPlan& Out, double Scale, const TArray<FPlanReserved>& Reserved);
 	/** The generic name of a kind the plan generates ("Cabin"); empty for the signature rooms. */

@@ -3526,16 +3526,52 @@ void AStarshipPawn::DrawPlanSkeleton() const
 		DrawDebugCircle(World, F.TransformPosition(St.Car + Up * 10.0), 127.0, 16, Lift, false, -1.f, Depth, 2.f,
 			F.TransformVectorNoScale(FVector(1, 0, 0)), F.TransformVectorNoScale(FVector(0, 1, 0)), false);
 		Line(St.Car, St.Car + St.Facing.GetSafeNormal2D() * 160.0, Lift, 2.f);
-		Shafts.FindOrAdd(St.Shaft).Add(St.Car);
+		// The sets' own stops carry no shaft name: they are doors, not a shaft to draw.
+		if (!St.Shaft.IsEmpty()) { Shafts.FindOrAdd(St.Shaft).Add(St.Car); }
 	}
 	for (const auto& Pair : Shafts)
 	{
+		// A shaft is drawn as a column through its stops' mean footprint, with a tie from each stop; a group
+		// whose stops stand further apart than a car's width is not one shaft but a name shared along the ship.
 		if (Pair.Value.Num() < 2) { continue; }
-		double Lo = Pair.Value[0].Z, Hi = Pair.Value[0].Z;
-		FVector Base = Pair.Value[0];
-		for (const FVector& V : Pair.Value) { Lo = FMath::Min(Lo, V.Z); Hi = FMath::Max(Hi, V.Z); }
+		FVector Base = FVector::ZeroVector; double Lo = Pair.Value[0].Z, Hi = Pair.Value[0].Z;
+		for (const FVector& V : Pair.Value) { Base += V; Lo = FMath::Min(Lo, V.Z); Hi = FMath::Max(Hi, V.Z); }
+		Base /= Pair.Value.Num();
+		bool bAligned = true;
+		for (const FVector& V : Pair.Value) { if (FVector::Dist2D(V, Base) > 300.0) { bAligned = false; break; } }
+		if (!bAligned) { continue; }
 		for (const FVector& V : Pair.Value) { Line(V, FVector(Base.X, Base.Y, V.Z), Lift); }
 		Line(FVector(Base.X, Base.Y, Lo), FVector(Base.X, Base.Y, Hi), Lift, 3.f);
+	}
+	// The saucer's measured section (SaucerSkin) as four meridians and the rim's top and underside rings, so the
+	// decks read against the skin; each deck's reach as a circle at its floor.
+	{
+		const double RimR = 7250.0 * P.Scale;
+		for (int32 m = 0; m < 4; ++m)
+		{
+			const double A = m * PI / 2;
+			const FVector Dir(FMath::Cos(A), FMath::Sin(A), 0.0);
+			FVector PrevU, PrevT; bool bPrev = false;
+			for (double r = 0.0; r <= RimR + 1.0; r += 100.0 * P.Scale)
+			{
+				double Under, Top; SlonkPlan::SaucerSkin(FMath::Min(r, RimR), P.Scale, Under, Top);
+				const FVector U = FVector(P.SaucerX, 0, 0) + Dir * FMath::Min(r, RimR) + FVector(0, 0, Under);
+				const FVector T = FVector(P.SaucerX, 0, 0) + Dir * FMath::Min(r, RimR) + FVector(0, 0, Top);
+				if (bPrev) { Line(PrevU, U, Hull); Line(PrevT, T, Hull); }
+				PrevU = U; PrevT = T; bPrev = true;
+			}
+			Line(PrevU, PrevT, Hull);
+		}
+		const int32 N = 96;
+		for (double z : { 1434.0 * P.Scale, 2048.0 * P.Scale })
+		{
+			for (int32 i = 0; i < N; ++i)
+			{
+				const double A0 = 2.0 * PI * i / N, A1 = 2.0 * PI * (i + 1) / N;
+				const double r = z < 1500.0 * P.Scale ? 6800.0 * P.Scale : 7250.0 * P.Scale;
+				Line(FVector(P.SaucerX + r * FMath::Cos(A0), r * FMath::Sin(A0), z), FVector(P.SaucerX + r * FMath::Cos(A1), r * FMath::Sin(A1), z), Hull);
+			}
+		}
 	}
 	for (const FDeckSpec& D : P.Decks)
 	{

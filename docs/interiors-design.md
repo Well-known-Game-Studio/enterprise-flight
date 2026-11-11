@@ -83,13 +83,18 @@ if the walks prove too long the radii and bay counts are tuned afterwards.
 thick from z 1144 to 2200 out to its rim, the superstructure steps up to the bridge module, the lower dome falls
 to the sensor dome; the neck is 12 m wide and 21 m long; the secondary hull runs 28 m deep. The floors sit on three
 grids, each 2.5 m of room with the structure between: the saucer at 2.8 m from the bridge module's floor (A 31.3 m
-over the hull's centre, B, C, D and E in the superstructure to r 32 m, F, G and H the plate decks out to the rim,
-I and J in the lower dome), the dorsal at 2.8 m from the torpedo bay set (its I to M), the secondary hull at 3.2 m
+over the hull's centre, B, C, D and E in the superstructure to r 32 m, F the plate deck out to the rim, G and H
+under the plate in the lower dome, I and J lower still), the dorsal at 2.8 m from the torpedo bay set (its I to M), the secondary hull at 3.2 m
 from the hangar deck (N to U). The bridge set now stands in the bridge module at the top of the saucer, the
 airlock's staging area to port of deck B's corridor, the officers' mess inside deck C's lobby ring, the captain's
 cabin outside deck D's, the cargo bay forward on deck S. Each deck carries the plans' headline (the turbolift
 panel shows it) and its hull limit (a radius about the saucer's centre, or a box), inside which the generator
-keeps every room.
+keeps every room. The saucer's skin is a measured section too (`SaucerSkin`: the underside and the top by
+radius, taken off the mesh's forward half where nothing but saucer lies): a saucer room's floor must lie above
+the one and its ceiling below the other, and the plan test holds every saucer bay and room to it. That section
+is what puts only F in the plate: the mesh's rim is 6.1 m thick and the plate inboard of it 5 m, one 2.8 m deck's
+worth, where the published plans draw F, G and H across it (the refit's rim is an 8 m ring of two decks in the
+references). G's and H's rings once hung a metre and more below the underside.
 
 **Corridors.** The kit is the refit section the deck G set uses (`corridor_leg`: the grated deck, the lit lower
 panels leaning out to the waist, the band, the pale upper panels leaning in to the narrow dark ceiling), built
@@ -97,10 +102,12 @@ in bays of 2.24 m between frames. A ring is a polygon of bays on a radius, each 
 whose rib widens to cover the wedge the turn opens; a spoke is a straight between two rings, opening a bay of
 each (a junction is a bay with no wall on that side, the spoke's floor beginning at the wall plane); an arc of
 bays turning five degrees each swings the deck G set's opened port end round to run out radially to the inner
-ring. Deck F, G and H: an outer ring at r 60 m (168 bays) and an inner ring at r 47 m (132), eight short spokes
-between them, three long spokes from the inner ring in toward the core, and the L of the deck G set (generated
-on F and H, so the aft lift shaft runs through all three) with its arc to the inner ring. Decks C, D, E and I: a
-lobby ring at r 10 m round the core (the main shaft's door aft), E with a second ring at r 22 m and four spokes.
+ring. Deck F: an outer ring at r 60 m (168 bays) and an inner ring at r 47 m (132), eight short spokes between
+them, three long spokes from the inner ring in toward the core, and the L of the deck G set generated on F (so
+the aft lift shaft lines up with G's) with its arc to the inner ring. Deck G: the set, its opened port end run on
+as a straight passage to r 32 m with the labs and the security complex either side (the dome's skin at this floor
+allows no ring the set's end could turn onto). Decks C, D, E, H and I: a lobby ring at r 10 m round the core (the
+main shaft's door aft), E with a second ring at r 22 m and four spokes.
 Deck B: a straight along the bridge module. The dorsal's decks I to K: a fore-and-aft corridor down the neck
 (L and M are the torpedo bay's set, two decks tall). The secondary hull: a trunk corridor on the centre line each
 deck with the dorsal shaft's door in its starboard wall. The sets stand two decks tall, so the trunk jogs to
@@ -132,8 +139,8 @@ the airlock trace meet no wall that is not around them. A walker's place is test
 the wall, and the car would open late.
 
 **The turbolift.** The stops are a list: the plan's own lift doors (the main shaft aft of the lobby rings on B
-to E and I, the aft shaft at the core corridor's end on F, G and H, four rim shafts beside the diagonal
-junctions of the outer ring, the dorsal shaft from the plate decks down the neck to deck U) and the sets' shut
+to E, H and I, the aft shaft at the core corridor's end on F, four rim shafts beside the diagonal junctions of
+the outer ring, the dorsal shaft from the plate deck down the neck to deck U) and the sets' shut
 lift doors. F at one of the plan's doors brings the car (a round car with doors of its own behind the landing's,
 both pairs opening onto the corridor; at a set's stop only the car's close its gap); step
 in and, once you are clear of the doors' sensor, the deck buttons come up; choose, and the doors shut, the car travels (8 m/s up and down, 15 m/s along,

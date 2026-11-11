@@ -69,14 +69,40 @@ FString SlonkPlan::KindName(EShipRoom Kind)
 	}
 }
 
+void SlonkPlan::SaucerSkin(double R, double X, double& Under, double& Top)
+{
+	// The saucer's section measured off the 1701-A mesh in its forward half, where nothing but saucer lies
+	// (tools/plan/measure_hull.py): the lower dome from z 172 at the centre up to the plate's underside, which
+	// runs 1584..1623 across the plate and dips to 1434 under the rim; the superstructure stepping down from the
+	// bridge module to the plate's top at 2200, easing to 2048 at the rim. The rim band is 6.1 m thick, the plate
+	// inboard of it 5 m: room for one 2.8 m deck (F) where the published plans draw three (the refit's rim is
+	// an 8 m ring of two decks in the references; this mesh is thinner).
+	static const double U[][2] = { { 0, 172 }, { 400, 215 }, { 600, 297 }, { 800, 480 }, { 1000, 591 }, { 1200, 615 }, { 1400, 660 }, { 1600, 794 }, { 1800, 1003 }, { 2200, 1003 }, { 2400, 1190 }, { 2800, 1273 }, { 3600, 1465 }, { 4200, 1584 }, { 4600, 1623 }, { 5200, 1623 }, { 5600, 1604 }, { 6000, 1567 }, { 6200, 1515 }, { 6400, 1515 }, { 6600, 1434 }, { 7000, 1434 }, { 7200, 1488 }, { 7250, 1548 }, { 7300, 1800 } };
+	static const double T[][2] = { { 0, 3100 }, { 1687, 3000 }, { 1903, 2650 }, { 2410, 2500 }, { 3172, 2300 }, { 3600, 2200 }, { 4600, 2123 }, { 5300, 2067 }, { 5600, 2048 }, { 7250, 2048 }, { 7300, 1800 } };
+	auto At = [](const double (*Tab)[2], int32 N, double r)
+	{
+		if (r <= Tab[0][0]) { return Tab[0][1]; }
+		for (int32 i = 1; i < N; ++i)
+		{
+			if (r <= Tab[i][0]) { return FMath::Lerp(Tab[i - 1][1], Tab[i][1], (r - Tab[i - 1][0]) / (Tab[i][0] - Tab[i - 1][0])); }
+		}
+		return Tab[N - 1][1];
+	};
+	const double r = R / FMath::Max(X, 1e-6);
+	Under = At(U, UE_ARRAY_COUNT(U), r) * X;
+	Top = At(T, UE_ARRAY_COUNT(T), r) * X;
+	if (r > 7300.0) { Under = Top; }   // outside the saucer altogether
+}
+
 void SlonkPlan::DeckTable(TArray<FDeckSpec>& Out, double X)
 {
-	// Measured off the 1701-A mesh (tools/plan/measure_hull.py): the saucer's plate is 11.4 m thick between
-	// z 1144 and 2200 out to its rim (r 6600..7250, z 1434..2048), the superstructure steps up to the bridge
-	// module (x 7209..8855, |y| < 700, z 3100..3450) and the lower dome down to z 166 at the centre; the neck is
-	// 12 m wide and 21 m long; the secondary hull runs from z -700 to -3574. Floors: the saucer at 2.8 m from the
-	// bridge module down, the dorsal at 2.8 m from the torpedo bay set, the secondary hull at 3.2 m from the
-	// hangar deck. Each deck's hull limit is the radius (or box) at its ceiling.
+	// Measured off the 1701-A mesh (tools/plan/measure_hull.py, SaucerSkin above): the saucer's plate is 5 m
+	// thick (6.1 at the rim) between the underside at z 1434..1623 and the top at 2048..2200, the superstructure
+	// steps up to the bridge module (x 7209..8855, |y| < 700, z 3100..3450) and the lower dome runs down to
+	// z 172 at the centre; the neck is 12 m wide and 21 m long; the secondary hull runs from z -700 to -3574.
+	// Floors: the saucer at 2.8 m from the bridge module down, the dorsal at 2.8 m from the torpedo bay set, the
+	// secondary hull at 3.2 m from the hangar deck. A saucer deck's radius is how far its passages may reach at
+	// its floor; every passage and room is also held between the skin's underside and top by SaucerSkin.
 	Out.Reset();
 	auto Saucer = [&](TCHAR L, double Floor, double Radius, const TCHAR* Headline)
 	{
@@ -92,8 +118,8 @@ void SlonkPlan::DeckTable(TArray<FDeckSpec>& Out, double X)
 	Saucer('D', 2290.0, 2400.0, TEXT("Computer lab, high-energy physics lab, senior officers' quarters"));
 	Saucer('E', 2010.0, 3200.0, TEXT("Officers' dining mess, main computer memory banks, turbolift maintenance, officers' quarters"));
 	Saucer('F', 1730.0, 7100.0, TEXT("Enlisted quarters, damage control locker, forward observation lounge, bowling alley"));
-	Saucer('G', 1450.0, 7050.0, TEXT("Labs, transporter rooms, security complex, sickbay complex, rec deck, impulse engineering"));
-	Saucer('H', 1170.0, 6800.0, TEXT("Hull locks, phaser control, airlocks, workshops, communications bay, physics labs"));
+	Saucer('G', 1450.0, 3500.0, TEXT("Labs, transporter rooms, security complex, sickbay complex, rec deck, impulse engineering"));
+	Saucer('H', 1170.0, 2300.0, TEXT("Hull locks, phaser control, airlocks, workshops, communications bay, physics labs"));
 	Saucer('I', 890.0, 1700.0, TEXT("Cargo transporters, cargo holds, observation gallery"));
 	Saucer('J', 610.0, 1000.0, TEXT("Science sensor arrays, fire-control sensors, sensor bay: no access"));
 	Boxed('I', EDeckSection::Dorsal, 572.0, 1250.0, 3150.0, 560.0, TEXT("Observation lounge, engineering equipment"));
@@ -154,6 +180,9 @@ namespace
 				{
 					const FVector Corner(c & 1 ? B.Max.X : B.Min.X, c & 2 ? B.Max.Y : B.Min.Y, 0.0);
 					if (RadiusOf(Corner) > D.Radius) { return false; }
+					// Between the skin's underside and top, with the floor and ceiling slabs' thickness to spare.
+					double Under, Top; SlonkPlan::SaucerSkin(RadiusOf(Corner), X, Under, Top);
+					if (D.Floor - 10.0 < Under || D.Floor + CorrH + 10.0 > Top) { return false; }
 				}
 			}
 			else if (B.Min.X < D.XMin || B.Max.X > D.XMax || B.Min.Y < -D.HalfBeam || B.Max.Y > D.HalfBeam) { return false; }
@@ -391,7 +420,7 @@ namespace
 			for (int32 k = 0; k < 4; ++k) { Lift(Outer, (BayAtAngle(Outer, 45.0 + k * 90.0) + 2) % NOuter, 0, FString::Printf(TEXT("Rim %d"), k + 1)); }
 			Lift(Outer, (BayAtAngle(Outer, 180.0) + 2) % NOuter, 0, TEXT("Dorsal"));
 			// The core: deck G's own L of corridor (the authored set) with its lift aft of sickbay and its port
-			// end open; on F and H the same L is generated, so the lift shaft runs straight through the three.
+			// end open; on a generated plate deck (F) the same L is generated, so the lift shaft lines up with G's.
 			const FVector LegAEnd(5880.0 * X, -1150.0 * X, 0.0);
 			int32 LegA = -1;
 			if (!bCoreSet)
@@ -487,6 +516,30 @@ namespace
 					if (Err < Best) { Best = Err; OutTurnDeg = Turn; OutBays = N; OutArcEnd = Pos; }
 				}
 			}
+		}
+
+		/** Deck G below the plate: the sickbay, transporter and rec deck set under the lower dome, its corridor's
+		 *  open port end run on as a passage with the labs and the security complex either side, as far out as
+		 *  the dome's skin allows at this floor (r 3.5 m). */
+		void DeckG()
+		{
+			const int32 D = P.DeckIndex('G', EDeckSection::Saucer);
+			const FVector LegAEnd(5880.0 * X, -1150.0 * X, 0.0);
+			// Heading to port, side 0 is forward (the labs, two bays each) and side 1 aft, where the dome's skin
+			// meets the floor a bay or two out (the brig).
+			const int32 S = Straight(D, TEXT("port passage"), LegAEnd, FVector(5880.0 * X, -2700.0 * X, 0.0), false, true);
+			RoomsAlong(S, 0, { { TEXT("Biochemistry lab"), EShipRoom::Lab, 2, 1 }, { TEXT("Chemistry lab"), EShipRoom::Lab, 2, 1 }, { TEXT("Anthropology lab"), EShipRoom::Lab, 2, 1 }, { TEXT("Biophysics lab"), EShipRoom::Lab, 2, 1 }, { TEXT("Science lab"), EShipRoom::Lab, 2, -1 } });
+			RoomsAlong(S, 1, { { TEXT("Brig cell"), EShipRoom::Brig, 1, 3 }, { TEXT("Security control"), EShipRoom::Office, 2, 1 }, { TEXT("Armoury"), EShipRoom::Armoury, 2, 1 }, { TEXT("Junior officers' quarters"), EShipRoom::Cabin, 2, -1 } });
+		}
+
+		/** Deck H in the lower dome: the lobby ring with the phaser rooms, the communications bay and the physics
+		 *  labs about it (the hull locks and airlocks the plans put at the rim have no rim at this floor). */
+		void DeckH()
+		{
+			const int32 D = P.DeckIndex('H', EDeckSection::Saucer);
+			const int32 L = Lobby(D, {});
+			RoomsAlong(L, 1, { { TEXT("Phaser control room"), EShipRoom::Equipment, 3, 2 }, { TEXT("Communications bay"), EShipRoom::Equipment, 3, 1 }, { TEXT("Physics lab"), EShipRoom::Lab, 3, 1 }, { TEXT("Astrophysics lab"), EShipRoom::Lab, 3, 1 }, { TEXT("Equipment store"), EShipRoom::Store, 2, -1 } }, RoomDepth, true);
+			RoomsAlong(L, 0, { { TEXT("Staging room"), EShipRoom::Store, 3, 1 }, { TEXT("Damage control locker"), EShipRoom::Store, 2, 1 }, { TEXT("Equipment store"), EShipRoom::Store, 2, -1 } }, RoomDepth, true);
 		}
 
 		void DeckE()
@@ -668,9 +721,9 @@ void SlonkPlan::Build(FShipPlan& P, double X, const TArray<FPlanReserved>& Reser
 	P.Scale = X; P.SaucerX = 8000.0 * X;
 	DeckTable(P.Decks, X);
 	FBuilder B(P, X, Reserved);
+	// The plate holds one deck at this hull's thickness (SaucerSkin): F takes the rings; G and H keep to the dome.
 	B.PlateDeck('F', false);
-	B.PlateDeck('G', true);
-	B.PlateDeck('H', false);
+	B.DeckG(); B.DeckH();
 	B.DeckE(); B.DeckD(); B.DeckC(); B.DeckB(); B.DeckI();
 	B.Dorsal(); B.Secondary();
 	B.Finish();
