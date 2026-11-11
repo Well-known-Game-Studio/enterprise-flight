@@ -521,13 +521,26 @@ namespace
 		/** Deck G below the plate: the sickbay, transporter and rec deck set under the lower dome, its corridor's
 		 *  open port end run on as a passage with the labs and the security complex either side, as far out as
 		 *  the dome's skin allows at this floor (r 3.5 m). */
+		/** Where the deck G set's athwartships corridor leg ends at its open port end, on the floor: taken from the
+		 *  set's own reserved box (its centre scales with the ship, its size does not, so the baseline figures only
+		 *  meet it at scale 1), or the baseline when the plan is built without the sets. */
+		FVector SetCorridorPortEnd(int32 Deck) const
+		{
+			for (const FPlanReserved& R : Reserved)
+			{
+				// The corridor's first box is the athwartships leg (the forward leg is its Legs entry, named alike).
+				if (R.Name == TEXT("Deck G corridor")) { return FVector(R.Box.GetCenter().X, R.Box.Min.Y, Floor(Deck)); }
+			}
+			return FVector(5880.0 * X, -1150.0 * X, Floor(Deck));
+		}
+
 		void DeckG()
 		{
 			const int32 D = P.DeckIndex('G', EDeckSection::Saucer);
-			const FVector LegAEnd(5880.0 * X, -1150.0 * X, 0.0);
+			const FVector LegAEnd = SetCorridorPortEnd(D);
 			// Heading to port, side 0 is forward (the labs, two bays each) and side 1 aft, where the dome's skin
 			// meets the floor a bay or two out (the brig).
-			const int32 S = Straight(D, TEXT("port passage"), LegAEnd, FVector(5880.0 * X, -2700.0 * X, 0.0), false, true);
+			const int32 S = Straight(D, TEXT("port passage"), LegAEnd, FVector(LegAEnd.X, -2700.0 * X, LegAEnd.Z), false, true);
 			RoomsAlong(S, 0, { { TEXT("Biochemistry lab"), EShipRoom::Lab, 2, 1 }, { TEXT("Chemistry lab"), EShipRoom::Lab, 2, 1 }, { TEXT("Anthropology lab"), EShipRoom::Lab, 2, 1 }, { TEXT("Biophysics lab"), EShipRoom::Lab, 2, 1 }, { TEXT("Science lab"), EShipRoom::Lab, 2, -1 } });
 			RoomsAlong(S, 1, { { TEXT("Brig cell"), EShipRoom::Brig, 1, 3 }, { TEXT("Security control"), EShipRoom::Office, 2, 1 }, { TEXT("Armoury"), EShipRoom::Armoury, 2, 1 }, { TEXT("Junior officers' quarters"), EShipRoom::Cabin, 2, -1 } });
 		}
