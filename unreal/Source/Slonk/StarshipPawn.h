@@ -813,6 +813,11 @@ private:
 	void TickAutopilot(float DeltaTime);
 	FVector2D DebugLook = FVector2D::ZeroVector;
 	float DebugLookTime = 0.f;
+	/** `ship plan draw <secs> [hide]`: the plan's skeleton (every bay, room, lift shaft and each deck's hull
+	 *  outline) as debug lines for a while, the hull hidden meanwhile when asked, for checking the plan's fit. */
+	float PlanDrawTime = 0.f;
+	bool bPlanDrawHidden = false;
+	void DrawPlanSkeleton() const;
 	float DebugVertical = 0.f;
 	float DebugVerticalTime = 0.f;
 	FVector DebugThrust = FVector::ZeroVector;

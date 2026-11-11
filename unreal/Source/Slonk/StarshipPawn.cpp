@@ -10,6 +10,7 @@
 #include "StarSystem.h"
 #include "SpaceVessel.h"
 #include "EngineUtils.h"
+#include "DrawDebugHelpers.h"
 #include "SlonkGameMode.h"
 #include "FloatingOriginComponent.h"
 #include "Engine/BlendableInterface.h"
@@ -1555,6 +1556,12 @@ void AStarshipPawn::Tick(float DeltaTime)
 		DebugLookTime -= DeltaTime;
 		FreeLookAngles = DebugLook;
 	}
+	if (PlanDrawTime > 0.f)
+	{
+		PlanDrawTime -= DeltaTime;
+		DrawPlanSkeleton();
+		if (PlanDrawTime <= 0.f && bPlanDrawHidden) { SetActorHiddenInGame(false); bPlanDrawHidden = false; }
+	}
 	if (DebugVerticalTime > 0.f && Movement)
 	{
 		DebugVerticalTime -= DeltaTime;
@@ -2634,6 +2641,15 @@ bool AStarshipPawn::HandleCraftCommand(const FString& Op, const TArray<FString>&
 		}
 		return true;
 	}
+	if (Op == TEXT("plan") && Args.Num() > 1 && Args[1].ToLower() == TEXT("draw"))
+	{
+		// `plan draw <secs> [hide]`: the plan's skeleton over the ship for a while; `hide` takes the hull away.
+		PlanDrawTime = Args.Num() > 2 ? FCString::Atof(*Args[2]) : 10.f;
+		const bool bHide = Args.Num() > 3 && Args[3].ToLower() == TEXT("hide");
+		if (bHide != bPlanDrawHidden) { SetActorHiddenInGame(bHide); bPlanDrawHidden = bHide; }
+		if (PlanDrawTime <= 0.f && bPlanDrawHidden) { SetActorHiddenInGame(false); bPlanDrawHidden = false; }
+		return true;
+	}
 	if (Op == TEXT("lift") && Args.Num() > 1)
 	{
 		// The room in one word or two: "lift deck g" names the deck; "lift stop 12" a stop of the plan.
@@ -3468,6 +3484,78 @@ bool AStarshipPawn::LaunchShuttle()
 namespace
 {
 	bool ParseDepartmentSafe(const FString& Word, ECrewDepartment& Out) { return !Word.IsEmpty() && UCrewRosterSubsystem::ParseDepartment(Word, Out); }
+}
+
+void AStarshipPawn::DrawPlanSkeleton() const
+{
+	// The plan as lines in the ship's frame, one frame at a time: each bay's floor outline (white; a junction's
+	// open side dashed by its absence), each room's floor polygon (yellow) with its doorway (green), each stop's
+	// car (magenta) and the shafts joining them, and each deck's hull outline at its floor (grey): the saucer's
+	// radius about its centre, the dorsal's and secondary hull's boxes. Over the hull it draws in the foreground.
+	UWorld* World = GetWorld();
+	if (!World || !Interior) { return; }
+	const FShipPlan& P = Interior->GetPlan();
+	const FTransform F = CraftFrame();
+	const uint8 Depth = bPlanDrawHidden ? SDPG_World : SDPG_Foreground;
+	auto Line = [&](const FVector& A, const FVector& B, const FColor& C, float Thick = 0.f)
+	{
+		DrawDebugLine(World, F.TransformPosition(A), F.TransformPosition(B), C, false, -1.f, Depth, Thick);
+	};
+	const FColor Bay(230, 230, 230), Room(255, 200, 40), Door(80, 255, 80), Lift(255, 60, 255), Hull(110, 130, 160);
+	for (const FPlanStretch& S : P.Stretches)
+	{
+		for (int32 i = 0; i < S.Bays.Num(); ++i)
+		{
+			const FPlanBay& B = S.Bays[i];
+			const FVector R = B.SideDir(0) * SlonkPlan::CorrW;
+			Line(B.P0 + R, B.P1 + R, Bay);
+			Line(B.P0 - R, B.P1 - R, Bay);
+			if (i == 0 || B.TurnIn != 0.0) { Line(B.P0 + R, B.P0 - R, Bay); }
+			if (i == S.Bays.Num() - 1) { Line(B.P1 + R, B.P1 - R, Bay); }
+		}
+	}
+	for (const FPlanRoom& R : P.Rooms)
+	{
+		for (int32 k = 0; k < 4; ++k) { Line(R.Corners[k], R.Corners[(k + 1) % 4], Room); }
+		Line(R.Door, R.Door + R.DoorIn.GetSafeNormal() * 60.0, Door, 2.f);
+	}
+	TMap<FString, TArray<FVector>> Shafts;
+	for (const FPlanStop& St : P.Stops)
+	{
+		const FVector Up(0, 0, 1);
+		DrawDebugCircle(World, F.TransformPosition(St.Car + Up * 10.0), 127.0, 16, Lift, false, -1.f, Depth, 2.f,
+			F.TransformVectorNoScale(FVector(1, 0, 0)), F.TransformVectorNoScale(FVector(0, 1, 0)), false);
+		Line(St.Car, St.Car + St.Facing.GetSafeNormal2D() * 160.0, Lift, 2.f);
+		Shafts.FindOrAdd(St.Shaft).Add(St.Car);
+	}
+	for (const auto& Pair : Shafts)
+	{
+		if (Pair.Value.Num() < 2) { continue; }
+		double Lo = Pair.Value[0].Z, Hi = Pair.Value[0].Z;
+		FVector Base = Pair.Value[0];
+		for (const FVector& V : Pair.Value) { Lo = FMath::Min(Lo, V.Z); Hi = FMath::Max(Hi, V.Z); }
+		for (const FVector& V : Pair.Value) { Line(V, FVector(Base.X, Base.Y, V.Z), Lift); }
+		Line(FVector(Base.X, Base.Y, Lo), FVector(Base.X, Base.Y, Hi), Lift, 3.f);
+	}
+	for (const FDeckSpec& D : P.Decks)
+	{
+		if (D.Section == EDeckSection::Saucer)
+		{
+			const int32 N = 96;
+			for (int32 i = 0; i < N; ++i)
+			{
+				const double A0 = 2.0 * PI * i / N, A1 = 2.0 * PI * (i + 1) / N;
+				Line(FVector(P.SaucerX + D.Radius * FMath::Cos(A0), D.Radius * FMath::Sin(A0), D.Floor),
+					FVector(P.SaucerX + D.Radius * FMath::Cos(A1), D.Radius * FMath::Sin(A1), D.Floor), Hull);
+			}
+		}
+		else
+		{
+			const FVector C[4] = { FVector(D.XMin, -D.HalfBeam, D.Floor), FVector(D.XMax, -D.HalfBeam, D.Floor),
+				FVector(D.XMax, D.HalfBeam, D.Floor), FVector(D.XMin, D.HalfBeam, D.Floor) };
+			for (int32 k = 0; k < 4; ++k) { Line(C[k], C[(k + 1) % 4], Hull); }
+		}
+	}
 }
 
 void AStarshipPawn::HandleCrewCommand(const TArray<FString>& Args)
