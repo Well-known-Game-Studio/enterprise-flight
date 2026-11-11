@@ -158,12 +158,12 @@ int32 UCrewWalkersComponent::PlaceFor(const FString& Where, int32 Seed) const
 		{ TEXT("Computer core"), EShipRoom::Count, { TEXT("Computer core"), TEXT("Main computer memory bank") } },
 		{ TEXT("Phaser control"), EShipRoom::Count, { TEXT("Phaser control") } },
 		{ TEXT("Security and armoury"), EShipRoom::Count, { TEXT("Security control"), TEXT("Armoury"), TEXT("Brig cell"), TEXT("Security lounge") } },
-		{ TEXT("Impulse engineering"), EShipRoom::Count, { TEXT("Impulse engineering") } },
+		{ TEXT("Impulse engineering"), EShipRoom::Count, { TEXT("Impulse engineering"), TEXT("Engineering equipment") } },
 		{ TEXT("Reactor"), EShipRoom::Count, { TEXT("Reactor"), TEXT("Fusion reactor"), TEXT("Intermix shaft") } },
 		{ TEXT("Environmental control"), EShipRoom::Count, { TEXT("Environmental control") } },
-		{ TEXT("Deflector"), EShipRoom::Count, { TEXT("Deflector") } },
-		{ TEXT("Sensor bay"), EShipRoom::Count, { TEXT("Lower sensor array"), TEXT("Sensor") } },
-		{ TEXT("Shield generators"), EShipRoom::Count, { TEXT("Shield generator") } },
+		{ TEXT("Deflector"), EShipRoom::Count, { TEXT("Deflector"), TEXT("Engineering systems") } },
+		{ TEXT("Sensor bay"), EShipRoom::Count, { TEXT("Lower sensor array"), TEXT("Sensor"), TEXT("Science sensor") } },
+		{ TEXT("Shield generators"), EShipRoom::Count, { TEXT("Shield generator"), TEXT("Engineering equipment") } },
 	};
 	const FMap* M = nullptr;
 	for (const FMap& T : Table) { if (Where == T.Where) { M = &T; break; } }
@@ -359,8 +359,8 @@ void UCrewWalkersComponent::Sync(bool bAll)
 	}
 	// Those gone from the roster (dead, transferred) leave the ship.
 	for (int32 i = 0; i < Walkers.Num(); ++i) { if (!Seen[i] && !Walkers[i].bOffstage) { Release(Walkers[i]); Walkers[i].bOffstage = true; Walkers[i].bMoving = false; Walkers[i].Place = INDEX_NONE; } }
-	// New places: a few routes a sync (a watch change moves a third of the ship), all of them when settling.
-	int32 Budget = bAll ? INT32_MAX : 24;
+	// New places: four dozen routes a sync (a watch change moves a third of the ship in seconds), all when settling.
+	int32 Budget = bAll ? INT32_MAX : 48;
 	for (FCrewWalker& W : Walkers)
 	{
 		if (!W.bReplan || Budget <= 0) { continue; }
