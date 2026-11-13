@@ -14,7 +14,7 @@
 #include "PlanetTerrainComponent.generated.h"
 
 class UDynamicMeshComponent;
-class UInstancedStaticMeshComponent;
+class URockInstancesComponent;
 class UMaterialInterface;
 class UMaterialInstanceDynamic;
 namespace UE::Geometry { class FDynamicMesh3; }
@@ -70,8 +70,11 @@ public:
 	void Configure(const FPlanetTerrainParams& InParams, UMaterialInterface* InMaterial);
 
 	/** The rocks on the ground (TerrainScatter.h): on or off, how many, and whether there are towns to keep clear.
-	 *  A change rebuilds the terrain. */
+	 *  A change rebuilds the chunks fine enough to carry rocks, in place. */
 	void SetScatterOptions(bool bEnabled, float Density, bool bCities);
+	/** Makes the rocks round a world position solid for a while, wherever the pawn is: a transporter's destination,
+	 *  so the arrival trace stands the person on a boulder rather than inside it. */
+	void PinSolidRocks(const FVector& WorldPos, double Seconds);
 	const FScatterSettings& GetScatterSettings() const { return Scatter; }
 	/** Rocks on the chunks showing, rocks with collision round the pawn, and the instance components made. */
 	int32 GetVisibleRockCount() const { return VisibleRocks; }
@@ -161,7 +164,7 @@ private:
 		TArray<float> Heights;
 		int32 HeightSteps = 0;
 		/** The chunk's rocks by kind, attached to its mesh and shown and hidden with it. */
-		UInstancedStaticMeshComponent* Rocks[SlonkGroundRocks::NumKinds] = {};
+		URockInstancesComponent* Rocks[SlonkGroundRocks::NumKinds] = {};
 		int32 RockCount = 0;
 		/** The rocks of them big enough to stand on, chunk-relative, for the collision round the pawn. */
 		TArray<FTransform> Solids[SlonkGroundRocks::NumKinds];
@@ -185,10 +188,11 @@ private:
 	UDynamicMeshComponent* AcquireMesh();
 	void ApplyRocks(FNode& N, SlonkScatter::FChunkScatter& Sc);
 	void ReleaseRocks(FNode& N);
-	UInstancedStaticMeshComponent* AcquireRocks(int32 Kind);
+	URockInstancesComponent* AcquireRocks(int32 Kind);
 	/** Collision for the rocks round the pawn: rebuilt when it has walked a few metres or the chunks there changed. */
 	void UpdateSolidRocks();
 	void ClearSolidRocks();
+	void RebuildRockChunks();
 	void MakeRoots();
 	void ChunkFrame(int32 Face, int32 Depth, int64 X, int64 Y, FVector& OutCentre, double& OutEdge) const;
 	static FVector CubeDir(int32 Face, double U, double V);
@@ -205,13 +209,16 @@ private:
 	UPROPERTY() TArray<TObjectPtr<UDynamicMeshComponent>> Pool;
 	TArray<UDynamicMeshComponent*> FreeMeshes;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> RockMID;
-	UPROPERTY() TArray<TObjectPtr<UInstancedStaticMeshComponent>> RockPool;
-	TArray<UInstancedStaticMeshComponent*> FreeRocks[SlonkGroundRocks::NumKinds];
+	UPROPERTY() TArray<TObjectPtr<URockInstancesComponent>> RockPool;
+	TArray<URockInstancesComponent*> FreeRocks[SlonkGroundRocks::NumKinds];
 	/** Collision-only copies of the rocks round the pawn, one per kind, planet-local. */
-	UPROPERTY() TArray<TObjectPtr<UInstancedStaticMeshComponent>> SolidSets;
+	UPROPERTY() TArray<TObjectPtr<URockInstancesComponent>> SolidSets;
 	uint64 SolidSignature = 0;
 	FVector SolidCentre = FVector(1.0e30, 0.0, 0.0);
 	FVector SolidLastPawn = FVector::ZeroVector;
+	/** Planet-local; the rocks round it stay solid until SolidPinUntil (world seconds). */
+	FVector SolidPinLocal = FVector::ZeroVector;
+	double SolidPinUntil = -1.0;
 	int32 VisibleRocks = 0;
 	int32 SolidRocks = 0;
 	TUniquePtr<FNode> Roots[6];

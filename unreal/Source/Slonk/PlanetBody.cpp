@@ -972,7 +972,12 @@ void APlanetBody::SetNightLights(float Intensity)
 	if (bStyleFromArchetype) { ResolveStyleFromArchetype(); bStyleFromArchetype = false; }
 	Style.NightLightIntensity = Intensity;
 	for (UMaterialInstanceDynamic* M : SurfaceMIDs()) { if (M) { M->SetScalarParameterValue(TEXT("NightLightIntensity"), Intensity); } }
-	if (Terrain) { Terrain->SetScalarParameter(TEXT("NightLightIntensity"), Intensity); }
+	if (Terrain)
+	{
+		Terrain->SetScalarParameter(TEXT("NightLightIntensity"), Intensity);
+		// A colony founded (or a world gone dark) brings its towns or takes them away; the rocks follow.
+		Terrain->SetScatterOptions(Terrain->GetScatterSettings().bEnabled, Terrain->GetScatterSettings().Density, HasCities());
+	}
 }
 
 bool APlanetBody::HasCities() const
@@ -1007,6 +1012,8 @@ void APlanetBody::PrepareGroundCollisionAt(const FVector& WorldPos, float Second
 	CityPinLocal = Body ? Body->GetComponentTransform().InverseTransformPosition(WorldPos) * Body->GetComponentScale() : WorldPos - GetActorLocation();
 	CityPinUntil = (GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0) + Seconds;
 	UpdateNearCollision(CityNearCentre.X < 1.0e29 ? CityNearCentre : CityPinLocal, true);
+	// And the rocks there, which are otherwise solid only round someone already on the ground.
+	if (Terrain) { Terrain->PinSolidRocks(WorldPos, Seconds); }
 }
 
 void APlanetBody::ClearCities()
