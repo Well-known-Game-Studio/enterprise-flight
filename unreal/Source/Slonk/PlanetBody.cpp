@@ -1277,6 +1277,8 @@ void APlanetBody::EnsureTerrain()
 		Terrain->SetWorldScale3D(FVector::OneVector);
 	}
 	const FPlanetTerrainParams P = MakeTerrainParams();
+	// The rocks keep off the streets of a world with towns; set before the chunks are built.
+	Terrain->SetScatterOptions(Terrain->GetScatterSettings().bEnabled, Terrain->GetScatterSettings().Density, HasCities());
 	if (!bTerrainActive || P != TerrainParams)
 	{
 		TerrainParams = P;

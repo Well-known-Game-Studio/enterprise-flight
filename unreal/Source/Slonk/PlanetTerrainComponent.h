@@ -9,10 +9,12 @@
 #include "CoreMinimal.h"
 #include "Components/SceneComponent.h"
 #include "PlanetTerrain.h"
+#include "TerrainScatter.h"
 #include "Tasks/Task.h"
 #include "PlanetTerrainComponent.generated.h"
 
 class UDynamicMeshComponent;
+class UInstancedStaticMeshComponent;
 class UMaterialInterface;
 class UMaterialInstanceDynamic;
 namespace UE::Geometry { class FDynamicMesh3; }
@@ -56,8 +58,35 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Terrain", meta = (ClampMin = "1", ClampMax = "32"))
 	int32 MaxUploadsPerUpdate = 6;
 
+	/** Chunks with edges shorter than this cast their rocks' shadows. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Terrain|Scatter")
+	float ScatterShadowEdgeCm = 8000.f;
+
+	/** Rocks within this of the pawn are solid to the crew's boots. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Terrain|Scatter")
+	float ScatterSolidReachCm = 4000.f;
+
 	/** Set the field, material and radius; clears any built chunks. */
 	void Configure(const FPlanetTerrainParams& InParams, UMaterialInterface* InMaterial);
+
+	/** The rocks on the ground (TerrainScatter.h): on or off, how many, and whether there are towns to keep clear.
+	 *  A change rebuilds the terrain. */
+	void SetScatterOptions(bool bEnabled, float Density, bool bCities);
+	const FScatterSettings& GetScatterSettings() const { return Scatter; }
+	/** Rocks on the chunks showing, rocks with collision round the pawn, and the instance components made. */
+	int32 GetVisibleRockCount() const { return VisibleRocks; }
+	int32 GetSolidRockCount() const { return SolidRocks; }
+	int32 GetRockComponentCount() const { return RockPool.Num(); }
+	/** Traces the boots' channel down through the solid rocks nearest the pawn, up to MaxRocks of them: how many
+	 *  were tried, and in OutHits how many the trace found solid. A check that what is drawn is what is stood on. */
+	int32 CheckSolidRocks(int32 MaxRocks, int32& OutHits) const;
+
+	/** The face and the chunk (X, Y) at a depth under a planet-local direction. */
+	static bool ChunkAt(const FVector& Dir, int32 Depth, int32& OutFace, int64& OutX, int64& OutY);
+	/** The rocks a chunk carries, built as a chunk build builds them, as planet-local transforms by kind; and the
+	 *  drawn height (cm above sea level) at each rock's direction, from the chunk's own triangles. For tests. */
+	static void BuildChunkScatterForTest(const FPlanetTerrainParams& P, const FScatterSettings& S, int32 Face, int32 Depth, int64 X, int64 Y, int32 Steps,
+		TArray<FTransform> (&OutPlanetLocal)[SlonkGroundRocks::NumKinds], TArray<double> (&OutDrawnHeightCm)[SlonkGroundRocks::NumKinds]);
 
 	/** Pick LOD for this view (world space), launch builds, swap finished meshes in. Call a few times a second. */
 	/** Refine for the camera and for the pawn (the ground it stands on matters a chase camera's length away). */
@@ -107,6 +136,7 @@ private:
 		/** Height above sea level (water surface over water) at each grid vertex, row-major (Steps + 1)^2. */
 		TArray<float> Heights;
 		int32 Steps = 0;
+		SlonkScatter::FChunkScatter Scatter;
 	};
 	struct FNode
 	{
@@ -130,6 +160,11 @@ private:
 		/** The grid heights of the mesh this node shows (see FBuildResult), for ground queries. */
 		TArray<float> Heights;
 		int32 HeightSteps = 0;
+		/** The chunk's rocks by kind, attached to its mesh and shown and hidden with it. */
+		UInstancedStaticMeshComponent* Rocks[SlonkGroundRocks::NumKinds] = {};
+		int32 RockCount = 0;
+		/** The rocks of them big enough to stand on, chunk-relative, for the collision round the pawn. */
+		TArray<FTransform> Solids[SlonkGroundRocks::NumKinds];
 	};
 
 	void ResetTree();
@@ -145,18 +180,40 @@ private:
 	void CollectFinished();
 	void ApplyResult(FNode& N);
 	void ShowNode(FNode& N, bool bShow);
+	/** The chunk's mesh and its rocks together. */
+	void SetChunkVisible(FNode& N, bool bShow);
 	UDynamicMeshComponent* AcquireMesh();
+	void ApplyRocks(FNode& N, SlonkScatter::FChunkScatter& Sc);
+	void ReleaseRocks(FNode& N);
+	UInstancedStaticMeshComponent* AcquireRocks(int32 Kind);
+	/** Collision for the rocks round the pawn: rebuilt when it has walked a few metres or the chunks there changed. */
+	void UpdateSolidRocks();
+	void ClearSolidRocks();
+	void MakeRoots();
 	void ChunkFrame(int32 Face, int32 Depth, int64 X, int64 Y, FVector& OutCentre, double& OutEdge) const;
-	FVector CubeDir(int32 Face, double U, double V) const;
+	static FVector CubeDir(int32 Face, double U, double V);
 	/** The inverse of CubeDir: which face a direction falls on and its (U, V) there. */
-	bool FaceUV(const FVector& Dir, int32& OutFace, double& OutU, double& OutV) const;
-	static void BuildChunk(const FPlanetTerrainParams& P, int32 Face, int32 Depth, int64 X, int64 Y, int32 Steps, FBuildResult& Out);
+	static bool FaceUV(const FVector& Dir, int32& OutFace, double& OutU, double& OutV);
+	/** The drawn height at (U, V) from a chunk's grid of heights, on its triangles. */
+	static double GridHeightAt(const TArray<float>& Heights, int32 Steps, int32 Depth, int64 X, int64 Y, double U, double V);
+	static void BuildChunk(const FPlanetTerrainParams& P, const FScatterSettings& Sc, int32 Face, int32 Depth, int64 X, int64 Y, int32 Steps, FBuildResult& Out);
 
 	FPlanetTerrainParams Params;
+	FScatterSettings Scatter;
 	UPROPERTY() TObjectPtr<UMaterialInterface> Material;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> MID;
 	UPROPERTY() TArray<TObjectPtr<UDynamicMeshComponent>> Pool;
 	TArray<UDynamicMeshComponent*> FreeMeshes;
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> RockMID;
+	UPROPERTY() TArray<TObjectPtr<UInstancedStaticMeshComponent>> RockPool;
+	TArray<UInstancedStaticMeshComponent*> FreeRocks[SlonkGroundRocks::NumKinds];
+	/** Collision-only copies of the rocks round the pawn, one per kind, planet-local. */
+	UPROPERTY() TArray<TObjectPtr<UInstancedStaticMeshComponent>> SolidSets;
+	uint64 SolidSignature = 0;
+	FVector SolidCentre = FVector(1.0e30, 0.0, 0.0);
+	FVector SolidLastPawn = FVector::ZeroVector;
+	int32 VisibleRocks = 0;
+	int32 SolidRocks = 0;
 	TUniquePtr<FNode> Roots[6];
 	struct FRequest { FNode* Node; double Priority; };
 	TArray<FRequest> Requests;
