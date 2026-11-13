@@ -1105,7 +1105,7 @@ void UShipInteriorComponent::Inst(FZone& Z, const FVector& Center, const FVector
 	if (!GetOwner()) { return; }
 	UStaticMesh* Mesh = bCylinder ? CylinderMesh.Get() : CubeMesh.Get();
 	if (!Mesh) { return; }
-	auto Make = [&](UMaterialInterface* M, bool bVisible, bool bBlocks)
+	auto Make = [&](UMaterialInterface* M, bool bShow, bool bBlocks)
 	{
 		UInstancedStaticMeshComponent* C = NewObject<UInstancedStaticMeshComponent>(GetOwner(), *FString::Printf(TEXT("Plan_%d"), PieceCount++));
 		C->SetupAttachment(this);
@@ -1119,8 +1119,8 @@ void UShipInteriorComponent::Inst(FZone& Z, const FVector& Center, const FVector
 		C->SetCollisionResponseToAllChannels(ECR_Ignore);
 		C->SetCollisionResponseToChannel(ECC_GameTraceChannel1, bBlocks ? ECR_Block : ECR_Ignore);
 		C->SetCollisionEnabled(bBlocks && Z.bSolidOn ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
-		C->SetVisibility(bVisible && Z.bShown);
-		C->SetCastShadow(bVisible);
+		C->SetVisibility(bShow && Z.bShown);
+		C->SetCastShadow(bShow);
 		C->RegisterComponent();
 		AllPieces.Add(C);
 		return C;
