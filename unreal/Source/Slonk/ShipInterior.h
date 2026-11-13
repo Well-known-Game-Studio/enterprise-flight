@@ -276,7 +276,9 @@ private:
 	TArray<TWeakObjectPtr<UPrimitiveComponent>> CarSolids;
 	/** The car's own doors: two leaves across its gap, inside the posts, that shut for the ride (and stand shut at a
 	 *  set's stop, where no landing doors cover the gap) and slide apart behind the wall panels at a landing. */
-	static constexpr double CarR = 127.0, CarDoorX = 98.0, CarLeafW = 66.0;
+	static constexpr double CarR = 127.0;
+	static constexpr double CarDoorX = 98.0;
+	static constexpr double CarLeafW = 66.0;
 	UStaticMeshComponent* CarLeaf[2] = { nullptr, nullptr };
 	float CarDoorOpen = 0.f;
 	void SetCarDoor(float Open);

@@ -511,17 +511,17 @@ void UEngineeringPanel::Refresh()
 	UShipSystemsComponent* Sys = Ship ? Ship->Systems.Get() : nullptr;
 	if (!Sys) { return; }
 	const FVector4 Radii(Lcars::PillR, Lcars::PillR, Lcars::PillR, Lcars::PillR);
-	const EShipSystem Priority = Sys->GetRepairPriority();
+	const EShipSystem RepairPriority = Sys->GetRepairPriority();
 	for (int32 i = 0; i < Rows.Num(); ++i)
 	{
 		FSystemRow& R = Rows[i];
 		const FShipSystemState& St = Sys->GetSystem((EShipSystem)i);
 		if (R.Bar && FMath::Abs(St.Integrity - R.LastIntegrity) > 0.002f) { R.LastIntegrity = St.Integrity; R.Bar->SetPercent(St.Integrity); R.Bar->SetFillColorAndOpacity(IntegrityColor(St.Integrity)); }
-		const bool bPow = St.Power > 1.01f, bRep = Priority == (EShipSystem)i;
+		const bool bPow = St.Power > 1.01f, bRep = RepairPriority == (EShipSystem)i;
 		if (R.PowerButton && bPow != R.bLastPower) { R.bLastPower = bPow; Lcars::SetButtonColor(R.PowerButton, bPow ? Lcars::Orange : Lcars::Lilac, &Radii); }
 		if (R.RepairButton && bRep != R.bLastRepair) { R.bLastRepair = bRep; Lcars::SetButtonColor(R.RepairButton, bRep ? Lcars::Orange : Lcars::Lilac, &Radii); }
 	}
-	if (AutoRepairButton) { Lcars::SetButtonColor(AutoRepairButton, Priority == EShipSystem::Count ? Lcars::Orange : Lcars::Peach, nullptr); }
+	if (AutoRepairButton) { Lcars::SetButtonColor(AutoRepairButton, RepairPriority == EShipSystem::Count ? Lcars::Orange : Lcars::Peach, nullptr); }
 	FString Why; const bool bCan = Sys->IsResupplying() || Sys->CanResupply(Why);
 	if (ResupplyButton && bCan != bLastCanResupply) { bLastCanResupply = bCan; Lcars::SetButtonColor(ResupplyButton, bCan ? Lcars::Periwinkle : Lcars::Darker(Lcars::Periwinkle, 0.55f), nullptr); }
 	if (Sys->GetLogRevision() != LastLogCount) { LastLogCount = Sys->GetLogRevision(); FillBridgeLog(this, WidgetTree, LogBox, Sys, 12); }

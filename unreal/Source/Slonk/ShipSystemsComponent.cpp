@@ -694,7 +694,7 @@ void UShipSystemsComponent::OnHitAt(float Applied, float ThroughShields, const F
 
 void UShipSystemsComponent::MarkHit(const FVector& LocalPoint, int32 Facing, bool bThrough)
 {
-	RecentHits.Add({ LocalPoint, GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f, Facing, bThrough });
+	RecentHits.Add({ LocalPoint, GetWorld() ? (float)GetWorld()->GetTimeSeconds() : 0.f, Facing, bThrough });
 	if (RecentHits.Num() > 12) { RecentHits.RemoveAt(0); }
 }
 
