@@ -124,6 +124,81 @@ void SlonkGerstner(float2 pu, float time, float periodCm, float swellCm, out flo
     }
     nrm = normalize(float3(-dn, 1.0 - dz));
 }
+// The settlements' hash (SlonkCities' Mix and Hash01).
+uint SlonkMix(uint a, uint b) { uint h = a ^ (b + 0x9e3779b9u + (a << 6) + (a >> 2)); h = (h ^ (h >> 13)) * 0x5bd1e995u; return h ^ (h >> 15); }
+float SlonkU(uint h) { return (float)(h & 0xffffu) / 65535.0; }
+// A town's own ways, number for number as PlanetCities.cpp's FWays::TownClearance lays them for its builders: how far
+// a point at (x, y) in the town's frame is from the edge of the nearest, cm (below 0 on one). style 3: a grown town's
+// ring ways halfway between its rings of pods (one lobed shape scaled ring by ring) and its spokes, logarithmic
+// spirals out from the plaza (plaza is 1 inside it); 1 and 2: a village's lanes or a hamlet's paths, wandering out
+// from its heart.
+float SlonkTownWays(float x, float y, uint H, float style, bool isCity, float radiusCm, out float plaza)
+{
+    plaza = 0.0;
+    float r = length(float2(x, y)); float A = atan2(y, x);
+    if (style > 2.5)
+    {
+        float ring = 3200.0 + 1200.0 * SlonkU(SlonkMix(H, 17u));
+        float lobes = SlonkU(SlonkMix(H, 0x50u)) * 6.2831853;
+        float k0 = isCity ? 2.0 : 1.0;
+        float rings = max(k0, floor(radiusCm / ring));
+        float hw = isCity ? 350.0 : 250.0;
+        float w = 1.0 + 0.18 * sin(3.0 * A + lobes);
+        float rho = r / (ring * w);
+        float inner = k0 - 0.5;
+        if (rho < inner) { plaza = 1.0; return 1e9; }
+        if (rho > rings + 0.5 + hw / ring) { return 1e9; }
+        float kk = clamp(round(rho - 0.5), k0 - 1.0, rings);
+        float ringClr = abs(rho - (kk + 0.5)) * ring * w - hw;
+        float ns = 3.0 + (float)(SlonkMix(H, 0x52u) % 3u);
+        float phi0 = SlonkU(SlonkMix(H, 0x53u)) * 6.2831853;
+        float tw = SlonkU(SlonkMix(H, 0x54u)) < 0.5 ? -0.55 : 0.55;
+        float sector = 6.2831853 / ns;
+        float d0 = A - phi0 - tw * log(max(rho, inner) / inner);
+        float dl = d0 - sector * round(d0 / sector);
+        return min(ringClr, r * abs(dl) / sqrt(1.0 + tw * tw) - hw);
+    }
+    bool stone = style > 1.5;
+    float vr = min(radiusCm, stone ? 18000.0 : 40000.0);
+    float r0 = stone ? 500.0 : 1200.0;
+    if (r < r0 || r > vr) { return 1e9; }
+    float nl = stone ? 2.0 + (float)(SlonkMix(H, 0x60u) % 2u) : 3.0 + (float)(SlonkMix(H, 0x60u) % 3u);
+    float p0 = SlonkU(SlonkMix(H, 0x61u)) * 6.2831853;
+    float lw = stone ? 300.0 : 600.0, lam = stone ? 1800.0 : 2600.0, hw = stone ? 75.0 : 175.0;
+    float ramp = smoothstep(0.0, 3000.0, r);
+    float best = 1e9;
+    [loop] for (int l = 0; l < 5; l++)
+    {
+        if ((float)l >= nl) { break; }
+        uint hl = SlonkMix(H, 0x62u + (uint)l);
+        float phil = p0 + 6.2831853 * (float)l / nl + (SlonkU(hl) - 0.5) * 1.8849556 / nl;
+        float psi = SlonkU(SlonkMix(hl, 5u)) * 6.2831853;
+        float da = A - phil; da -= 6.2831853 * round(da / 6.2831853);
+        if (abs(da) > 1.5707963) { continue; }
+        float lat = lw * sin(r / lam + psi) * ramp;
+        best = min(best, abs(r * sin(da) - lat) - hw);
+    }
+    return best;
+}
+// The road a pixel lies on between its two nearest town points (ap: the pixel less the nearest, ab: the second less
+// the nearest, both across the ground), as FWays::RoadClearance: out of the town it starts from (townR), straight for
+// a grid-building people (style 0), an S-curve for a grown one (3), winding for the early ages (1, 2). How far from
+// its edge, cm (below 0 on it).
+float SlonkRoad(float3 ap, float3 ab, float3 U, uint hA, uint hB, float style, float townR)
+{
+    float L2 = max(dot(ab, ab), 1.0); float L = sqrt(L2);
+    float t = saturate(dot(ap, ab) / L2);
+    if (t * L < townR) { return 1e9; }
+    float3 perp = normalize(cross(U, ab));
+    float sgn = (SlonkMix(hA ^ hB, 0x70u) & 1u) != 0u ? 1.0 : -1.0;
+    float st = sin(6.2831853 * t);
+    float off = 0.0, hw = 450.0;
+    if (style > 2.5) { off = 0.12 * st; hw = 300.0; }
+    else if (style > 1.5) { off = 0.06 * st + 0.03 * sin(18.849556 * t); hw = 75.0; }
+    else if (style > 0.5) { off = 0.05 * st + 0.025 * sin(12.566371 * t); hw = 200.0; }
+    float along = dot(ap, ab) / L, lat = dot(ap, perp);
+    return length(float2(along - t * L, lat - sgn * off * L)) - hw;
+}
 float SlonkTexFuncsEnd1(FMaterialPixelParameters Parameters)
 {
 #else
@@ -396,7 +471,8 @@ float lowland = 1.0 - saturate(hN * ReliefCm / 250000.0);
 // from what is left, small enough to keep its centimetres. The points are kept as offsets from the pixel (townRel
 // is the pixel less the town's point), never as planet positions a float would round to metres.
 float town = 0.0, cluster = 0.0, region = 0.0;
-float3 townRel = 0; uint townH = 0u; float3 clusterRel = 0; uint clusterH = 0u; float3 town2Rel = 0; float dmin2b = 9.0; float paving = 0.0;
+float3 townRel = 0; uint townH = 0u; float3 clusterRel = 0; uint clusterH = 0u; float3 town2Rel = 0; uint town2H = 0u; float dmin2b = 9.0; float paving = 0.0;
+float wayCover = 0.0, wayGlow = 0.0;
 {
     int3 tile = int3(round(TX), round(TY), round(TZ));
     float dmin[3] = { 9.0, 9.0, 9.0 };
@@ -422,8 +498,8 @@ float3 townRel = 0; uint townH = 0u; float3 clusterRel = 0; uint clusterH = 0u; 
             float3 dp = float3(off) + jit - frw;
             float dd = dot(dp, dp);
             float3 rel = -dp * wcs;
-            if (kw == 2 && dd < dmin[2]) { town2Rel = townRel; dmin2b = dmin[2]; townRel = rel; townH = hw; }
-            else if (kw == 2 && dd < dmin2b) { town2Rel = rel; dmin2b = dd; }
+            if (kw == 2 && dd < dmin[2]) { town2Rel = townRel; town2H = townH; dmin2b = dmin[2]; townRel = rel; townH = hw; }
+            else if (kw == 2 && dd < dmin2b) { town2Rel = rel; town2H = hw; dmin2b = dd; }
             if (kw == 1 && dd < dmin[1]) { clusterRel = rel; clusterH = hw; }
             dmin[kw] = min(dmin[kw], dd);
         }
@@ -432,8 +508,8 @@ float3 townRel = 0; uint townH = 0u; float3 clusterRel = 0; uint clusterH = 0u; 
     cluster = 1.0 - smoothstep(0.02, 0.5, dmin[1]);
     town = 1.0 - smoothstep(0.03, 0.3, dmin[2]);
 }
-// The ground's glow and its paving come with electric light: a world with nobody, and a people without it (their huts
-// and villages carry their own firelight, Civilization.h), keep their bare ground by day as well as by night.
+// The ground's glow comes with the people's light (Civilization.h's GroundLights): a city's electric light, or the dim
+// warm firelight of a stone- or iron-age people's hearths; a world with nobody keeps its bare ground.
 float settled = NightLightIntensity > 0.0 ? 1.0 : 0.0;
 // The people live at only SettleDensity of the settlement points (SlonkCities' cut on each point's hash): the ground
 // is paved and lit under the ones they live at.
@@ -441,6 +517,7 @@ uint hdT = townH ^ (0xD5u + 0x9e3779b9u + (townH << 6) + (townH >> 2)); hdT = (h
 uint hdC = clusterH ^ (0xD5u + 0x9e3779b9u + (clusterH << 6) + (clusterH >> 2)); hdC = (hdC ^ (hdC >> 13)) * 0x5bd1e995u; hdC ^= hdC >> 15;
 float keptT = (float)(hdT & 0xffffu) / 65535.0 <= SettleDensity ? 1.0 : 0.0;
 float keptC = (float)(hdC & 0xffffu) / 65535.0 <= SettleDensity ? 1.0 : 0.0;
+float keptT2 = SlonkU(SlonkMix(town2H, 0xD5u)) <= SettleDensity ? 1.0 : 0.0;
 settled *= max(keptT, keptC * step(0.35, region));
 // SettleWet is the driest ground the world's people settle (Civilization.h: 0.3, or none at all for a desert people), as
 // SlonkCities gates its towns.
@@ -448,10 +525,14 @@ float city = settled * region * cluster * town * (1.0 - water) * saturate((wet -
 // Built-up ground by day: paving and roofs grey the land where the lights are at night, where the people pave
 // (StreetGrid: an industrial or later people that builds on a grid; not a village's, nor a grown town's).
 base = lerp(base, float3(0.30, 0.29, 0.28), saturate(city * 1.5) * 0.7 * StreetGrid);
-// Streets: a city at a cluster point or a town at a town point lays its blocks on a grid (bearing and pitch from
-// its seed, as the buildings are laid); the streets between the lots and a wider avenue every fifth and seventh
-// row are paved, and the lots themselves greyed.
-if (water < 0.5 && settled * StreetGrid > 0.0)
+// Streets and ways: a city at a cluster point or a town at a town point lays out its ground as its people do
+// (WayStyle, Civilization.h's EWayStyle). A grid-building people's blocks on a grid (bearing and pitch from its seed,
+// as the buildings are laid), the streets between the lots and a wider avenue every fifth and seventh row paved and
+// lit, the lots greyed; a grown town's ring ways and spiral spokes and its plaza in pale stone, their edges aglow at
+// night; a village's dirt lanes, a hamlet's trodden paths. Not at a point the people would sooner have built into a
+// cliff (CliffAffinity: whether they found one is not known here), where the grid-builders' streets are all the same,
+// as they try the open land first.
+if (water < 0.5 && settled > 0.0)
 {
     float cityR = 640000.0 * (0.25 + 0.2 * region);
     // The footprints are round the sites SlonkCities builds on: each Worley point taken down onto the sphere (it lies
@@ -466,45 +547,70 @@ if (water < 0.5 && settled * StreetGrid > 0.0)
     uint H = inCity ? clusterH : townH;
     float kept = inCity ? keptC : keptT;
     float Rr = inCity ? cityR : townR;
-    if (inCity || (townS > 0.3 && length(rel) < townR * 1.05))
+    // The same land gating the lights and the builder use: level, wet, low ground only.
+    float landOk = saturate((wet - SettleWet + 0.05) * 4.0) * (1.0 - saturate(slope * 12.0)) * lowland;
+    // The settlement's own up, at its site, and its frame (FTownFrame).
+    float3 upT = inCity ? upC : upW;
+    float3 eT = normalize(cross(float3(0, 0, 1), upT)); float3 nT = cross(upT, eT);
+    float ang = SlonkU(SlonkMix(H, 11u)) * 3.14159265;
+    float3 gX = eT * cos(ang) + nT * sin(ang); float3 gY = cross(upT, gX);
+    float lx = dot(rel, gX), ly = dot(rel, gY);
+    bool inSite = inCity || (townS > 0.3 && length(rel) < townR * 1.05);
+    // A way fades out as it narrows to under a pixel on the screen, before it shimmers (a telephoto view shows it from
+    // far off, a wide one loses it near); a grown way's glow widens to a pixel and a half instead, dimmed to match.
+    float pixCm = max(max(length(dpx), length(dpy)), 1.0);
+    float hwWay = WayStyle > 2.5 ? 300.0 : (WayStyle > 1.5 ? 75.0 : 175.0);
+    float wayFade = smoothstep(0.3, 0.8, hwWay / pixCm);
+    float gw = max(40.0, pixCm * 1.5);
+    float glowFade = min(1.0, 80.0 / gw) * (1.0 - smoothstep(1500000.0, 4000000.0, dist));
+    if (StreetGrid > 0.0 && inSite)
     {
-        uint h11 = H ^ (11u + 0x9e3779b9u + (H << 6) + (H >> 2)); h11 = (h11 ^ (h11 >> 13)) * 0x5bd1e995u; h11 ^= h11 >> 15;
-        uint h17 = H ^ (17u + 0x9e3779b9u + (H << 6) + (H >> 2)); h17 = (h17 ^ (h17 >> 13)) * 0x5bd1e995u; h17 ^= h17 >> 15;
-        float ang = (float)(h11 & 0xffffu) / 65535.0 * 3.14159265;
-        float pitch = 3600.0 + 1400.0 * (float)(h17 & 0xffffu) / 65535.0;
-        // The settlement's own up, at its site.
-        float3 upT = inCity ? upC : upW;
-        float3 eT = normalize(cross(float3(0, 0, 1), upT)); float3 nT = cross(upT, eT);
-        float3 gX = eT * cos(ang) + nT * sin(ang); float3 gY = cross(upT, gX);
-        float gx = dot(rel, gX) / pitch, gy = dot(rel, gY) / pitch;
+        float pitch = 3600.0 + 1400.0 * SlonkU(SlonkMix(H, 17u));
+        float gx = lx / pitch, gy = ly / pitch;
         float inTown = 1.0 - smoothstep(0.9, 1.0, length(rel) / Rr);
         float sx = abs(frac(gx) - 0.5), sy = abs(frac(gy) - 0.5);           // 0 mid-street, 0.5 mid-lot
         float street = max(1.0 - smoothstep(0.1, 0.14, sx), 1.0 - smoothstep(0.1, 0.14, sy));
         int ix = (int)round(gx), iy = (int)round(gy);
         float aveX = (ix % 5 == 0) ? 1.0 - smoothstep(0.38, 0.46, abs(frac(gx + 0.5) - 0.5)) : 0.0;
         float aveY = (iy % 7 == 0) ? 1.0 - smoothstep(0.38, 0.46, abs(frac(gy + 0.5) - 0.5)) : 0.0;
-        // The same land gating the lights and the builder use: level, wet, low ground only.
-        float landOk = saturate((wet - SettleWet + 0.05) * 4.0) * (1.0 - saturate(slope * 12.0)) * lowland * kept;
-        inTown *= landOk;
+        inTown *= landOk * kept;
         paving = max(street, max(aveX, aveY)) * inTown;
         base = lerp(base, float3(0.30, 0.29, 0.28), inTown * 0.35);
     }
-    // A road between the two nearest settlement points (the pair this pixel lies between): eight metres wide,
-    // where both ends stand on land and the pixel does.
-    if (dmin2b < 9.0 && townS > 0.08)
+    else if (WayStyle > 0.5 && inSite && kept > 0.0 && SlonkU(SlonkMix(H, 0xC1u)) >= CliffAffinity)
+    {
+        float plaza;
+        float clr = SlonkTownWays(lx, ly, H, WayStyle, inCity, Rr, plaza);
+        float inTown = (1.0 - smoothstep(0.95, 1.05, length(rel) / Rr)) * landOk;
+        wayCover = max((1.0 - smoothstep(-50.0, 30.0, clr)) * wayFade, WayStyle > 2.5 ? plaza : 0.0) * inTown;
+        if (WayStyle > 2.5) { wayGlow = (1.0 - smoothstep(0.0, gw, abs(clr + 45.0))) * glowFade * inTown; }
+    }
+    // A road between the two nearest settlement points (the pair this pixel lies between), out of the towns at its
+    // ends, where both are lived at (and, for a people who do not pave, neither is one they would sooner have built
+    // into a cliff) and the pixel's ground will take one.
+    bool roadEnds = keptT * keptT2 > 0.0 && (WayStyle < 0.5 || (SlonkU(SlonkMix(townH, 0xC1u)) >= CliffAffinity && SlonkU(SlonkMix(town2H, 0xC1u)) >= CliffAffinity));
+    if (dmin2b < 9.0 && townS > 0.08 && roadEnds)
     {
         // From the nearest site to the second, across the ground: both points' offsets laid in the pixel's own
         // tangent plane, so their heights off the sphere do not hold the road off the ground.
         float3 ap = townRel - U * dot(townRel, U);
         float3 ab = ap - (town2Rel - U * dot(town2Rel, U));
-        float t = saturate(dot(ap, ab) / max(dot(ab, ab), 1.0));
-        float dRoad = length(ap - ab * t);
-        float road = (1.0 - smoothstep(350.0, 500.0, dRoad)) * (1.0 - saturate(slope * 8.0)) * saturate((wet - SettleWet + 0.1) * 5.0);
-        paving = max(paving, road);
+        float clr = SlonkRoad(ap, ab, U, townH, town2H, WayStyle, townR);
+        float road = (1.0 - smoothstep(-100.0, 50.0, clr)) * (1.0 - saturate(slope * 8.0)) * saturate((wet - SettleWet + 0.1) * 5.0);
+        if (WayStyle < 0.5) { paving = max(paving, road); }
+        else
+        {
+            wayCover = max(wayCover, road * wayFade);
+            if (WayStyle > 2.5) { wayGlow = max(wayGlow, (1.0 - smoothstep(0.0, gw, abs(clr + 45.0))) * glowFade * road); }
+        }
     }
     base = lerp(base, float3(0.11, 0.11, 0.12), paving * 0.9);
+    // Pale stone for the grown; for the early ages bare earth, darker and browner than any grass or scrub round it
+    // (a dry world's ochre ground included), a village's lanes and tracks packed darker than a hamlet's trodden paths.
+    float3 wayCol = WayStyle > 2.5 ? float3(0.66, 0.63, 0.56) : (WayStyle > 1.5 ? float3(0.31, 0.25, 0.18) : float3(0.24, 0.19, 0.14));
+    base = lerp(base, wayCol, wayCover * (WayStyle > 1.5 && WayStyle < 2.5 ? 0.75 : 0.9));
 }
-Emis = NightLightColor * (NightLightIntensity * city * night + 0.35 * paving * night) + float3(1.0, 0.28, 0.05) * (LavaEmissive * water * (0.6 + 0.8 * (fb0 + 0.5)));
+Emis = NightLightColor * (NightLightIntensity * city * night + 0.35 * paving * night + 1.5 * wayGlow * night) + float3(1.0, 0.28, 0.05) * (LavaEmissive * water * (0.6 + 0.8 * (fb0 + 0.5)));
 return base;
 """
 
@@ -517,7 +623,7 @@ WPO_INPUTS = ["Fn", "LP", "Col", "OX", "OY", "OZ", "ORX", "ORY", "ORZ", "Cam", "
 INPUTS = ["Fn", "N", "LP", "UV0", "UV1", "UV2", "UV3", "Col", "ColA", "OX", "OY", "OZ", "Cell", "ORX", "ORY", "ORZ", "Cam", "WP", "PlanetRadiusCm", "WaterNR", "Time", "SwellCm"] + TEX_INPUTS + [
           "OceanColor", "ShallowColor", "LandColor", "LandColor2", "MountainColor", "IceColor", "NightLightColor",
           "OceanRoughness", "LandRoughness", "NightLightIntensity", "LavaEmissive", "SunDirection",
-          "NoisePeriodCm", "ReliefCm", "OceanDepthCm", "TX", "TY", "TZ", "StreetGrid", "SettleWet", "SettleDensity"]
+          "NoisePeriodCm", "ReliefCm", "OceanDepthCm", "TX", "TY", "TZ", "StreetGrid", "SettleWet", "SettleDensity", "WayStyle", "CliffAffinity"]
 
 
 def build():
@@ -539,7 +645,7 @@ def build():
         "OceanColor": (0.05, 0.17, 0.35), "ShallowColor": (0.1, 0.35, 0.5), "LandColor": (0.30, 0.36, 0.18), "LandColor2": (0.55, 0.45, 0.28),
         "MountainColor": (0.55, 0.52, 0.50), "IceColor": (0.90, 0.93, 0.97), "NightLightColor": (1.0, 0.8, 0.5), "SunDirection": (1.0, 0.0, 0.0),
     }
-    scal = {"OceanRoughness": 0.22, "LandRoughness": 0.9, "NightLightIntensity": 0.0, "LavaEmissive": 0.0, "NoisePeriodCm": 1048576.0, "ReliefCm": 3.8e6, "OceanDepthCm": 5.0e5, "PlanetRadiusCm": 6.371e8, "SwellCm": 120.0, "StreetGrid": 1.0, "SettleWet": 0.3, "SettleDensity": 1.0}
+    scal = {"OceanRoughness": 0.22, "LandRoughness": 0.9, "NightLightIntensity": 0.0, "LavaEmissive": 0.0, "NoisePeriodCm": 1048576.0, "ReliefCm": 3.8e6, "OceanDepthCm": 5.0e5, "PlanetRadiusCm": 6.371e8, "SwellCm": 120.0, "StreetGrid": 1.0, "SettleWet": 0.3, "SettleDensity": 1.0, "WayStyle": 0.0, "CliffAffinity": 0.0}
     e = g.custom(CODE, INPUTS, "CMOT_Float3", "terrain layers, textures, bump, lights", extra_outputs=(("Nrm", "CMOT_Float3"), ("Rough", "CMOT_Float1"), ("Emis", "CMOT_Float3"), ("AO", "CMOT_Float1")))
     for pin, src in [("Fn", fn), ("N", n), ("LP", vi), ("UV0", uv0), ("UV1", uv1), ("UV2", uv2), ("UV3", uv3), ("Col", col), ("OX", ox), ("OY", oy), ("OZ", oz), ("Cell", cell), ("ORX", orx), ("ORY", ory), ("ORZ", orz), ("Cam", cam), ("WP", wp), ("TX", tx), ("TY", ty), ("TZ", tz)]:
         g.c(src, e, pin)

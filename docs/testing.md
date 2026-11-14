@@ -67,7 +67,10 @@ shape (a fire none); each age's own kinds of building, no corner of any hanging 
 corners from the transforms, not where the builder looked) unless it stands on its footing, and no two buildings
 in each other in a town or across neighbouring towns; and the towns built into cliffs, their houses on the ledges at
 the foot of the risers with both rear corners in the rock and nothing hanging over the drop, and the towns along a
-stretch of cliffs never building on each other.
+stretch of cliffs never building on each other; and each people's ways (a hamlet's paths, a village's lanes, a grown
+town's ring ways and spokes, the roads between towns), no part of any building on one (sampled every metre over each
+footprint near one), the ways a share of the towns' ground and roads leaving them, and a village's houses fronting
+onto their lanes.
 
 Writing one: make an `FSystems` (a roster seed gives the same people every time), drive the subsystems through
 their public API, assert with `TestEqual`/`TestTrue`. For anything that depends on the world (targets picked from

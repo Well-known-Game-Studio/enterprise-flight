@@ -45,4 +45,10 @@ namespace SlonkCities
 	/** Building transforms for a town by kind (planet-local, for a 1 m unit mesh: scale is the building's size in
 	 *  metres; OutByKind has EBuildingKind::Count arrays), laid out as its people build. Safe off the game thread. */
 	SLONK_API void BuildTown(const FPlanetTerrainParams& P, const FCivilization& Civ, const FTownSite& Town, TArray<FTransform>* OutByKind, int32 MaxBuildings = 2500);
+	/** How far a point (a unit direction, planet-local) is from the edge of the nearest way of a town, cm, below 0 on
+	 *  one: the town's own ways (a grown town's ring ways and spiral spokes round its plaza, a village's lanes or a
+	 *  hamlet's paths out from its heart; a grid town's streets are its lots' gaps) and the roads between neighbouring
+	 *  settlements, out of the towns at their ends, as the terrain material paints them. The builders keep every
+	 *  building off them; for the tests. */
+	SLONK_API double WayClearanceCm(const FPlanetTerrainParams& P, const FCivilization& Civ, const FTownSite& Town, const FVector& Dir);
 }

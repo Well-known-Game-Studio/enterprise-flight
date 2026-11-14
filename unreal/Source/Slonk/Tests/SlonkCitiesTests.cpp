@@ -305,6 +305,115 @@ bool FSlonkCitiesTownsByAgeTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkCitiesWaysTest, "Slonk.Cities.Ways", SLONK_TEST_FLAGS)
+bool FSlonkCitiesWaysTest::RunTest(const FString& Parameters)
+{
+	// Each people's ways, as the terrain paints them (terrain_material.py mirrors SlonkCities' FWays): a hamlet's paths,
+	// a village's lanes, a grown town's ring ways and spiral spokes, and the roads between their settlements, straight
+	// for a grid-building people. The builders keep every building off them: no part of one stands on a way (sampled
+	// every metre over its footprint wherever it comes near one). The ways are there: a share of a town's ground, and
+	// roads leaving the towns (crossing a ring round each, a little outside it). Near its lane, a village house fronts
+	// onto it.
+	const FPlanetTerrainParams P = Earthish();
+	struct FCase { const TCHAR* Name; FCivilization Civ; bool bTownWays; };
+	const TArray<FCase> Cases = {
+		{ TEXT("stone"), SlonkCivs::Make(ETechAge::Stone, 0.f, 0.f, false), true },
+		{ TEXT("iron"), SlonkCivs::Make(ETechAge::Iron, 0.f, 0.f, false), true },
+		{ TEXT("modern"), SlonkCivs::Make(ETechAge::Modern, 0.f, 0.f, false), false },
+		{ TEXT("grown"), SlonkCivs::Make(ETechAge::Starfaring, 1.f, 0.f, false), true },
+	};
+	for (const FCase& C : Cases)
+	{
+		TArray<FTownSite> Built;
+		int32 Buildings = 0, Checked = 0, OnWay = 0, Ground = 0, WayGround = 0, Near = 0, Fronting = 0, Roads = 0, RoadTowns = 0;
+		TSet<uint32> Seen;
+		for (int32 i = 0; i < 120 && Built.Num() < 8; ++i)
+		{
+			const FVector Dir = Fib(i * 11 + 5, 1320);
+			if (SlonkTerrain::SampleStructure(P, Dir, 2.0e5).bWater) { continue; }
+			TArray<FTownSite> Sites;
+			SlonkCities::EnumerateTowns(P, C.Civ, Dir * P.RadiusCm, 6.0e5, Sites, 8);
+			for (const FTownSite& T : Sites)
+			{
+				if (T.bCliff || Seen.Contains(T.Seed) || Built.Num() >= 8) { continue; }
+				Seen.Add(T.Seed);
+				Built.Add(T);
+				TArray<FTransform> ByKind[(int32)EBuildingKind::Count];
+				SlonkCities::BuildTown(P, C.Civ, T, ByKind, 2500);
+				auto Clearance = [&](const FVector& At) { return SlonkCities::WayClearanceCm(P, C.Civ, T, At.GetSafeNormal()); };
+				for (int32 k = 0; k < (int32)EBuildingKind::Count; ++k)
+				{
+					for (const FTransform& Xf : ByKind[k])
+					{
+						++Buildings;
+						const FVector Ctr = Xf.GetLocation().GetSafeNormal() * P.RadiusCm;
+						const FVector X = Xf.GetRotation().GetAxisX(), Y = Xf.GetRotation().GetAxisY();
+						const double W = Xf.GetScale3D().X * 100.0, D = Xf.GetScale3D().Y * 100.0;
+						// Far from every way (its clearance is a distance): nothing of it can be on one.
+						const double C0 = Clearance(Ctr);
+						if (C0 > 0.5 * FMath::Sqrt(W * W + D * D) + 10.0) { continue; }
+						++Checked;
+						bool bOn = false;
+						const int32 Nx = FMath::CeilToInt(W / 100.0), Ny = FMath::CeilToInt(D / 100.0);
+						for (int32 a = 0; a <= Nx && !bOn; ++a)
+						{
+							for (int32 b = 0; b <= Ny && !bOn; ++b)
+							{
+								bOn = Clearance(Ctr + X * ((a / (double)Nx - 0.5) * W) + Y * ((b / (double)Ny - 0.5) * D)) < 0.0;
+							}
+						}
+						OnWay += bOn ? 1 : 0;
+						// A village house near a lane: its front (the mesh's -Y) nearer the lane than its back by most of
+						// its depth.
+						if (C.Civ.Age == ETechAge::Iron && (EBuildingKind)k == EBuildingKind::House && C0 < D * 0.5 + 500.0)
+						{
+							++Near;
+							Fronting += Clearance(Ctr - Y * (D * 0.5)) < Clearance(Ctr + Y * (D * 0.5)) - D * 0.7 ? 1 : 0;
+						}
+					}
+				}
+				// How much of the town's ground is way: a 4 m grid over it (a hamlet's is small whatever its point's
+				// weight, a village's under 400 m).
+				const FVector Up = T.Dir;
+				const FVector E = FVector::CrossProduct(FVector::ZAxisVector, Up).GetSafeNormal(), N = FVector::CrossProduct(Up, E);
+				const double Rad = C.Civ.Age == ETechAge::Stone ? FMath::Min(T.RadiusCm, 18000.0) : C.Civ.Age == ETechAge::Iron ? FMath::Min(T.RadiusCm, 40000.0) : T.RadiusCm;
+				for (double u = -Rad; u <= Rad; u += 400.0)
+				{
+					for (double v = -Rad; v <= Rad; v += 400.0)
+					{
+						if (u * u + v * v > Rad * Rad) { continue; }
+						++Ground;
+						WayGround += Clearance(T.LocalCm + E * u + N * v) < 0.0 ? 1 : 0;
+					}
+				}
+				// The roads leaving it: how many times a ring 40% beyond its edge goes onto one, 2.5 m a step.
+				if (!T.bCity)
+				{
+					const double Rr = T.RadiusCm * 1.4;
+					const int32 Steps = FMath::CeilToInt(2.0 * PI * Rr / 250.0);
+					bool bWas = false;
+					for (int32 s = 0; s <= Steps; ++s)
+					{
+						const double A = 2.0 * PI * s / Steps;
+						const bool bOn = Clearance(T.LocalCm + (E * FMath::Cos(A) + N * FMath::Sin(A)) * Rr) < 0.0;
+						Roads += bOn && !bWas && s > 0 ? 1 : 0;
+						bWas = bOn;
+					}
+					++RoadTowns;
+				}
+			}
+		}
+		AddInfo(FString::Printf(TEXT("%s: %d towns, %d buildings, %d near a way, %d of them on one; ways %.1f%% of the towns' ground; %d roads leaving %d towns; %d of %d houses near a lane fronting onto it"),
+			C.Name, Built.Num(), Buildings, Checked, OnWay, Ground > 0 ? 100.0 * WayGround / Ground : 0.0, Roads, RoadTowns, Fronting, Near));
+		TestTrue(FString::Printf(TEXT("the %s people build towns"), C.Name), Buildings > 20);
+		TestEqual(FString::Printf(TEXT("no %s building stands on a way"), C.Name), OnWay, 0);
+		if (C.bTownWays) { TestTrue(FString::Printf(TEXT("the %s towns have ways of their own"), C.Name), WayGround * 300 >= Ground); }
+		TestTrue(FString::Printf(TEXT("roads run between the %s towns"), C.Name), Roads > 0);
+		if (Near > 0) { TestTrue(TEXT("a village's houses front onto their lanes"), Fronting * 10 >= Near * 8); }
+	}
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkCitiesCliffTownsTest, "Slonk.Cities.CliffTowns", SLONK_TEST_FLAGS)
 bool FSlonkCitiesCliffTownsTest::RunTest(const FString& Parameters)
 {

@@ -434,6 +434,214 @@ namespace
 		}
 	};
 
+	/** The two nearest town points to a planet-local point as the terrain material finds them (its eight cells round
+	 *  the point, in its order): the ends of the road it paints there. */
+	bool NearestTwoTowns(const FVector& LocalCm, FVector& OutA, uint32& OutHA, FVector& OutB, uint32& OutHB)
+	{
+		const double Cell = LevelCm[2];
+		const FVector Q = LocalCm / Cell - FVector(0.5, 0.5, 0.5);
+		const FVector Fl(FMath::Floor(Q.X), FMath::Floor(Q.Y), FMath::Floor(Q.Z));
+		const FVector Fr = Q - Fl;
+		double D1 = 9.0, D2 = 9.0;
+		for (int32 i = 0; i < 8; ++i)
+		{
+			const FIntVector Off(i & 1, (i >> 1) & 1, (i >> 2) & 1);
+			const FIntVector C((int32)Fl.X + Off.X, (int32)Fl.Y + Off.Y, (int32)Fl.Z + Off.Z);
+			const uint32 H = CellHash(C, LevelSalt(2));
+			if ((H >> 30) >= LevelKeep[2]) { continue; }
+			const double Dd = (FVector(Off) + Jitter(H) - Fr).SizeSquared();
+			const FVector Pt = (FVector(C) + Jitter(H) + FVector(0.5, 0.5, 0.5)) * Cell;
+			if (Dd < D1) { OutB = OutA; OutHB = OutHA; D2 = D1; OutA = Pt; OutHA = H; D1 = Dd; }
+			else if (Dd < D2) { OutB = Pt; OutHB = H; D2 = Dd; }
+		}
+		return D2 < 9.0;
+	}
+
+	/**
+	 * A town's ways, as the terrain material paints them (terrain_material.py's SlonkTownWays and SlonkRoad mirror
+	 * this, number for number): a grown town's ring ways between its rings of pods and the spiral spokes out from its
+	 * plaza; a village's lanes, or a hamlet's paths, wandering out from its heart; and the roads to the neighbouring
+	 * settlements, out of the towns at their ends. A town's own ways are laid only where the material paints them:
+	 * not at a point the people would sooner have built into a cliff (the material cannot tell whether they found
+	 * one). A grid town's streets are the gaps between its lots, and it has none of these but the roads.
+	 */
+	struct FWays
+	{
+		const FPlanetTerrainParams& P;
+		const FCivilization& Civ;
+		EWayStyle Style;
+		FTownFrame F;
+		FVector Centre;
+		bool bCity;
+		double RadiusCm;
+		bool bTownWays = false;
+		/** How far into a town the builder keeps off a road the material stops at the town's edge: the material
+		 *  measures the edge from the weights at the pixel, the builder from those at the point. */
+		double EndSlackCm;
+		// A grown town's: ring spacing, the lobes the rings wander by, the first ring of pods (inside it the plaza), the
+		// last, the ways' half-width, and its spokes (how many, where, how they turn).
+		double Ring = 1.0, Lobes = 0.0, K0 = 1.0, Rings = 1.0, GrownHW = 250.0, NS = 3.0, Phi0 = 0.0, Tw = 0.55;
+		// A village's or a hamlet's: how far its lanes run, from how near its heart, how they wander, their half-width.
+		double VR = 0.0, R0 = 0.0, LW = 0.0, Lam = 1.0, LaneHW = 0.0;
+		int32 NL = 0;
+		double LanePhi[5] = {}, LanePsi[5] = {};
+
+		FWays(const FPlanetTerrainParams& InP, const FCivilization& InCiv, const FTownSite& Town, double InEndSlackCm)
+			: P(InP), Civ(InCiv), Style(InCiv.Ways()), F(Town), Centre(Town.LocalCm), bCity(Town.bCity), RadiusCm(Town.RadiusCm), EndSlackCm(InEndSlackCm)
+		{
+			const uint32 S = Town.Seed;
+			bTownWays = Style != EWayStyle::Grid && !Town.bCliff && !LikesCliff(S);
+			if (Style == EWayStyle::Grown)
+			{
+				Ring = 3200.0 + 1200.0 * Hash01(Mix(S, 17u));
+				Lobes = Hash01(Mix(S, 0x50u)) * 2.0 * PI;
+				K0 = bCity ? 2.0 : 1.0;
+				Rings = FMath::Max(K0, FMath::FloorToDouble(RadiusCm / Ring));
+				GrownHW = bCity ? 350.0 : 250.0;
+				NS = 3.0 + (double)(Mix(S, 0x52u) % 3u);
+				Phi0 = Hash01(Mix(S, 0x53u)) * 2.0 * PI;
+				Tw = Hash01(Mix(S, 0x54u)) < 0.5f ? -0.55 : 0.55;
+			}
+			else if (Style == EWayStyle::Lanes || Style == EWayStyle::Paths)
+			{
+				const bool bStone = Style == EWayStyle::Paths;
+				VR = FMath::Min(RadiusCm, bStone ? 18000.0 : 40000.0);
+				R0 = bStone ? 500.0 : 1200.0;
+				NL = bStone ? 2 + (int32)(Mix(S, 0x60u) % 2u) : 3 + (int32)(Mix(S, 0x60u) % 3u);
+				const double P0 = Hash01(Mix(S, 0x61u)) * 2.0 * PI;
+				LW = bStone ? 300.0 : 600.0; Lam = bStone ? 1800.0 : 2600.0; LaneHW = bStone ? 75.0 : 175.0;
+				for (int32 l = 0; l < NL; ++l)
+				{
+					const uint32 Hl = Mix(S, 0x62u + (uint32)l);
+					LanePhi[l] = P0 + 2.0 * PI * l / NL + (Hash01(Hl) - 0.5) * 1.8849556 / NL;
+					LanePsi[l] = Hash01(Mix(Hl, 5u)) * 2.0 * PI;
+				}
+			}
+		}
+		bool LikesCliff(uint32 H) const { return Hash01(Mix(H, 0xC1u)) < Civ.CliffAffinity; }
+		bool Kept(uint32 H) const { return Hash01(Mix(H, 0xD5u)) <= Civ.Density; }
+		/** A point's place in the town's plane (cm along its frame's axes), and back. */
+		FVector2D Planar(const FVector& Dir) const { const FVector Off = Dir * P.RadiusCm - Centre; return FVector2D(FVector::DotProduct(Off, F.GX), FVector::DotProduct(Off, F.GY)); }
+		FVector DirOf(const FVector2D& XY) const { return (Centre + F.GX * XY.X + F.GY * XY.Y).GetSafeNormal(); }
+		/** A grown town's plaza, inside its first ring way, is clear of the ways to this radius however its lobes turn. */
+		double PlazaCm() const { return (K0 - 0.5) * Ring * 0.82 - GrownHW; }
+
+		/** From a point of the town's plane to the edge of its nearest own way, cm (below 0 on it). */
+		double TownClearance(const FVector2D& XY) const
+		{
+			if (!bTownWays) { return 1.0e9; }
+			const double R = XY.Size(), A = FMath::Atan2(XY.Y, XY.X);
+			if (Style == EWayStyle::Grown)
+			{
+				// Ring ways halfway between the rings of pods (the same lobed shape scaled ring by ring), and spokes that
+				// turn as they go, at a fixed angle to the radius (logarithmic spirals).
+				const double W = 1.0 + 0.18 * FMath::Sin(3.0 * A + Lobes);
+				const double Rho = R / (Ring * W);
+				const double Inner = K0 - 0.5;
+				if (Rho < Inner || Rho > Rings + 0.5 + GrownHW / Ring) { return 1.0e9; }
+				const double Kk = FMath::Clamp(FMath::RoundToDouble(Rho - 0.5), K0 - 1.0, Rings);
+				const double RingClr = FMath::Abs(Rho - (Kk + 0.5)) * Ring * W - GrownHW;
+				const double Sector = 2.0 * PI / NS;
+				const double D0 = A - Phi0 - Tw * FMath::Loge(FMath::Max(Rho, Inner) / Inner);
+				const double Dl = D0 - Sector * FMath::RoundToDouble(D0 / Sector);
+				return FMath::Min(RingClr, R * FMath::Abs(Dl) / FMath::Sqrt(1.0 + Tw * Tw) - GrownHW);
+			}
+			// Lanes out from the heart, each wandering to either side of its line (straight at first).
+			if (R < R0 || R > VR) { return 1.0e9; }
+			const double Ramp = FMath::SmoothStep(0.0, 3000.0, R);
+			double Best = 1.0e9;
+			for (int32 l = 0; l < NL; ++l)
+			{
+				double Da = A - LanePhi[l];
+				Da -= 2.0 * PI * FMath::RoundToDouble(Da / (2.0 * PI));
+				if (FMath::Abs(Da) > 0.5 * PI) { continue; }
+				const double Lat = LW * FMath::Sin(R / Lam + LanePsi[l]) * Ramp;
+				Best = FMath::Min(Best, FMath::Abs(R * FMath::Sin(Da) - Lat) - LaneHW);
+			}
+			return Best;
+		}
+
+		/** A village's nearest lane at a point of its plane: how far (as TownClearance), and the way out from it to the
+		 *  point. False away from the lanes. */
+		bool NearestLane(const FVector2D& XY, double& OutClearance, FVector2D& OutAway) const
+		{
+			if (!bTownWays || (Style != EWayStyle::Lanes && Style != EWayStyle::Paths)) { return false; }
+			const double R = XY.Size(), A = FMath::Atan2(XY.Y, XY.X);
+			if (R < R0 || R > VR) { return false; }
+			const double Ramp = FMath::SmoothStep(0.0, 3000.0, R);
+			const FVector2D Radial(FMath::Cos(A), FMath::Sin(A)), Round(-FMath::Sin(A), FMath::Cos(A));
+			OutClearance = 1.0e9;
+			for (int32 l = 0; l < NL; ++l)
+			{
+				double Da = A - LanePhi[l];
+				Da -= 2.0 * PI * FMath::RoundToDouble(Da / (2.0 * PI));
+				if (FMath::Abs(Da) > 0.5 * PI) { continue; }
+				const double Lat = LW * FMath::Sin(R / Lam + LanePsi[l]) * Ramp;
+				const double Side = R * FMath::Sin(Da) - Lat;
+				if (FMath::Abs(Side) - LaneHW >= OutClearance) { continue; }
+				OutClearance = FMath::Abs(Side) - LaneHW;
+				// The lane runs out along the radius, turned by its wander's slope; out from it is square to that.
+				const FVector2D T = (Radial + Round * (LW * FMath::Cos(R / Lam + LanePsi[l]) * Ramp / Lam)).GetSafeNormal();
+				OutAway = FVector2D(-T.Y, T.X) * (Side >= 0.0 ? 1.0 : -1.0);
+			}
+			return OutClearance < 1.0e8;
+		}
+
+		/** From a point to the edge of the road the material paints there, cm (below 0 on it): between its two nearest
+		 *  town points, both lived at (and for a people who do not pave, neither one they would sooner have built into
+		 *  a cliff), out of the town it starts from; straight for a grid-building people, an S-curve for a grown one,
+		 *  winding for the early ages. */
+		double RoadClearance(const FVector& Dir) const
+		{
+			const FVector X = Dir * P.RadiusCm;
+			FVector A, B; uint32 HA = 0, HB = 0;
+			if (!NearestTwoTowns(X, A, HA, B, HB) || !Kept(HA) || !Kept(HB)) { return 1.0e9; }
+			if (Style != EWayStyle::Grid && (LikesCliff(HA) || LikesCliff(HB))) { return 1.0e9; }
+			const float Region = 1.f - SmoothStep(0.05f, 0.7f, (float)NearestSq(X, 0));
+			const float Cluster = 1.f - SmoothStep(0.02f, 0.5f, (float)NearestSq(X, 1));
+			const double TownS = (double)Region * Cluster;
+			if (TownS <= 0.08) { return 1.0e9; }
+			const FVector Ap = (X - A) - Dir * FVector::DotProduct(X - A, Dir);
+			const FVector Ab = (B - A) - Dir * FVector::DotProduct(B - A, Dir);
+			const double L2 = FMath::Max(Ab.SizeSquared(), 1.0), L = FMath::Sqrt(L2);
+			const double T = FMath::Clamp(FVector::DotProduct(Ap, Ab) / L2, 0.0, 1.0);
+			if (T * L < 160000.0 * (0.2 + 0.3 * TownS) - EndSlackCm) { return 1.0e9; }
+			const FVector Perp = FVector::CrossProduct(Dir, Ab).GetSafeNormal();
+			const double Sgn = (Mix(HA ^ HB, 0x70u) & 1u) ? 1.0 : -1.0;
+			const double St = FMath::Sin(2.0 * PI * T);
+			double Off = 0.0, HW = 450.0;
+			switch (Style)
+			{
+			case EWayStyle::Grown: Off = 0.12 * St; HW = 300.0; break;
+			case EWayStyle::Paths: Off = 0.06 * St + 0.03 * FMath::Sin(6.0 * PI * T); HW = 75.0; break;
+			case EWayStyle::Lanes: Off = 0.05 * St + 0.025 * FMath::Sin(4.0 * PI * T); HW = 200.0; break;
+			default: break;
+			}
+			const double Alongs = FVector::DotProduct(Ap, Ab) / L, Lat = FVector::DotProduct(Ap, Perp);
+			return FVector2D(Alongs - T * L, Lat - Sgn * Off * L).Size() - HW;
+		}
+
+		double Clearance(const FVector2D& XY) const { return FMath::Min(TownClearance(XY), RoadClearance(DirOf(XY))); }
+
+		/** Whether a footprint in the town's plane (its centre, its X axis, W along it and D across) keeps Margin clear of
+		 *  every way. Sampled no more than 2 m apart, so a 1.5 m margin keeps every part of it off them. */
+		bool Clear(const FVector2D& C, const FVector2D& X, double W, double D, double Margin = 150.0) const
+		{
+			if (Clearance(C) >= HalfDiag(W, D) + Margin) { return true; }
+			const FVector2D Xn = X.GetSafeNormal(), Yn(-Xn.Y, Xn.X);
+			const int32 Nx = FMath::Max(2, FMath::CeilToInt(W / 200.0)), Ny = FMath::Max(2, FMath::CeilToInt(D / 200.0));
+			for (int32 i = 0; i <= Nx; ++i)
+			{
+				for (int32 j = 0; j <= Ny; ++j)
+				{
+					const FVector2D Q = C + Xn * ((i / (double)Nx - 0.5) * W) + Yn * ((j / (double)Ny - 0.5) * D);
+					if (Clearance(Q) < Margin) { return false; }
+				}
+			}
+			return true;
+		}
+	};
+
 	/** The grid towns of the industrial, modern and starfaring built peoples: blocks between streets, as the terrain
 	 *  material paves them. */
 	void BuildGridTown(const FPlanetTerrainParams& P, const FCivilization& Civ, const FTownSite& Town, TArray<FTransform>* OutByKind, int32 MaxBuildings)
@@ -442,6 +650,8 @@ namespace
 		const FTownFrame F(Town);
 		const FOwnGround Own(P, Town);
 		FLots Lots;
+		// Keeps off the ways the terrain paints (and 30 m further into the town along a road than the paint goes).
+		const FWays Ways(P, Civ, Town, 3000.0);
 		const double Pitch = 3600.0 + 1400.0 * Hash01(Mix(Town.Seed, 17u));		// 36 to 50 m lots
 		const int32 Half = FMath::CeilToInt(Town.RadiusCm / Pitch);
 		int32 Count = 0;
@@ -452,7 +662,7 @@ namespace
 		if (bPad)
 		{
 			const FPlanetTerrainSample S0 = SlonkTerrain::Sample(P, F.Up, 400.0);
-			if (!S0.bWater && Own.Owns(F.Up, HalfDiag(9000.0, 9000.0)))
+			if (!S0.bWater && Own.Owns(F.Up, HalfDiag(9000.0, 9000.0)) && Ways.Clear(FVector2D::ZeroVector, FVector2D(1.0, 0.0), 9000.0, 9000.0))
 			{
 				PlaceOnGround(OutByKind, EBuildingKind::Block, F.Up, F.GX, R, S0, 9000.0, 9000.0, 50.0, 150.0, true);
 				Lots.Take(FVector2D::ZeroVector, FVector2D(1.0, 0.0), 9000.0, 9000.0);
@@ -505,7 +715,8 @@ namespace
 				break;
 			}
 			// In the town's own cell, and clear of its neighbours (a works is broader than its lot).
-			if (!Own.Owns(Dir, HalfDiag(W, Dp)) || !Lots.Take(C2, FVector2D(1.0, 0.0), W, Dp)) { continue; }
+			// In the town's own cell, off the roads, and clear of its neighbours (a works is broader than its lot).
+			if (!Own.Owns(Dir, HalfDiag(W, Dp)) || !Ways.Clear(C2, FVector2D(1.0, 0.0), W, Dp) || !Lots.Take(C2, FVector2D(1.0, 0.0), W, Dp)) { continue; }
 			PlaceOnGround(OutByKind, Kind, Dir, F.GX, R, S, W, Dp, Hgt, 150.0, true);
 			++Count;
 		}
@@ -520,6 +731,8 @@ namespace
 		const FTownFrame F(Town);
 		const FOwnGround Own(P, Town);
 		FLots Lots;
+		// Keeps off the ways the terrain paints (and 30 m further into the town along a road than the paint goes).
+		const FWays Ways(P, Civ, Town, 3000.0);
 		const bool bStone = Civ.Age == ETechAge::Stone;
 		const bool bAdobe = Civ.WetMin < 0.f;
 		const double Pitch = bStone ? 1500.0 + 500.0 * Hash01(Mix(Town.Seed, 17u)) : 2000.0 + 600.0 * Hash01(Mix(Town.Seed, 17u));
@@ -552,13 +765,8 @@ namespace
 			if (D2 > 1.0) { continue; }
 			const float Density = (bStone ? 0.45f : 0.6f) * (float)(1.0 - D2);
 			if (Hash01(H) > Density) { continue; }
-			const FVector Dir = (Town.LocalCm + F.GX * Dx + F.GY * Dy).GetSafeNormal();
-			const FPlanetTerrainSample S = SlonkTerrain::Sample(P, Dir, 400.0);
-			if (!Buildable(S)) { continue; }
-			// Turned any way: there is no street to face.
 			const double Yaw = Hash01(Mix(H, 23u)) * 2.0 * PI;
-			const FVector Facing = F.GX * FMath::Cos(Yaw) + F.GY * FMath::Sin(Yaw);
-			const FVector2D C2(Dx, Dy), X2(FMath::Cos(Yaw), FMath::Sin(Yaw));
+			FVector2D C2(Dx, Dy), X2(FMath::Cos(Yaw), FMath::Sin(Yaw));
 			const float Pick = Hash01(Mix(H, 19u));
 			EBuildingKind Kind; double W, D, Hgt, Sink;
 			bool bFooting = false;
@@ -579,43 +787,64 @@ namespace
 				W = 700.0 + 600.0 * Hash01(Mix(H, 7u)); D = 600.0 + 500.0 * Hash01(Mix(H, 9u)); Hgt = 450.0 + 350.0 * Hash01(Mix(H, 13u)); Sink = 100.0;
 				bFooting = Kind != EBuildingKind::Hut;
 			}
+			// Turned any way where there is no lane to face. Near one, a house fronts onto it: turned along it, its door
+			// side (the mesh's -Y) toward it, set back far enough to keep its corners off it. A fire is wherever it is.
+			double LaneClr = 0.0;
+			FVector2D Away;
+			if (Kind != EBuildingKind::Fire && Ways.NearestLane(C2, LaneClr, Away) && LaneClr < Pitch * 0.6)
+			{
+				X2 = FVector2D(Away.Y, -Away.X);
+				const double Need = D * 0.5 + 250.0;
+				if (LaneClr < Need) { C2 += Away * (Need - LaneClr); }
+			}
+			if (!Ways.Clear(C2, X2, W, D)) { continue; }
+			const FVector Dir = Ways.DirOf(C2);
+			const FPlanetTerrainSample S = SlonkTerrain::Sample(P, Dir, 400.0);
+			if (!Buildable(S)) { continue; }
+			const FVector Facing = F.GX * X2.X + F.GY * X2.Y;
 			if (!Own.Owns(Dir, HalfDiag(W, D)) || !Lots.Take(C2, X2, W, D)) { continue; }
 			PlaceOnGround(OutByKind, Kind, Dir, Facing, R, S, W, D, Hgt, Sink, bFooting);
 			++Count;
 		}
 	}
 
-	/** A grown town: rings of pods round a heart of bulb towers, the ways between them curving, every building
-	 *  turned to face the heart. */
+	/** A grown town: rings of pods round a plaza and its bulb towers, ring ways between them curving side by side and
+	 *  spiral spokes out from the plaza (FWays), every building turned to face the heart. */
 	void BuildGrownTown(const FPlanetTerrainParams& P, const FCivilization& Civ, const FTownSite& Town, TArray<FTransform>* OutByKind, int32 MaxBuildings)
 	{
 		const double R = P.RadiusCm;
 		const FTownFrame F(Town);
 		const FOwnGround Own(P, Town);
 		FLots Lots;
-		const double Ring = 3200.0 + 1200.0 * Hash01(Mix(Town.Seed, 17u));
-		const int32 Rings = FMath::Max(1, FMath::FloorToInt(Town.RadiusCm / Ring));
+		// Keeps off the ways the terrain paints (and 30 m further into the town along a road than the paint goes).
+		const FWays Ways(P, Civ, Town, 3000.0);
+		const double Ring = Ways.Ring;
+		const int32 K0 = (int32)Ways.K0, Rings = (int32)Ways.Rings;
+		const double Plaza = Ways.PlazaCm();
 		int32 Count = 0;
-		// The heart: a bulb tower, and in a city a cluster of them, the tallest a hundred metres and more. Laid out
-		// first, so the pods keep clear of them.
+		// The heart: a bulb tower, and in a city a cluster of them, the tallest a hundred metres and more, all on the
+		// plaza inside the first ring way (a city's plaza takes in its first two rings). Laid out first, so the pods keep
+		// clear of them.
 		const int32 Hearts = Town.bCity ? 3 + (int32)(Hash01(Mix(Town.Seed, 29u)) * 4.f) : 1;
 		for (int32 h = 0; h < Hearts && Count < MaxBuildings; ++h)
 		{
 			const uint32 H = Mix(Town.Seed, 0xB0u + (uint32)h);
-			const double A = Hash01(Mix(H, 1u)) * 2.0 * PI, Rd = h == 0 ? 0.0 : Ring * 0.6 * (0.5 + Hash01(Mix(H, 2u)));
+			const double Hgt = (Town.bCity ? 6000.0 + 9000.0 * Town.Strength : 2500.0) * (0.6 + 0.4 * Hash01(Mix(H, 3u)));
+			const double W = FMath::Min(Hgt * (0.3 + 0.1 * Hash01(Mix(H, 4u))), 2.0 * (Plaza - 300.0));
+			if (W < 300.0) { continue; }
+			const double A = Hash01(Mix(H, 1u)) * 2.0 * PI;
+			const double Rd = h == 0 ? 0.0 : FMath::Min(Ring * 0.6 * (0.5 + Hash01(Mix(H, 2u))), FMath::Max(0.0, Plaza - W * 0.5 - 300.0));
 			const FVector Dir = (Town.LocalCm + (F.GX * FMath::Cos(A) + F.GY * FMath::Sin(A)) * Rd).GetSafeNormal();
 			const FPlanetTerrainSample S = SlonkTerrain::Sample(P, Dir, 400.0);
 			if (!Buildable(S)) { continue; }
-			const double Hgt = (Town.bCity ? 6000.0 + 9000.0 * Town.Strength : 2500.0) * (0.6 + 0.4 * Hash01(Mix(H, 3u)));
-			const double W = Hgt * (0.3 + 0.1 * Hash01(Mix(H, 4u)));
-			if (!Own.Owns(Dir, HalfDiag(W, W)) || !Lots.Take(FVector2D(FMath::Cos(A), FMath::Sin(A)) * Rd, FVector2D(1.0, 0.0), W, W, 400.0)) { continue; }
+			if (!Own.Owns(Dir, HalfDiag(W, W)) || !Ways.Clear(FVector2D(FMath::Cos(A), FMath::Sin(A)) * Rd, FVector2D(1.0, 0.0), W, W) || !Lots.Take(FVector2D(FMath::Cos(A), FMath::Sin(A)) * Rd, FVector2D(1.0, 0.0), W, W, 400.0)) { continue; }
 			PlaceOnGround(OutByKind, EBuildingKind::BulbTower, Dir, F.GX, R, S, W, W, Hgt, 200.0, false);
 			++Count;
 		}
 		// The rings wander in and out together (one lobed shape, scaled ring by ring), so the ways between them curve
-		// side by side and never cross; each pod strays a little from its ring.
-		const double Lobes = Hash01(Mix(Town.Seed, 0x50u)) * 2.0 * PI;
-		for (int32 k = 1; k <= Rings && Count < MaxBuildings; ++k)
+		// side by side and never cross; each pod strays a little from its ring, and none stands on a way.
+		const double Lobes = Ways.Lobes;
+		for (int32 k = K0; k <= Rings && Count < MaxBuildings; ++k)
 		{
 			const double Rk = k * Ring;
 			const int32 N = FMath::Max(6, FMath::FloorToInt(2.0 * PI * Rk / 2200.0));
@@ -637,7 +866,7 @@ namespace
 				const bool bDome = Pick < 0.18f;
 				const double Wd = bDome ? W * 1.5 : W, Dd = bDome ? W * 1.5 : W * (0.8 + 0.4 * Hash01(Mix(H, 9u)));
 				const double Hgt = bDome ? W * 0.6 : W * (0.7 + 0.6 * Hash01(Mix(H, 13u)));
-				if (!Own.Owns(Dir, HalfDiag(Wd, Dd)) || !Lots.Take(C2, FVector2D(FMath::Cos(A), FMath::Sin(A)), Wd, Dd)) { continue; }
+				if (!Own.Owns(Dir, HalfDiag(Wd, Dd)) || !Ways.Clear(C2, FVector2D(FMath::Cos(A), FMath::Sin(A)), Wd, Dd) || !Lots.Take(C2, FVector2D(FMath::Cos(A), FMath::Sin(A)), Wd, Dd)) { continue; }
 				PlaceOnGround(OutByKind, bDome ? EBuildingKind::Dome : EBuildingKind::Pod, Dir, Out, R, S, Wd, Dd, Hgt, 150.0, false);
 				++Count;
 			}
@@ -800,6 +1029,13 @@ namespace
 			}
 		}
 	}
+}
+
+double SlonkCities::WayClearanceCm(const FPlanetTerrainParams& P, const FCivilization& Civ, const FTownSite& Town, const FVector& Dir)
+{
+	// As the material paints them, without the builder's slack at a road's end.
+	const FWays Ways(P, Civ, Town, 0.0);
+	return Ways.Clearance(Ways.Planar(Dir));
 }
 
 void SlonkCities::BuildTown(const FPlanetTerrainParams& P, const FCivilization& Civ, const FTownSite& Town, TArray<FTransform>* OutByKind, int32 MaxBuildings)
