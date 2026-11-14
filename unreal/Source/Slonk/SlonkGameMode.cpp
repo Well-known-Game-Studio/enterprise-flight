@@ -516,7 +516,11 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 	const float ApBoost = FMath::Lerp(FMath::Max(SkyLuminanceBoost * 0.5f, 1.f), 1.f, Blend);
 	// The captured sky is full daylight wherever the sky light sits, so in orbit it floods everything with
 	// ambient (no dark sides, no visible sun glint). Fade it out with altitude; a trace stays as planetshine.
-	ApplySkyLightIntensity(SkyLightIntensityNearPlanet * FMath::Lerp(1.f, 0.04f, Blend));
+	// Under an unbroken deck the sun's light reaches the ground only through the deck, as the sky light: it rises
+	// as the world's sky is a deck (Venus, a hazy moon); broken and scattered skies, the ocean worlds' marine layer
+	// among them, keep the clear sky's, the sun coming through their gaps.
+	const float Overcast = S.bClouds ? FMath::SmoothStep(0.6f, 1.f, S.CloudDeck) * FMath::SmoothStep(0.6f, 0.9f, S.CloudCoverage) : 0.f;
+	ApplySkyLightIntensity(FMath::Lerp(SkyLightIntensityNearPlanet, SkyLightIntensityOvercast, Overcast) * FMath::Lerp(1.f, 0.04f, Blend));
 	// Daylight: inside the atmosphere with the sun up, the sky outshines the star field, so hide it (the
 	// sprites are sized for space and would burn through the blue).
 	if (APawn* ViewPawn = UGameplayStatics::GetPlayerPawn(this, 0))
