@@ -193,12 +193,17 @@ float crack = (1.0 - abs(val[3] - 0.5) * 2.0) * wgt[3];
 // Jittered dots: one hashed disc per lattice cell of size cellCm, present in a fraction `density` of the cells,
 // centred anywhere in the middle of its cell with a hashed radius, so no lattice shows. Returns coverage 0..1.
 // (A function would need a separate custom node; the loop runs twice inline, scrub then stones.)
+// The scrub dots are copied on the CPU: SlonkScatter::ScrubDotAt and ScrubZoneAt (TerrainScatter) stand a bush on each
+// one. A change to their cell count, salt, gate, centre or radius here, or to the scrub zone below, goes there too.
+// Each lattice has a whole number of cells to the noise period (about 450 cm and 180 cm a cell) and wraps its index
+// by that count, so it is periodic: a chunk whose origin has wrapped draws the same dots as its neighbour.
 float dotsA = 0, dotsB = 0;
 [unroll] for (int kd = 0; kd < 2; kd++)
 {
-    float cellCm = kd == 0 ? 450.0 : 180.0;
+    int nc = kd == 0 ? 2330 : 5825;
+    float cellCm = NoisePeriodCm / (float)nc;
     float3 q = p / cellCm; float3 fl = floor(q); float3 fr = q - fl;
-    int3 c = (int3)fl & ((int)(NoisePeriodCm / cellCm) - 1);
+    int3 c = ((int3)fl % nc + nc) % nc;
     uint hh = ((uint)c.x * 73856093u) ^ ((uint)c.y * 19349663u) ^ ((uint)c.z * 83492791u) ^ ((uint)(kd + 31) * 2654435761u);
     hh = (hh ^ (hh >> 13)) * 0x5bd1e995u; hh ^= hh >> 15;
     float gate = (float)(hh & 0xffu) / 255.0;

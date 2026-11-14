@@ -158,6 +158,50 @@ namespace SlonkTerrain
 	double Noise3(const FVector& P) { return Perlin(P); }
 	double Fbm(const FVector& P, int32 Octaves, double Lacunarity, double Gain) { return FbmN(P, Octaves, Lacunarity, Gain); }
 
+	FVector CubeDir(int32 Face, double U, double V)
+	{
+		// Tangent warp: plain cube projection squeezes the corners of a face to half size.
+		const double S = FMath::Tan(U * UE_DOUBLE_PI * 0.25);
+		const double T = FMath::Tan(V * UE_DOUBLE_PI * 0.25);
+		FVector D;
+		switch (Face)
+		{
+		case 0: D = FVector(1.0, S, T); break;
+		case 1: D = FVector(-1.0, -S, T); break;
+		case 2: D = FVector(-S, 1.0, T); break;
+		case 3: D = FVector(S, -1.0, T); break;
+		case 4: D = FVector(-T, S, 1.0); break;
+		default: D = FVector(T, S, -1.0); break;
+		}
+		return D.GetSafeNormal();
+	}
+
+	bool FaceUV(const FVector& Dir, int32& OutFace, double& OutU, double& OutV)
+	{
+		const FVector A = Dir.GetAbs();
+		double S, T;
+		if (A.X >= A.Y && A.X >= A.Z)
+		{
+			if (A.X <= 0.0) { return false; }
+			OutFace = Dir.X > 0.0 ? 0 : 1;
+			S = Dir.Y / Dir.X; T = Dir.X > 0.0 ? Dir.Z / Dir.X : -Dir.Z / Dir.X;
+		}
+		else if (A.Y >= A.Z)
+		{
+			OutFace = Dir.Y > 0.0 ? 2 : 3;
+			S = -Dir.X / Dir.Y; T = Dir.Y > 0.0 ? Dir.Z / Dir.Y : -Dir.Z / Dir.Y;
+		}
+		else
+		{
+			OutFace = Dir.Z > 0.0 ? 4 : 5;
+			T = -Dir.X / Dir.Z; S = Dir.Z > 0.0 ? Dir.Y / Dir.Z : -Dir.Y / Dir.Z;
+		}
+		OutU = FMath::Atan(S) * 4.0 / UE_DOUBLE_PI;
+		OutV = FMath::Atan(T) * 4.0 / UE_DOUBLE_PI;
+		// The mapping is checked rather than trusted: a sign slip here would put feet on the wrong chunk.
+		return FVector::DotProduct(CubeDir(OutFace, OutU, OutV), Dir.GetSafeNormal()) > 0.999999;
+	}
+
 	FPlanetTerrainSample SampleStructure(const FPlanetTerrainParams& P, const FVector& Dir, double MinWavelengthCm)
 	{
 		FPlanetTerrainSample Out;

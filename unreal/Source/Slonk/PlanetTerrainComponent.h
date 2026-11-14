@@ -14,7 +14,7 @@
 #include "PlanetTerrainComponent.generated.h"
 
 class UDynamicMeshComponent;
-class URockInstancesComponent;
+class UScatterInstancesComponent;
 class UMaterialInterface;
 class UMaterialInstanceDynamic;
 namespace UE::Geometry { class FDynamicMesh3; }
@@ -58,38 +58,46 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Terrain", meta = (ClampMin = "1", ClampMax = "32"))
 	int32 MaxUploadsPerUpdate = 6;
 
-	/** Chunks with edges shorter than this cast their rocks' shadows. */
+	/** Chunks with edges shorter than this cast their rocks' and bushes' shadows; trees cast them from chunks twice
+	 *  this size, and grass never does. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Terrain|Scatter")
 	float ScatterShadowEdgeCm = 8000.f;
 
-	/** Rocks within this of the pawn are solid to the crew's boots. */
+	/** Rocks and tree trunks within this of the pawn are solid to the crew's boots. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Terrain|Scatter")
 	float ScatterSolidReachCm = 4000.f;
+
+	/** Plants stop swaying in the wind beyond this, cm: their shadows and motion cost nothing further out. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Terrain|Scatter")
+	float PlantWindDistanceCm = 30000.f;
 
 	/** Set the field, material and radius; clears any built chunks. */
 	void Configure(const FPlanetTerrainParams& InParams, UMaterialInterface* InMaterial);
 
-	/** The rocks on the ground (TerrainScatter.h): on or off, how many, and whether there are towns to keep clear.
-	 *  A change rebuilds the chunks fine enough to carry rocks, in place. */
-	void SetScatterOptions(bool bEnabled, float Density, bool bCities);
+	/** The rocks and plants on the ground (TerrainScatter.h): on or off, how many, whether there are towns to keep
+	 *  clear, and how much grows. A change rebuilds the chunks fine enough to carry any, in place. */
+	void SetScatterOptions(bool bEnabled, float Density, bool bCities, float Life);
 	/** Makes the rocks round a world position solid for a while, wherever the pawn is: a transporter's destination,
 	 *  so the arrival trace stands the person on a boulder rather than inside it. */
 	void PinSolidRocks(const FVector& WorldPos, double Seconds);
 	const FScatterSettings& GetScatterSettings() const { return Scatter; }
-	/** Rocks on the chunks showing, rocks with collision round the pawn, and the instance components made. */
+	/** Rocks and plants on the chunks showing, the rocks and trunks with collision round the pawn, and the instance
+	 *  components made. */
 	int32 GetVisibleRockCount() const { return VisibleRocks; }
+	int32 GetVisiblePlantCount() const { return VisiblePlants; }
 	int32 GetSolidRockCount() const { return SolidRocks; }
-	int32 GetRockComponentCount() const { return RockPool.Num(); }
+	int32 GetScatterSetCount() const { return SetPool.Num(); }
 	/** Traces the boots' channel down through the solid rocks nearest the pawn, up to MaxRocks of them: how many
 	 *  were tried, and in OutHits how many the trace found solid. A check that what is drawn is what is stood on. */
 	int32 CheckSolidRocks(int32 MaxRocks, int32& OutHits) const;
 
 	/** The face and the chunk (X, Y) at a depth under a planet-local direction. */
 	static bool ChunkAt(const FVector& Dir, int32 Depth, int32& OutFace, int64& OutX, int64& OutY);
-	/** The rocks a chunk carries, built as a chunk build builds them, as planet-local transforms by kind; and the
-	 *  drawn height (cm above sea level) at each rock's direction, from the chunk's own triangles. For tests. */
+	/** The rocks and plants a chunk carries, built as a chunk build builds them, as planet-local transforms by mesh;
+	 *  the drawn height (cm above sea level) at each one's direction, from the chunk's own triangles; and the chunk's
+	 *  origin, planet-local. For tests. */
 	static void BuildChunkScatterForTest(const FPlanetTerrainParams& P, const FScatterSettings& S, int32 Face, int32 Depth, int64 X, int64 Y, int32 Steps,
-		TArray<FTransform> (&OutPlanetLocal)[SlonkGroundRocks::NumKinds], TArray<double> (&OutDrawnHeightCm)[SlonkGroundRocks::NumKinds]);
+		TArray<FTransform> (&OutPlanetLocal)[SlonkScatter::NumMeshes], TArray<double> (&OutDrawnHeightCm)[SlonkScatter::NumMeshes], FVector* OutOrigin = nullptr);
 
 	/** Pick LOD for this view (world space), launch builds, swap finished meshes in. Call a few times a second. */
 	/** Refine for the camera and for the pawn (the ground it stands on matters a chase camera's length away). */
@@ -163,11 +171,13 @@ private:
 		/** The grid heights of the mesh this node shows (see FBuildResult), for ground queries. */
 		TArray<float> Heights;
 		int32 HeightSteps = 0;
-		/** The chunk's rocks by kind, attached to its mesh and shown and hidden with it. */
-		URockInstancesComponent* Rocks[SlonkGroundRocks::NumKinds] = {};
+		/** The chunk's rocks and plants by mesh, attached to its mesh and shown and hidden with it. */
+		UScatterInstancesComponent* Sets[SlonkScatter::NumMeshes] = {};
 		int32 RockCount = 0;
-		/** The rocks of them big enough to stand on, chunk-relative, for the collision round the pawn. */
-		TArray<FTransform> Solids[SlonkGroundRocks::NumKinds];
+		int32 PlantCount = 0;
+		/** The rocks and trees of them big enough to stand on or walk into, chunk-relative, for the collision round
+		 *  the pawn. */
+		TArray<FTransform> Solids[SlonkScatter::NumMeshes];
 	};
 
 	void ResetTree();
@@ -186,13 +196,14 @@ private:
 	/** The chunk's mesh and its rocks together. */
 	void SetChunkVisible(FNode& N, bool bShow);
 	UDynamicMeshComponent* AcquireMesh();
-	void ApplyRocks(FNode& N, SlonkScatter::FChunkScatter& Sc);
-	void ReleaseRocks(FNode& N);
-	URockInstancesComponent* AcquireRocks(int32 Kind);
+	void ApplyScatter(FNode& N, SlonkScatter::FChunkScatter& Sc);
+	void ReleaseScatter(FNode& N);
+	/** An instanced set for one scatter mesh (SlonkScatter's index: the rock shapes, then the plants). */
+	UScatterInstancesComponent* AcquireSet(int32 Mesh);
 	/** Collision for the rocks round the pawn: rebuilt when it has walked a few metres or the chunks there changed. */
 	void UpdateSolidRocks();
 	void ClearSolidRocks();
-	void RebuildRockChunks();
+	void RebuildScatterChunks();
 	void MakeRoots();
 	void ChunkFrame(int32 Face, int32 Depth, int64 X, int64 Y, FVector& OutCentre, double& OutEdge) const;
 	static FVector CubeDir(int32 Face, double U, double V);
@@ -209,10 +220,11 @@ private:
 	UPROPERTY() TArray<TObjectPtr<UDynamicMeshComponent>> Pool;
 	TArray<UDynamicMeshComponent*> FreeMeshes;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> RockMID;
-	UPROPERTY() TArray<TObjectPtr<URockInstancesComponent>> RockPool;
-	TArray<URockInstancesComponent*> FreeRocks[SlonkGroundRocks::NumKinds];
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> FoliageMID;
+	UPROPERTY() TArray<TObjectPtr<UScatterInstancesComponent>> SetPool;
+	TArray<UScatterInstancesComponent*> FreeSets[SlonkScatter::NumMeshes];
 	/** Collision-only copies of the rocks round the pawn, one per kind, planet-local. */
-	UPROPERTY() TArray<TObjectPtr<URockInstancesComponent>> SolidSets;
+	UPROPERTY() TArray<TObjectPtr<UScatterInstancesComponent>> SolidSets;
 	uint64 SolidSignature = 0;
 	FVector SolidCentre = FVector(1.0e30, 0.0, 0.0);
 	FVector SolidLastPawn = FVector::ZeroVector;
@@ -220,6 +232,7 @@ private:
 	FVector SolidPinLocal = FVector::ZeroVector;
 	double SolidPinUntil = -1.0;
 	int32 VisibleRocks = 0;
+	int32 VisiblePlants = 0;
 	int32 SolidRocks = 0;
 	TUniquePtr<FNode> Roots[6];
 	struct FRequest { FNode* Node; double Priority; };

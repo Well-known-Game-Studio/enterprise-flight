@@ -1,9 +1,9 @@
-#include "RockInstancesComponent.h"
+#include "ScatterInstancesComponent.h"
 #include "Engine/StaticMesh.h"
 
-void URockInstancesComponent::SetRocks(const TArray<FTransform>& Transforms, TConstArrayView<float> CustomData)
+void UScatterInstancesComponent::SetPieces(const TArray<FTransform>& Transforms, TConstArrayView<float> CustomData)
 {
-	ClearRocks();
+	ClearPieces();
 	if (Transforms.Num() == 0) { return; }
 	const FBox Mesh = GetStaticMesh() ? GetStaticMesh()->GetBounds().GetBox() : FBox(FVector(-50.0), FVector(50.0));
 	for (const FTransform& T : Transforms) { LocalBox += Mesh.TransformBy(T); }
@@ -15,13 +15,13 @@ void URockInstancesComponent::SetRocks(const TArray<FTransform>& Transforms, TCo
 	UpdateBounds();
 }
 
-void URockInstancesComponent::ClearRocks()
+void UScatterInstancesComponent::ClearPieces()
 {
 	LocalBox.Init();
 	if (GetInstanceCount() > 0) { ClearInstances(); }
 }
 
-FBoxSphereBounds URockInstancesComponent::CalcBounds(const FTransform& LocalToWorld) const
+FBoxSphereBounds UScatterInstancesComponent::CalcBounds(const FTransform& LocalToWorld) const
 {
 	if (!LocalBox.IsValid) { return Super::CalcBounds(LocalToWorld); }
 	FBoxSphereBounds B(LocalBox.TransformBy(LocalToWorld));

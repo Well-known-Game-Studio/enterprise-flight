@@ -976,13 +976,26 @@ void APlanetBody::SetNightLights(float Intensity)
 	{
 		Terrain->SetScalarParameter(TEXT("NightLightIntensity"), Intensity);
 		// A colony founded (or a world gone dark) brings its towns or takes them away; the rocks follow.
-		Terrain->SetScatterOptions(Terrain->GetScatterSettings().bEnabled, Terrain->GetScatterSettings().Density, HasCities());
+		Terrain->SetScatterOptions(Terrain->GetScatterSettings().bEnabled, Terrain->GetScatterSettings().Density, HasCities(), GroundLife());
 	}
 }
 
 bool APlanetBody::HasCities() const
 {
 	return Style.NightLightIntensity > 0.f && !IsGiant() && Style.ReliefFraction > 0.f && CityReachKm > 0.f;
+}
+
+float APlanetBody::GroundLife() const
+{
+	// Nothing grows without air, whatever the kind: a hand-tuned style can take a world's atmosphere away.
+	if (!Style.bAtmosphere) { return 0.f; }
+	switch (ResolvedArchetype)
+	{
+	case EPlanetArchetype::Terrestrial:
+	case EPlanetArchetype::Ocean: return 1.f;
+	case EPlanetArchetype::Desert: return 0.25f;
+	default: return 0.f;
+	}
 }
 
 void APlanetBody::UpdateNearCollision(const FVector& ViewLocal, bool bForce)
@@ -1285,7 +1298,7 @@ void APlanetBody::EnsureTerrain()
 	}
 	const FPlanetTerrainParams P = MakeTerrainParams();
 	// The rocks keep off the streets of a world with towns; set before the chunks are built.
-	Terrain->SetScatterOptions(Terrain->GetScatterSettings().bEnabled, Terrain->GetScatterSettings().Density, HasCities());
+	Terrain->SetScatterOptions(Terrain->GetScatterSettings().bEnabled, Terrain->GetScatterSettings().Density, HasCities(), GroundLife());
 	if (!bTerrainActive || P != TerrainParams)
 	{
 		TerrainParams = P;

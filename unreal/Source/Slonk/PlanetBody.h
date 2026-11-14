@@ -272,6 +272,9 @@ public:
 
 	/** Whether this world has settlements (lit at night, built by day). */
 	bool HasCities() const;
+	/** How much grows on the ground, 0..1 (TerrainScatter.h): grass, bushes and forest on an Earth-like or ocean
+	 *  world, a little scrub on a desert, nothing on the dead ones. */
+	float GroundLife() const;
 	/** The night-side lights set from outside (a colony founded, a world struck): the style is kept from here on. */
 	void SetNightLights(float Intensity);
 	/** Reach (km) within which towns are built around the view; 0 switches the buildings off. */

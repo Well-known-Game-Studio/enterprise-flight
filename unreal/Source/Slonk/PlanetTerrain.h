@@ -130,4 +130,10 @@ namespace SlonkTerrain
 	/** Gradient noise in doubles on an integer lattice: stable at any frequency the sphere can carry. */
 	SLONK_API double Noise3(const FVector& P);
 	SLONK_API double Fbm(const FVector& P, int32 Octaves, double Lacunarity = 2.0, double Gain = 0.5);
+
+	/** The cube-sphere the terrain's quadtree lies on: the unit direction at (U, V) in -1..1 on a face, tangent-warped
+	 *  so equal steps are near-equal angles (chunks are the same size at a face's middle and its corners). */
+	SLONK_API FVector CubeDir(int32 Face, double U, double V);
+	/** The inverse of CubeDir: which face a direction falls on and its (U, V) there; false if the round trip fails. */
+	SLONK_API bool FaceUV(const FVector& Dir, int32& OutFace, double& OutU, double& OutV);
 }

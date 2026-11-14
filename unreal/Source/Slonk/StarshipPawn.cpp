@@ -2157,15 +2157,15 @@ void AStarshipPawn::ProcessDebugCommand()
 	}
 	else if (Op == TEXT("terrain") && Movement && ArgStr(1) == TEXT("rocks"))
 	{
-		// terrain rocks [on|off|density <x>|check]: the rocks on the ground of the world below, and how many are about;
-		// check traces the boots' channel through the solid ones nearest the pawn.
+		// terrain rocks [on|off|density <x>|check]: the rocks and plants on the ground of the world below, and how many
+		// are about; check traces the boots' channel through the solid rocks and trunks nearest the pawn.
 		APlanetBody* Planet = Cast<APlanetBody>(Movement->GroundBody.Get());
 		if (UPlanetTerrainComponent* T = Planet ? Planet->Terrain.Get() : nullptr)
 		{
 			const FScatterSettings Was = T->GetScatterSettings();
 			const FString Mode = ArgStr(2);
-			if (Mode == TEXT("on") || Mode == TEXT("off")) { T->SetScatterOptions(Mode == TEXT("on"), Was.Density, Was.bCities); }
-			else if (Mode == TEXT("density")) { T->SetScatterOptions(true, Arg(3, 1.f), Was.bCities); }
+			if (Mode == TEXT("on") || Mode == TEXT("off")) { T->SetScatterOptions(Mode == TEXT("on"), Was.Density, Was.bCities, Was.Life); }
+			else if (Mode == TEXT("density")) { T->SetScatterOptions(true, Arg(3, 1.f), Was.bCities, Was.Life); }
 			else if (Mode == TEXT("check"))
 			{
 				int32 Hits = 0;
@@ -2173,8 +2173,8 @@ void AStarshipPawn::ProcessDebugCommand()
 				UE_LOG(LogTemp, Log, TEXT("Rock check: %d of the %d solid rocks nearest you stop the boots' trace"), Hits, Tried);
 			}
 			const FScatterSettings& Now = T->GetScatterSettings();
-			const FString Line = FString::Printf(TEXT("Rocks on %s: %s, density %.2f%s; %d on the chunks showing, %d solid round you, %d instance sets"), *Planet->GetDisplayName(),
-				Now.bEnabled ? TEXT("on") : TEXT("off"), Now.Density, Now.bCities ? TEXT(", clear of the towns") : TEXT(""), T->GetVisibleRockCount(), T->GetSolidRockCount(), T->GetRockComponentCount());
+			const FString Line = FString::Printf(TEXT("Rocks and plants on %s: %s, density %.2f, life %.2f%s; %d rocks and %d plants on the chunks showing, %d solid round you, %d instance sets"), *Planet->GetDisplayName(),
+				Now.bEnabled ? TEXT("on") : TEXT("off"), Now.Density, Now.Life, Now.bCities ? TEXT(", clear of the towns") : TEXT(""), T->GetVisibleRockCount(), T->GetVisiblePlantCount(), T->GetSolidRockCount(), T->GetScatterSetCount());
 			UE_LOG(LogTemp, Log, TEXT("%s"), *Line);
 			ScreenMessage(Line, FColor::Cyan);
 		}
@@ -2511,7 +2511,7 @@ void AStarshipPawn::ProcessDebugCommand()
 			TEXT("ship impact [status|raise [<world>]|deflect|shatter|hit]  (a rock on a course for an inhabited world; the dev ops for testing)"),
 			TEXT("ship camera [chase|bridge|cinematic|front|port|starboard|top|bottom] | zoom <x> | look <yaw> <pitch> [s]"),
 			TEXT("ship warpvis [classic|real] | cscale <0..1> | systems | shipwarp [km] [far]"),
-			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mountain|coast|river|linea|land> <alt m> [across|sun|away|along|giant] | terrain rocks [on|off|density <x>|check]"),
+			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mountain|coast|river|linea|green|land> <alt m> [across|sun|away|along|giant] | terrain rocks [on|off|density <x>|check]"),
 			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km]"),
 			TEXT("ship shuttle  (launch the shuttlecraft; aboard it, dock when the bay is within 500 m) | ship takeoff"),
 			TEXT("ship scan [stop]  (sensors on the locked / nav target; landed: survey the ground) | ship science [reset]"),

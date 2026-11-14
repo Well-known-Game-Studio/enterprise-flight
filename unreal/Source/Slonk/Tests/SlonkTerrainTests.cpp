@@ -1,5 +1,5 @@
-// Slonk - automation tests for the rocks on the ground (TerrainScatter.h), built the way a chunk build builds them,
-// without a world. Under "Slonk.Terrain."; tools/run_tests.sh runs them headless.
+// Slonk - automation tests for the rocks and plants on the ground (TerrainScatter.h), built the way a chunk build
+// builds them, without a world. Under "Slonk.Terrain."; tools/run_tests.sh runs them headless.
 
 #include "Misc/AutomationTest.h"
 #include "../PlanetTerrain.h"
@@ -54,24 +54,57 @@ namespace
 		return Out;
 	}
 
-	/** The coarsest depth whose chunks carry boulders. */
-	int32 BoulderDepth(const FPlanetTerrainParams& P)
+	/** The coarsest depth whose chunks carry a class that rides on chunks up to EdgeCm across. */
+	int32 DepthFor(const FPlanetTerrainParams& P, double EdgeCm)
 	{
-		return FMath::CeilToInt32(FMath::Log2(P.RadiusCm * UE_DOUBLE_HALF_PI / SlonkScatter::MaxChunkEdgeCm()));
+		return FMath::CeilToInt32(FMath::Log2(P.RadiusCm * UE_DOUBLE_HALF_PI / EdgeCm));
 	}
+	/** The coarsest depth whose chunks carry boulders (their class rides on chunks to 260 m). */
+	int32 BoulderDepth(const FPlanetTerrainParams& P) { return DepthFor(P, 26000.0); }
 
 	struct FRocks
 	{
-		TArray<FTransform> Xf[SlonkGroundRocks::NumKinds];
-		TArray<double> Drawn[SlonkGroundRocks::NumKinds];
+		TArray<FTransform> Xf[SlonkScatter::NumMeshes];
+		TArray<double> Drawn[SlonkScatter::NumMeshes];
+		FVector Origin = FVector::ZeroVector;
 		int32 Num() const { int32 N = 0; for (const TArray<FTransform>& T : Xf) { N += T.Num(); } return N; }
+		int32 NumPlants() const { int32 N = 0; for (int32 M = SlonkScatter::FirstPlant; M < SlonkScatter::NumMeshes; ++M) { N += Xf[M].Num(); } return N; }
 	};
-	FRocks Build(const FPlanetTerrainParams& P, const FScatterSettings& S, int32 Face, int32 Depth, int64 X, int64 Y)
+	/** A chunk's scatter at the terrain's default grid (64 steps a side), or at another the component allows. */
+	FRocks Build(const FPlanetTerrainParams& P, const FScatterSettings& S, int32 Face, int32 Depth, int64 X, int64 Y, int32 Steps = 64)
 	{
 		FRocks R;
-		UPlanetTerrainComponent::BuildChunkScatterForTest(P, S, Face, Depth, X, Y, 64, R.Xf, R.Drawn);
+		UPlanetTerrainComponent::BuildChunkScatterForTest(P, S, Face, Depth, X, Y, Steps, R.Xf, R.Drawn, &R.Origin);
 		return R;
 	}
+
+	/** Living settings: grass, bushes and forest as on an Earth-like world. */
+	FScatterSettings Living()
+	{
+		FScatterSettings S;
+		S.Life = 1.f;
+		return S;
+	}
+
+	/** Moist lowlands, level enough for the meadows and the woods, wettest first. */
+	TArray<FVector> GreenSpots(const FPlanetTerrainParams& P, int32 Count)
+	{
+		struct FSpot { FVector Dir; double Score; };
+		TArray<FSpot> Spots;
+		const int32 N = 3000;
+		for (int32 i = 0; i < N; ++i)
+		{
+			const FVector Dir = Fibonacci(i, N);
+			const FPlanetTerrainSample S = SlonkTerrain::Sample(P, Dir, 200.0);
+			if (S.bWater || S.Ice > 0.05f || S.Slope > 0.2f || S.HeightCm > 2.0e5 || S.Rock > 0.3f || FMath::Abs(Dir.Z) > 0.6) { continue; }
+			Spots.Add({ Dir, (double)S.Wet });
+		}
+		Spots.Sort([](const FSpot& A, const FSpot& B) { return A.Score > B.Score; });
+		TArray<FVector> Out;
+		for (int32 i = 0; i < Spots.Num() && Out.Num() < Count; ++i) { Out.Add(Spots[i].Dir); }
+		return Out;
+	}
+	constexpr int32 TreeMeshes[2] = { SlonkScatter::PlantMesh(EPlant::Broadleaf), SlonkScatter::PlantMesh(EPlant::Conifer) };
 	/** Boulders only: wider than any stone. */
 	int32 CountBoulders(const FRocks& R)
 	{
@@ -100,7 +133,7 @@ bool FSlonkTerrainRocksNestTest::RunTest(const FString& Parameters)
 		FRocks Kids[4];
 		for (int32 c = 0; c < 4; ++c) { Kids[c] = Build(P, S, Face, D + 1, X * 2 + (c & 1), Y * 2 + (c >> 1)); }
 		int32 Boulders = 0, Matched = 0;
-		for (int32 K = 0; K < SlonkGroundRocks::NumKinds; ++K)
+		for (int32 K = 0; K < SlonkScatter::NumMeshes; ++K)
 		{
 			for (const FTransform& A : Parent.Xf[K])
 			{
@@ -150,7 +183,7 @@ bool FSlonkTerrainRocksGroundedTest::RunTest(const FString& Parameters)
 			if (!UPlanetTerrainComponent::ChunkAt(Dir, D, Face, X, Y)) { continue; }
 			const FRocks R = Build(P, S, Face, D, X, Y);
 			const FRocks Again = Build(P, S, Face, D, X, Y);
-			for (int32 K = 0; K < SlonkGroundRocks::NumKinds; ++K)
+			for (int32 K = 0; K < SlonkScatter::NumMeshes; ++K)
 			{
 				TestEqual(TEXT("the same chunk carries the same rocks"), Again.Xf[K].Num(), R.Xf[K].Num());
 				for (int32 i = 0; i < R.Xf[K].Num() && i < Again.Xf[K].Num(); ++i)
@@ -224,6 +257,200 @@ bool FSlonkTerrainRocksTownsTest::RunTest(const FString& Parameters)
 	AddInfo(FString::Printf(TEXT("town of radius %.0f m: %d rocks inside it, %d without the rule"), Town.RadiusCm / 100.0, WithRule, WithoutRule));
 	TestTrue(TEXT("the same ground would carry rocks without the rule"), WithoutRule > 0);
 	TestEqual(TEXT("no rocks inside the town"), WithRule, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkTerrainPlantsLifeTest, "Slonk.Terrain.PlantsLife", SLONK_TEST_FLAGS)
+bool FSlonkTerrainPlantsLifeTest::RunTest(const FString& Parameters)
+{
+	// The same moist lowland chunks grow grass, bushes and trees on a living world, and nothing on a dead one or one
+	// without air.
+	const FPlanetTerrainParams P = RockWorld();
+	FPlanetTerrainParams Airless = P;
+	Airless.bAirless = true;
+	FScatterSettings Dead;
+	const TArray<FVector> Spots = GreenSpots(P, 4);
+	if (!TestTrue(TEXT("found moist lowland"), Spots.Num() > 0)) { return true; }
+	int32 Grown = 0, OnDead = 0, OnAirless = 0, Grass = 0, Shrubs = 0, Trees = 0;
+	for (const FVector& Dir : Spots)
+	{
+		// A tree chunk, a bush chunk and a grass chunk over the spot.
+		for (const int32 D : { DepthFor(P, 31000.0), DepthFor(P, 8000.0), DepthFor(P, 1700.0) })
+		{
+			int32 Face; int64 X, Y;
+			if (!UPlanetTerrainComponent::ChunkAt(Dir, D, Face, X, Y)) { continue; }
+			const FRocks R = Build(P, Living(), Face, D, X, Y);
+			Grown += R.NumPlants();
+			Grass += R.Xf[SlonkScatter::PlantMesh(EPlant::Grass)].Num();
+			Shrubs += R.Xf[SlonkScatter::PlantMesh(EPlant::Shrub)].Num();
+			for (const int32 T : TreeMeshes) { Trees += R.Xf[T].Num(); }
+			OnDead += Build(P, Dead, Face, D, X, Y).NumPlants();
+			OnAirless += Build(Airless, Living(), Face, D, X, Y).NumPlants();
+		}
+	}
+	AddInfo(FString::Printf(TEXT("%d plants on a living world (%d grass, %d bushes, %d trees); %d with no life, %d without air"), Grown, Grass, Shrubs, Trees, OnDead, OnAirless));
+	TestTrue(TEXT("grass grows on the moist lowland"), Grass > 0);
+	TestTrue(TEXT("bushes grow there"), Shrubs > 0);
+	TestTrue(TEXT("and trees"), Trees > 0);
+	TestEqual(TEXT("nothing grows on a dead world"), OnDead, 0);
+	TestEqual(TEXT("nothing grows without air"), OnAirless, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkTerrainTreesNestTest, "Slonk.Terrain.TreesNest", SLONK_TEST_FLAGS)
+bool FSlonkTerrainTreesNestTest::RunTest(const FString& Parameters)
+{
+	// A tree a coarse chunk carries is carried again by its four children, of the same kind and size, in the same
+	// place, and stands in the drawn ground: its foot below the surface, its trunk not lost in it.
+	const FPlanetTerrainParams P = RockWorld();
+	const int32 D = DepthFor(P, 31000.0);
+	int32 Tried = 0, Trees = 0, Matched = 0, Floating = 0, Sunk = 0;
+	for (const FVector& Dir : GreenSpots(P, 12))
+	{
+		int32 Face; int64 X, Y;
+		if (!UPlanetTerrainComponent::ChunkAt(Dir, D, Face, X, Y)) { continue; }
+		const FRocks Parent = Build(P, Living(), Face, D, X, Y);
+		if (Parent.Xf[TreeMeshes[0]].Num() + Parent.Xf[TreeMeshes[1]].Num() < 10) { continue; }
+		++Tried;
+		FRocks Kids[4];
+		for (int32 c = 0; c < 4; ++c) { Kids[c] = Build(P, Living(), Face, D + 1, X * 2 + (c & 1), Y * 2 + (c >> 1)); }
+		for (const int32 M : TreeMeshes)
+		{
+			for (int32 i = 0; i < Parent.Xf[M].Num(); ++i)
+			{
+				const FTransform& A = Parent.Xf[M][i];
+				++Trees;
+				const double Foot = A.GetLocation().Size() - P.RadiusCm - Parent.Drawn[M][i];
+				if (Foot > 0.0) { ++Floating; }
+				if (Foot < -A.GetScale3D().Z * 100.0 * 0.15 - 100.0) { ++Sunk; }
+				const FVector Ua = A.GetLocation().GetSafeNormal();
+				bool bFound = false;
+				for (const FRocks& Kid : Kids)
+				{
+					for (const FTransform& B : Kid.Xf[M])
+					{
+						const double Apart = FMath::Acos(FMath::Clamp(FVector::DotProduct(Ua, B.GetLocation().GetSafeNormal()), -1.0, 1.0)) * P.RadiusCm;
+						if (Apart < 50.0 && FMath::Abs(B.GetScale3D().Z / A.GetScale3D().Z - 1.0) < 0.1) { bFound = true; break; }
+					}
+					if (bFound) { break; }
+				}
+				Matched += bFound ? 1 : 0;
+			}
+		}
+		if (Tried >= 3) { break; }
+	}
+	AddInfo(FString::Printf(TEXT("%d trees on %d chunks: %d found again on the children, %d standing clear of the ground, %d sunk"), Trees, Tried, Matched, Floating, Sunk));
+	TestTrue(TEXT("found wooded chunks"), Tried > 0);
+	TestTrue(TEXT("nearly every tree is found again on the finer chunks"), Matched >= Trees * 0.85);
+	TestEqual(TEXT("no tree's foot stands clear of the drawn ground"), Floating, 0);
+	TestEqual(TEXT("no tree is sunk past its foot"), Sunk, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkTerrainShrubsOnDotsTest, "Slonk.Terrain.ShrubsOnDots", SLONK_TEST_FLAGS)
+bool FSlonkTerrainShrubsOnDotsTest::RunTest(const FString& Parameters)
+{
+	// Every bush stands on a scrub dot the terrain material paints: in a cell the shader's hash gives a dot, at the
+	// dot's centre, about as wide as the dot. And on the coarsest grid the terrain allows (8 steps a side, vertices ten
+	// metres apart, the dots' cells under five) the chunk finds about as many as on the default one: every dot the
+	// drawn ground passes through, not only those in a cell that happens to hold a vertex.
+	const FPlanetTerrainParams P = RockWorld();
+	const int32 D = DepthFor(P, 8000.0);
+	const int32 M = SlonkScatter::PlantMesh(EPlant::Shrub);
+	int32 Shrubs = 0, OffDot = 0, WrongSize = 0, Fine = 0, Coarse = 0;
+	for (const FVector& Dir : GreenSpots(P, 6))
+	{
+		int32 Face; int64 X, Y;
+		if (!UPlanetTerrainComponent::ChunkAt(Dir, D, Face, X, Y)) { continue; }
+		for (const int32 Steps : { 64, 8 })
+		{
+			const FRocks R = Build(P, Living(), Face, D, X, Y, Steps);
+			const FVector OriginNoise = SlonkScatter::ToNoiseSpace(R.Origin);
+			(Steps == 64 ? Fine : Coarse) += R.Xf[M].Num();
+			for (const FTransform& T : R.Xf[M])
+			{
+				++Shrubs;
+				// The point of the ground the bush stands on (its foot, raised back out of the ground by the 4% of its
+				// height it is sunk), in the material's noise space as the chunk hands it to the shader.
+				const FVector Ground = T.GetLocation() + T.GetRotation().GetAxisZ() * (T.GetScale3D().Z * SlonkPlants::UnitCm * 0.04);
+				const FVector Foot = OriginNoise + (Ground - R.Origin);
+				FVector Centre; double Radius;
+				if (!SlonkScatter::ScrubDotAt(Foot, Centre, Radius)) { ++OffDot; continue; }
+				// Across the ground from the dot's centre: the centre lies above or below the surface, never beside it.
+				const FVector Up = T.GetLocation().GetSafeNormal();
+				const FVector Off = Foot - Centre;
+				if ((Off - Up * FVector::DotProduct(Off, Up)).Size() > 25.0) { ++OffDot; }
+				const double Wide = T.GetScale3D().X * 110.0;
+				if (Wide < Radius * 1.8 || Wide > Radius * 2.4) { ++WrongSize; }
+			}
+		}
+	}
+	AddInfo(FString::Printf(TEXT("%d bushes (%d on the 64-step grids, %d on the 8-step): %d off their dot, %d not the dot's size"), Shrubs, Fine, Coarse, OffDot, WrongSize));
+	TestTrue(TEXT("bushes were placed"), Fine > 10);
+	TestEqual(TEXT("every bush stands on a painted dot's centre"), OffDot, 0);
+	TestEqual(TEXT("every bush is as wide as its dot"), WrongSize, 0);
+	// The two grids draw slightly different ground, so a few dots fall in or out; a missed cell would lose most.
+	TestTrue(TEXT("a coarse grid finds about as many bushes as the default one"), Coarse >= Fine * 0.75 && Coarse <= Fine * 1.25);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkTerrainShrubsAcrossWrapTest, "Slonk.Terrain.ShrubsAcrossWrap", SLONK_TEST_FLAGS)
+bool FSlonkTerrainShrubsAcrossWrapTest::RunTest(const FString& Parameters)
+{
+	// The material's noise space is each chunk's origin modulo NoisePeriodCm plus the vertex, so where a wrap plane of
+	// that period runs between a chunk and its children their noise spaces are a period apart. The scrub dots, and so
+	// the bushes, must come out the same in both: a bush a chunk carries is carried again by the children that refine
+	// it, at the same place, wrap or no wrap.
+	const FPlanetTerrainParams P = RockWorld();
+	const int32 D = DepthFor(P, 8000.0);
+	const int32 M = SlonkScatter::PlantMesh(EPlant::Shrub);
+	const double Period = SlonkScatter::NoisePeriodCm;
+	int32 Tried = 0, Bushes = 0, Matched = 0;
+	for (const FVector& Spot : GreenSpots(P, 40))
+	{
+		// To the nearest wrap plane across the ground: along an axis the ground does not face, a few kilometres at most.
+		const FVector G = Spot * P.RadiusCm;
+		int32 Axis = -1; double Best = 1e30;
+		for (int32 a = 0; a < 3; ++a)
+		{
+			if (FMath::Abs(Spot[a]) > 0.8) { continue; }
+			const double To = FMath::RoundToDouble(G[a] / Period) * Period - G[a];
+			if (FMath::Abs(To) < Best) { Best = FMath::Abs(To); Axis = a; }
+		}
+		if (Axis < 0) { continue; }
+		FVector Moved = G;
+		Moved[Axis] += FMath::RoundToDouble(G[Axis] / Period) * Period - G[Axis];
+		int32 Face; int64 X, Y;
+		if (!UPlanetTerrainComponent::ChunkAt(Moved.GetSafeNormal(), D, Face, X, Y)) { continue; }
+		const FRocks Parent = Build(P, Living(), Face, D, X, Y);
+		if (Parent.Xf[M].Num() < 10) { continue; }
+		FRocks Kids[4];
+		bool bStraddles = false;
+		for (int32 c = 0; c < 4; ++c)
+		{
+			Kids[c] = Build(P, Living(), Face, D + 1, X * 2 + (c & 1), Y * 2 + (c >> 1));
+			for (int32 a = 0; a < 3; ++a) { bStraddles |= FMath::FloorToDouble(Kids[c].Origin[a] / Period) != FMath::FloorToDouble(Parent.Origin[a] / Period); }
+		}
+		if (!bStraddles) { continue; }
+		++Tried;
+		for (const FTransform& A : Parent.Xf[M])
+		{
+			++Bushes;
+			bool bFound = false;
+			for (const FRocks& Kid : Kids)
+			{
+				for (const FTransform& B : Kid.Xf[M]) { if (FVector::Dist(A.GetLocation(), B.GetLocation()) < 30.0) { bFound = true; break; } }
+				if (bFound) { break; }
+			}
+			Matched += bFound ? 1 : 0;
+		}
+		if (Tried >= 4) { break; }
+	}
+	AddInfo(FString::Printf(TEXT("%d chunks with a wrap plane between them and their children: %d bushes, %d found again on the children"), Tried, Bushes, Matched));
+	if (!TestTrue(TEXT("found chunks across a wrap plane"), Tried > 0)) { return true; }
+	// The finer ground moves a few bushes out of their dot's cell, or into another's; a lattice shifted by the wrap
+	// would lose every bush on the children across the plane.
+	TestTrue(TEXT("nearly every bush is found again across the wrap"), Matched >= Bushes * 0.8);
 	return true;
 }
 
