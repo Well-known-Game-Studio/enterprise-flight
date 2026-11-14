@@ -70,6 +70,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
 	float SkyLightIntensityNearPlanet = 0.5f;
 
+	/** Sky light intensity under a world's unbroken cloud deck (Venus, a hazy moon). The deck stops the sun's direct
+	 *  light, so the ground is lit by the deck alone, and at the clear-sky intensity it came out near black under a
+	 *  bright sky (2% of the deck's brightness on Meozaleth I). At 2 it is 18%, as overcast ground of that colour is
+	 *  in life. Only a deck style at full coverage reaches it; broken skies keep SkyLightIntensityNearPlanet. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
+	float SkyLightIntensityOvercast = 2.f;
+
 	/** Volumetric clouds on the atmosphere planet, replacing its cloud shell while the view is within VolumetricCloudRangeKm of the surface. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Slonk|Atmosphere")
 	bool bUseVolumetricClouds = true;
