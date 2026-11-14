@@ -692,11 +692,16 @@ void UPlanetTerrainComponent::ApplyResult(FNode& N)
 	// The shader's detail noise is periodic in NoisePeriodCm; the origin modulo that period keeps it continuous
 	// across chunks without a 6e8 cm float in the vertex shader.
 	const FVector O = N.Result->Origin;
-	auto Wrap = [](double V) { double M = FMath::Fmod(V, NoisePeriodCm); if (M < 0.0) { M += NoisePeriodCm; } return (float)M; };
-	C->SetCustomPrimitiveDataFloat(0, Wrap(O.X));
-	C->SetCustomPrimitiveDataFloat(1, Wrap(O.Y));
-	C->SetCustomPrimitiveDataFloat(2, Wrap(O.Z));
+	auto Wrap = [](double V) { double M = FMath::Fmod(V, NoisePeriodCm); if (M < 0.0) { M += NoisePeriodCm; } return M; };
+	C->SetCustomPrimitiveDataFloat(0, (float)Wrap(O.X));
+	C->SetCustomPrimitiveDataFloat(1, (float)Wrap(O.Y));
+	C->SetCustomPrimitiveDataFloat(2, (float)Wrap(O.Z));
 	C->SetCustomPrimitiveDataFloat(3, (float)(N.EdgeCm / FMath::Max(GridSteps, 1)));
+	// And the period the origin wrapped from, in whole periods per axis (a few hundred: exact in a float): with the
+	// wrapped origin, planet space, which the settlements are drawn in so they match SlonkCities' towns.
+	C->SetCustomPrimitiveDataFloat(7, (float)FMath::RoundToDouble((O.X - Wrap(O.X)) / NoisePeriodCm));
+	C->SetCustomPrimitiveDataFloat(8, (float)FMath::RoundToDouble((O.Y - Wrap(O.Y)) / NoisePeriodCm));
+	C->SetCustomPrimitiveDataFloat(9, (float)FMath::RoundToDouble((O.Z - Wrap(O.Z)) / NoisePeriodCm));
 	// The chunk origin over the planet radius: the material rebuilds the radial direction from it (the origin
 	// itself is a 6e8 cm float) to lay its texture projections in a frame tied to the ground, not the world axes.
 	const FVector OR = O / Params.RadiusCm;

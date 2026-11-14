@@ -3,10 +3,14 @@
 The mesh carries the height field: positions, smooth normals and per-vertex biome data (UV0 = height/relief and
 slope, UV1 = moisture and rock, UV2 = ice and canyon, colour = crater, water, |latitude|). The material only
 shades: it picks layer colours from those, adds a periodic detail bump that stays continuous across chunks (the
-chunk origin modulo the noise period arrives through custom primitive data 0..2, the cell size in 3), and fades
-each noise octave out once it is smaller than a pixel.
+chunk origin modulo the noise period arrives through custom primitive data 0..2, the cell size in 3, the origin over
+the radius in 4..6 and its tile of the period in whole periods in 7..9), and fades each noise octave out once it is
+smaller than a pixel. Every lattice in noise space has a whole number of cells to the period, so the look carries on
+across a wrap; the settlements are drawn in planet space instead, as SlonkCities places the towns.
 
 Run with the editor open and no play session:  python3 tools/planet_materials/terrain_material.py
+This script is the material's source: change the graph here, not in the editor (a rebuild undoes an edit made there).
+To see whether the asset has drifted from it:  python3 tools/ue_mcp/matgraph.py check tools/planet_materials/terrain_material.py M_PlanetTerrain
 """
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "ue_mcp"))
@@ -157,13 +161,16 @@ float3 T2 = cross(Nn, T1);
 
 // Five octaves of value noise from 16 m down to 1 m (the mesh carries everything coarser, the texture sets everything finer), with the gradient
 // taken analytically from the trilinear weights so the bump costs one lattice lookup per octave. Each octave is
-// weighted out as it drops below a pixel. The octave values are kept for the texturing below.
-float fb0 = 0, norm = 0, amp = 1.0, cs = 1600.0;
+// weighted out as it drops below a pixel. The octave values are kept for the texturing below. Each octave has a whole
+// number of cells to the noise period (655, doubling: cells of 1600.9 cm down to 100.05 cm) and wraps its index by
+// that count, so the noise is periodic and a chunk whose origin has wrapped matches its neighbour.
+float fb0 = 0, norm = 0, amp = 1.0;
 float3 gfb = 0;
 float val[5]; float wgt[5];
 [unroll] for (int k = 0; k < 5; k++)
 {
-    int wrap = (int)(NoisePeriodCm / cs);
+    int wrap = 655 << k;
+    float cs = NoisePeriodCm / (float)wrap;
     float w = saturate(cs / (dist * 0.0045) - 0.35);
     float3 q = p / cs;
     float3 fl = floor(q); float3 t = q - fl; float3 sm = t * t * (3.0 - 2.0 * t); float3 dsm = 6.0 * t * (1.0 - t);
@@ -171,7 +178,7 @@ float val[5]; float wgt[5];
     float h[8];
     [unroll] for (int i = 0; i < 8; i++)
     {
-        int3 c = (c0 + int3(i & 1, (i >> 1) & 1, (i >> 2) & 1)) & (wrap - 1);
+        int3 c = ((c0 + int3(i & 1, (i >> 1) & 1, (i >> 2) & 1)) % wrap + wrap) % wrap;
         uint hh = ((uint)c.x * 73856093u) ^ ((uint)c.y * 19349663u) ^ ((uint)c.z * 83492791u) ^ ((uint)k * 2654435761u);
         hh = (hh ^ (hh >> 13)) * 0x5bd1e995u; hh ^= hh >> 15;
         h[i] = (float)(hh & 0xffffu) / 65535.0;
@@ -185,7 +192,7 @@ float val[5]; float wgt[5];
     g.z = (y1 - y0) * dsm.z;
     val[k] = v; wgt[k] = w;
     fb0 += (v - 0.5) * amp * w; gfb += g / cs * amp * w;
-    norm += amp; amp *= 0.6; cs *= 0.5;
+    norm += amp; amp *= 0.6;
 }
 fb0 /= norm; gfb /= norm;
 float crack = (1.0 - abs(val[3] - 0.5) * 2.0) * wgt[3];
@@ -216,23 +223,25 @@ float dotsA = 0, dotsB = 0;
     if (kd == 0) dotsA = (gate < 0.35 ? cov : 0.0) * wd; else dotsB = (gate < 0.3 ? cov : 0.0) * wd;
 }
 
-// Coarse value noise (3.2 km, 1.6 km, 0.8 km cells): soil patchiness by day, settlement blobs by night.
-float cn = 0, cnorm = 0, camp = 1.0, ccs = 320000.0;
+// Coarse value noise for the soil's patchiness by day: 3, 6 and 12 cells to the noise period (3.5 km, 1.7 km and
+// 0.9 km), the index wrapped by that count, so the patches tile with the period and carry on across a wrap.
+float cn = 0, cnorm = 0, camp = 1.0;
 [unroll] for (int kc = 0; kc < 3; kc++)
 {
-    int wrapc = 4096;    // the soil patches tiled every 10 km with the texture period
+    int wrapc = 3 << kc;
+    float ccs = NoisePeriodCm / (float)wrapc;
     float3 q = p / ccs; float3 fl = floor(q); float3 fr = q - fl; fr = fr * fr * (3.0 - 2.0 * fr);
     int3 c0 = (int3)fl;
     float h[8];
     [unroll] for (int i = 0; i < 8; i++)
     {
-        int3 c = (c0 + int3(i & 1, (i >> 1) & 1, (i >> 2) & 1)) & (wrapc - 1);
+        int3 c = ((c0 + int3(i & 1, (i >> 1) & 1, (i >> 2) & 1)) % wrapc + wrapc) % wrapc;
         uint hh = ((uint)c.x * 73856093u) ^ ((uint)c.y * 19349663u) ^ ((uint)c.z * 83492791u) ^ ((uint)(kc + 11) * 2654435761u);
         hh = (hh ^ (hh >> 13)) * 0x5bd1e995u; hh ^= hh >> 15;
         h[i] = (float)(hh & 0xffffu) / 65535.0;
     }
     float v = lerp(lerp(lerp(h[0], h[1], fr.x), lerp(h[2], h[3], fr.x), fr.y), lerp(lerp(h[4], h[5], fr.x), lerp(h[6], h[7], fr.x), fr.y), fr.z);
-    cn += (v - 0.5) * camp; cnorm += camp; camp *= 0.5; ccs *= 0.5;
+    cn += (v - 0.5) * camp; cnorm += camp; camp *= 0.5;
 }
 cn = cn / cnorm + 0.5;
 
@@ -380,28 +389,42 @@ float lowland = 1.0 - saturate(hN * ReliefCm / 250000.0);
 // Settlements: Worley points at three scales (25 km regions, 6 km clusters, 1.6 km towns), each level present in
 // only part of its cells, so the lights gather along a few belts with dark country between. Value noise peaked on
 // its lattice corners, which from orbit read as rows of dots fanning into the poles.
+// The points are SlonkCities' own, in planet space, so every town's buildings stand on its lit and paved ground: not
+// in the wrapped noise space p, whose 10 km period no Worley level divides. The chunk's tile of the period (TX, TY,
+// TZ: whole periods, exact in a float) and p within it give each level's cell in integers, as a period is 2^20 cm
+// and the cells 2^12, 2^10 and 2^8 times 625 cm (a tile is 256, 1024 or 4096 625ths of a cell), and the fraction
+// from what is left, small enough to keep its centimetres. The points are kept as offsets from the pixel (townRel
+// is the pixel less the town's point), never as planet positions a float would round to metres.
 float town = 0.0, cluster = 0.0, region = 0.0;
-float3 townP = 0; uint townH = 0u; float3 clusterP = 0; uint clusterH = 0u; float3 town2P = 0; float dmin2b = 9.0; float paving = 0.0;
+float3 townRel = 0; uint townH = 0u; float3 clusterRel = 0; uint clusterH = 0u; float3 town2Rel = 0; float dmin2b = 9.0; float paving = 0.0;
 {
+    int3 tile = int3(round(TX), round(TY), round(TZ));
     float dmin[3] = { 9.0, 9.0, 9.0 };
     [unroll] for (int kw = 0; kw < 3; kw++)
     {
         float wcs = kw == 0 ? 2560000.0 : (kw == 1 ? 640000.0 : 160000.0);
+        int per = kw == 0 ? 256 : (kw == 1 ? 1024 : 4096);      // 625ths of a cell to a period
         uint keep = kw == 0 ? 3u : (kw == 1 ? 3u : 3u);        // of four cells
-        float3 qw = p / wcs - 0.5; float3 flw = floor(qw); float3 frw = qw - flw;
+        int3 tn = tile * per;
+        int3 ti = (int3)floor((float3)tn / 625.0);
+        float3 qw = (float3)(tn - ti * 625) / 625.0 + p / wcs - 0.5;
+        float3 fq = floor(qw); float3 frw = qw - fq;
+        int3 flw = ti + (int3)fq;
         [unroll] for (int iw = 0; iw < 8; iw++)
         {
-            int3 cw = ((int3)flw + int3(iw & 1, (iw >> 1) & 1, (iw >> 2) & 1));
+            int3 off = int3(iw & 1, (iw >> 1) & 1, (iw >> 2) & 1);
+            int3 cw = flw + off;
             int3 cwk = cw & 4095;
             uint hw = ((uint)cwk.x * 73856093u) ^ ((uint)cwk.y * 19349663u) ^ ((uint)cwk.z * 83492791u) ^ (0x9e3779b9u + (uint)kw * 0x85ebca6bu);
             hw = (hw ^ (hw >> 13)) * 0x5bd1e995u; hw ^= hw >> 15;
             if ((hw >> 30) >= keep) continue;
             float3 jit = float3(hw & 0x3ffu, (hw >> 10) & 0x3ffu, (hw >> 20) & 0x3ffu) / 1023.0;
-            float3 dp = float3(cw - (int3)flw) + jit - frw;
+            float3 dp = float3(off) + jit - frw;
             float dd = dot(dp, dp);
-            if (kw == 2 && dd < dmin[2]) { town2P = townP; dmin2b = dmin[2]; townP = (float3(cw) + jit + 0.5) * wcs; townH = hw; }
-            else if (kw == 2 && dd < dmin2b) { town2P = (float3(cw) + jit + 0.5) * wcs; dmin2b = dd; }
-            if (kw == 1 && dd < dmin[1]) { clusterP = (float3(cw) + jit + 0.5) * wcs; clusterH = hw; }
+            float3 rel = -dp * wcs;
+            if (kw == 2 && dd < dmin[2]) { town2Rel = townRel; dmin2b = dmin[2]; townRel = rel; townH = hw; }
+            else if (kw == 2 && dd < dmin2b) { town2Rel = rel; dmin2b = dd; }
+            if (kw == 1 && dd < dmin[1]) { clusterRel = rel; clusterH = hw; }
             dmin[kw] = min(dmin[kw], dd);
         }
     }
@@ -418,11 +441,11 @@ base = lerp(base, float3(0.30, 0.29, 0.28), saturate(city * 1.5) * 0.7);
 if (water < 0.5)
 {
     float cityR = 640000.0 * (0.25 + 0.2 * region);
-    float3 relC = p - clusterP;
+    float3 relC = clusterRel;
     bool inCity = region > 0.35 && length(relC) < cityR * 1.05;
     float townS = region * cluster;
     float townR = 160000.0 * (0.2 + 0.3 * townS);
-    float3 rel = inCity ? relC : (p - townP);
+    float3 rel = inCity ? relC : townRel;
     uint H = inCity ? clusterH : townH;
     float Rr = inCity ? cityR : townR;
     if (inCity || (townS > 0.3 && length(rel) < townR * 1.05))
@@ -431,7 +454,8 @@ if (water < 0.5)
         uint h17 = H ^ (17u + 0x9e3779b9u + (H << 6) + (H >> 2)); h17 = (h17 ^ (h17 >> 13)) * 0x5bd1e995u; h17 ^= h17 >> 15;
         float ang = (float)(h11 & 0xffffu) / 65535.0 * 3.14159265;
         float pitch = 3600.0 + 1400.0 * (float)(h17 & 0xffffu) / 65535.0;
-        float3 upT = normalize(inCity ? clusterP : townP);
+        // The settlement's own up: its point, the pixel less the offset (a direction keeps its precision).
+        float3 upT = normalize(U * PlanetRadiusCm - rel);
         float3 eT = normalize(cross(float3(0, 0, 1), upT)); float3 nT = cross(upT, eT);
         float3 gX = eT * cos(ang) + nT * sin(ang); float3 gY = cross(upT, gX);
         float gx = dot(rel, gX) / pitch, gy = dot(rel, gY) / pitch;
@@ -451,10 +475,10 @@ if (water < 0.5)
     // where both ends stand on land and the pixel does.
     if (dmin2b < 9.0 && townS > 0.08)
     {
-        float3 ab = town2P - townP; float3 ap = p - townP;
+        // From the nearest point to the second, and the pixel's offset from the nearest.
+        float3 ab = townRel - town2Rel; float3 ap = townRel;
         float t = saturate(dot(ap, ab) / max(dot(ab, ab), 1.0));
-        float3 q = townP + ab * t;
-        float dRoad = length(p - q);
+        float dRoad = length(ap - ab * t);
         float road = (1.0 - smoothstep(350.0, 500.0, dRoad)) * (1.0 - saturate(slope * 8.0)) * saturate((wet - 0.2) * 5.0);
         paving = max(paving, road);
     }
@@ -473,7 +497,7 @@ WPO_INPUTS = ["Fn", "LP", "Col", "OX", "OY", "OZ", "ORX", "ORY", "ORZ", "Cam", "
 INPUTS = ["Fn", "N", "LP", "UV0", "UV1", "UV2", "UV3", "Col", "ColA", "OX", "OY", "OZ", "Cell", "ORX", "ORY", "ORZ", "Cam", "WP", "PlanetRadiusCm", "WaterNR", "Time", "SwellCm"] + TEX_INPUTS + [
           "OceanColor", "ShallowColor", "LandColor", "LandColor2", "MountainColor", "IceColor", "NightLightColor",
           "OceanRoughness", "LandRoughness", "NightLightIntensity", "LavaEmissive", "SunDirection",
-          "NoisePeriodCm", "ReliefCm", "OceanDepthCm"]
+          "NoisePeriodCm", "ReliefCm", "OceanDepthCm", "TX", "TY", "TZ"]
 
 
 def build():
@@ -486,6 +510,8 @@ def build():
     col = g.node("VertexColor")
     ox, oy, oz, cell = g.scalar("ChunkOX", 0.0, cpd=0), g.scalar("ChunkOY", 0.0, cpd=1), g.scalar("ChunkOZ", 0.0, cpd=2), g.scalar("ChunkCell", 100.0, cpd=3)
     orx, ory, orz = g.scalar("ChunkORX", 0.0, cpd=4), g.scalar("ChunkORY", 0.0, cpd=5), g.scalar("ChunkORZ", 1.0, cpd=6)
+    # The chunk origin's tile of the noise period, whole periods per axis: with OX..OZ, planet space for the settlements.
+    tx, ty, tz = g.scalar("ChunkTX", 0.0, cpd=7), g.scalar("ChunkTY", 0.0, cpd=8), g.scalar("ChunkTZ", 0.0, cpd=9)
     fn = g.custom(FUNCS, [], "CMOT_Float1", "texture set functions")
     cam = g.node("CameraPositionWS")
     wp = g.node("WorldPosition")
@@ -495,7 +521,7 @@ def build():
     }
     scal = {"OceanRoughness": 0.22, "LandRoughness": 0.9, "NightLightIntensity": 0.0, "LavaEmissive": 0.0, "NoisePeriodCm": 1048576.0, "ReliefCm": 3.8e6, "OceanDepthCm": 5.0e5, "PlanetRadiusCm": 6.371e8, "SwellCm": 120.0}
     e = g.custom(CODE, INPUTS, "CMOT_Float3", "terrain layers, textures, bump, lights", extra_outputs=(("Nrm", "CMOT_Float3"), ("Rough", "CMOT_Float1"), ("Emis", "CMOT_Float3"), ("AO", "CMOT_Float1")))
-    for pin, src in [("Fn", fn), ("N", n), ("LP", vi), ("UV0", uv0), ("UV1", uv1), ("UV2", uv2), ("UV3", uv3), ("Col", col), ("OX", ox), ("OY", oy), ("OZ", oz), ("Cell", cell), ("ORX", orx), ("ORY", ory), ("ORZ", orz), ("Cam", cam), ("WP", wp)]:
+    for pin, src in [("Fn", fn), ("N", n), ("LP", vi), ("UV0", uv0), ("UV1", uv1), ("UV2", uv2), ("UV3", uv3), ("Col", col), ("OX", ox), ("OY", oy), ("OZ", oz), ("Cell", cell), ("ORX", orx), ("ORY", ory), ("ORZ", orz), ("Cam", cam), ("WP", wp), ("TX", tx), ("TY", ty), ("TZ", tz)]:
         g.c(src, e, pin)
     wn = g.node("TextureObjectParameter", {"ParameterName": "WaterNR", "Texture": {"refPath": f"{TEX_FOLDER}/T_Water_NR.T_Water_NR"}})
     g.c(wn, e, "WaterNR")
