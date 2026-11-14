@@ -105,15 +105,20 @@ void UPlanetTerrainComponent::MakeRoots()
 	}
 }
 
-void UPlanetTerrainComponent::SetScatterOptions(bool bEnabled, float Density, bool bCities, float Life)
+void UPlanetTerrainComponent::SetScatterOptions(bool bEnabled, float Density, bool bCities, float Life, const FCivilization& People)
 {
 	Density = FMath::Max(Density, 0.f);
 	Life = FMath::Clamp(Life, 0.f, 1.f);
-	if (Scatter.bEnabled == bEnabled && FMath::IsNearlyEqual(Scatter.Density, Density) && Scatter.bCities == bCities && FMath::IsNearlyEqual(Scatter.Life, Life)) { return; }
+	// Their towns are where the scatter keeps out: a different people (another age, a liking for cliffs) moves them.
+	const FCivilization& Was = Scatter.People;
+	const bool bSamePeople = Was.bInhabited == People.bInhabited && Was.Age == People.Age && Was.Organic == People.Organic && Was.CliffAffinity == People.CliffAffinity
+		&& Was.Density == People.Density && Was.WetMin == People.WetMin;
+	if (Scatter.bEnabled == bEnabled && FMath::IsNearlyEqual(Scatter.Density, Density) && Scatter.bCities == bCities && FMath::IsNearlyEqual(Scatter.Life, Life) && bSamePeople) { return; }
 	Scatter.bEnabled = bEnabled;
 	Scatter.Density = Density;
 	Scatter.bCities = bCities;
 	Scatter.Life = Life;
+	Scatter.People = People;
 	if (bConfigured) { RebuildScatterChunks(); }
 }
 
@@ -831,12 +836,25 @@ FPlanetTerrainSample UPlanetTerrainComponent::SampleAtWorld(const FVector& World
 bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& NearDir, FVector& OutDir, double& OutHeightCm, const FVector& SunDirLocal) const
 {
 	if (!bConfigured) { return false; }
+	if (Kind.ToLower() == TEXT("cliffs"))
+	{
+		// The nearest town built into a cliff within 600 km of the bearing, the view 350 m out from its wall.
+		const FVector Centre = (NearDir.IsNearlyZero() ? FVector::ZAxisVector : NearDir.GetSafeNormal()) * Params.RadiusCm;
+		TArray<FTownSite> Towns;
+		SlonkCities::EnumerateTowns(Params, Scatter.People.bInhabited ? Scatter.People : SlonkCivs::Colonists(), Centre, 6.0e7, Towns, 2000);
+		const FTownSite* Best = nullptr; double BestD = 1.0e30;
+		for (const FTownSite& T : Towns) { if (T.bCliff && FVector::DistSquared(T.LocalCm, Centre) < BestD) { BestD = FVector::DistSquared(T.LocalCm, Centre); Best = &T; } }
+		if (!Best) { return false; }
+		OutDir = (Best->Dir * Params.RadiusCm + Best->Face * 35000.0).GetSafeNormal();
+		OutHeightCm = SlonkTerrain::SurfaceHeightCm(Params, OutDir);
+		return true;
+	}
 	if (Kind.ToLower() == TEXT("city") || Kind.ToLower() == TEXT("town"))
 	{
 		// The biggest town within 600 km of the bearing (or of the sub-point), weighted toward the near ones.
 		const FVector Centre = (NearDir.IsNearlyZero() ? FVector::ZAxisVector : NearDir.GetSafeNormal()) * Params.RadiusCm;
 		TArray<FTownSite> Towns;
-		SlonkCities::EnumerateTowns(Params, Centre, 6.0e7, Towns, 2000);
+		SlonkCities::EnumerateTowns(Params, Scatter.People.bInhabited ? Scatter.People : SlonkCivs::Colonists(), Centre, 6.0e7, Towns, 2000);
 		const FTownSite* Best = nullptr; double BestScore = -1.0e9;
 		for (const FTownSite& T : Towns)
 		{

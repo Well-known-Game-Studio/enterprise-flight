@@ -13,6 +13,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Civilization.h"
 #include "PlanetTerrain.h"
 #include "GroundRocks.h"
 #include "PlantMeshes.h"
@@ -35,6 +36,8 @@ struct FScatterSettings
 	float Density = 1.f;
 	/** Worlds with settlements keep the scatter off their streets and lots. */
 	bool bCities = false;
+	/** Who lives there, for where their towns stand (nobody: the Federation's colonists, if bCities). */
+	FCivilization People;
 	/** How much grows, 0..1: 1 on a temperate living world, a little scrub on a desert, nothing on the dead ones. */
 	float Life = 0.f;
 	FScatterPalette Palette;

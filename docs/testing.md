@@ -58,6 +58,12 @@ average; snow above the snowline for the latitude and none below it, and on high
 the treeline under it and stopping there. And the canyons: depth and width by the same root as the relief, cut
 that deep and as wide as they say rim to rim; the plateaus ending in cliffs with islands of the caprock before them;
 and badlands gullied metres deep below the scarps of a dry world, none without air.
+`Slonk.Cities.*` (Tests/SlonkCitiesTests.cpp) covers the peoples and their settlements: who lives on each kind of world
+(a lit Earth-like world an electric people, a dark one a people before electricity half the time, two deserts in
+five, mostly cliff dwellers, the dead worlds nobody; only the modern and later grow their buildings, and no grid
+under a grown or an early people's towns); every building shape in its unit box; each age's own kinds of building,
+every one standing on its ground; and the towns built into cliffs, their houses on the ledges at the foot of the
+risers with their backs in the rock.
 
 Writing one: make an `FSystems` (a roster seed gives the same people every time), drive the subsystems through
 their public API, assert with `TestEqual`/`TestTrue`. For anything that depends on the world (targets picked from

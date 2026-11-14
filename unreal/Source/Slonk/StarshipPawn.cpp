@@ -2027,6 +2027,36 @@ void AStarshipPawn::ProcessDebugCommand()
 		if (ArgStr(1) == TEXT("off")) { Movement->ClearTerrainFollow(); }
 		else { Movement->SetTerrainFollow(Arg(1, 300.f) * 100.f); Movement->SetCanyonFollow(ArgStr(2) == TEXT("canyon")); }
 	}
+	else if (Op == TEXT("people"))
+	{
+		// people <none|stone|iron|industrial|modern|starfaring> [organic] [cliff]: who lives on the nearest world from
+		// now on (their lights and colours, their towns rebuilt round the view), to look at each kind; with no age,
+		// say who lives there.
+		APlanetBody* Planet = Movement ? Cast<APlanetBody>(Movement->GroundBody.Get()) : nullptr;
+		if (!Planet)
+		{
+			double BestD = TNumericLimits<double>::Max();
+			for (TActorIterator<APlanetBody> It(GetWorld()); It; ++It)
+			{
+				const double D = FVector::Dist(It->GetActorLocation(), GetActorLocation());
+				if (It->HasTerrain() && D < BestD) { BestD = D; Planet = *It; }
+			}
+		}
+		if (Planet)
+		{
+			static const TMap<FString, ETechAge> Ages = { { TEXT("stone"), ETechAge::Stone }, { TEXT("iron"), ETechAge::Iron }, { TEXT("industrial"), ETechAge::Industrial },
+				{ TEXT("modern"), ETechAge::Modern }, { TEXT("starfaring"), ETechAge::Starfaring } };
+			const FString Age = ArgStr(1).ToLower();
+			bool bOrganic = false, bCliff = false;
+			for (int32 i = 2; i <= 3; ++i) { const FString W = ArgStr(i).ToLower(); bOrganic |= W == TEXT("organic"); bCliff |= W == TEXT("cliff"); }
+			if (Age == TEXT("none")) { Planet->SetPeople(FCivilization()); }
+			else if (const ETechAge* A = Ages.Find(Age))
+			{
+				Planet->SetPeople(SlonkCivs::Make(*A, bOrganic ? 0.9f : 0.f, bCliff ? 0.9f : 0.1f, Planet->ResolvedArchetype == EPlanetArchetype::Desert, GetTypeHash(Planet->GetDisplayName())));
+			}
+			UE_LOG(LogTemp, Log, TEXT("People on %s: %s"), *Planet->GetDisplayName(), *Planet->GetPeople().Describe());
+		}
+	}
 	else if (Op == TEXT("terrain") && Movement && ArgStr(1) == TEXT("goto"))
 	{
 		// terrain goto <canyon|mesa|badlands|mountain|coast|land> <altitude m> [heading: across|sun|away]: park over that feature of
@@ -2058,7 +2088,7 @@ void AStarshipPawn::ProcessDebugCommand()
 		const FVector GiantDirW = Giant && Planet ? (Giant->GetActorLocation() - Planet->GetActorLocation()).GetSafeNormal() : FVector::ZeroVector;
 		const FVector NearLocal = Giant && Planet && Planet->Terrain ? Planet->Terrain->GetComponentTransform().InverseTransformVectorNoScale(GiantDirW) : FVector::ZeroVector;
 		// Towns are searched out from where the ship is, not from the giant's bearing.
-		const bool bTown = ArgStr(2).ToLower() == TEXT("city") || ArgStr(2).ToLower() == TEXT("town");
+		const bool bTown = ArgStr(2).ToLower() == TEXT("city") || ArgStr(2).ToLower() == TEXT("town") || ArgStr(2).ToLower() == TEXT("cliffs");
 		const FVector ShipLocal = Planet && Planet->Terrain ? Planet->Terrain->GetComponentTransform().InverseTransformPosition(GetActorLocation()).GetSafeNormal() : FVector::ZeroVector;
 		if (Planet && Planet->Terrain && Planet->HasTerrain() && Planet->Terrain->FindFeature(ArgStr(2), bTown ? ShipLocal : NearLocal, Dir, H, SunLocal))
 		{
@@ -2086,6 +2116,17 @@ void AStarshipPawn::ProcessDebugCommand()
 					}
 				}
 				if (!BestD.IsNearlyZero()) { Fwd = TT.TransformVectorNoScale(BestD).GetSafeNormal(); }
+			}
+			if (Heading == TEXT("uphill"))
+			{
+				// Up the slope: toward a cliff that is in front (the way to look at a town built into one).
+				const FPlanetTerrainParams& TP = Planet->Terrain->GetParams();
+				const FVector E = FVector::CrossProduct(FVector::ZAxisVector, Dir).GetSafeNormal();
+				const FVector Nn = FVector::CrossProduct(Dir, E).GetSafeNormal();
+				const double S = 3.0e4 / TP.RadiusCm;
+				const double Ge = SlonkTerrain::SampleStructure(TP, (Dir + E * S).GetSafeNormal(), 2.0e4).HeightCm - SlonkTerrain::SampleStructure(TP, (Dir - E * S).GetSafeNormal(), 2.0e4).HeightCm;
+				const double Gn = SlonkTerrain::SampleStructure(TP, (Dir + Nn * S).GetSafeNormal(), 2.0e4).HeightCm - SlonkTerrain::SampleStructure(TP, (Dir - Nn * S).GetSafeNormal(), 2.0e4).HeightCm;
+				if (Ge != 0.0 || Gn != 0.0) { Fwd = TT.TransformVectorNoScale((E * Ge + Nn * Gn).GetSafeNormal()); }
 			}
 			if (Heading == TEXT("along"))
 			{
@@ -2164,8 +2205,8 @@ void AStarshipPawn::ProcessDebugCommand()
 		{
 			const FScatterSettings Was = T->GetScatterSettings();
 			const FString Mode = ArgStr(2);
-			if (Mode == TEXT("on") || Mode == TEXT("off")) { T->SetScatterOptions(Mode == TEXT("on"), Was.Density, Was.bCities, Was.Life); }
-			else if (Mode == TEXT("density")) { T->SetScatterOptions(true, Arg(3, 1.f), Was.bCities, Was.Life); }
+			if (Mode == TEXT("on") || Mode == TEXT("off")) { T->SetScatterOptions(Mode == TEXT("on"), Was.Density, Was.bCities, Was.Life, Was.People); }
+			else if (Mode == TEXT("density")) { T->SetScatterOptions(true, Arg(3, 1.f), Was.bCities, Was.Life, Was.People); }
 			else if (Mode == TEXT("check"))
 			{
 				int32 Hits = 0;
@@ -2511,8 +2552,8 @@ void AStarshipPawn::ProcessDebugCommand()
 			TEXT("ship impact [status|raise [<world>]|deflect|shatter|hit]  (a rock on a course for an inhabited world; the dev ops for testing)"),
 			TEXT("ship camera [chase|bridge|cinematic|front|port|starboard|top|bottom] | zoom <x> | look <yaw> <pitch> [s]"),
 			TEXT("ship warpvis [classic|real] | cscale <0..1> | systems | shipwarp [km] [far]"),
-			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mesa|badlands|mountain|coast|river|linea|green|land> <alt m> [across|sun|away|along|giant] | terrain rocks [on|off|density <x>|check]"),
-			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km]"),
+			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mesa|badlands|cliffs|city|mountain|coast|river|linea|green|land> <alt m> [across|sun|away|along|uphill|giant] | terrain rocks [on|off|density <x>|check]"),
+			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km] | people [none|stone|iron|industrial|modern|starfaring] [organic] [cliff]"),
 			TEXT("ship shuttle  (launch the shuttlecraft; aboard it, dock when the bay is within 500 m) | ship takeoff"),
 			TEXT("ship scan [stop]  (sensors on the locked / nav target; landed: survey the ground) | ship science [reset]"),
 			TEXT("ship ui menu | chart | science | engineering | tactical | medical | crew | msd | controls | settings | close | click <button>   (the LCARS panels)"),

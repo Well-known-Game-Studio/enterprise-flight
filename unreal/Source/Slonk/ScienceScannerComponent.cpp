@@ -462,11 +462,22 @@ void UScienceScannerComponent::FactsForWorld(const APlanetBody* P, FScanRecord& 
 		if (Surface.Num() > 0) { R.Facts.Add(TEXT("Surface: ") + FString::Join(Surface, TEXT(", "))); }
 	}
 	if (S.bRings) { R.Facts.Add(FString::Printf(TEXT("Ring system from %.1f to %.1f radii"), S.RingInner, S.RingOuter)); }
-	if (S.NightLightIntensity > 0.001f) { R.Facts.Add(TEXT("Artificial lighting on the night side: inhabited")); }
+	// Who lives here, and how they build; the lights alone for the Federation's own colonists.
+	const FCivilization& Who = P->GetPeople();
+	if (Who.bInhabited && !Who.bColonists) { R.Facts.Add(TEXT("Inhabited: ") + Who.Describe()); }
+	if (S.NightLightIntensity > 0.001f) { R.Facts.Add(Who.bColonists ? TEXT("Artificial lighting on the night side: a Federation colony") : TEXT("Artificial lighting on the night side")); }
 
-	// Discoveries: certain ones from what the world is, otherwise a seeded roll.
+	// Discoveries: certain ones from what the world is, otherwise a seeded roll. A native people is the find, worth
+	// more the earlier they are (a first contact the Prime Directive keeps at arm's length) and the more unusual
+	// their building.
 	struct FFind { const TCHAR* Text; int32 Points; };
-	if (S.NightLightIntensity > 0.001f) { R.Discovery = TEXT("Industrial civilisation, pre-warp"); R.Bonus += 200; }
+	if (Who.bInhabited && !Who.bColonists)
+	{
+		const bool bPreWarp = Who.Age < ETechAge::Starfaring;
+		R.Discovery = FString::Printf(TEXT("A %s %s%s%s%s"), *Who.AgeName(), Who.Age <= ETechAge::Iron ? TEXT("people") : TEXT("civilisation"), Who.IsOrganic() ? TEXT(" that grows its cities") : TEXT(""),
+			bPreWarp ? TEXT(", pre-warp") : TEXT(", warp-capable"), Who.CliffAffinity >= 0.5f ? TEXT(", cliff dwellers") : TEXT(""));
+		R.Bonus += 200 + (Who.Age <= ETechAge::Iron ? 100 : 0) + (Who.IsOrganic() || Who.CliffAffinity >= 0.5f ? 50 : 0);
+	}
 	else if (S.Lineae > 0.05f) { R.Discovery = TEXT("Subsurface ocean under the ice"); R.Bonus += 200; }
 	else if (Roll(R.Key, 1) < 0.4f)
 	{
