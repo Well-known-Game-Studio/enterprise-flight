@@ -18,6 +18,17 @@ enum class ETechAge : uint8
 	Count
 };
 
+/** How a people's ways run, in their towns and between them (the terrain material's WayStyle, PlanetCities' FWays):
+ *  a street grid and straight paved roads; a village's dirt lanes and winding tracks; a hamlet's footpaths; a grown
+ *  town's ring ways and spiral spokes round a plaza, and S-curved roads of pale stone that glow at night. */
+enum class EWayStyle : uint8
+{
+	Grid = 0,
+	Lanes = 1,
+	Paths = 2,
+	Grown = 3
+};
+
 struct FCivilization
 {
 	/** Anyone at all. A world with nobody of its own can still be settled by the Federation (Colonists()). */
@@ -49,6 +60,7 @@ struct FCivilization
 	float WindowGlow = 12.f;
 
 	bool IsOrganic() const { return Organic > 0.5f; }
+	EWayStyle Ways() const { return IsOrganic() ? EWayStyle::Grown : Age == ETechAge::Stone ? EWayStyle::Paths : Age == ETechAge::Iron ? EWayStyle::Lanes : EWayStyle::Grid; }
 	/** "stone-age", "iron-age", "industrial", "modern", "starfaring". */
 	FString AgeName() const;
 	/** A sentence for the science scanner: who they are and how they build. */

@@ -1437,6 +1437,10 @@ void APlanetBody::ApplyTerrainMaterialParams()
 	Terrain->SetScalarParameter(TEXT("SettleWet"), FMath::Max(GetPeople().WetMin, -1.f));
 	// And the share of the settlement points they live at, so the ground is paved and lit only under their towns.
 	Terrain->SetScalarParameter(TEXT("SettleDensity"), GetPeople().Density);
+	// How their ways run, and which of their points they would sooner build into a cliff (the material lays no ways
+	// for those: it cannot tell whether they found one).
+	Terrain->SetScalarParameter(TEXT("WayStyle"), GetPeople().bInhabited ? (float)GetPeople().Ways() : 0.f);
+	Terrain->SetScalarParameter(TEXT("CliffAffinity"), GetPeople().bInhabited ? GetPeople().CliffAffinity : 0.f);
 	Terrain->SetScalarParameter(TEXT("LavaEmissive"), S.LavaEmissive);
 	Terrain->SetScalarParameter(TEXT("CloudScale"), S.CloudScale);
 	Terrain->SetScalarParameter(TEXT("Coverage"), S.bClouds ? S.CloudCoverage : 0.f);
