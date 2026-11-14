@@ -55,8 +55,10 @@ static FPlanetTerrainParams Earthlike()
 	FPlanetTerrainParams P;
 	P.Seed = FVector(37.1, 61.7, 12.9);
 	P.RadiusCm = 5.707e8;
-	P.ReliefCm = 0.0016 * P.RadiusCm;
-	P.OceanDepthCm = 0.0008 * P.RadiusCm;
+	// As APlanetBody::MakeTerrainParams gives an Earth-like world of this size.
+	P.ReliefCm = SlonkTerrain::ReliefForRadius(0.0016, P.RadiusCm);
+	P.OceanDepthCm = SlonkTerrain::ReliefForRadius(0.0008, P.RadiusCm);
+	P.SnowlineCm = 5.0e5;
 	P.SeaLevel = 0.59f; P.ContinentScale = 3.f;
 	P.Mountains = 0.6f; P.Canyons = 0.5f; P.Strata = 0.6f; P.Moisture = 0.55f;
 	P.CanyonDepthCm = 1.6e5 * (P.RadiusCm / 6.371e8); P.CanyonWidthCm = 7.0e5 * (P.RadiusCm / 6.371e8);

@@ -52,6 +52,10 @@ bushes and trees on moist lowland and nothing with no life or no air, every tree
 standing in the drawn ground, and every bush on the centre of a scrub dot the terrain material paints, as wide as
 the dot, with about as many found on the coarsest chunk grid the terrain allows as on the default one, and every
 bush found again on the finer chunks where a wrap plane of the material's noise period runs between them.
+And the mountains: the relief law at three sizes and a range's peaks reaching toward the relief on a small world
+and an Earth-size one, bare rock at the top; the coarse levels of detail of the ranges standing where the fine ones
+average; snow above the snowline for the latitude and none below it, and on high ground the trees climbing toward
+the treeline under it and stopping there.
 
 Writing one: make an `FSystems` (a roster seed gives the same people every time), drive the subsystems through
 their public API, assert with `TestEqual`/`TestTrue`. For anything that depends on the world (targets picked from

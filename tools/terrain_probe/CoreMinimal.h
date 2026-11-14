@@ -21,6 +21,7 @@ struct FVector
 	FVector operator-() const { return FVector(-X, -Y, -Z); }
 	FVector& operator*=(double k) { X *= k; Y *= k; Z *= k; return *this; }
 	FVector& operator+=(const FVector& o) { X += o.X; Y += o.Y; Z += o.Z; return *this; }
+	FVector& operator-=(const FVector& o) { X -= o.X; Y -= o.Y; Z -= o.Z; return *this; }
 	bool operator==(const FVector& o) const { return X == o.X && Y == o.Y && Z == o.Z; }
 	double Size() const { return std::sqrt(X * X + Y * Y + Z * Z); }
 	double SizeSquared() const { return X * X + Y * Y + Z * Z; }
