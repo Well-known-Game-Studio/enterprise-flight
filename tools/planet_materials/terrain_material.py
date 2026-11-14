@@ -220,7 +220,7 @@ float dotsA = 0, dotsB = 0;
 float cn = 0, cnorm = 0, camp = 1.0, ccs = 320000.0;
 [unroll] for (int kc = 0; kc < 3; kc++)
 {
-    int wrapc = (int)(NoisePeriodCm / ccs);
+    int wrapc = 4096;    // the soil patches tiled every 10 km with the texture period
     float3 q = p / ccs; float3 fl = floor(q); float3 fr = q - fl; fr = fr * fr * (3.0 - 2.0 * fr);
     int3 c0 = (int3)fl;
     float h[8];
@@ -377,8 +377,90 @@ AO = lerp(1.0, texOrm.r, nearFade * (1.0 - water));
 
 float night = saturate(-dot(Nn, normalize(SunDirection)) * 6.0 + 0.1);
 float lowland = 1.0 - saturate(hN * ReliefCm / 250000.0);
-float city = smoothstep(0.58, 0.68, cn) * (1.0 - water) * saturate((wet - 0.25) * 4.0) * (1.0 - saturate(slope * 12.0)) * lowland * saturate(fb0 * 4.0 + 0.6);
-Emis = NightLightColor * (NightLightIntensity * city * night) + float3(1.0, 0.28, 0.05) * (LavaEmissive * water * (0.6 + 0.8 * (fb0 + 0.5)));
+// Settlements: Worley points at three scales (25 km regions, 6 km clusters, 1.6 km towns), each level present in
+// only part of its cells, so the lights gather along a few belts with dark country between. Value noise peaked on
+// its lattice corners, which from orbit read as rows of dots fanning into the poles.
+float town = 0.0, cluster = 0.0, region = 0.0;
+float3 townP = 0; uint townH = 0u; float3 clusterP = 0; uint clusterH = 0u; float3 town2P = 0; float dmin2b = 9.0; float paving = 0.0;
+{
+    float dmin[3] = { 9.0, 9.0, 9.0 };
+    [unroll] for (int kw = 0; kw < 3; kw++)
+    {
+        float wcs = kw == 0 ? 2560000.0 : (kw == 1 ? 640000.0 : 160000.0);
+        uint keep = kw == 0 ? 3u : (kw == 1 ? 3u : 3u);        // of four cells
+        float3 qw = p / wcs - 0.5; float3 flw = floor(qw); float3 frw = qw - flw;
+        [unroll] for (int iw = 0; iw < 8; iw++)
+        {
+            int3 cw = ((int3)flw + int3(iw & 1, (iw >> 1) & 1, (iw >> 2) & 1));
+            int3 cwk = cw & 4095;
+            uint hw = ((uint)cwk.x * 73856093u) ^ ((uint)cwk.y * 19349663u) ^ ((uint)cwk.z * 83492791u) ^ (0x9e3779b9u + (uint)kw * 0x85ebca6bu);
+            hw = (hw ^ (hw >> 13)) * 0x5bd1e995u; hw ^= hw >> 15;
+            if ((hw >> 30) >= keep) continue;
+            float3 jit = float3(hw & 0x3ffu, (hw >> 10) & 0x3ffu, (hw >> 20) & 0x3ffu) / 1023.0;
+            float3 dp = float3(cw - (int3)flw) + jit - frw;
+            float dd = dot(dp, dp);
+            if (kw == 2 && dd < dmin[2]) { town2P = townP; dmin2b = dmin[2]; townP = (float3(cw) + jit + 0.5) * wcs; townH = hw; }
+            else if (kw == 2 && dd < dmin2b) { town2P = (float3(cw) + jit + 0.5) * wcs; dmin2b = dd; }
+            if (kw == 1 && dd < dmin[1]) { clusterP = (float3(cw) + jit + 0.5) * wcs; clusterH = hw; }
+            dmin[kw] = min(dmin[kw], dd);
+        }
+    }
+    region = 1.0 - smoothstep(0.05, 0.7, dmin[0]);
+    cluster = 1.0 - smoothstep(0.02, 0.5, dmin[1]);
+    town = 1.0 - smoothstep(0.03, 0.3, dmin[2]);
+}
+float city = region * cluster * town * (1.0 - water) * saturate((wet - 0.25) * 4.0) * (1.0 - saturate(slope * 12.0)) * lowland * saturate(fb0 * 4.0 + 0.6);
+// Built-up ground by day: paving and roofs grey the land where the lights are at night.
+base = lerp(base, float3(0.30, 0.29, 0.28), saturate(city * 1.5) * 0.7);
+// Streets: a city at a cluster point or a town at a town point lays its blocks on a grid (bearing and pitch from
+// its seed, as the buildings are laid); the streets between the lots and a wider avenue every fifth and seventh
+// row are paved, and the lots themselves greyed.
+if (water < 0.5)
+{
+    float cityR = 640000.0 * (0.25 + 0.2 * region);
+    float3 relC = p - clusterP;
+    bool inCity = region > 0.35 && length(relC) < cityR * 1.05;
+    float townS = region * cluster;
+    float townR = 160000.0 * (0.2 + 0.3 * townS);
+    float3 rel = inCity ? relC : (p - townP);
+    uint H = inCity ? clusterH : townH;
+    float Rr = inCity ? cityR : townR;
+    if (inCity || (townS > 0.3 && length(rel) < townR * 1.05))
+    {
+        uint h11 = H ^ (11u + 0x9e3779b9u + (H << 6) + (H >> 2)); h11 = (h11 ^ (h11 >> 13)) * 0x5bd1e995u; h11 ^= h11 >> 15;
+        uint h17 = H ^ (17u + 0x9e3779b9u + (H << 6) + (H >> 2)); h17 = (h17 ^ (h17 >> 13)) * 0x5bd1e995u; h17 ^= h17 >> 15;
+        float ang = (float)(h11 & 0xffffu) / 65535.0 * 3.14159265;
+        float pitch = 3600.0 + 1400.0 * (float)(h17 & 0xffffu) / 65535.0;
+        float3 upT = normalize(inCity ? clusterP : townP);
+        float3 eT = normalize(cross(float3(0, 0, 1), upT)); float3 nT = cross(upT, eT);
+        float3 gX = eT * cos(ang) + nT * sin(ang); float3 gY = cross(upT, gX);
+        float gx = dot(rel, gX) / pitch, gy = dot(rel, gY) / pitch;
+        float inTown = 1.0 - smoothstep(0.9, 1.0, length(rel) / Rr);
+        float sx = abs(frac(gx) - 0.5), sy = abs(frac(gy) - 0.5);           // 0 mid-street, 0.5 mid-lot
+        float street = max(1.0 - smoothstep(0.1, 0.14, sx), 1.0 - smoothstep(0.1, 0.14, sy));
+        int ix = (int)round(gx), iy = (int)round(gy);
+        float aveX = (ix % 5 == 0) ? 1.0 - smoothstep(0.38, 0.46, abs(frac(gx + 0.5) - 0.5)) : 0.0;
+        float aveY = (iy % 7 == 0) ? 1.0 - smoothstep(0.38, 0.46, abs(frac(gy + 0.5) - 0.5)) : 0.0;
+        // The same land gating the lights and the builder use: level, wet, low ground only.
+        float landOk = saturate((wet - 0.25) * 4.0) * (1.0 - saturate(slope * 12.0)) * lowland;
+        inTown *= landOk;
+        paving = max(street, max(aveX, aveY)) * inTown;
+        base = lerp(base, float3(0.30, 0.29, 0.28), inTown * 0.35);
+    }
+    // A road between the two nearest settlement points (the pair this pixel lies between): eight metres wide,
+    // where both ends stand on land and the pixel does.
+    if (dmin2b < 9.0 && townS > 0.08)
+    {
+        float3 ab = town2P - townP; float3 ap = p - townP;
+        float t = saturate(dot(ap, ab) / max(dot(ab, ab), 1.0));
+        float3 q = townP + ab * t;
+        float dRoad = length(p - q);
+        float road = (1.0 - smoothstep(350.0, 500.0, dRoad)) * (1.0 - saturate(slope * 8.0)) * saturate((wet - 0.2) * 5.0);
+        paving = max(paving, road);
+    }
+    base = lerp(base, float3(0.11, 0.11, 0.12), paving * 0.9);
+}
+Emis = NightLightColor * (NightLightIntensity * city * night + 0.35 * paving * night) + float3(1.0, 0.28, 0.05) * (LavaEmissive * water * (0.6 + 0.8 * (fb0 + 0.5)));
 return base;
 """
 
@@ -441,7 +523,18 @@ def build():
     g.out(e, "MP_BaseColor")
     g.out(e, "MP_Normal", "Nrm")
     g.out(e, "MP_Roughness", "Rough")
-    g.out(e, "MP_EmissiveColor", "Emis")
+    # A world seen through another world's sky: opaque aerial perspective stops at the sky LUT's range with its own
+    # luminance factor, so from inside an atmosphere a far planet drew as a cut-out. SkyBehind (0 unless the game
+    # mode sets it for a world beyond the atmosphere's planet) adds back the sky's own luminance less the aerial
+    # in-scatter, over the transmittance, so the far world matches the sky round it.
+    sb = g.custom("return K * (L - AP.rgb) / max(AP.a, 0.001);", ["L", "AP", "K"], "CMOT_Float3", "SkyBehind")
+    g.c(g.node("SkyAtmosphereViewLuminance"), sb, "L")
+    g.c(g.node("SkyAtmosphereAerialPerspective"), sb, "AP")
+    g.c(g.scalar("SkyBehind", 0.0), sb, "K")
+    emis = g.node("Add")
+    g.c(e, emis, "A", "Emis")
+    g.c(sb, emis, "B")
+    g.out(emis, "MP_EmissiveColor")
     g.out(e, "MP_AmbientOcclusion", "AO")
     g.finish()
 
