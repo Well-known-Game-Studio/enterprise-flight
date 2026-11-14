@@ -119,6 +119,26 @@ namespace
 		return Norm > 0.0 ? Sum / Norm : 0.0;
 	}
 
+	/** FbmN() with its gradient in P's units, for distances to its level sets: the value is the same field. */
+	double FbmND(const FVector& P, int32 Octaves, double Lacunarity, double Gain, FVector& OutGrad)
+	{
+		double Sum = 0.0, Amp = 1.0, Norm = 0.0, Freq = 1.0;
+		FVector Q = P, Gr(0.0, 0.0, 0.0);
+		for (int32 i = 0; i < Octaves; ++i)
+		{
+			FVector G;
+			Sum += Amp * PerlinD(Q, G);
+			Gr += G * (Amp * Freq);
+			Norm += Amp;
+			Amp *= Gain;
+			Freq *= Lacunarity;
+			Q *= Lacunarity;
+			Q += FVector(17.31, 9.17, 23.71);
+		}
+		OutGrad = Norm > 0.0 ? Gr / Norm : FVector(0.0, 0.0, 0.0);
+		return Norm > 0.0 ? Sum / Norm : 0.0;
+	}
+
 	/** Noise for ridges: Perlin is zero at every lattice point, so ridges folded from |Perlin| run along the lattice
 	 *  diagonals. Adding a second Perlin at an incommensurate scale frees the zero set. Output about -1..1. */
 	FORCEINLINE double RidgeBase(const FVector& Q)
@@ -280,6 +300,68 @@ namespace
 		// Rim falling off outside, with ejecta tail.
 		return 0.14 * (1.0 - SmoothStep(1.0, 1.6, r));
 	}
+
+	/**
+	 * Mesas and buttes: the caprock an escarpment leaves standing as it retreats. X is in cells of the field, and
+	 * each cell of a jittered lattice may hold an island with a hashed size and toughness. Retreat is how far the
+	 * scarp has gone past (0 at its foot, 1 at the edge of the zone it leaves islands in): an island stands while its
+	 * toughness times Reach beats Retreat, and shrinks to nothing over the last stretch (the toughness skewed low,
+	 * so only a few stand far out), so the islands thin out and
+	 * dwindle away from the scarp instead of being cut off along a line. Wig roughens the outline (cells). Returns
+	 * 0..1 of the caprock's height: a flat top, a sheer cliff of the hard cap down to under half, then a concave
+	 * apron of the soft beds beneath. OutSide is 1 on the cliff, falling down the apron to 0 at its foot.
+	 */
+	double Outlier(const FVector& X, double Retreat, double Reach, double Fill, double Wig, double& OutSide)
+	{
+		double Best = 0.0;
+		OutSide = 0.0;
+		const int64 IX = (int64)FMath::Floor(X.X), IY = (int64)FMath::Floor(X.Y), IZ = (int64)FMath::Floor(X.Z);
+		for (int64 dz = -1; dz <= 1; ++dz)
+		for (int64 dy = -1; dy <= 1; ++dy)
+		for (int64 dx = -1; dx <= 1; ++dx)
+		{
+			const int64 CX = IX + dx, CY = IY + dy, CZ = IZ + dz;
+			const uint32 H = Hash3(CX * 5 + 7, CY * 13 + 1, CZ * 3 + 11);
+			// Only Fill of the cells hold one, so the islands do not stand in rows.
+			if (((H >> 24) & 255) / 255.0 > Fill) { continue; }
+			const uint32 H2 = Hash3(CX + 3, CY + 17, CZ + 5);
+			const double Tough = FMath::Pow((H2 & 1023) / 1023.0, 1.5);
+			const double Live = SmoothStep(0.0, 0.15, Tough * Reach - Retreat);
+			if (Live <= 0.0) { continue; }
+			const FVector Centre((double)CX + (H & 255) / 255.0, (double)CY + ((H >> 8) & 255) / 255.0, (double)CZ + ((H >> 16) & 255) / 255.0);
+			const double Rad = (0.12 + 0.22 * ((H2 >> 10) & 255) / 255.0) * FMath::Sqrt(Live);
+			// Drawn out along a hashed axis, up to twice as long as wide, as the joints the cliffs retreat along leave
+			// them, and lobed by Wig.
+			const uint32 H3 = Hash3(CX + 11, CY + 2, CZ + 23);
+			const FVector Axis = FVector((H3 & 255) / 127.5 - 1.0, ((H3 >> 8) & 255) / 127.5 - 1.0, ((H3 >> 16) & 255) / 127.5 - 1.0).GetSafeNormal();
+			const double Stretch = 1.0 + ((H3 >> 24) & 255) / 255.0;
+			const FVector Dv = X - Centre;
+			const double Along = FVector::DotProduct(Dv, Axis) / Stretch;
+			const double D = FMath::Sqrt((Dv - Axis * (Along * Stretch)).SizeSquared() + Along * Along) + Wig;
+			const double CliffW = 0.035, Apron = 0.08 + 0.45 * Rad;
+			double Hgt, Side;
+			if (D <= Rad) { Hgt = 1.0; Side = 0.0; }
+			else if (D < Rad + CliffW) { const double T = (D - Rad) / CliffW; Hgt = 1.0 - 0.55 * T; Side = SmoothStep(0.0, 0.3, T); }
+			else if (D < Rad + CliffW + Apron) { const double T = (D - Rad - CliffW) / Apron; Hgt = 0.45 * (1.0 - T) * (1.0 - T); Side = 1.0 - T; }
+			else { continue; }
+			// Some have lost their top beds as well, the more the farther out: they stand lower, a few of them spires.
+			const double Worn = ((H3 >> 4) & 255) / 255.0;
+			Hgt *= 1.0 - 0.45 * Worn * Worn * FMath::Clamp(0.3 + Retreat, 0.0, 1.0);
+			if (Hgt > Best) { Best = Hgt; OutSide = Side; }
+		}
+		return Best;
+	}
+
+	/** The scarp's own profile across its foot (D in widths of the scarp, 0 at the rim, 1 at the foot): the same
+	 *  sheer cliff of the cap then concave apron as the islands', 1 on the plateau and 0 below. */
+	FORCEINLINE double ScarpProfile(double D, double& OutSide)
+	{
+		if (D <= 0.0) { OutSide = 0.0; return 1.0; }
+		if (D < 0.12) { OutSide = SmoothStep(0.0, 0.04, D); return 1.0 - 0.55 * D / 0.12; }
+		if (D < 1.0) { const double T = (D - 0.12) / 0.88; OutSide = 1.0 - T; return 0.45 * (1.0 - T) * (1.0 - T); }
+		OutSide = 0.0;
+		return 0.0;
+	}
 }
 
 namespace SlonkTerrain
@@ -295,10 +377,15 @@ namespace SlonkTerrain
 		return FMath::Max(LineCm * 0.06, 2000.0);
 	}
 
-	double ReliefForRadius(double FractionAtEarthSize, double RadiusCm)
+	double ScaleWithWorld(double AtEarthSizeCm, double RadiusCm)
 	{
 		constexpr double EarthCm = 6.371e8;
-		return FMath::Max(FractionAtEarthSize * EarthCm * FMath::Sqrt(FMath::Max(RadiusCm, 1.0) / EarthCm), 1.0);
+		return AtEarthSizeCm * FMath::Sqrt(FMath::Max(RadiusCm, 1.0) / EarthCm);
+	}
+
+	double ReliefForRadius(double FractionAtEarthSize, double RadiusCm)
+	{
+		return FMath::Max(ScaleWithWorld(FractionAtEarthSize * 6.371e8, RadiusCm), 1.0);
 	}
 
 	double Noise3(const FVector& P) { return Perlin(P); }
@@ -401,27 +488,115 @@ namespace SlonkTerrain
 		H *= (1.0 - 0.88 * Maria);
 
 		// ---- canyons: valley lines where a noise field crosses zero, cut into uplifted tablelands ----
-		double Carve = 0.0, Wall = 0.0, River = 0.0, Banks = 0.0;
-		const double TableField = FbmN(Q * 1.1 + FVector(0.0, 23.0, 0.0), 3, 2.0, 0.5) * 0.5 + 0.5;
+		double Carve = 0.0, Wall = 0.0, River = 0.0, Banks = 0.0, BadZone = 0.0;
+		FVector GTable;
+		const double TableField = FbmND(Q * 1.1 + FVector(0.0, 23.0, 0.0), 3, 2.0, 0.5, GTable) * 0.5 + 0.5;
 		// Canyons sets how much of the land is tableland (threshold), never the depth of the cut.
 		const double TableLo = 0.68 - 0.2 * FMath::Clamp((double)P.Canyons, 0.0, 1.0);
 		const double Tableland = SmoothStep(TableLo, TableLo + 0.1, TableField) * SmoothStep(0.08, 0.25, HN) * (1.0 - SmoothStep(0.15, 0.6, MtnMask * Mtn * 3.0)) * Land;
 		const double CanyonZone = P.Canyons > 0.f ? Tableland : 0.0;
-		// The plateau rises a quarter of the relief (2.3 km on an Earth) so a canyon has something to cut into.
-		H += Tableland * 0.25 * FMath::Max(P.Canyons, 0.3f);
+		// The mesas, buttes and the canyon floor's temples are islands in cells a third and a tenth of a canyon's width
+		// (on an Earth-size world, 5.6 and 1.8 km).
+		const double WidthCm = FMath::Max(P.CanyonWidthCm, 1.0);
+		const double MesaCellCm = FMath::Max(0.35 * WidthCm, 2.0e5), ButteCellCm = FMath::Max(0.11 * WidthCm, 8.0e4);
+
+		// ---- the escarpment: the plateau ends in a cliff, with mesas and buttes before it ----
+		// The top three fifths of the uplift are a hard caprock over soft beds. Past the plateau's edge the cap has
+		// been stripped back to a scarp, a sheer cliff over a talus apron whose line wanders and is scalloped, and in
+		// front of it, over two canyon widths, the cap survives only as mesas and then buttes, fewer and smaller the
+		// farther out: the Colorado Plateau's cliffs with Monument Valley before them. The distance to the edge comes
+		// from the field's own gradient, so the scarp is as sharp wherever the field climbs slowly or fast.
+		double Cap = 1.0, CapSide = 0.0, CapTop = 0.0;
+		if (P.Canyons > 0.f && Tableland > 0.001)
+		{
+			const double TablePerCm = 0.5 * 1.1 * CS * (GTable - Dir * FVector::DotProduct(GTable, Dir)).Size() / R;
+			const double ScarpCm = 0.12 * WidthCm, RetreatCm = 2.0 * WidthCm;
+			// The line wanders by half a retreat's width every few of them, is scalloped into bays and promontories a
+			// retreat across, and crenellated finer again, so it never runs straight for long.
+			const double EdgeWigCm = RetreatCm * 0.5 * FbmN(QW * (Lambda0 / (2.5 * RetreatCm)) + FVector(13.0, 5.0, 71.0), OctavesFor(2.5 * RetreatCm, MinWavelengthCm, 3), 2.0, 0.5)
+				+ RetreatCm * 0.3 * FbmN(QW * (Lambda0 / RetreatCm) + FVector(3.0, 37.0, 19.0), OctavesFor(RetreatCm, MinWavelengthCm, 3), 2.0, 0.5)
+				+ RetreatCm * 0.06 * FbmN(QW * (Lambda0 / (0.2 * RetreatCm)) + FVector(41.0, 9.0, 2.0), OctavesFor(0.2 * RetreatCm, MinWavelengthCm, 3), 2.0, 0.55)
+				// Buttresses and alcoves: the cliff's foot moves in and out by half its width, every half a width or so.
+				+ ScarpCm * 0.5 * FbmN(QW * (Lambda0 / (0.6 * ScarpCm)) + FVector(7.0, 61.0, 23.0), OctavesFor(0.6 * ScarpCm, MinWavelengthCm, 4), 2.0, 0.55);
+			// Re-entrants: where the gullies run off the plateau they have cut back into it, narrow notches a few
+			// kilometres deep along the zero lines of a noise a quarter of a retreat across.
+			const double Gully = FbmN(QW * (Lambda0 / (0.25 * RetreatCm)) + FVector(17.0, 3.0, 59.0), OctavesFor(0.25 * RetreatCm, MinWavelengthCm, 2), 2.0, 0.5);
+			const double NotchCm = RetreatCm * 0.15 * FMath::Pow(FMath::Max(1.0 - FMath::Abs(Gully) * 2.0, 0.0), 3.0);
+			// How far out from the rim, cm (negative on the plateau).
+			const double Beyond = (TableLo + 0.07 - TableField) / FMath::Max(TablePerCm, 1e-15) + EdgeWigCm + NotchCm;
+			if (Beyond > 0.0)
+			{
+				Cap = ScarpProfile(Beyond / ScarpCm, CapSide);
+				const double Retreat = (Beyond - ScarpCm) / RetreatCm;
+				if (Retreat < 1.0)
+				{
+					// Mesas nearer the scarp, buttes out to the zone's edge; each once the mesh can carry it.
+					double Side = 0.0;
+					if (MinWavelengthCm < MesaCellCm * 0.5)
+					{
+						// The outline lobed by a noise a third of the cell across, a tenth of a cell deep.
+						const double Wig = 0.1 * FbmN(Dir * (R / (0.3 * MesaCellCm)) + P.Seed * 1.3, OctavesFor(0.3 * MesaCellCm, MinWavelengthCm, 3), 2.0, 0.5);
+						const double M = Outlier(Dir * (R / MesaCellCm) + P.Seed * 1.7, Retreat, 0.7, 0.45, Wig, Side);
+						if (M > Cap) { Cap = M; CapSide = Side; }
+					}
+					if (MinWavelengthCm < ButteCellCm * 0.5)
+					{
+						const double Wig = 0.14 * FbmN(Dir * (R / (0.3 * ButteCellCm)) + P.Seed * 2.9, OctavesFor(0.3 * ButteCellCm, MinWavelengthCm, 3), 2.0, 0.5);
+						const double B = Outlier(Dir * (R / ButteCellCm) + P.Seed * 2.3, Retreat, 1.0, 0.25, Wig, Side);
+						if (B > Cap) { Cap = B; CapSide = Side; }
+					}
+				}
+				// The islands' tops are the bare caprock.
+				CapTop = SmoothStep(0.9, 1.0, Cap);
+				// The soft beds bared under the cap near the scarp: badlands, where it is dry enough (the biome below).
+				BadZone = (1.0 - SmoothStep(0.05, 0.3, Retreat)) * (1.0 - Cap);
+			}
+		}
+		// The plateau rises a quarter of the relief (2.3 km on an Earth) so a canyon has something to cut into; the
+		// cap is its top three fifths, the soft beds' two fifths stay under the scarp and its islands.
+		H += Tableland * 0.25 * FMath::Max(P.Canyons, 0.3f) * (0.4 + 0.6 * Cap);
 		if (CanyonZone > 0.001)
 		{
 			const double F = 5.0; // one valley line per ~400 km on an Earth-size world
 			const double CellCm = Lambda0 / F;
-			// |n| < HalfWidth is inside; the noise climbs at roughly 1.5 per unit off its zero line.
-			const double HalfWidth = P.CanyonWidthCm * 0.5 / CellCm * 1.5;
+			// The canyon's width in the trunk field's units. |n| < HalfWidth is inside, with n measured as the
+			// distance to the line at the rate the noise climbs on average, 1.5 per unit.
+			const double Wn = WidthCm / CellCm;
+			const double HalfWidth = Wn * 0.5 * 1.5;
+			const FVector Q1 = QW * F + FVector(57.0, 0.0, 0.0);
+			// Incised meanders: where a slow field says the river wandered across a plain before the plateau rose
+			// under it, the line loops every few widths, about a width to either side (seldom on a world that never
+			// had rivers). Two octaves of a warp of the field's domain, its Jacobian carried along so the distance
+			// below stays true and the canyon keeps its width round the bends.
+			const double MeanderAmt = SmoothStep(0.4, 0.6, FbmN(QW * F * 2.0 + FVector(7.0, 41.0, 3.0), 2, 2.0, 0.5) * 0.5 + 0.5) * (P.bAirless ? 0.3 : 1.0);
+			FVector G1;
+			double N1;
+			if (MeanderAmt > 0.01)
+			{
+				const double K1 = 1.0 / (5.0 * Wn), K2 = 1.0 / (2.0 * Wn);
+				const double A1 = 1.4 * Wn * MeanderAmt, A2 = 0.45 * Wn * MeanderAmt;
+				FVector Gx1, Gy1, Gz1, Gx2, Gy2, Gz2, Gn;
+				const FVector Warp = FVector(PerlinD(Q1 * K1 + FVector(3.1, 0.0, 0.0), Gx1), PerlinD(Q1 * K1 + FVector(0.0, 7.7, 0.0), Gy1), PerlinD(Q1 * K1 + FVector(0.0, 0.0, 5.3), Gz1)) * A1
+					+ FVector(PerlinD(Q1 * K2 + FVector(1.9, 4.4, 0.0), Gx2), PerlinD(Q1 * K2 + FVector(8.8, 0.0, 2.6), Gy2), PerlinD(Q1 * K2 + FVector(0.0, 6.1, 9.9), Gz2)) * A2;
+				N1 = PerlinD(Q1 + Warp, Gn);
+				// d/dQ1 of n(Q1 + Warp(Q1)): Gn plus each of Gn's components times that component of the warp's slope.
+				G1 = Gn + (Gx1 * Gn.X + Gy1 * Gn.Y + Gz1 * Gn.Z) * (A1 * K1) + (Gx2 * Gn.X + Gy2 * Gn.Y + Gz2 * Gn.Z) * (A2 * K2);
+			}
+			else
+			{
+				N1 = PerlinD(Q1, G1);
+			}
+			// The distance to the line, from the value over the gradient across the ground.
+			const double Line = N1 / FMath::Max((G1 - Dir * FVector::DotProduct(G1, Dir)).Size(), 0.25) * 1.5;
+			// The width wanders along the canyon: narrows, and broad reaches where the walls stand back.
+			const double WidthMod = 0.7 + 0.6 * SmoothStep(0.25, 0.75, FbmN(QW * F * 4.0 + FVector(0.0, 13.0, 29.0), 2, 2.0, 0.5) * 0.5 + 0.5);
 			// Rough the line with finer noise so the walls are not glass smooth.
 			const double Wig = FbmN(QW * F * 9.0 + FVector(3.0, 5.0, 7.0), OctavesFor(CellCm / 9.0, MinWavelengthCm, 5), 2.0, 0.5);
 			// Finer wiggle (about 8 km down to 500 m) so the cliff lines are scalloped and gullied, not ruled.
 			const double Wig2 = FbmN(QW * F * 48.0 + FVector(11.0, 2.0, 9.0), OctavesFor(CellCm / 48.0, MinWavelengthCm, 5), 2.0, 0.55);
 			// And finer again (2 km down), so the floor edge and the side canyons wander by hundreds of metres.
 			const double Wig3 = FbmN(QW * F * 200.0 + FVector(5.0, 23.0, 1.0), OctavesFor(CellCm / 200.0, MinWavelengthCm, 4), 2.0, 0.5);
-			const double V0 = FMath::Abs(Perlin(QW * F + FVector(57.0, 0.0, 0.0)) + 0.18 * HalfWidth * Wig + 0.3 * HalfWidth * Wig2 + 0.08 * HalfWidth * Wig3);
+			const double V0 = FMath::Abs(Line / WidthMod + 0.18 * HalfWidth * Wig + 0.3 * HalfWidth * Wig2 + 0.08 * HalfWidth * Wig3);
 			// Fluting: noise from 200 m down to the cell moves the wall line in and out, so the cliffs stand in
 			// buttresses and alcoves instead of ruled faces. It is keyed to the coarse position across the wall as
 			// well as along it, so each stratum weathers to its own pattern.
@@ -471,39 +646,53 @@ namespace SlonkTerrain
 			float StratumMain = 0.f, StratumTrib = 0.f;
 			const double Stair = StairAt(T, StratumMain);
 			Out.Stratum = StratumMain;
-			const double Main = 1.0 - (P.Strata > 0.f ? Stair * 0.85 + T * 0.15 : SmoothStep(0.0, 1.0, T));
+			double Main = 1.0 - (P.Strata > 0.f ? Stair * 0.85 + T * 0.15 : SmoothStep(0.0, 1.0, T));
+			// Temples: mesas standing on the floor of the broad reaches, the walls' last remnants as they retreat,
+			// thickest by the walls and gone before the gorge, their tops a fifth of the depth under the rim.
+			if (MinWavelengthCm < MesaCellCm * 0.5)
+			{
+				const double Retreat = (HalfWidth * 0.62 - V) / (HalfWidth * 0.4);
+				if (Retreat > -0.25 && Retreat < 1.0)
+				{
+					double Side = 0.0;
+					const double Temple = Outlier(Dir * (R / MesaCellCm) + P.Seed * 3.9, FMath::Max(Retreat, 0.0), 0.9, 0.5, 0.0, Side);
+					Main = FMath::Min(Main, 1.0 - 0.8 * Temple);
+				}
+			}
 			// Inner gorge: a narrow slot down the middle of the floor, a quarter of the depth again.
 			const double Gorge = (1.0 - SmoothStep(HalfWidth * 0.08, HalfWidth * 0.2, V)) * 0.25;
-			// Side canyons: a second, much denser line set, a third of the width and four fifths of the
-			// depth, cut into the walls and the plateau beside the canyon. Each fades out two widths from the
-			// main line, its floor climbing back through the strata, so it ends in an amphitheatre. Lines that
-			// run along the canyon rather than into it are held back by the angle between the two fields'
-			// gradients (taken by central differences along two tangents of the direction).
+			// Side canyons: a second line set, one about every three fifths of a width along the trunk on any world,
+			// three twentieths of its width at the mouth and four fifths of its depth, cut into the walls and the
+			// plateau beside the canyon. Each reaches a little past the rim, up to three quarters of a width,
+			// narrowing to two fifths and its floor climbing toward its head, where it ends in an amphitheatre. Its
+			// distance is measured as the trunk's is, so each keeps its width. Lines that run along the canyon
+			// rather than into it are held back by the angle between the two fields' gradients across the ground
+			// (the trunk's through its meanders); kept short, what is left of them stays on the walls.
 			double Trib = 0.0;
 			{
-				// Sixty times the trunk's line density: a side canyon every five kilometres or so on an Earth.
-				const double Kt = 60.0;
-				const double HWt = HalfWidth * 0.3 * Kt;
-				const FVector Q1 = QW * F + FVector(57.0, 0.0, 0.0);
-				const FVector Qt = QW * F * Kt + FVector(0.0, 91.0, 0.0);
-				const FVector Ta = FVector::CrossProduct(FMath::Abs(Dir.Z) < 0.9 ? FVector::ZAxisVector : FVector::XAxisVector, Dir).GetSafeNormal();
-				const FVector Tb = FVector::CrossProduct(Dir, Ta);
-				// A step of a few hundredths of each field's own cell.
-				const double E1 = 0.03, E2 = 0.03;
-				const double G1a = Perlin(Q1 + Ta * E1) - Perlin(Q1 - Ta * E1), G1b = Perlin(Q1 + Tb * E1) - Perlin(Q1 - Tb * E1);
-				const double G2a = Perlin(Qt + Ta * E2) - Perlin(Qt - Ta * E2), G2b = Perlin(Qt + Tb * E2) - Perlin(Qt - Tb * E2);
-				const double CosAng = FMath::Abs(G1a * G2a + G1b * G2b) / (FMath::Sqrt(G1a * G1a + G1b * G1b) * FMath::Sqrt(G2a * G2a + G2b * G2b) + 1e-12);
-				const double Across = 1.0 - SmoothStep(0.45, 0.85, CosAng);
-				const double V2 = FMath::Abs(Perlin(Qt) + 0.5 * HWt * Wig2 + 0.3 * HWt * Wig3 + 0.0045 * HWt * Flute * 0.6);
-				const double T2 = FMath::Clamp((V2 - HWt * 0.5) / (HWt * 0.5) + Shift, 0.0, 1.0);
-				const double StairT = StairAt(T2, StratumTrib);
-				const double Profile = 1.0 - (P.Strata > 0.f ? StairT * 0.85 + T2 * 0.15 : SmoothStep(0.0, 1.0, T2));
-				// How far each side canyon reaches into the plateau varies along the trunk, so the heads do not
-				// line up.
-				const double ReachEnd = HalfWidth * (1.5 + 1.2 * (FbmN(QW * F * 30.0 + FVector(0.0, 0.0, 41.0), 2, 2.0, 0.5) * 0.5 + 0.5));
-				const double Reach = 1.0 - SmoothStep(ReachEnd, ReachEnd + HalfWidth * 0.5, V0);
-				Trib = Profile * 0.8 * Reach * Across;
-				if (Trib > Main) { Out.Stratum = StratumTrib; }
+				const double Spacing = 0.6 * Wn;
+				// How far each reaches into the plateau varies along the trunk, so the heads do not line up.
+				const double ReachEnd = HalfWidth * (1.3 + 1.2 * (FbmN(QW * F * 30.0 + FVector(0.0, 0.0, 41.0), 2, 2.0, 0.5) * 0.5 + 0.5));
+				const double Reach = 1.0 - SmoothStep(ReachEnd, ReachEnd + HalfWidth * 0.3, V0);
+				if (Reach > 0.0)
+				{
+					FVector G2;
+					const double N2 = PerlinD(Q1 * (1.0 / Spacing) + FVector(0.0, 91.0, 0.0), G2);
+					const FVector G1t = G1 - Dir * FVector::DotProduct(G1, Dir), G2t = G2 - Dir * FVector::DotProduct(G2, Dir);
+					const double G1n = G1t.Size(), G2n = G2t.Size();
+					const double CosAng = FMath::Abs(FVector::DotProduct(G1t, G2t)) / (G1n * G2n + 1e-12);
+					const double Across = 1.0 - SmoothStep(0.45, 0.85, CosAng);
+					const double Head = SmoothStep(HalfWidth * 0.9, ReachEnd, V0);
+					// Half-width in the side field's units, at the trunk's rate of 1.5 per unit.
+					const double HWt = 0.19 * (1.0 - 0.6 * Head);
+					const double Lt = N2 / FMath::Max(G2n, 0.25) * 1.5;
+					const double V2 = FMath::Abs(Lt + 0.5 * HWt * Wig2 + 0.3 * HWt * Wig3 + 0.0045 * HWt * Flute * 0.6);
+					const double T2 = FMath::Clamp((V2 - HWt * 0.5) / (HWt * 0.5) + Shift, 0.0, 1.0);
+					const double StairT = StairAt(T2, StratumTrib);
+					const double Profile = 1.0 - (P.Strata > 0.f ? StairT * 0.85 + T2 * 0.15 : SmoothStep(0.0, 1.0, T2));
+					Trib = Profile * 0.8 * (1.0 - 0.6 * Head) * Reach * Across;
+					if (Trib > Main) { Out.Stratum = StratumTrib; }
+				}
 			}
 			// Depth varies along the canyon so it opens and narrows.
 			const double Along = 0.75 + 0.25 * (FbmN(QW * 3.0 + FVector(19.0, 0.0, 0.0), 3, 2.0, 0.5) * 0.5 + 0.5);
@@ -522,6 +711,8 @@ namespace SlonkTerrain
 			// The wall band: everything between the rim and the floor.
 			Wall = SmoothStep(0.02, 0.12, Carve) * (1.0 - SmoothStep(0.88, 0.98, Carve));
 		}
+		// The scarp's and the islands' flanks are wall too: the same strata, terraced the same way below.
+		Wall = FMath::Max(Wall, CapSide * SmoothStep(0.05, 0.3, Tableland));
 		const double CanyonUnits = P.CanyonDepthCm / FMath::Max(P.ReliefCm, 1.0);
 		// Never cut below sea level: keep a twentieth of the plateau height under the floor.
 		const double Cut = FMath::Min(Carve * CanyonUnits, H * 0.95);
@@ -653,7 +844,7 @@ namespace SlonkTerrain
 		const double Band = SnowBandCm(Line);
 		const double Snow = P.bAirless || P.bLava || P.SnowlineCm <= 0.0 ? 0.0 : SmoothStep(Line - Band, Line + 2.0 * Band, HeightCm);
 		Out.Ice = (float)FMath::Clamp(FMath::Max(Polar, Snow) * (P.bLava ? 0.0 : 1.0), 0.0, 1.0);
-		Out.Rock = (float)FMath::Clamp(MtnMask * Mtn * 2.5 + Wall + CraterShade * 0.5, 0.0, 1.0);
+		Out.Rock = (float)FMath::Clamp(FMath::Max(MtnMask * Mtn * 2.5 + Wall + CraterShade * 0.5, CapTop * 0.6), 0.0, 1.0);
 		Out.Wet = (float)Wet;
 		Out.Canyon = (float)FMath::Clamp(Carve, 0.0, 1.0);
 		Out.Wall = (float)FMath::Clamp(Wall, 0.0, 1.0);
@@ -661,6 +852,13 @@ namespace SlonkTerrain
 		Out.Table = (float)FMath::Clamp(Tableland, 0.0, 1.0);
 		Out.Crater = (float)FMath::Clamp(CraterShade, 0.0, 1.0);
 		Out.Linea = (float)FMath::Clamp(Linea * P.Lineae, 0.0, 1.0);
+		// Badlands where the soft beds are bared and too dry for anything to hold them, in patches; the refinement
+		// cuts them into gullies. Rain makes them, so a world without air has none.
+		if (BadZone > 0.001 && !P.bAirless)
+		{
+			const double Patch = SmoothStep(0.35, 0.55, FbmN(Dir * (R / (1.5 * WidthCm)) + P.Seed * 0.7, 3, 2.0, 0.5) * 0.5 + 0.5);
+			Out.Badland = (float)FMath::Clamp(BadZone * (1.0 - SmoothStep(0.3, 0.6, Wet)) * Patch, 0.0, 1.0);
+		}
 		return Out;
 	}
 
@@ -709,12 +907,20 @@ namespace SlonkTerrain
 				}
 			}
 		}
+		// Badlands: the soft beds cut into a dense net of gullies between knife-edged ridges, forty metres deep at a
+		// hundred-metre spacing and finer down to the cell, slopes near forty degrees.
+		const double Bad = (double)S.Badland * (1.0 - Cliff);
+		if (Bad > 0.002)
+		{
+			const int32 Oct = OctavesFor(10000.0, MinWavelengthCm, 6, 2.2);
+			Add += (Ridged(Q * (RefineStartCm / 10000.0) + FVector(2.9, 8.1, 4.6), Oct, 2.2, 0.5, 0.7) - 0.3) * 4000.0 * Bad;
+		}
 		// Soil, sand and regolith: gentle hummocks from 200 m down to the decimetre.
 		if (Flat > 0.002)
 		{
 			const int32 Oct = OctavesFor(RefineStartCm, MinWavelengthCm, 11, 2.0);
 			const double Dry = 1.0 - 0.5 * S.Wet;
-			Add += FbmN(Q + FVector(7.7, 0.0, 4.4), Oct, 2.0, 0.45) * 150.0 * Flat * Dry * Air;
+			Add += FbmN(Q + FVector(7.7, 0.0, 4.4), Oct, 2.0, 0.45) * 150.0 * Flat * Dry * Air * (1.0 - Bad);
 		}
 		// Keep the coast where it is: the refinement fades out over the first few metres above the sea.
 		if (!P.bAirless) { Add *= SmoothStep(0.0, 600.0, S.HeightCm); }

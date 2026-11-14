@@ -877,6 +877,10 @@ bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& Ne
 		// The river: the gorge's deepest cut leads to within a bend of it, then the river mask takes over.
 		if (K == TEXT("river")) { return S.River * 10.0 + S.Canyon * 2.0 + S.CutCm / FMath::Max(Params.CanyonDepthCm, 1.0) * 4.0 + Temperate + Near * 0.5; }
 		if (K == TEXT("mountain")) { return S.bWater ? -1e9 : S.HeightCm / FMath::Max(Params.ReliefCm, 1.0) * 10.0 + Near * 0.5; }
+		// The scarp at a plateau's edge, away from the canyons, toward the foreland where its mesas and buttes stand.
+		if (K == TEXT("mesa")) { return S.bWater ? -1e9 : S.Wall * 6.0 - S.Canyon * 10.0 + S.Badland * 2.0 + Temperate + Near * 0.5; }
+		// Badlands: the gullied soft beds below a dry world's scarps.
+		if (K == TEXT("badlands")) { return S.bWater ? -1e9 : S.Badland * 10.0 + Temperate + Near * 0.5; }
 		// Green: the wettest level lowland, where a living world grows its meadows and forests (TerrainScatter.h).
 		if (K == TEXT("green")) { return S.bWater ? -1e9 : S.Wet * 6.0 - S.Slope * 4.0 - S.Rock * 2.0 - S.Ice * 6.0 - S.HeightCm / FMath::Max(Params.ReliefCm, 1.0) * 6.0 - FMath::Abs(D.Z) * 2.0 + Near * 2.0; }
 		if (K == TEXT("linea")) { return S.Linea * 10.0 + Near * 3.0; }
@@ -920,9 +924,10 @@ bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& Ne
 		if (Sc > BestScore) { BestScore = Sc; Best = D; }
 	}
 	if (BestScore <= -1e8) { return false; }
-	// Canyons are thin lines on broad tablelands and the coarse pass mostly misses them: around the best few
-	// tableland samples, comb a fine grid (2 km spacing, 80 km across) for the deepest cut.
-	if (K == TEXT("canyon") || K == TEXT("rim") || K == TEXT("river"))
+	// Canyons, scarps and badlands are thin on broad tablelands and the coarse pass mostly misses them: around the
+	// best few tableland samples, comb a fine grid (2 km spacing, 80 km across) for the best.
+	const bool bTableFeature = K == TEXT("canyon") || K == TEXT("rim") || K == TEXT("river") || K == TEXT("mesa") || K == TEXT("badlands");
+	if (bTableFeature)
 	{
 		struct FCand { double Score; FVector D; };
 		TArray<FCand> Cands;
@@ -956,7 +961,7 @@ bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& Ne
 		}
 	}
 	// Refine: hill-climb on a shrinking step so the result sits on the feature, not 30 km from it.
-	double Step = (K == TEXT("canyon") || K == TEXT("rim") || K == TEXT("river")) ? 2.0e5 / Params.RadiusCm : CoarseWavelength / Params.RadiusCm;
+	double Step = bTableFeature ? 2.0e5 / Params.RadiusCm : CoarseWavelength / Params.RadiusCm;
 	for (int32 It = 0; It < 6; ++It)
 	{
 		bool bMoved = true;
