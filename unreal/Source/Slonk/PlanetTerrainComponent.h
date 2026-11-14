@@ -76,7 +76,7 @@ public:
 
 	/** The rocks and plants on the ground (TerrainScatter.h): on or off, how many, whether there are towns to keep
 	 *  clear, and how much grows. A change rebuilds the chunks fine enough to carry any, in place. */
-	void SetScatterOptions(bool bEnabled, float Density, bool bCities, float Life);
+	void SetScatterOptions(bool bEnabled, float Density, bool bCities, float Life, const FCivilization& People);
 	/** Makes the rocks round a world position solid for a while, wherever the pawn is: a transporter's destination,
 	 *  so the arrival trace stands the person on a boulder rather than inside it. */
 	void PinSolidRocks(const FVector& WorldPos, double Seconds);

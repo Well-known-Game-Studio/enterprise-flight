@@ -435,13 +435,16 @@ float3 townRel = 0; uint townH = 0u; float3 clusterRel = 0; uint clusterH = 0u; 
 // Only a world with settlements has them: one without night lights (SlonkCities builds nothing there, HasCities)
 // keeps its bare ground by day as well as by night.
 float settled = NightLightIntensity > 0.0 ? 1.0 : 0.0;
-float city = settled * region * cluster * town * (1.0 - water) * saturate((wet - 0.25) * 4.0) * (1.0 - saturate(slope * 12.0)) * lowland * saturate(fb0 * 4.0 + 0.6);
-// Built-up ground by day: paving and roofs grey the land where the lights are at night.
-base = lerp(base, float3(0.30, 0.29, 0.28), saturate(city * 1.5) * 0.7);
+// SettleWet is the driest ground the world's people settle (Civilization.h: 0.3, or none at all for a desert people), as
+// SlonkCities gates its towns.
+float city = settled * region * cluster * town * (1.0 - water) * saturate((wet - SettleWet + 0.05) * 4.0) * (1.0 - saturate(slope * 12.0)) * lowland * saturate(fb0 * 4.0 + 0.6);
+// Built-up ground by day: paving and roofs grey the land where the lights are at night, where the people pave
+// (StreetGrid: an industrial or later people that builds on a grid; not a village's, nor a grown town's).
+base = lerp(base, float3(0.30, 0.29, 0.28), saturate(city * 1.5) * 0.7 * StreetGrid);
 // Streets: a city at a cluster point or a town at a town point lays its blocks on a grid (bearing and pitch from
 // its seed, as the buildings are laid); the streets between the lots and a wider avenue every fifth and seventh
 // row are paved, and the lots themselves greyed.
-if (water < 0.5 && settled > 0.0)
+if (water < 0.5 && settled * StreetGrid > 0.0)
 {
     float cityR = 640000.0 * (0.25 + 0.2 * region);
     // The footprints are round the sites SlonkCities builds on: each Worley point taken down onto the sphere (it lies
@@ -473,7 +476,7 @@ if (water < 0.5 && settled > 0.0)
         float aveX = (ix % 5 == 0) ? 1.0 - smoothstep(0.38, 0.46, abs(frac(gx + 0.5) - 0.5)) : 0.0;
         float aveY = (iy % 7 == 0) ? 1.0 - smoothstep(0.38, 0.46, abs(frac(gy + 0.5) - 0.5)) : 0.0;
         // The same land gating the lights and the builder use: level, wet, low ground only.
-        float landOk = saturate((wet - 0.25) * 4.0) * (1.0 - saturate(slope * 12.0)) * lowland;
+        float landOk = saturate((wet - SettleWet + 0.05) * 4.0) * (1.0 - saturate(slope * 12.0)) * lowland;
         inTown *= landOk;
         paving = max(street, max(aveX, aveY)) * inTown;
         base = lerp(base, float3(0.30, 0.29, 0.28), inTown * 0.35);
@@ -488,7 +491,7 @@ if (water < 0.5 && settled > 0.0)
         float3 ab = ap - (town2Rel - U * dot(town2Rel, U));
         float t = saturate(dot(ap, ab) / max(dot(ab, ab), 1.0));
         float dRoad = length(ap - ab * t);
-        float road = (1.0 - smoothstep(350.0, 500.0, dRoad)) * (1.0 - saturate(slope * 8.0)) * saturate((wet - 0.2) * 5.0);
+        float road = (1.0 - smoothstep(350.0, 500.0, dRoad)) * (1.0 - saturate(slope * 8.0)) * saturate((wet - SettleWet + 0.1) * 5.0);
         paving = max(paving, road);
     }
     base = lerp(base, float3(0.11, 0.11, 0.12), paving * 0.9);
@@ -506,7 +509,7 @@ WPO_INPUTS = ["Fn", "LP", "Col", "OX", "OY", "OZ", "ORX", "ORY", "ORZ", "Cam", "
 INPUTS = ["Fn", "N", "LP", "UV0", "UV1", "UV2", "UV3", "Col", "ColA", "OX", "OY", "OZ", "Cell", "ORX", "ORY", "ORZ", "Cam", "WP", "PlanetRadiusCm", "WaterNR", "Time", "SwellCm"] + TEX_INPUTS + [
           "OceanColor", "ShallowColor", "LandColor", "LandColor2", "MountainColor", "IceColor", "NightLightColor",
           "OceanRoughness", "LandRoughness", "NightLightIntensity", "LavaEmissive", "SunDirection",
-          "NoisePeriodCm", "ReliefCm", "OceanDepthCm", "TX", "TY", "TZ"]
+          "NoisePeriodCm", "ReliefCm", "OceanDepthCm", "TX", "TY", "TZ", "StreetGrid", "SettleWet"]
 
 
 def build():
@@ -528,7 +531,7 @@ def build():
         "OceanColor": (0.05, 0.17, 0.35), "ShallowColor": (0.1, 0.35, 0.5), "LandColor": (0.30, 0.36, 0.18), "LandColor2": (0.55, 0.45, 0.28),
         "MountainColor": (0.55, 0.52, 0.50), "IceColor": (0.90, 0.93, 0.97), "NightLightColor": (1.0, 0.8, 0.5), "SunDirection": (1.0, 0.0, 0.0),
     }
-    scal = {"OceanRoughness": 0.22, "LandRoughness": 0.9, "NightLightIntensity": 0.0, "LavaEmissive": 0.0, "NoisePeriodCm": 1048576.0, "ReliefCm": 3.8e6, "OceanDepthCm": 5.0e5, "PlanetRadiusCm": 6.371e8, "SwellCm": 120.0}
+    scal = {"OceanRoughness": 0.22, "LandRoughness": 0.9, "NightLightIntensity": 0.0, "LavaEmissive": 0.0, "NoisePeriodCm": 1048576.0, "ReliefCm": 3.8e6, "OceanDepthCm": 5.0e5, "PlanetRadiusCm": 6.371e8, "SwellCm": 120.0, "StreetGrid": 1.0, "SettleWet": 0.3}
     e = g.custom(CODE, INPUTS, "CMOT_Float3", "terrain layers, textures, bump, lights", extra_outputs=(("Nrm", "CMOT_Float3"), ("Rough", "CMOT_Float1"), ("Emis", "CMOT_Float3"), ("AO", "CMOT_Float1")))
     for pin, src in [("Fn", fn), ("N", n), ("LP", vi), ("UV0", uv0), ("UV1", uv1), ("UV2", uv2), ("UV3", uv3), ("Col", col), ("OX", ox), ("OY", oy), ("OZ", oz), ("Cell", cell), ("ORX", orx), ("ORY", ory), ("ORZ", orz), ("Cam", cam), ("WP", wp), ("TX", tx), ("TY", ty), ("TZ", tz)]:
         g.c(src, e, pin)
