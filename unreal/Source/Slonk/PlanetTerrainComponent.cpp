@@ -4,7 +4,7 @@
 #include "SlonkMaterials.h"
 
 #include "Components/DynamicMeshComponent.h"
-#include "RockInstancesComponent.h"
+#include "ScatterInstancesComponent.h"
 #include "DynamicMesh/DynamicMesh3.h"
 #include "DynamicMesh/DynamicMeshAttributeSet.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -21,14 +21,20 @@ using namespace UE::Geometry;
 
 namespace
 {
-	/** Period of the material's detail noise, cm. Chunk origins are handed to the shader modulo this, so the
-	 *  float it adds to the vertex position never loses the metres. */
-	constexpr double NoisePeriodCm = 1048576.0; // 2^20
+	/** Period of the material's detail noise, cm (2^20). Chunk origins are handed to the shader modulo this, so the
+	 *  float it adds to the vertex position never loses the metres; the scatter finds the scrub dots in the same space. */
+	constexpr double NoisePeriodCm = SlonkScatter::NoisePeriodCm;
+
+	/** The mesh of a scatter set: the rock shapes, then the plants. */
+	UStaticMesh* ScatterMesh(int32 Mesh)
+	{
+		return SlonkScatter::IsPlant(Mesh) ? SlonkPlants::GetMesh((EPlant)(Mesh - SlonkScatter::FirstPlant)) : SlonkGroundRocks::GetMesh((EGroundRock)Mesh);
+	}
 
 	/** Back to the pool: empty, hidden and attached to nothing, so the planet's turn no longer moves it each frame. */
-	void PoolRocks(URockInstancesComponent* R, TArray<URockInstancesComponent*>& Free)
+	void PoolSet(UScatterInstancesComponent* R, TArray<UScatterInstancesComponent*>& Free)
 	{
-		R->ClearRocks();
+		R->ClearPieces();
 		R->SetVisibility(false);
 		R->DetachFromComponent(FDetachmentTransformRules::KeepRelativeTransform);
 		Free.Add(R);
@@ -77,6 +83,12 @@ void UPlanetTerrainComponent::Configure(const FPlanetTerrainParams& InParams, UM
 		if (!RockMat) { RockMat = SlonkMaterials::LoadOrFallback(TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_Asteroid.M_Asteroid"))), TEXT("GroundRock"), true); }
 		if (RockMat) { RockMID = UMaterialInstanceDynamic::Create(RockMat, this); }
 	}
+	if (!FoliageMID)
+	{
+		// The foliage material masks the leaf cards, sways in the wind and tints from each instance.
+		UMaterialInterface* PlantMat = SlonkMaterials::LoadOrFallback(TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_Foliage.M_Foliage"))), TEXT("Foliage"), true);
+		if (PlantMat) { FoliageMID = UMaterialInstanceDynamic::Create(PlantMat, this); }
+	}
 	MakeRoots();
 	bConfigured = true;
 	UE_LOG(LogTemp, Log, TEXT("PlanetTerrain: configured %s R %.0f km relief %.1f km sea %.2f"), GetOwner() ? *GetOwner()->GetName() : TEXT("?"), Params.RadiusCm / 1e5, Params.ReliefCm / 1e5, Params.SeaLevel);
@@ -93,19 +105,21 @@ void UPlanetTerrainComponent::MakeRoots()
 	}
 }
 
-void UPlanetTerrainComponent::SetScatterOptions(bool bEnabled, float Density, bool bCities)
+void UPlanetTerrainComponent::SetScatterOptions(bool bEnabled, float Density, bool bCities, float Life)
 {
 	Density = FMath::Max(Density, 0.f);
-	if (Scatter.bEnabled == bEnabled && FMath::IsNearlyEqual(Scatter.Density, Density) && Scatter.bCities == bCities) { return; }
+	Life = FMath::Clamp(Life, 0.f, 1.f);
+	if (Scatter.bEnabled == bEnabled && FMath::IsNearlyEqual(Scatter.Density, Density) && Scatter.bCities == bCities && FMath::IsNearlyEqual(Scatter.Life, Life)) { return; }
 	Scatter.bEnabled = bEnabled;
 	Scatter.Density = Density;
 	Scatter.bCities = bCities;
-	if (bConfigured) { RebuildRockChunks(); }
+	Scatter.Life = Life;
+	if (bConfigured) { RebuildScatterChunks(); }
 }
 
-void UPlanetTerrainComponent::RebuildRockChunks()
+void UPlanetTerrainComponent::RebuildScatterChunks()
 {
-	// The rocks are built with the chunks, so the chunks fine enough to carry any go round again. The builds in
+	// The scatter is built with the chunks, so the chunks fine enough to carry any go round again. The builds in
 	// flight land first; then those chunks let their meshes go, and the coarser chunk above each shows until its
 	// children are rebuilt (Select keeps a parent on screen while they cook), so the ground never opens.
 	for (FNode* N : InFlight) { if (N && N->Task.IsValid()) { N->Task.Wait(); } }
@@ -140,7 +154,7 @@ void UPlanetTerrainComponent::SetScalarParameter(FName Name, float Value)
 void UPlanetTerrainComponent::SetVectorParameter(FName Name, const FLinearColor& Value)
 {
 	if (MID) { MID->SetVectorParameterValue(Name, Value); }
-	// The rocks are tinted from the same palette when their chunk is built, and wear the same snow.
+	// The rocks and plants are tinted from the same palette when their chunk is built, and wear the same snow.
 	if (Name == TEXT("MountainColor")) { Scatter.Palette.Mountain = Value; }
 	else if (Name == TEXT("LandColor")) { Scatter.Palette.Land = Value; }
 	else if (Name == TEXT("LandColor2")) { Scatter.Palette.Land2 = Value; }
@@ -148,6 +162,7 @@ void UPlanetTerrainComponent::SetVectorParameter(FName Name, const FLinearColor&
 	{
 		Scatter.Palette.Ice = Value;
 		if (RockMID) { RockMID->SetVectorParameterValue(Name, Value); }
+		if (FoliageMID) { FoliageMID->SetVectorParameterValue(Name, Value); }
 	}
 }
 
@@ -164,7 +179,7 @@ void UPlanetTerrainComponent::ResetTree()
 		if (Roots[F]) { ReleaseSubtree(*Roots[F]); Roots[F].Reset(); }
 	}
 	ClearSolidRocks();
-	VisibleChunks = BuiltChunks = PendingBuilds = DeepestVisible = ParkedChunks = VisibleRocks = 0;
+	VisibleChunks = BuiltChunks = PendingBuilds = DeepestVisible = ParkedChunks = VisibleRocks = VisiblePlants = 0;
 }
 
 void UPlanetTerrainComponent::ReleaseSubtree(FNode& N)
@@ -180,7 +195,7 @@ void UPlanetTerrainComponent::ReleaseSubtree(FNode& N)
 
 void UPlanetTerrainComponent::ReleaseMesh(FNode& N)
 {
-	ReleaseRocks(N);
+	ReleaseScatter(N);
 	if (N.Mesh)
 	{
 		N.Mesh->SetVisibility(false);
@@ -269,21 +284,7 @@ void UPlanetTerrainComponent::MakeChildren(FNode& N)
 
 FVector UPlanetTerrainComponent::CubeDir(int32 Face, double U, double V)
 {
-	// Tangent warp: equal steps in U are near-equal angles on the sphere, so chunks are the same size at a face's
-	// middle and its corners (plain cube projection squeezes the corners to half size).
-	const double S = FMath::Tan(U * UE_DOUBLE_PI * 0.25);
-	const double T = FMath::Tan(V * UE_DOUBLE_PI * 0.25);
-	FVector D;
-	switch (Face)
-	{
-	case 0: D = FVector(1.0, S, T); break;
-	case 1: D = FVector(-1.0, -S, T); break;
-	case 2: D = FVector(-S, 1.0, T); break;
-	case 3: D = FVector(S, -1.0, T); break;
-	case 4: D = FVector(-T, S, 1.0); break;
-	default: D = FVector(T, S, -1.0); break;
-	}
-	return D.GetSafeNormal();
+	return SlonkTerrain::CubeDir(Face, U, V);
 }
 
 void UPlanetTerrainComponent::ChunkFrame(int32 Face, int32 Depth, int64 X, int64 Y, FVector& OutCentre, double& OutEdge) const
@@ -332,14 +333,14 @@ void UPlanetTerrainComponent::ShowNode(FNode& N, bool bShow)
 	{
 		const bool bWant = bShow && bTerrainVisible;
 		SetChunkVisible(N, bWant);
-		if (bWant) { ++VisibleChunks; VisibleRocks += N.RockCount; DeepestVisible = FMath::Max(DeepestVisible, N.Depth); }
+		if (bWant) { ++VisibleChunks; VisibleRocks += N.RockCount; VisiblePlants += N.PlantCount; DeepestVisible = FMath::Max(DeepestVisible, N.Depth); }
 	}
 }
 
 void UPlanetTerrainComponent::SetChunkVisible(FNode& N, bool bShow)
 {
 	if (N.Mesh && N.Mesh->IsVisible() != bShow) { N.Mesh->SetVisibility(bShow); }
-	for (URockInstancesComponent* R : N.Rocks)
+	for (UScatterInstancesComponent* R : N.Sets)
 	{
 		if (R && R->IsVisible() != bShow) { R->SetVisibility(bShow); }
 	}
@@ -351,73 +352,85 @@ void UPlanetTerrainComponent::SetTerrainVisible(bool bShow)
 	if (!bShow)
 	{
 		for (UDynamicMeshComponent* C : Pool) { if (C) { C->SetVisibility(false); } }
-		for (URockInstancesComponent* R : RockPool) { if (R) { R->SetVisibility(false); } }
+		for (UScatterInstancesComponent* R : SetPool) { if (R) { R->SetVisibility(false); } }
 		ClearSolidRocks();
 	}
 }
 
-URockInstancesComponent* UPlanetTerrainComponent::AcquireRocks(int32 Kind)
+UScatterInstancesComponent* UPlanetTerrainComponent::AcquireSet(int32 Mesh)
 {
-	if (FreeRocks[Kind].Num() > 0)
+	if (FreeSets[Mesh].Num() > 0)
 	{
-		return FreeRocks[Kind].Pop(EAllowShrinking::No);
+		return FreeSets[Mesh].Pop(EAllowShrinking::No);
 	}
-	// Attached to a chunk's mesh when used (ApplyRocks), to nothing while pooled.
-	URockInstancesComponent* R = NewObject<URockInstancesComponent>(GetOwner() ? (UObject*)GetOwner() : (UObject*)this, NAME_None, RF_Transient);
+	// Attached to a chunk's mesh when used (ApplyScatter), to nothing while pooled.
+	UScatterInstancesComponent* R = NewObject<UScatterInstancesComponent>(GetOwner() ? (UObject*)GetOwner() : (UObject*)this, NAME_None, RF_Transient);
 	R->SetMobility(EComponentMobility::Movable);
-	R->SetStaticMesh(SlonkGroundRocks::GetMesh((EGroundRock)Kind));
+	R->SetStaticMesh(ScatterMesh(Mesh));
 	R->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	R->SetGenerateOverlapEvents(false);
 	R->SetCanEverAffectNavigation(false);
 	R->bAffectDistanceFieldLighting = false;
 	R->SetNumCustomDataFloats(SlonkScatter::NumCustomFloats);
-	// Shadows by chunk size in ApplyRocks, as for the chunks themselves.
+	// Shadows by chunk size in ApplyScatter, as for the chunks themselves.
 	R->CastShadow = false;
 	R->bCastDynamicShadow = true;
 	R->SetVisibility(false);
-	if (RockMID) { R->SetMaterial(0, RockMID); }
+	if (SlonkScatter::IsPlant(Mesh))
+	{
+		// The wind moves the plants' vertices: only near the view, and never in the ray-traced scene, where swaying
+		// geometry would have to be rebuilt every frame.
+		R->bEvaluateWorldPositionOffsetInRayTracing = false;
+		R->SetWorldPositionOffsetDisableDistance((int32)PlantWindDistanceCm);
+		if (FoliageMID) { R->SetMaterial(0, FoliageMID); }
+	}
+	else if (RockMID) { R->SetMaterial(0, RockMID); }
 	R->RegisterComponent();
-	RockPool.Add(R);
+	SetPool.Add(R);
 	return R;
 }
 
-void UPlanetTerrainComponent::ApplyRocks(FNode& N, SlonkScatter::FChunkScatter& Sc)
+void UPlanetTerrainComponent::ApplyScatter(FNode& N, SlonkScatter::FChunkScatter& Sc)
 {
-	N.RockCount = 0;
-	const bool bShadow = N.EdgeCm < ScatterShadowEdgeCm;
-	for (int32 K = 0; K < SlonkGroundRocks::NumKinds; ++K)
+	N.RockCount = N.PlantCount = 0;
+	for (int32 K = 0; K < SlonkScatter::NumMeshes; ++K)
 	{
+		// Rocks and bushes cast shadows from the near chunks, trees from chunks twice the size; grass never does.
+		const bool bTree = K == SlonkScatter::PlantMesh(EPlant::Broadleaf) || K == SlonkScatter::PlantMesh(EPlant::Conifer);
+		const bool bShadow = K != SlonkScatter::PlantMesh(EPlant::Grass) && N.EdgeCm < ScatterShadowEdgeCm * (bTree ? 2.f : 1.f);
 		N.Solids[K] = MoveTemp(Sc.Solids[K]);
 		const TArray<FTransform>& Xf = Sc.Transforms[K];
-		URockInstancesComponent*& R = N.Rocks[K];
+		UScatterInstancesComponent*& R = N.Sets[K];
 		if (Xf.Num() == 0)
 		{
-			if (R) { PoolRocks(R, FreeRocks[K]); R = nullptr; }
+			if (R) { PoolSet(R, FreeSets[K]); R = nullptr; }
 			continue;
 		}
-		if (!R) { R = AcquireRocks(K); }
+		if (!R) { R = AcquireSet(K); }
 		// On the chunk's mesh, so the instances are chunk-relative (floats stay exact) and move with it.
 		if (R->GetAttachParent() != N.Mesh) { R->AttachToComponent(N.Mesh, FAttachmentTransformRules::KeepRelativeTransform); }
 		R->SetRelativeTransform(FTransform::Identity);
-		R->SetRocks(Xf, Sc.Custom[K]);
+		R->SetPieces(Xf, Sc.Custom[K]);
 		if (R->CastShadow != bShadow) { R->SetCastShadow(bShadow); }
+		// The wind's reach as it is now, on a set made earlier too.
+		if (SlonkScatter::IsPlant(K) && R->GetWorldPositionOffsetDisableDistance() != (int32)PlantWindDistanceCm) { R->SetWorldPositionOffsetDisableDistance((int32)PlantWindDistanceCm); }
 		R->SetVisibility(N.Mesh->IsVisible());
-		N.RockCount += Xf.Num();
+		(SlonkScatter::IsPlant(K) ? N.PlantCount : N.RockCount) += Xf.Num();
 	}
 }
 
-void UPlanetTerrainComponent::ReleaseRocks(FNode& N)
+void UPlanetTerrainComponent::ReleaseScatter(FNode& N)
 {
-	for (int32 K = 0; K < SlonkGroundRocks::NumKinds; ++K)
+	for (int32 K = 0; K < SlonkScatter::NumMeshes; ++K)
 	{
-		if (URockInstancesComponent* R = N.Rocks[K])
+		if (UScatterInstancesComponent* R = N.Sets[K])
 		{
-			PoolRocks(R, FreeRocks[K]);
-			N.Rocks[K] = nullptr;
+			PoolSet(R, FreeSets[K]);
+			N.Sets[K] = nullptr;
 		}
 		N.Solids[K].Empty();
 	}
-	N.RockCount = 0;
+	N.RockCount = N.PlantCount = 0;
 }
 
 int32 UPlanetTerrainComponent::CheckSolidRocks(int32 MaxRocks, int32& OutHits) const
@@ -427,7 +440,7 @@ int32 UPlanetTerrainComponent::CheckSolidRocks(int32 MaxRocks, int32& OutHits) c
 	if (!World) { return 0; }
 	struct FNear { double DistSq; FVector Local; double HeightCm; };
 	TArray<FNear> Near;
-	for (const URockInstancesComponent* C : SolidSets)
+	for (const UScatterInstancesComponent* C : SolidSets)
 	{
 		for (int32 i = 0; C && i < C->GetInstanceCount(); ++i)
 		{
@@ -442,7 +455,8 @@ int32 UPlanetTerrainComponent::CheckSolidRocks(int32 MaxRocks, int32& OutHits) c
 	FCollisionQueryParams Query(SCENE_QUERY_STAT(RockCheck), true);
 	for (const FNear& R : Near)
 	{
-		// Straight down through the middle of the rock, from well above its top to below its centre.
+		// Straight down through the middle of the rock (from its centre) or the tree (from its foot), from well above
+		// its top: the trace meets the rock's hull or the trunk's capsule.
 		const FVector Up = R.Local.GetSafeNormal();
 		FHitResult Hit;
 		if (World->LineTraceSingleByChannel(Hit, CT.TransformPosition(R.Local + Up * (R.HeightCm + 300.0)), CT.TransformPosition(R.Local - Up * (R.HeightCm * 0.25)), ECC_GameTraceChannel1, Query)
@@ -456,9 +470,9 @@ int32 UPlanetTerrainComponent::CheckSolidRocks(int32 MaxRocks, int32& OutHits) c
 
 void UPlanetTerrainComponent::ClearSolidRocks()
 {
-	for (URockInstancesComponent* C : SolidSets)
+	for (UScatterInstancesComponent* C : SolidSets)
 	{
-		if (C) { C->ClearRocks(); }
+		if (C) { C->ClearPieces(); }
 	}
 	SolidSignature = 0;
 	SolidCentre = FVector(1.0e30, 0.0, 0.0);
@@ -489,7 +503,7 @@ void UPlanetTerrainComponent::UpdateSolidRocks()
 	{
 		const double AwayCm = FMath::Acos(FMath::Clamp(FVector::DotProduct(PawnDir, N.Centre), -1.0, 1.0)) * Params.RadiusCm;
 		if (AwayCm > N.EdgeCm * 0.75 + Reach) { return; }
-		if (N.Mesh && N.bReady && N.Mesh->IsVisible() && N.RockCount > 0) { Near.Add(&N); }
+		if (N.Mesh && N.bReady && N.Mesh->IsVisible() && N.RockCount + N.PlantCount > 0) { Near.Add(&N); }
 		for (const TUniquePtr<FNode>& C : N.Children) { if (C) { Walk(*C); } }
 	};
 	for (const TUniquePtr<FNode>& Root : Roots) { if (Root) { Walk(*Root); } }
@@ -497,19 +511,19 @@ void UPlanetTerrainComponent::UpdateSolidRocks()
 	for (const FNode* N : Near)
 	{
 		Sig = (Sig ^ (uint64)(UPTRINT)N) * 1099511628211ULL;
-		Sig = (Sig ^ (uint64)N->RockCount) * 1099511628211ULL;
+		Sig = (Sig ^ (uint64)(N->RockCount + N->PlantCount)) * 1099511628211ULL;
 	}
 	if (Sig == SolidSignature && FVector::DistSquared(Centre, SolidCentre) < FMath::Square(Reach * 0.25)) { return; }
 	SolidSignature = Sig;
 	SolidCentre = Centre;
 	if (SolidSets.Num() == 0)
 	{
-		for (int32 K = 0; K < SlonkGroundRocks::NumKinds; ++K)
+		for (int32 K = 0; K < SlonkScatter::NumMeshes; ++K)
 		{
-			URockInstancesComponent* C = NewObject<URockInstancesComponent>(GetOwner() ? (UObject*)GetOwner() : (UObject*)this, NAME_None, RF_Transient);
+			UScatterInstancesComponent* C = NewObject<UScatterInstancesComponent>(GetOwner() ? (UObject*)GetOwner() : (UObject*)this, NAME_None, RF_Transient);
 			C->SetupAttachment(this);
 			C->SetMobility(EComponentMobility::Movable);
-			C->SetStaticMesh(SlonkGroundRocks::GetMesh((EGroundRock)K));
+			C->SetStaticMesh(ScatterMesh(K));
 			// Solid to the crew's boots (their floor and wall traces) and nothing else.
 			C->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 			C->SetCollisionResponseToAllChannels(ECR_Ignore);
@@ -524,7 +538,7 @@ void UPlanetTerrainComponent::UpdateSolidRocks()
 		}
 	}
 	SolidRocks = 0;
-	for (int32 K = 0; K < SlonkGroundRocks::NumKinds; ++K)
+	for (int32 K = 0; K < SlonkScatter::NumMeshes; ++K)
 	{
 		TArray<FTransform> Planet;
 		for (const FNode* N : Near)
@@ -539,7 +553,7 @@ void UPlanetTerrainComponent::UpdateSolidRocks()
 				Planet.Add(W);
 			}
 		}
-		SolidSets[K]->SetRocks(Planet, {});
+		SolidSets[K]->SetPieces(Planet, {});
 		SolidRocks += Planet.Num();
 	}
 }
@@ -692,7 +706,7 @@ void UPlanetTerrainComponent::ApplyResult(FNode& N)
 	if (MID && C->GetMaterial(0) != MID) { C->SetMaterial(0, MID); }
 	N.Heights = MoveTemp(N.Result->Heights);
 	N.HeightSteps = N.Result->Steps;
-	ApplyRocks(N, N.Result->Scatter);
+	ApplyScatter(N, N.Result->Scatter);
 	N.Result.Reset();
 	N.bReady = true;
 }
@@ -702,7 +716,7 @@ void UPlanetTerrainComponent::UpdateView(const FVector& ViewLocationWorld, const
 	if (!bConfigured) { return; }
 	++Stamp;
 	VisibleChunks = 0;
-	VisibleRocks = 0;
+	VisibleRocks = VisiblePlants = 0;
 	DeepestVisible = 0;
 	const FVector CamLocal = GetComponentTransform().InverseTransformPositionNoScale(ViewLocationWorld);
 	// The chunks refine for the camera (what is seen) and for the pawn (what is stood on, a chase camera's length
@@ -735,28 +749,7 @@ double UPlanetTerrainComponent::SurfaceHeightAtWorld(const FVector& WorldPos) co
 
 bool UPlanetTerrainComponent::FaceUV(const FVector& Dir, int32& OutFace, double& OutU, double& OutV)
 {
-	const FVector A = Dir.GetAbs();
-	double S, T;
-	if (A.X >= A.Y && A.X >= A.Z)
-	{
-		if (A.X <= 0.0) { return false; }
-		OutFace = Dir.X > 0.0 ? 0 : 1;
-		S = Dir.Y / Dir.X; T = Dir.X > 0.0 ? Dir.Z / Dir.X : -Dir.Z / Dir.X;
-	}
-	else if (A.Y >= A.Z)
-	{
-		OutFace = Dir.Y > 0.0 ? 2 : 3;
-		S = -Dir.X / Dir.Y; T = Dir.Y > 0.0 ? Dir.Z / Dir.Y : -Dir.Z / Dir.Y;
-	}
-	else
-	{
-		OutFace = Dir.Z > 0.0 ? 4 : 5;
-		T = -Dir.X / Dir.Z; S = Dir.Z > 0.0 ? Dir.Y / Dir.Z : -Dir.Y / Dir.Z;
-	}
-	OutU = FMath::Atan(S) * 4.0 / UE_DOUBLE_PI;
-	OutV = FMath::Atan(T) * 4.0 / UE_DOUBLE_PI;
-	// The mapping is checked rather than trusted: a sign slip here would put feet on the wrong chunk.
-	return FVector::DotProduct(CubeDir(OutFace, OutU, OutV), Dir.GetSafeNormal()) > 0.999999;
+	return SlonkTerrain::FaceUV(Dir, OutFace, OutU, OutV);
 }
 
 bool UPlanetTerrainComponent::DrawnHeightAtLocalDir(const FVector& DirLocal, double& OutHeightCm) const
@@ -804,11 +797,12 @@ bool UPlanetTerrainComponent::ChunkAt(const FVector& Dir, int32 Depth, int32& Ou
 }
 
 void UPlanetTerrainComponent::BuildChunkScatterForTest(const FPlanetTerrainParams& P, const FScatterSettings& S, int32 Face, int32 Depth, int64 X, int64 Y, int32 Steps,
-	TArray<FTransform> (&OutPlanetLocal)[SlonkGroundRocks::NumKinds], TArray<double> (&OutDrawnHeightCm)[SlonkGroundRocks::NumKinds])
+	TArray<FTransform> (&OutPlanetLocal)[SlonkScatter::NumMeshes], TArray<double> (&OutDrawnHeightCm)[SlonkScatter::NumMeshes], FVector* OutOrigin)
 {
 	FBuildResult R;
 	BuildChunk(P, S, Face, Depth, X, Y, Steps, R);
-	for (int32 K = 0; K < SlonkGroundRocks::NumKinds; ++K)
+	if (OutOrigin) { *OutOrigin = R.Origin; }
+	for (int32 K = 0; K < SlonkScatter::NumMeshes; ++K)
 	{
 		for (const FTransform& T : R.Scatter.Transforms[K])
 		{
@@ -878,6 +872,8 @@ bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& Ne
 		// The river: the gorge's deepest cut leads to within a bend of it, then the river mask takes over.
 		if (K == TEXT("river")) { return S.River * 10.0 + S.Canyon * 2.0 + S.CutCm / FMath::Max(Params.CanyonDepthCm, 1.0) * 4.0 + Temperate + Near * 0.5; }
 		if (K == TEXT("mountain")) { return S.bWater ? -1e9 : S.HeightCm / FMath::Max(Params.ReliefCm, 1.0) * 10.0 + Near * 0.5; }
+		// Green: the wettest level lowland, where a living world grows its meadows and forests (TerrainScatter.h).
+		if (K == TEXT("green")) { return S.bWater ? -1e9 : S.Wet * 6.0 - S.Slope * 4.0 - S.Rock * 2.0 - S.Ice * 6.0 - S.HeightCm / FMath::Max(Params.ReliefCm, 1.0) * 6.0 - FMath::Abs(D.Z) * 2.0 + Near * 2.0; }
 		if (K == TEXT("linea")) { return S.Linea * 10.0 + Near * 3.0; }
 		if (K == TEXT("coast"))
 		{

@@ -25,6 +25,7 @@ struct FVector
 	double Size() const { return std::sqrt(X * X + Y * Y + Z * Z); }
 	double SizeSquared() const { return X * X + Y * Y + Z * Z; }
 	FVector GetSafeNormal() const { double s = Size(); return s > 1e-12 ? *this / s : FVector(); }
+	FVector GetAbs() const { return FVector(std::fabs(X), std::fabs(Y), std::fabs(Z)); }
 	bool IsNearlyZero(double tol = 1e-8) const { return std::fabs(X) <= tol && std::fabs(Y) <= tol && std::fabs(Z) <= tol; }
 	static double DotProduct(const FVector& a, const FVector& b) { return a.X * b.X + a.Y * b.Y + a.Z * b.Z; }
 	static FVector CrossProduct(const FVector& a, const FVector& b) { return FVector(a.Y * b.Z - a.Z * b.Y, a.Z * b.X - a.X * b.Z, a.X * b.Y - a.Y * b.X); }
@@ -48,5 +49,6 @@ struct FMath
 	static double Cos(double v) { return std::cos(v); }
 	static double Sin(double v) { return std::sin(v); }
 	static double Tan(double v) { return std::tan(v); }
+	static double Atan(double v) { return std::atan(v); }
 	static bool IsNearlyZero(double v, double tol = 1e-8) { return std::fabs(v) <= tol; }
 };

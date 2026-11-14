@@ -193,6 +193,8 @@ float crack = (1.0 - abs(val[3] - 0.5) * 2.0) * wgt[3];
 // Jittered dots: one hashed disc per lattice cell of size cellCm, present in a fraction `density` of the cells,
 // centred anywhere in the middle of its cell with a hashed radius, so no lattice shows. Returns coverage 0..1.
 // (A function would need a separate custom node; the loop runs twice inline, scrub then stones.)
+// The scrub dots are copied on the CPU: SlonkScatter::ScrubDotAt and ScrubZoneAt (TerrainScatter) stand a bush on each
+// one. A change to their cell size, salt, gate, centre or radius here, or to the scrub zone below, goes there too.
 float dotsA = 0, dotsB = 0;
 [unroll] for (int kd = 0; kd < 2; kd++)
 {

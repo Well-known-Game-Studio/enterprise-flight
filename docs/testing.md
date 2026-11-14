@@ -47,7 +47,10 @@ are placed in a room), and a ship's day of the crew's places (meals in the offic
 sleep in quarters, the off-watch hours on the rec deck, every place named a room of the interior); and the rocks on
 the ground, built as a chunk build builds them (`SlonkTerrainTests.cpp`): a chunk and its four children placing the
 same boulders in the same place, every rock seated in the drawn ground and none in the water, pebbles on the
-finest chunks, the same chunk carrying the same rocks every time, and none inside a town.
+finest chunks, the same chunk carrying the same rocks every time, and none inside a town; and the plants: grass,
+bushes and trees on moist lowland and nothing with no life or no air, every tree found again on the finer chunks and
+standing in the drawn ground, and every bush on the centre of a scrub dot the terrain material paints, as wide as
+the dot.
 
 Writing one: make an `FSystems` (a roster seed gives the same people every time), drive the subsystems through
 their public API, assert with `TestEqual`/`TestTrue`. For anything that depends on the world (targets picked from
