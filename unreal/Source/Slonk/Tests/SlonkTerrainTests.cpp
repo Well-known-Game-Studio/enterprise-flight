@@ -394,4 +394,64 @@ bool FSlonkTerrainShrubsOnDotsTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkTerrainShrubsAcrossWrapTest, "Slonk.Terrain.ShrubsAcrossWrap", SLONK_TEST_FLAGS)
+bool FSlonkTerrainShrubsAcrossWrapTest::RunTest(const FString& Parameters)
+{
+	// The material's noise space is each chunk's origin modulo NoisePeriodCm plus the vertex, so where a wrap plane of
+	// that period runs between a chunk and its children their noise spaces are a period apart. The scrub dots, and so
+	// the bushes, must come out the same in both: a bush a chunk carries is carried again by the children that refine
+	// it, at the same place, wrap or no wrap.
+	const FPlanetTerrainParams P = RockWorld();
+	const int32 D = DepthFor(P, 8000.0);
+	const int32 M = SlonkScatter::PlantMesh(EPlant::Shrub);
+	const double Period = SlonkScatter::NoisePeriodCm;
+	int32 Tried = 0, Bushes = 0, Matched = 0;
+	for (const FVector& Spot : GreenSpots(P, 40))
+	{
+		// To the nearest wrap plane across the ground: along an axis the ground does not face, a few kilometres at most.
+		const FVector G = Spot * P.RadiusCm;
+		int32 Axis = -1; double Best = 1e30;
+		for (int32 a = 0; a < 3; ++a)
+		{
+			if (FMath::Abs(Spot[a]) > 0.8) { continue; }
+			const double To = FMath::RoundToDouble(G[a] / Period) * Period - G[a];
+			if (FMath::Abs(To) < Best) { Best = FMath::Abs(To); Axis = a; }
+		}
+		if (Axis < 0) { continue; }
+		FVector Moved = G;
+		Moved[Axis] += FMath::RoundToDouble(G[Axis] / Period) * Period - G[Axis];
+		int32 Face; int64 X, Y;
+		if (!UPlanetTerrainComponent::ChunkAt(Moved.GetSafeNormal(), D, Face, X, Y)) { continue; }
+		const FRocks Parent = Build(P, Living(), Face, D, X, Y);
+		if (Parent.Xf[M].Num() < 10) { continue; }
+		FRocks Kids[4];
+		bool bStraddles = false;
+		for (int32 c = 0; c < 4; ++c)
+		{
+			Kids[c] = Build(P, Living(), Face, D + 1, X * 2 + (c & 1), Y * 2 + (c >> 1));
+			for (int32 a = 0; a < 3; ++a) { bStraddles |= FMath::FloorToDouble(Kids[c].Origin[a] / Period) != FMath::FloorToDouble(Parent.Origin[a] / Period); }
+		}
+		if (!bStraddles) { continue; }
+		++Tried;
+		for (const FTransform& A : Parent.Xf[M])
+		{
+			++Bushes;
+			bool bFound = false;
+			for (const FRocks& Kid : Kids)
+			{
+				for (const FTransform& B : Kid.Xf[M]) { if (FVector::Dist(A.GetLocation(), B.GetLocation()) < 30.0) { bFound = true; break; } }
+				if (bFound) { break; }
+			}
+			Matched += bFound ? 1 : 0;
+		}
+		if (Tried >= 4) { break; }
+	}
+	AddInfo(FString::Printf(TEXT("%d chunks with a wrap plane between them and their children: %d bushes, %d found again on the children"), Tried, Bushes, Matched));
+	if (!TestTrue(TEXT("found chunks across a wrap plane"), Tried > 0)) { return true; }
+	// The finer ground moves a few bushes out of their dot's cell, or into another's; a lattice shifted by the wrap
+	// would lose every bush on the children across the plane.
+	TestTrue(TEXT("nearly every bush is found again across the wrap"), Matched >= Bushes * 0.8);
+	return true;
+}
+
 #endif

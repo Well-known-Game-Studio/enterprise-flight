@@ -276,13 +276,18 @@ FVector SlonkScatter::ToNoiseSpace(const FVector& PlanetLocalCm)
 	return FVector(Wrap(PlanetLocalCm.X), Wrap(PlanetLocalCm.Y), Wrap(PlanetLocalCm.Z));
 }
 
+FIntVector SlonkScatter::ScrubCellKey(const FIntVector& Cell)
+{
+	auto Wrap = [](int32 I) { const int32 W = I % ScrubCellsPerPeriod; return W < 0 ? W + ScrubCellsPerPeriod : W; };
+	return FIntVector(Wrap(Cell.X), Wrap(Cell.Y), Wrap(Cell.Z));
+}
+
 bool SlonkScatter::ScrubDotAt(const FVector& NoiseP, FVector& OutCentre, double& OutRadiusCm)
 {
-	// terrain_material.py, the first pass of the jittered dots: the same hash on the same cells, and the same mask
-	// on the cell index (the period over the cell size, less one: not a power of two, but it is what the shader does).
+	// terrain_material.py, the first pass of the jittered dots: the same cells, the index wrapped to the period the
+	// same way, the same hash. The centre stays in the caller's noise space (the cell unwrapped).
 	const FIntVector Fl((int32)FMath::FloorToDouble(NoiseP.X / ScrubCellCm), (int32)FMath::FloorToDouble(NoiseP.Y / ScrubCellCm), (int32)FMath::FloorToDouble(NoiseP.Z / ScrubCellCm));
-	const int32 Mask = (int32)(NoisePeriodCm / ScrubCellCm) - 1;
-	const FIntVector C(Fl.X & Mask, Fl.Y & Mask, Fl.Z & Mask);
+	const FIntVector C = ScrubCellKey(Fl);
 	uint32 H = ((uint32)C.X * 73856093u) ^ ((uint32)C.Y * 19349663u) ^ ((uint32)C.Z * 83492791u) ^ (31u * 2654435761u);
 	H = (H ^ (H >> 13)) * 0x5bd1e995u;
 	H ^= H >> 15;
@@ -501,7 +506,10 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 			if (!F.SpotAt(U, V, Sp) || Sp.River > 0.08 || Sp.Cliff > 0.3 || Sp.Ice > 0.3) { continue; }
 			if (CellOf(OriginNoise + Sp.Pt) != Cell) { continue; }
 			const double Zone = F.ScrubZoneAt(P, Sp);
-			FDraw D(Mix64(((uint64)(uint32)Cell.X << 42) ^ ((uint64)(uint32)Cell.Y << 21) ^ (uint64)(uint32)Cell.Z ^ 0x6a09e667f3bcc909ULL));
+			// The bush's own draws from the dot's place on the periodic lattice, so it is the same bush whichever side
+			// of a wrap the chunk's origin lies.
+			const FIntVector Key = ScrubCellKey(Cell);
+			FDraw D(Mix64(((uint64)(uint32)Key.X << 42) ^ ((uint64)(uint32)Key.Y << 21) ^ (uint64)(uint32)Key.Z ^ 0x6a09e667f3bcc909ULL));
 			if (D.Next() >= S.Life * S.Density * SmoothStep(0.25, 0.55, Zone)) { continue; }
 			if (KeepOut.Towns.Num() > 0 && KeepOut.Contains(Sp.Up, R)) { continue; }
 			// As wide as the painted dot, a little over half as tall; the mesh's crown is 110 cm across at unit scale.

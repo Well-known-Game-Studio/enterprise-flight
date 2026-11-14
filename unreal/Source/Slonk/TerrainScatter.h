@@ -61,8 +61,13 @@ namespace SlonkScatter
 	constexpr int32 MaxPlantsPerChunk = 9000;
 	/** Period of the terrain material's planet-local noise, cm: the chunk origins reach the shader modulo this. */
 	constexpr double NoisePeriodCm = 1048576.0;
-	/** The material's scrub dots: one hashed disc per cell of this size, cm. */
-	constexpr double ScrubCellCm = 450.0;
+	/** The material's scrub dots: one hashed disc per cell, a whole number of cells to the noise period along each
+	 *  axis (about 450 cm a cell), so the lattice is periodic and a chunk whose origin has wrapped finds the same dots
+	 *  on the same ground as its neighbour or its parent. */
+	constexpr int32 ScrubCellsPerPeriod = 2330;
+	constexpr double ScrubCellCm = NoisePeriodCm / ScrubCellsPerPeriod;
+	/** A scrub cell's index on the periodic lattice (the one the shader hashes) from its index in a chunk's noise space. */
+	SLONK_API FIntVector ScrubCellKey(const FIntVector& Cell);
 
 	/** A chunk's grid as the chunk build has it, margin included. */
 	struct FChunkGrid

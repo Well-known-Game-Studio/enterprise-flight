@@ -987,6 +987,8 @@ bool APlanetBody::HasCities() const
 
 float APlanetBody::GroundLife() const
 {
+	// Nothing grows without air, whatever the kind: a hand-tuned style can take a world's atmosphere away.
+	if (!Style.bAtmosphere) { return 0.f; }
 	switch (ResolvedArchetype)
 	{
 	case EPlanetArchetype::Terrestrial:
