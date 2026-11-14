@@ -729,6 +729,12 @@ void APlanetBody::ResolveStyleFromArchetype()
 			Style.RingColor = Jitter(FLinearColor(0.90f, 0.95f, 1.0f), 0.04f);
 		}
 	}
+
+	// Who lives here, from a stream of their own (Civilization.cpp) so nothing rolled above moves: an Earth-like world
+	// the style lit keeps an electric people, one it left dark may have a people before electricity, and the deserts,
+	// oceans and ice worlds have their own. Their age sets the ground's glow and its colour.
+	Civ = SlonkCivs::Natives(Type, Hash, Style.NightLightIntensity > 0.f);
+	if (Civ.bInhabited) { Style.NightLightIntensity = Civ.GroundLights; Style.NightLightColor = Civ.LightColor; }
 }
 
 TArray<UMaterialInstanceDynamic*> APlanetBody::SurfaceMIDs() const
@@ -970,19 +976,81 @@ void APlanetBody::SetNightLights(float Intensity)
 	// The style is resolved once more from the seed (the same values) and then kept, so a later appearance pass
 	// does not roll the lights away again.
 	if (bStyleFromArchetype) { ResolveStyleFromArchetype(); bStyleFromArchetype = false; }
+	// Who lived here and whether there were towns, to rebuild them only if that changes (not for a dimming).
+	const bool bHadCities = HasCities();
+	const FCivilization Was = GetPeople();
 	Style.NightLightIntensity = Intensity;
-	for (UMaterialInstanceDynamic* M : SurfaceMIDs()) { if (M) { M->SetScalarParameterValue(TEXT("NightLightIntensity"), Intensity); } }
+	// A people whose lights go out is gone; one that never had electric light is not put out by this.
+	if (Intensity <= 0.f && Civ.bInhabited && Civ.GroundLights > 0.f) { Civ.bInhabited = false; }
+	// With no people of its own, whoever lights it is the Federation's: their lights, not a gone people's colour.
+	if (!Civ.bInhabited) { Style.NightLightColor = SlonkCivs::Colonists().LightColor; }
+	for (UMaterialInstanceDynamic* M : SurfaceMIDs())
+	{
+		if (!M) { continue; }
+		M->SetScalarParameterValue(TEXT("NightLightIntensity"), Intensity);
+		M->SetVectorParameterValue(TEXT("NightLightColor"), Style.NightLightColor);
+	}
 	if (Terrain)
 	{
-		Terrain->SetScalarParameter(TEXT("NightLightIntensity"), Intensity);
+		ApplyTerrainMaterialParams();
 		// A colony founded (or a world gone dark) brings its towns or takes them away; the rocks follow.
-		Terrain->SetScatterOptions(Terrain->GetScatterSettings().bEnabled, Terrain->GetScatterSettings().Density, HasCities(), GroundLife());
+		Terrain->SetScatterOptions(Terrain->GetScatterSettings().bEnabled, Terrain->GetScatterSettings().Density, HasCities(), GroundLife(), GetPeople());
 	}
+	const FCivilization& Now = GetPeople();
+	if (HasCities() != bHadCities || Now.bInhabited != Was.bInhabited || Now.bColonists != Was.bColonists || Now.Age != Was.Age || Now.Organic != Was.Organic)
+	{
+		ApplyBuildingParams();
+		ClearCities();
+	}
+}
+
+bool APlanetBody::IsNamedWorldInhabited(UWorld* World, const FString& Name)
+{
+	if (!World) { return false; }
+	for (TActorIterator<APlanetBody> B(World); B; ++B) { if (B->GetDisplayName() == Name) { return B->IsInhabited(); } }
+	return false;
+}
+
+const FCivilization& APlanetBody::GetPeople() const
+{
+	static const FCivilization Settlers = SlonkCivs::Colonists();
+	static const FCivilization Nobody;
+	return Civ.bInhabited ? Civ : (Style.NightLightIntensity > 0.f ? Settlers : Nobody);
+}
+
+void APlanetBody::SetPeople(const FCivilization& People)
+{
+	if (bStyleFromArchetype) { ResolveStyleFromArchetype(); bStyleFromArchetype = false; }
+	Civ = People;
+	Style.NightLightIntensity = People.bInhabited ? People.GroundLights : 0.f;
+	Style.NightLightColor = People.LightColor;
+	for (UMaterialInstanceDynamic* M : SurfaceMIDs())
+	{
+		if (!M) { continue; }
+		M->SetScalarParameterValue(TEXT("NightLightIntensity"), Style.NightLightIntensity);
+		M->SetVectorParameterValue(TEXT("NightLightColor"), Style.NightLightColor);
+	}
+	ApplyTerrainMaterialParams();
+	if (Terrain) { Terrain->SetScatterOptions(Terrain->GetScatterSettings().bEnabled, Terrain->GetScatterSettings().Density, HasCities(), GroundLife(), GetPeople()); }
+	ApplyBuildingParams();
+	ClearCities();
+}
+
+void APlanetBody::ApplyBuildingParams()
+{
+	if (!BuildingMID) { return; }
+	const FCivilization& P = GetPeople();
+	BuildingMID->SetVectorParameterValue(TEXT("ToneA"), P.ToneA);
+	BuildingMID->SetVectorParameterValue(TEXT("ToneB"), P.ToneB);
+	BuildingMID->SetVectorParameterValue(TEXT("LightColor"), P.LightColor);
+	BuildingMID->SetScalarParameterValue(TEXT("WindowLit"), P.WindowLit);
+	BuildingMID->SetScalarParameterValue(TEXT("WindowGlow"), P.WindowGlow);
+	BuildingMID->SetScalarParameterValue(TEXT("Organic"), P.Organic);
 }
 
 bool APlanetBody::HasCities() const
 {
-	return Style.NightLightIntensity > 0.f && !IsGiant() && Style.ReliefFraction > 0.f && CityReachKm > 0.f;
+	return (Civ.bInhabited || Style.NightLightIntensity > 0.f) && !IsGiant() && Style.ReliefFraction > 0.f && CityReachKm > 0.f;
 }
 
 float APlanetBody::GroundLife() const
@@ -1000,22 +1068,27 @@ float APlanetBody::GroundLife() const
 
 void APlanetBody::UpdateNearCollision(const FVector& ViewLocal, bool bForce)
 {
-	if (!BuildingsNear) { return; }
+	if (BuildingsNear.Num() == 0) { return; }
 	const FVector View = ViewLocal;
 	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
 	const bool bPinned = Now < CityPinUntil;
 	if (!bForce && FVector::Dist(View, CityNearCentre) < 15000.0 && bPinned == bCityPinApplied) { return; }
 	CityNearCentre = View;
 	bCityPinApplied = bPinned;
-	TArray<FTransform> Near;
 	const double ReachSq = FMath::Square(50000.0);		// 500 m
-	for (const FTransform& Tm : CityInstances)
+	for (int32 K = 0; K < BuildingsNear.Num(); ++K)
 	{
-		// Round the view, and round a pinned spot (a transporter's destination) while its pin lasts.
-		if (FVector::DistSquared(Tm.GetLocation(), View) < ReachSq || (bPinned && FVector::DistSquared(Tm.GetLocation(), CityPinLocal) < ReachSq)) { Near.Add(Tm); }
+		UHierarchicalInstancedStaticMeshComponent* H = BuildingsNear[K];
+		if (!H) { continue; }
+		TArray<FTransform> Near;
+		for (const FTransform& Tm : CityInstances[K])
+		{
+			// Round the view, and round a pinned spot (a transporter's destination) while its pin lasts.
+			if (FVector::DistSquared(Tm.GetLocation(), View) < ReachSq || (bPinned && FVector::DistSquared(Tm.GetLocation(), CityPinLocal) < ReachSq)) { Near.Add(Tm); }
+		}
+		if (H->GetInstanceCount() > 0) { H->ClearInstances(); }
+		if (Near.Num() > 0) { H->AddInstances(Near, false, false); }
 	}
-	BuildingsNear->ClearInstances();
-	if (Near.Num() > 0) { BuildingsNear->AddInstances(Near, false, false); }
 }
 
 void APlanetBody::PrepareGroundCollisionAt(const FVector& WorldPos, float Seconds)
@@ -1032,11 +1105,12 @@ void APlanetBody::PrepareGroundCollisionAt(const FVector& WorldPos, float Second
 void APlanetBody::ClearCities()
 {
 	for (UHierarchicalInstancedStaticMeshComponent* H : BuildingSets) { if (H && H->GetInstanceCount() > 0) { H->ClearInstances(); } }
-	if (BuildingsNear && BuildingsNear->GetInstanceCount() > 0) { BuildingsNear->ClearInstances(); }
-	CityInstances.Reset();
+	for (UHierarchicalInstancedStaticMeshComponent* H : BuildingsNear) { if (H && H->GetInstanceCount() > 0) { H->ClearInstances(); } }
+	for (TArray<FTransform>& K : CityInstances) { K.Reset(); }
 	CityNearCentre = FVector(1.0e30, 0.0, 0.0);
 	CityActiveTowns.Reset();
 	CityCentreLocal = FVector(1.0e30, 0.0, 0.0);
+	++CityGeneration;
 }
 
 void APlanetBody::UpdateCities(const FVector& ViewLoc, float DeltaTime)
@@ -1045,13 +1119,14 @@ void APlanetBody::UpdateCities(const FVector& ViewLoc, float DeltaTime)
 	if (CityFuture.IsValid() && CityFuture.IsReady())
 	{
 		CityFuture = TFuture<void>();
-		if (CityPending.IsValid())
+		if (CityPending.IsValid() && CityPending->Generation == CityGeneration)
 		{
 			if (BuildingSets.Num() == 0)
 			{
 				if (UMaterialInterface* Mat = SlonkMaterials::LoadOrFallback(BuildingMaterial, TEXT("Building"), false))
 				{
 					BuildingMID = UMaterialInstanceDynamic::Create(Mat, this);
+					ApplyBuildingParams();
 				}
 				for (int32 K = 0; K < (int32)EBuildingKind::Count; ++K)
 				{
@@ -1065,28 +1140,34 @@ void APlanetBody::UpdateCities(const FVector& ViewLoc, float DeltaTime)
 					H->CastShadow = true;
 					H->bAffectDistanceFieldLighting = false;
 					H->SetCullDistances(0, (int32)(CityReachKm * 100000.f));
-					H->NumCustomDataFloats = 3;		// the building's size in metres, for the window grid
+					H->NumCustomDataFloats = 4;		// the building's size in metres, for the window grid, and its kind
 					if (BuildingMID) { H->SetMaterial(0, BuildingMID); }
 					H->RegisterComponent();
 					BuildingSets.Add(H);
 				}
-				BuildingsNear = NewObject<UHierarchicalInstancedStaticMeshComponent>(this, TEXT("BuildingsNear"));
-				BuildingsNear->SetupAttachment(GetRootComponent());
-				BuildingsNear->SetUsingAbsoluteScale(true);
-				BuildingsNear->SetMobility(EComponentMobility::Movable);
-				BuildingsNear->SetStaticMesh(SlonkBuildings::GetMesh(EBuildingKind::Block));
-				BuildingsNear->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-				BuildingsNear->SetCollisionProfileName(TEXT("BlockAll"));
-				BuildingsNear->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Block);		// the crew's boots
-				BuildingsNear->SetGenerateOverlapEvents(false);
-				BuildingsNear->SetVisibility(false);		// collision only: the visual copy is in Buildings
-				BuildingsNear->SetHiddenInGame(true);
-				BuildingsNear->CastShadow = false;
-				BuildingsNear->RegisterComponent();
+				for (int32 K = 0; K < (int32)EBuildingKind::Count; ++K)
+				{
+					// Each shape's own hulls; a fire is walked round, not stood on.
+					if ((EBuildingKind)K == EBuildingKind::Fire) { BuildingsNear.Add(nullptr); continue; }
+					UHierarchicalInstancedStaticMeshComponent* C = NewObject<UHierarchicalInstancedStaticMeshComponent>(this, *FString::Printf(TEXT("BuildingsNear%d"), K));
+					C->SetupAttachment(GetRootComponent());
+					C->SetUsingAbsoluteScale(true);
+					C->SetMobility(EComponentMobility::Movable);
+					C->SetStaticMesh(SlonkBuildings::GetMesh((EBuildingKind)K));
+					C->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+					C->SetCollisionProfileName(TEXT("BlockAll"));
+					C->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Block);		// the crew's boots
+					C->SetGenerateOverlapEvents(false);
+					C->SetVisibility(false);		// collision only: the visual copy is in Buildings
+					C->SetHiddenInGame(true);
+					C->CastShadow = false;
+					C->RegisterComponent();
+					BuildingsNear.Add(C);
+				}
 			}
 			if (CityPending->Towns.Difference(CityActiveTowns).Num() > 0 || CityActiveTowns.Difference(CityPending->Towns).Num() > 0)
 			{
-				CityInstances.Reset();
+				for (TArray<FTransform>& Ks : CityInstances) { Ks.Reset(); }
 				for (int32 K = 0; K < BuildingSets.Num(); ++K)
 				{
 					UHierarchicalInstancedStaticMeshComponent* H = BuildingSets[K];
@@ -1101,14 +1182,17 @@ void APlanetBody::UpdateCities(const FVector& ViewLoc, float DeltaTime)
 							H->SetCustomDataValue(i, 0, (float)Sc.X, false);
 							H->SetCustomDataValue(i, 1, (float)Sc.Y, false);
 							H->SetCustomDataValue(i, 2, (float)Sc.Z, false);
+							H->SetCustomDataValue(i, 3, (float)K, false);		// the kind: a fire burns, a footing has no windows
 						}
 						H->MarkRenderStateDirty();
 					}
-					CityInstances.Append(Inst);
+					CityInstances[K] = Inst;
 				}
 				CityActiveTowns = CityPending->Towns;
 				UpdateNearCollision(Body ? Body->GetComponentTransform().InverseTransformPosition(ViewLoc) * Body->GetComponentScale() : ViewLoc - GetActorLocation(), true);
-				UE_LOG(LogTemp, Log, TEXT("%s: %d towns, %d buildings within %.0f km"), *GetDisplayName(), CityPending->TownCount, CityInstances.Num(), CityReachKm);
+				int32 Built = 0;
+				for (const TArray<FTransform>& Ks : CityInstances) { Built += Ks.Num(); }
+				UE_LOG(LogTemp, Log, TEXT("%s: %d towns, %d buildings within %.0f km"), *GetDisplayName(), CityPending->TownCount, Built, CityReachKm);
 			}
 		}
 		CityPending.Reset();
@@ -1136,19 +1220,23 @@ void APlanetBody::UpdateCities(const FVector& ViewLoc, float DeltaTime)
 	if (FVector::Dist(Centre, CityCentreLocal) < CityReachKm * 100000.0 / 6.0) { return; }
 	CityCentreLocal = Centre;
 	const FPlanetTerrainParams P = TerrainParams;
+	const FCivilization Who = GetPeople();
 	const double Reach = CityReachKm * 100000.0;
 	CityPending = MakeShared<FCityBuild, ESPMode::ThreadSafe>();
+	CityPending->Generation = CityGeneration;
 	TSharedPtr<FCityBuild, ESPMode::ThreadSafe> Res = CityPending;
-	CityFuture = Async(EAsyncExecution::ThreadPool, [P, Centre, Reach, Res]()
+	CityFuture = Async(EAsyncExecution::ThreadPool, [P, Who, Centre, Reach, Res]()
 	{
 		TArray<FTownSite> Towns;
-		SlonkCities::EnumerateTowns(P, Centre, Reach, Towns);
+		SlonkCities::EnumerateTowns(P, Who, Centre, Reach, Towns);
 		Res->TownCount = Towns.Num();
 		for (const FTownSite& T : Towns)
 		{
 			Res->Towns.Add(T.Seed);
-			if (Res->Instances[0].Num() + Res->Instances[1].Num() + Res->Instances[2].Num() > 100000) { break; }
-			SlonkCities::BuildTown(P, T, Res->Instances, 7000);
+			int32 Built = 0;
+			for (const TArray<FTransform>& K : Res->Instances) { Built += K.Num(); }
+			if (Built > 100000) { break; }
+			SlonkCities::BuildTown(P, Who, T, Res->Instances, 7000);
 		}
 	});
 }
@@ -1316,7 +1404,7 @@ void APlanetBody::EnsureTerrain()
 	}
 	const FPlanetTerrainParams P = MakeTerrainParams();
 	// The rocks keep off the streets of a world with towns; set before the chunks are built.
-	Terrain->SetScatterOptions(Terrain->GetScatterSettings().bEnabled, Terrain->GetScatterSettings().Density, HasCities(), GroundLife());
+	Terrain->SetScatterOptions(Terrain->GetScatterSettings().bEnabled, Terrain->GetScatterSettings().Density, HasCities(), GroundLife(), GetPeople());
 	if (!bTerrainActive || P != TerrainParams)
 	{
 		TerrainParams = P;
@@ -1343,6 +1431,12 @@ void APlanetBody::ApplyTerrainMaterialParams()
 	Terrain->SetScalarParameter(TEXT("OceanRoughness"), S.OceanRoughness);
 	Terrain->SetScalarParameter(TEXT("LandRoughness"), S.LandRoughness);
 	Terrain->SetScalarParameter(TEXT("NightLightIntensity"), S.NightLightIntensity);
+	// The people's streets (a grid paved and lit, or none) and the driest ground they settle, as the town builder
+	// reads them.
+	Terrain->SetScalarParameter(TEXT("StreetGrid"), GetPeople().StreetGrid);
+	Terrain->SetScalarParameter(TEXT("SettleWet"), FMath::Max(GetPeople().WetMin, -1.f));
+	// And the share of the settlement points they live at, so the ground is paved and lit only under their towns.
+	Terrain->SetScalarParameter(TEXT("SettleDensity"), GetPeople().Density);
 	Terrain->SetScalarParameter(TEXT("LavaEmissive"), S.LavaEmissive);
 	Terrain->SetScalarParameter(TEXT("CloudScale"), S.CloudScale);
 	Terrain->SetScalarParameter(TEXT("Coverage"), S.bClouds ? S.CloudCoverage : 0.f);

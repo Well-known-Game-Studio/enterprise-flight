@@ -7,6 +7,8 @@
 #include "GameFramework/Actor.h"
 #include "FarBody.h"
 #include "PlanetTerrain.h"
+#include "Civilization.h"
+#include "BuildingMeshes.h"
 #include "Async/Future.h"
 #include "PlanetBody.generated.h"
 
@@ -275,8 +277,21 @@ public:
 	/** How much grows on the ground, 0..1 (TerrainScatter.h): grass, bushes and forest on an Earth-like or ocean
 	 *  world, a little scrub on a desert, nothing on the dead ones. */
 	float GroundLife() const;
-	/** The night-side lights set from outside (a colony founded, a world struck): the style is kept from here on. */
+	/** The night-side lights set from outside (a colony founded, a world struck): the style is kept from here on. A
+	 *  native people whose lights are put out is gone. */
 	void SetNightLights(float Intensity);
+	/** Who lives here (Civilization.h), rolled with the style; on a world with no people of its own that has been lit
+	 *  from outside, the Federation's colonists. */
+	const FCivilization& GetPeople() const;
+	/** A native people of its own (not the Federation's colonists), lit or not. */
+	bool HasNatives() const { return Civ.bInhabited; }
+	/** Someone lives here: a native people, whatever their lights, or whoever lights its night side. */
+	bool IsInhabited() const { return Civ.bInhabited || Style.NightLightIntensity > 0.001f; }
+	/** Whether the world of that display name has anyone living on it now (IsInhabited), for a chart made before it
+	 *  had a people of its own: nothing of ours goes in their sky. False if there is no such world. */
+	static bool IsNamedWorldInhabited(UWorld* World, const FString& Name);
+	/** Who lives here from now on (the `ship people` command): their lights, their colours, their towns rebuilt. */
+	void SetPeople(const FCivilization& People);
 	/** Reach (km) within which towns are built around the view; 0 switches the buildings off. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Cities") float CityReachKm = 30.f;
 
@@ -500,9 +515,10 @@ private:
 	/** One instanced mesh per building shape (block, tower, house). */
 	UPROPERTY() TArray<TObjectPtr<UHierarchicalInstancedStaticMeshComponent>> BuildingSets;
 	/** The few hundred buildings around the view carry collision; the planet turns every tick and a body per
-	 *  instance across the whole town set cost 300 ms a frame in the physics scene. */
-	UPROPERTY() TObjectPtr<UHierarchicalInstancedStaticMeshComponent> BuildingsNear;
-	TArray<FTransform> CityInstances;
+	 *  instance across the whole town set cost 300 ms a frame in the physics scene. A set per shape, each with its
+	 *  own hulls (none for a fire, whose entry is null). */
+	UPROPERTY() TArray<TObjectPtr<UHierarchicalInstancedStaticMeshComponent>> BuildingsNear;
+	TArray<FTransform> CityInstances[(int32)EBuildingKind::Count];
 	FVector CityNearCentre = FVector(1.0e30, 0.0, 0.0);
 	void UpdateNearCollision(const FVector& ViewLocal, bool bForce);
 public:
@@ -514,7 +530,13 @@ private:
 	double CityPinUntil = -1.0;
 	bool bCityPinApplied = false;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> BuildingMID;
-	struct FCityBuild { TSet<uint32> Towns; TArray<FTransform> Instances[3]; int32 TownCount = 0; };
+	struct FCityBuild { TSet<uint32> Towns; TArray<FTransform> Instances[(int32)EBuildingKind::Count]; int32 TownCount = 0; int32 Generation = 0; };
+	/** Counts the clearings of the towns (a new people, lights put out): a build started before one lands nowhere. */
+	int32 CityGeneration = 0;
+	/** The world's own people (nobody if not bInhabited). */
+	FCivilization Civ;
+	/** The building material's colours and lights for the people. */
+	void ApplyBuildingParams();
 	TSharedPtr<FCityBuild, ESPMode::ThreadSafe> CityPending;
 	TFuture<void> CityFuture;
 	TSet<uint32> CityActiveTowns;

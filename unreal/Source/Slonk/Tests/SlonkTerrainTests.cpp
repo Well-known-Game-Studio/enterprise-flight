@@ -233,7 +233,7 @@ bool FSlonkTerrainRocksTownsTest::RunTest(const FString& Parameters)
 		const FVector Dir = Fibonacci(i, 400);
 		if (SlonkTerrain::SampleStructure(P, Dir).bWater) { continue; }
 		TArray<FTownSite> Towns;
-		SlonkCities::EnumerateTowns(P, Dir * P.RadiusCm, 3.0e7, Towns, 8);
+		SlonkCities::EnumerateTowns(P, SlonkCivs::Colonists(), Dir * P.RadiusCm, 3.0e7, Towns, 8);
 		for (const FTownSite& T : Towns) { if (!T.bCity) { Town = T; bFound = true; break; } }
 	}
 	if (!bFound) { AddWarning(TEXT("no town on the test world; the keep-out rule went unchecked")); return true; }

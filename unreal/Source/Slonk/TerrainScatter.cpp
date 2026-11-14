@@ -211,11 +211,12 @@ namespace
 	struct FKeepOut
 	{
 		TArray<TPair<FVector, double>> Towns;
-		void Build(const FPlanetTerrainParams& P, const SlonkScatter::FChunkGrid& G)
+		void Build(const FPlanetTerrainParams& P, const FCivilization& People, const SlonkScatter::FChunkGrid& G)
 		{
 			TArray<FTownSite> Sites;
-			SlonkCities::EnumerateTowns(P, G.Origin, G.EdgeCm * 0.75 + SlonkCities::CityRadiusCm(1.f) + 5000.0, Sites, 64);
-			for (const FTownSite& T : Sites) { Towns.Add({ T.LocalCm, FMath::Square(T.RadiusCm + 2500.0) }); }
+			SlonkCities::EnumerateTowns(P, People.bInhabited ? People : SlonkCivs::Colonists(), G.Origin, G.EdgeCm * 0.75 + SlonkCities::CityRadiusCm(1.f) + 5000.0, Sites, 64);
+			// A cliff town runs its radius along the wall and its profile 300 m across it, either way.
+			for (const FTownSite& T : Sites) { Towns.Add({ T.LocalCm, FMath::Square((T.bCliff ? FMath::Sqrt(FMath::Square(T.RadiusCm) + FMath::Square(30000.0)) : T.RadiusCm) + 2500.0) }); }
 		}
 		bool Contains(const FVector& Up, double R) const
 		{
@@ -320,7 +321,7 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 	const FChunkFrame F(G);
 	const bool bLiving = S.Life > 0.f && !P.bAirless;
 	FKeepOut KeepOut;
-	if (S.bCities) { KeepOut.Build(P, G); }
+	if (S.bCities) { KeepOut.Build(P, S.People, G); }
 
 	int32 Rocks = 0, Plants = 0;
 	for (const FClass& Cl : Classes)

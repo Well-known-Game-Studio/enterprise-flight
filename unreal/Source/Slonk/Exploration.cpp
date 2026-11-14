@@ -258,7 +258,14 @@ bool UExplorationSubsystem::Reveal(const FString& Designation)
 	{
 		if (!P || P->IsMoon()) { continue; }
 		++Worlds;
-		if (P->Style.NightLightIntensity > 0.001f) { Lit.Add(P->GetDisplayName()); if (PreWarp.IsEmpty()) { PreWarp = P->GetDisplayName(); } }
+		// Someone's world, lit or not (a stone-age people has no lights); the first of a people who have not left it
+		// is the pre-warp world (a world lit with no people of its own, hand-styled, counts as one, as it did).
+		if (P->IsInhabited())
+		{
+			Lit.Add(P->GetDisplayName());
+			const bool bPreWarp = P->HasNatives() ? P->GetPeople().Age < ETechAge::Starfaring : true;
+			if (bPreWarp && PreWarp.IsEmpty()) { PreWarp = P->GetDisplayName(); }
+		}
 		if (!P->HasSolidSurface()) { continue; }
 		const EPlanetArchetype A = P->ResolvedArchetype;
 		if (A == EPlanetArchetype::Terrestrial || A == EPlanetArchetype::Ocean) { Habitable.Add(P->GetDisplayName()); }
@@ -312,7 +319,7 @@ bool UExplorationSubsystem::Chart(const FString& NameOrDesignation, bool bRollEv
 	E->ChartedStardate = M ? M->Stardate() : 0.0;
 	const FString StarWord = E->Spec.StarClass == EStarClass::M ? TEXT("a red dwarf") : E->Spec.StarClass == EStarClass::K ? TEXT("an orange star") : E->Spec.StarClass == EStarClass::G ? TEXT("a yellow star") : E->Spec.StarClass == EStarClass::F ? TEXT("a yellow-white star") : TEXT("a white star");
 	FString T = FString::Printf(TEXT("Entering %s, Captain: %s%s, %d world%s. No one has been here. It is ours to chart."), *E->Designation, *StarWord, E->Spec.CompanionClass != EStarClass::None ? TEXT(" with a companion") : TEXT(""), E->Worlds, E->Worlds == 1 ? TEXT("") : TEXT("s"));
-	if (!E->PreWarpWorld.IsEmpty()) { T += FString::Printf(TEXT(" And lights on the night side of %s."), *E->PreWarpWorld); }
+	if (!E->PreWarpWorld.IsEmpty()) { T += FString::Printf(TEXT(" And a people on %s, who have not left it."), *E->PreWarpWorld); }
 	Report(T, FLinearColor(0.7f, 1.f, 0.8f));
 	// The chart's worth: regard, science, and the crew's own sense of it.
 	if (M) { M->AddStanding(10, FString::Printf(TEXT("%s charted"), *E->Designation)); }
