@@ -61,7 +61,7 @@ static FPlanetTerrainParams Earthlike()
 	P.SnowlineCm = 5.0e5;
 	P.SeaLevel = 0.59f; P.ContinentScale = 3.f;
 	P.Mountains = 0.6f; P.Canyons = 0.5f; P.Strata = 0.6f; P.Moisture = 0.55f;
-	P.CanyonDepthCm = 1.6e5 * (P.RadiusCm / 6.371e8); P.CanyonWidthCm = 7.0e5 * (P.RadiusCm / 6.371e8);
+	P.CanyonDepthCm = SlonkTerrain::ScaleWithWorld(1.6e5, P.RadiusCm); P.CanyonWidthCm = SlonkTerrain::ScaleWithWorld(1.6e6, P.RadiusCm);
 	P.Craters = 0.1f;
 	return P;
 }
