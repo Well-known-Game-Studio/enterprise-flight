@@ -55,7 +55,9 @@ bush found again on the finer chunks where a wrap plane of the material's noise 
 And the mountains: the relief law at three sizes and a range's peaks reaching toward the relief on a small world
 and an Earth-size one, bare rock at the top; the coarse levels of detail of the ranges standing where the fine ones
 average; snow above the snowline for the latitude and none below it, and on high ground the trees climbing toward
-the treeline under it and stopping there.
+the treeline under it and stopping there. And the canyons: depth and width by the same root as the relief, cut
+that deep and as wide as they say rim to rim; the plateaus ending in cliffs with islands of the caprock before them;
+and badlands gullied metres deep below the scarps of a dry world, none without air.
 
 Writing one: make an `FSystems` (a roster seed gives the same people every time), drive the subsystems through
 their public API, assert with `TestEqual`/`TestTrue`. For anything that depends on the world (targets picked from

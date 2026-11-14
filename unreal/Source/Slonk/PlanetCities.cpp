@@ -190,7 +190,9 @@ void SlonkCities::BuildTown(const FPlanetTerrainParams& P, const FTownSite& Town
 		const FVector Flat = GX * (gx * Pitch + Jit.X) + GY * (gy * Pitch + Jit.Y);
 		const FVector Dir = (Town.LocalCm + Flat).GetSafeNormal();
 		const FPlanetTerrainSample S = SlonkTerrain::Sample(P, Dir, 400.0);
-		if (S.bWater) { continue; }
+		// No building in the water, or on a cliff: a town at a scarp's or a canyon's rim ends at the edge rather than
+		// standing on stilts down the face.
+		if (S.bWater || S.Wall > 0.3f || S.Slope > 0.5f) { continue; }
 		double W = Pitch * (0.5 + 0.4 * Hash01(Mix(H, 7u)));
 		double Dp = Pitch * (0.5 + 0.4 * Hash01(Mix(H, 9u)));
 		// Towers in the middle of a strong town, houses at the edge of a weak one.

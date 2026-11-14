@@ -14,7 +14,7 @@
 
 // The sine of the sun elevation the canyon, rim and river searches prefer, and the half-width of the band that
 // earns full marks: low by default so one wall is lit and the other in shadow; raise it for a sunlit floor.
-static TAutoConsoleVariable<float> CVarTerrainSunUp(TEXT("slonk.TerrainSunUp"), 0.45f, TEXT("Preferred sine of sun elevation for terrain goto canyon/rim/river"));
+static TAutoConsoleVariable<float> CVarTerrainSunUp(TEXT("slonk.TerrainSunUp"), 0.45f, TEXT("Preferred sine of sun elevation for terrain goto canyon/rim/river/mesa/badlands"));
 static TAutoConsoleVariable<float> CVarTerrainSunUpWidth(TEXT("slonk.TerrainSunUpWidth"), 0.25f, TEXT("Half-width of the preferred band"));
 
 using namespace UE::Geometry;
@@ -872,11 +872,15 @@ bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& Ne
 		}
 		// The deepest cut wins, not merely the widest floor.
 		if (K == TEXT("canyon")) { return S.bWater ? -1e9 : S.Canyon * 4.0 + S.CutCm / FMath::Max(Params.CanyonDepthCm, 1.0) * 10.0 + Temperate + Near * 0.5; }
-		// The rim: top of a wall, just outside the cut, high up.
-		if (K == TEXT("rim")) { return S.bWater ? -1e9 : S.Wall * 6.0 - S.Canyon * 8.0 + S.HeightCm / FMath::Max(Params.ReliefCm, 1.0) * 4.0 + S.CutCm / FMath::Max(Params.CanyonDepthCm, 1.0) * 4.0 + Temperate + Near * 0.5; }
+		// The rim: top of a canyon's wall, just outside the cut, high up (a wall with no cut is a scarp's, not a rim).
+		if (K == TEXT("rim")) { return S.bWater ? -1e9 : (S.CutCm > 0.01 * Params.CanyonDepthCm ? S.Wall : 0.0) * 6.0 - S.Canyon * 8.0 + S.HeightCm / FMath::Max(Params.ReliefCm, 1.0) * 4.0 + S.CutCm / FMath::Max(Params.CanyonDepthCm, 1.0) * 4.0 + Temperate + Near * 0.5; }
 		// The river: the gorge's deepest cut leads to within a bend of it, then the river mask takes over.
 		if (K == TEXT("river")) { return S.River * 10.0 + S.Canyon * 2.0 + S.CutCm / FMath::Max(Params.CanyonDepthCm, 1.0) * 4.0 + Temperate + Near * 0.5; }
 		if (K == TEXT("mountain")) { return S.bWater ? -1e9 : S.HeightCm / FMath::Max(Params.ReliefCm, 1.0) * 10.0 + Near * 0.5; }
+		// The scarp at a plateau's edge, away from the canyons, toward the foreland where its mesas and buttes stand.
+		if (K == TEXT("mesa")) { return S.bWater ? -1e9 : (S.CutCm > 0.01 * Params.CanyonDepthCm ? 0.0 : S.Wall) * 6.0 - S.Canyon * 10.0 + S.Badland * 2.0 + Temperate + Near * 0.5; }
+		// Badlands: the gullied soft beds below a dry world's scarps.
+		if (K == TEXT("badlands")) { return S.bWater ? -1e9 : S.Badland * 10.0 + Temperate + Near * 0.5; }
 		// Green: the wettest level lowland, where a living world grows its meadows and forests (TerrainScatter.h).
 		if (K == TEXT("green")) { return S.bWater ? -1e9 : S.Wet * 6.0 - S.Slope * 4.0 - S.Rock * 2.0 - S.Ice * 6.0 - S.HeightCm / FMath::Max(Params.ReliefCm, 1.0) * 6.0 - FMath::Abs(D.Z) * 2.0 + Near * 2.0; }
 		if (K == TEXT("linea")) { return S.Linea * 10.0 + Near * 3.0; }
@@ -920,19 +924,35 @@ bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& Ne
 		if (Sc > BestScore) { BestScore = Sc; Best = D; }
 	}
 	if (BestScore <= -1e8) { return false; }
-	// Canyons are thin lines on broad tablelands and the coarse pass mostly misses them: around the best few
-	// tableland samples, comb a fine grid (2 km spacing, 80 km across) for the deepest cut.
-	if (K == TEXT("canyon") || K == TEXT("rim") || K == TEXT("river"))
+	// Canyons, scarps and badlands are thin on broad tablelands and the coarse pass mostly misses them: around the
+	// best few tableland samples, comb a fine grid (2 km spacing, 80 km across) for the best.
+	const bool bEdgeFeature = K == TEXT("mesa") || K == TEXT("badlands");
+	const bool bTableFeature = bEdgeFeature || K == TEXT("canyon") || K == TEXT("rim") || K == TEXT("river");
+	if (bTableFeature)
 	{
+		// The coarse score was taken where none of this shows; score the best again as finely as the comb does, or
+		// nothing finer beats it and the search stays where the coarse pass left it.
+		BestScore = Score(Best, SlonkTerrain::Sample(Params, Best, 1.0e5));
 		struct FCand { double Score; FVector D; };
 		TArray<FCand> Cands;
-		for (int32 i = 0; i < N; ++i)
+		// Canyons lie within the tablelands, so the most tableland of the coarse pass seeds the comb. A scarp is a
+		// band a kilometre or two wide and its badlands not much wider: the coarse samples, blind to anything under
+		// a few hundred kilometres, never show one, so a denser pass at a fine wavelength looks for them itself and
+		// its best seed the comb.
+		const int32 NC = bEdgeFeature ? 40000 : N;
+		for (int32 i = 0; i < NC; ++i)
 		{
-			const double Z = 1.0 - 2.0 * (i + 0.5) / N;
+			const double Z = 1.0 - 2.0 * (i + 0.5) / NC;
 			const double Rr = FMath::Sqrt(FMath::Max(0.0, 1.0 - Z * Z));
 			const double Phi = Golden * i;
 			const FVector D(Rr * FMath::Cos(Phi), Rr * FMath::Sin(Phi), Z);
 			if (!SunDirLocal.IsNearlyZero() && FVector::DotProduct(D, SunDirLocal.GetSafeNormal()) < 0.3) { continue; }
+			if (bEdgeFeature)
+			{
+				const double Sc = Score(D, SlonkTerrain::SampleStructure(Params, D, 2.0e4));
+				if (Sc > -1e8) { Cands.Add({ Sc, D }); }
+				continue;
+			}
 			const FPlanetTerrainSample S = SlonkTerrain::Sample(Params, D, CoarseWavelength);
 			if (S.bWater || S.Table < 0.3f) { continue; }
 			Cands.Add({ S.Table - 2.0 * FMath::Abs(D.Z) - 4.0 * S.Ice, D });
@@ -956,11 +976,17 @@ bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& Ne
 		}
 	}
 	// Refine: hill-climb on a shrinking step so the result sits on the feature, not 30 km from it.
-	double Step = (K == TEXT("canyon") || K == TEXT("rim") || K == TEXT("river")) ? 2.0e5 / Params.RadiusCm : CoarseWavelength / Params.RadiusCm;
+	double Step = bTableFeature ? 2.0e5 / Params.RadiusCm : CoarseWavelength / Params.RadiusCm;
+	// A move must gain something real, and a stage has a budget: on ground where the score is flat (a scarp's
+	// band of wall, the badlands' full mask) the only change left is the latitude term's rounding, and an
+	// east-west step "improved" it every time, for ever.
 	for (int32 It = 0; It < 6; ++It)
 	{
+		// Each stage scores where it stands at its own level of detail: a spot that was badlands from a kilometre off
+		// is a butte's top up close, and the coarser score would never be beaten.
+		BestScore = Score(Best, SlonkTerrain::Sample(Params, Best, Step * Params.RadiusCm * 0.5));
 		bool bMoved = true;
-		while (bMoved)
+		for (int32 Moves = 0; bMoved && Moves < 200; ++Moves)
 		{
 			bMoved = false;
 			const FVector E = FVector::CrossProduct(FVector::ZAxisVector, Best).GetSafeNormal();
@@ -969,10 +995,16 @@ bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& Ne
 			{
 				const FVector D = (Best + Off).GetSafeNormal();
 				const double Sc = Score(D, SlonkTerrain::Sample(Params, D, Step * Params.RadiusCm * 0.5));
-				if (Sc > BestScore) { BestScore = Sc; Best = D; bMoved = true; }
+				if (Sc > BestScore + 1e-6) { BestScore = Sc; Best = D; bMoved = true; }
 			}
 		}
 		Step *= 0.4;
+	}
+	// A scarp or badlands asked of a world with none (no tablelands, no air, too wet) is not found.
+	if (bEdgeFeature)
+	{
+		const FPlanetTerrainSample S = SlonkTerrain::Sample(Params, Best, 1.0e4);
+		if (K == TEXT("mesa") ? (S.Wall < 0.1f || S.CutCm > 0.01 * Params.CanyonDepthCm) : S.Badland < 0.1f) { return false; }
 	}
 	OutDir = Best;
 	OutHeightCm = SlonkTerrain::SurfaceHeightCm(Params, Best);

@@ -2029,7 +2029,7 @@ void AStarshipPawn::ProcessDebugCommand()
 	}
 	else if (Op == TEXT("terrain") && Movement && ArgStr(1) == TEXT("goto"))
 	{
-		// terrain goto <canyon|mountain|coast|land> <altitude m> [heading: across|sun|away]: park over that feature of
+		// terrain goto <canyon|mesa|badlands|mountain|coast|land> <altitude m> [heading: across|sun|away]: park over that feature of
 		// the nearest planet, level, nose along the horizon. "across" flies with the sun on the beam.
 		APlanetBody* Planet = Cast<APlanetBody>(Movement->GroundBody.Get());
 		if (!Planet)
@@ -2511,7 +2511,7 @@ void AStarshipPawn::ProcessDebugCommand()
 			TEXT("ship impact [status|raise [<world>]|deflect|shatter|hit]  (a rock on a course for an inhabited world; the dev ops for testing)"),
 			TEXT("ship camera [chase|bridge|cinematic|front|port|starboard|top|bottom] | zoom <x> | look <yaw> <pitch> [s]"),
 			TEXT("ship warpvis [classic|real] | cscale <0..1> | systems | shipwarp [km] [far]"),
-			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mountain|coast|river|linea|green|land> <alt m> [across|sun|away|along|giant] | terrain rocks [on|off|density <x>|check]"),
+			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mesa|badlands|mountain|coast|river|linea|green|land> <alt m> [across|sun|away|along|giant] | terrain rocks [on|off|density <x>|check]"),
 			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km]"),
 			TEXT("ship shuttle  (launch the shuttlecraft; aboard it, dock when the bay is within 500 m) | ship takeoff"),
 			TEXT("ship scan [stop]  (sensors on the locked / nav target; landed: survey the ground) | ship science [reset]"),

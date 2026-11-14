@@ -469,10 +469,24 @@ namespace
 		P.OceanDepthCm = SlonkTerrain::ReliefForRadius(0.0008, P.RadiusCm);
 		P.Mountains = 0.6f;
 		P.Moisture = 0.55f;
-		const double Earth = P.RadiusCm / 6.371e8;
-		P.CanyonDepthCm = 1.6e5 * Earth;
-		P.CanyonWidthCm = 7.0e5 * Earth;
+		P.CanyonDepthCm = SlonkTerrain::ScaleWithWorld(1.6e5, P.RadiusCm);
+		P.CanyonWidthCm = SlonkTerrain::ScaleWithWorld(1.6e6, P.RadiusCm);
 		P.SnowlineCm = 5.0e5;
+		return P;
+	}
+
+	/** A desert world of a given radius, its canyon country as APlanetBody::MakeTerrainParams gives a Desert one. */
+	FPlanetTerrainParams DesertLike(double RadiusKm)
+	{
+		FPlanetTerrainParams P = EarthLike(RadiusKm);
+		P.ReliefCm = SlonkTerrain::ReliefForRadius(0.002, P.RadiusCm);
+		// The style's: dry basins for a sea, broad continents, some craters and maria, a cap at 0.92 (or none).
+		P.SeaLevel = 0.05f; P.ContinentScale = 2.2f;
+		P.Craters = 0.45f; P.CraterScale = 1.3f; P.Maria = 0.2f; P.IceCapStart = 0.92f;
+		P.Mountains = 0.5f; P.Canyons = 0.9f; P.Strata = 0.9f; P.Moisture = 0.05f;
+		P.CanyonDepthCm = SlonkTerrain::ScaleWithWorld(2.0e5, P.RadiusCm);
+		P.CanyonWidthCm = SlonkTerrain::ScaleWithWorld(1.8e6, P.RadiusCm);
+		P.SnowlineCm = 6.5e5;
 		return P;
 	}
 }
@@ -615,6 +629,226 @@ bool FSlonkTerrainSnowlineTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("trees grow on the high ground"), Trees > 0);
 	TestTrue(TEXT("up toward the treeline"), Highest > 0.6);
 	TestEqual(TEXT("none stands above the treeline"), OverLine, 0);
+	return true;
+}
+
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkTerrainCanyonsBySizeTest, "Slonk.Terrain.CanyonsBySize", SLONK_TEST_FLAGS)
+bool FSlonkTerrainCanyonsBySizeTest::RunTest(const FString& Parameters)
+{
+	// A world's canyons go with its relief, as the square root of its size: the Grand Canyon's 1.6 km on an Earth is
+	// half a kilometre on a world a tenth the size, not 160 m. They are cut that deep, on a small world and an
+	// Earth-size one. And they are as wide as they say, rim to rim (the narrowest chord through a floor point, over
+	// eighteen directions): the line's width comes from the distance to it, not from how fast its noise climbs, which
+	// once made them twice their nominal width (the continents' own warp still stretches them by up to about half
+	// locally, so it is the median of the main canyon's floors that is held to it).
+	TestTrue(TEXT("an Earth-size world's canyon is 1.6 km deep"), FMath::IsNearlyEqual(SlonkTerrain::ScaleWithWorld(1.6e5, 6.371e8) / 1e5, 1.6, 0.01));
+	TestTrue(TEXT("a world a tenth the size, half a kilometre"), FMath::IsNearlyEqual(SlonkTerrain::ScaleWithWorld(1.6e5, 6.371e7) / 1e5, 0.506, 0.01));
+	for (const double Km : { 600.0, 6371.0 })
+	{
+		const FPlanetTerrainParams P = DesertLike(Km);
+		double Deepest = 0.0;
+		TArray<FVector> Floor;
+		const int32 N = 20000;
+		for (int32 i = 0; i < N; ++i)
+		{
+			const FVector Dir = Fibonacci(i, N);
+			const FPlanetTerrainSample S = SlonkTerrain::SampleStructure(P, Dir, 2.0e4);
+			if (S.bWater) { continue; }
+			Deepest = FMath::Max(Deepest, (double)S.CutCm);
+			// The main canyon's floor (a side canyon's is under 0.8 of the depth).
+			if (S.Canyon >= 0.85f && Floor.Num() < 25) { Floor.Add(Dir); }
+		}
+		TArray<double> Widths;
+		for (const FVector& Dc : Floor)
+		{
+			const float C0 = SlonkTerrain::SampleStructure(P, Dc, 2.0e4).Canyon;
+			const FVector E = FVector::CrossProduct(FMath::Abs(Dc.Z) < 0.9 ? FVector::ZAxisVector : FVector::XAxisVector, Dc).GetSafeNormal();
+			const FVector Nn = FVector::CrossProduct(Dc, E);
+			double Narrowest = 1e30;
+			for (int32 a = 0; a < 18; ++a)
+			{
+				const double A = a * UE_DOUBLE_PI / 18.0;
+				const FVector T = E * FMath::Cos(A) + Nn * FMath::Sin(A);
+				double Chord = 0.0;
+				for (const double Side : { -1.0, 1.0 })
+				{
+					double Rim = 3.0 * P.CanyonWidthCm;
+					for (double D = 0.0; D < 3.0 * P.CanyonWidthCm; D += P.CanyonWidthCm / 40.0)
+					{
+						if (SlonkTerrain::SampleStructure(P, (Dc * P.RadiusCm + T * (Side * D)).GetSafeNormal(), 2.0e4).Canyon < 0.05f * C0) { Rim = D; break; }
+					}
+					Chord += Rim;
+				}
+				Narrowest = FMath::Min(Narrowest, Chord);
+			}
+			Widths.Add(Narrowest);
+		}
+		Widths.Sort();
+		const double Width = Widths.Num() > 0 ? Widths[Widths.Num() / 2] : 0.0;
+		AddInfo(FString::Printf(TEXT("R %.0f km: canyons %.2f km deep, %.1f km wide; deepest cut %.2f km; %d floor points, the median %.1f km rim to rim"),
+			Km, P.CanyonDepthCm / 1e5, P.CanyonWidthCm / 1e5, Deepest / 1e5, Floor.Num(), Width / 1e5));
+		TestTrue(FString::Printf(TEXT("the %.0f km world's canyons are cut most of their depth"), Km), Deepest >= 0.7 * P.CanyonDepthCm);
+		TestTrue(FString::Printf(TEXT("the %.0f km world has canyon floors to measure"), Km), Floor.Num() >= 10);
+		TestTrue(FString::Printf(TEXT("and they are about as wide as they say on the %.0f km world"), Km), Width > 0.75 * P.CanyonWidthCm && Width < 1.3 * P.CanyonWidthCm);
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkTerrainEscarpmentTest, "Slonk.Terrain.Escarpment", SLONK_TEST_FLAGS)
+bool FSlonkTerrainEscarpmentTest::RunTest(const FString& Parameters)
+{
+	// The plateaus end in cliffs, not ramps: the scarps and the islands' flanks away from the canyons climb at 35
+	// degrees or more over a couple of hundred metres (the old edge rose two and a half kilometres over a hundred
+	// and more, a slope of a fiftieth). And the cap stands before the scarp as islands: around the first dozen
+	// scarps, bare caprock tops (rock 0.6, no wall, no canyon, on tableland) standing over the ground 3 km away
+	// on at least seven sides of eight, by 100 m or more, and 3 km apart.
+	const FPlanetTerrainParams P = DesertLike(6371.0);
+	TArray<FVector> Flanks;
+	const int32 N = 40000;
+	for (int32 i = 0; i < N; ++i)
+	{
+		const FVector Dir = Fibonacci(i, N);
+		const FPlanetTerrainSample S = SlonkTerrain::SampleStructure(P, Dir, 2.0e4);
+		if (S.bWater || S.Canyon > 0.02f) { continue; }
+		if (S.Wall > 0.6f && Flanks.Num() < 40) { Flanks.Add(Dir); }
+	}
+	TArray<FVector> Tops;
+	for (int32 f = 0; f < FMath::Min(Flanks.Num(), 12); ++f)
+	{
+		const FVector Fc = Flanks[f];
+		const FVector E = FVector::CrossProduct(FMath::Abs(Fc.Z) < 0.9 ? FVector::ZAxisVector : FVector::XAxisVector, Fc).GetSafeNormal();
+		const FVector Nn = FVector::CrossProduct(Fc, E);
+		for (int32 j = -15; j <= 15; ++j)
+		{
+			for (int32 i = -15; i <= 15; ++i)
+			{
+				const FVector D = (Fc * P.RadiusCm + E * (i * 4.0e4) + Nn * (j * 4.0e4)).GetSafeNormal();
+				const FPlanetTerrainSample S = SlonkTerrain::SampleStructure(P, D, 2.0e4);
+				if (S.bWater || S.Table < 0.3f || S.Wall > 0.02f || S.Canyon > 0.02f || !FMath::IsNearlyEqual(S.Rock, 0.6f, 0.05f)) { continue; }
+				bool bNear = false;
+				for (const FVector& Tp : Tops) { if (FVector::DistSquared(Tp, D) * P.RadiusCm * P.RadiusCm < FMath::Square(3.0e5)) { bNear = true; break; } }
+				if (bNear) { continue; }
+				const FVector E2 = FVector::CrossProduct(FMath::Abs(D.Z) < 0.9 ? FVector::ZAxisVector : FVector::XAxisVector, D).GetSafeNormal();
+				const FVector N2 = FVector::CrossProduct(D, E2);
+				int32 Lower = 0;
+				for (int32 a = 0; a < 8; ++a)
+				{
+					const double A = a * UE_DOUBLE_PI / 4.0;
+					const FVector Dr = (D * P.RadiusCm + (E2 * FMath::Cos(A) + N2 * FMath::Sin(A)) * 3.0e5).GetSafeNormal();
+					Lower += SlonkTerrain::SampleStructure(P, Dr, 2.0e4).HeightCm < S.HeightCm - 1.0e4 ? 1 : 0;
+				}
+				if (Lower >= 7) { Tops.Add(D); }
+			}
+		}
+	}
+	int32 Steep = 0;
+	for (const FVector& Dc : Flanks)
+	{
+		const FVector E = FVector::CrossProduct(FMath::Abs(Dc.Z) < 0.9 ? FVector::ZAxisVector : FVector::XAxisVector, Dc).GetSafeNormal();
+		const FVector Nn = FVector::CrossProduct(Dc, E);
+		double Steepest = 0.0;
+		for (int32 a = 0; a < 8; ++a)
+		{
+			const double A = a * UE_DOUBLE_PI / 8.0;
+			const FVector T = (E * FMath::Cos(A) + Nn * FMath::Sin(A)) * 1.0e4;
+			const double H0 = SlonkTerrain::SampleStructure(P, (Dc * P.RadiusCm - T).GetSafeNormal(), 2.0e4).HeightCm;
+			const double H1 = SlonkTerrain::SampleStructure(P, (Dc * P.RadiusCm + T).GetSafeNormal(), 2.0e4).HeightCm;
+			Steepest = FMath::Max(Steepest, FMath::Abs(H1 - H0) / 2.0e4);
+		}
+		Steep += Steepest >= 0.7 ? 1 : 0;
+	}
+	AddInfo(FString::Printf(TEXT("%d scarp and island flanks, %d of them at 35 degrees or more; %d islands of caprock standing clear around the first dozen"), Flanks.Num(), Steep, Tops.Num()));
+	TestTrue(TEXT("the plateaus have scarps"), Flanks.Num() >= 20);
+	TestTrue(TEXT("most of them cliffs"), Steep * 2 >= Flanks.Num());
+	TestTrue(TEXT("with islands of the cap before them"), Tops.Num() >= 3);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkTerrainBadlandsTest, "Slonk.Terrain.Badlands", SLONK_TEST_FLAGS)
+bool FSlonkTerrainBadlandsTest::RunTest(const FString& Parameters)
+{
+	// Below the scarps of a dry world the soft beds are badlands, cut into gullies metres deep; a world without air
+	// has none, rain having made them.
+	FPlanetTerrainParams Airless = DesertLike(6371.0);
+	Airless.bAirless = true;
+	const FPlanetTerrainParams P = DesertLike(6371.0);
+	TArray<FVector> Bad;
+	int32 OnAirless = 0;
+	const int32 N = 40000;
+	for (int32 i = 0; i < N; ++i)
+	{
+		const FVector Dir = Fibonacci(i, N);
+		const FPlanetTerrainSample S = SlonkTerrain::SampleStructure(P, Dir, 2.0e4);
+		if (!S.bWater && S.Badland > 0.6f && Bad.Num() < 12) { Bad.Add(Dir); }
+		OnAirless += SlonkTerrain::SampleStructure(Airless, Dir, 2.0e4).Badland > 0.f ? 1 : 0;
+	}
+	// The relief of the ground along 200 m of each, at full detail, less its straight trend.
+	int32 Gullied = 0;
+	for (const FVector& Dc : Bad)
+	{
+		const FVector E = FVector::CrossProduct(FMath::Abs(Dc.Z) < 0.9 ? FVector::ZAxisVector : FVector::XAxisVector, Dc).GetSafeNormal();
+		TArray<double> H;
+		for (int32 k = 0; k <= 40; ++k) { H.Add(SlonkTerrain::Sample(P, (Dc * P.RadiusCm + E * ((k - 20) * 500.0)).GetSafeNormal(), 50.0).HeightCm); }
+		double Lo = 1e30, Hi = -1e30;
+		for (int32 k = 0; k <= 40; ++k) { const double R = H[k] - FMath::Lerp(H[0], H[40], k / 40.0); Lo = FMath::Min(Lo, R); Hi = FMath::Max(Hi, R); }
+		Gullied += Hi - Lo >= 800.0 ? 1 : 0;
+	}
+	AddInfo(FString::Printf(TEXT("%d badland samples checked, %d with gullies 8 m deep or more across 200 m; %d badland samples without air"), Bad.Num(), Gullied, OnAirless));
+	TestTrue(TEXT("a dry world has badlands"), Bad.Num() >= 5);
+	TestTrue(TEXT("cut into gullies"), Gullied * 3 >= Bad.Num() * 2);
+	TestEqual(TEXT("a world without air has none"), OnAirless, 0);
+	return true;
+}
+
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkTerrainFindLandformsTest, "Slonk.Terrain.FindLandforms", SLONK_TEST_FLAGS)
+bool FSlonkTerrainFindLandformsTest::RunTest(const FString& Parameters)
+{
+	// `ship terrain goto` finds what it is asked for and says so only when it has: a scarp (a wall with no canyon cut
+	// under it), badlands, and a canyon's rim (a wall with a cut, not a scarp's); and no badlands on a world without
+	// air. And each search finishes: on the flat top of a scarp's wall or of the badlands' mask the hill-climb once
+	// stepped east and west for ever, each step "improving" the latitude term by a rounding error.
+	const FPlanetTerrainParams P = DesertLike(6371.0);
+	UPlanetTerrainComponent* T = NewObject<UPlanetTerrainComponent>();
+	T->Configure(P, nullptr);
+	auto Find = [&](const TCHAR* Kind, FVector& Dir) -> bool
+	{
+		double H = 0.0;
+		const double T0 = FPlatformTime::Seconds();
+		const bool bFound = T->FindFeature(Kind, FVector::ZeroVector, Dir, H);
+		const double Secs = FPlatformTime::Seconds() - T0;
+		AddInfo(FString::Printf(TEXT("%s: %s in %.2f s"), Kind, bFound ? TEXT("found") : TEXT("not found"), Secs));
+		TestTrue(FString::Printf(TEXT("the %s search finishes promptly"), Kind), Secs < 30.0);
+		return bFound;
+	};
+	FVector Dir;
+	if (Find(TEXT("mesa"), Dir))
+	{
+		const FPlanetTerrainSample S = SlonkTerrain::Sample(P, Dir, 1.0e4);
+		AddInfo(FString::Printf(TEXT("  mesa: wall %.2f, canyon cut %.0f m"), S.Wall, S.CutCm / 100.0));
+		TestTrue(TEXT("the scarp found is a wall"), S.Wall >= 0.1f);
+		TestTrue(TEXT("and not a canyon's"), S.CutCm <= 0.01 * P.CanyonDepthCm);
+	}
+	else { AddError(TEXT("a desert world has scarps to find")); }
+	if (Find(TEXT("badlands"), Dir))
+	{
+		const FPlanetTerrainSample S = SlonkTerrain::Sample(P, Dir, 1.0e4);
+		AddInfo(FString::Printf(TEXT("  badlands: %.2f"), S.Badland));
+		TestTrue(TEXT("the badlands found are badlands"), S.Badland >= 0.5f);
+	}
+	else { AddError(TEXT("a desert world has badlands to find")); }
+	if (Find(TEXT("rim"), Dir))
+	{
+		const FPlanetTerrainSample S = SlonkTerrain::Sample(P, Dir, 1.0e4);
+		AddInfo(FString::Printf(TEXT("  rim: wall %.2f, canyon cut %.0f m"), S.Wall, S.CutCm / 100.0));
+		TestTrue(TEXT("the rim found is a canyon's"), S.CutCm > 0.01 * P.CanyonDepthCm);
+	}
+	else { AddError(TEXT("a desert world has canyon rims to find")); }
+	FPlanetTerrainParams Airless = P;
+	Airless.bAirless = true;
+	T->Configure(Airless, nullptr);
+	TestFalse(TEXT("a world without air has no badlands to find"), Find(TEXT("badlands"), Dir));
 	return true;
 }
 

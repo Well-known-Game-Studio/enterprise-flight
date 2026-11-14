@@ -81,7 +81,7 @@ struct FPlanetTerrainSample
 	float Wet = 0.f;
 	/** 0..1 canyon mask (1 on the canyon floor). */
 	float Canyon = 0.f;
-	/** 0..1 canyon wall (peaks halfway down the wall). */
+	/** 0..1 wall: a canyon's walls (peaking halfway down), and the flanks of a scarp and of its mesas and buttes. */
 	float Wall = 0.f;
 	/** How deep the canyon is cut here below the surrounding plateau, cm. */
 	float CutCm = 0.f;
@@ -95,8 +95,11 @@ struct FPlanetTerrainSample
 	float Linea = 0.f;
 	/** Rise over run of the coarse structure (0 flat, 1 is 45 degrees), set by the refinement stage. */
 	float Slope = 0.f;
-	/** Position in the canyon's stack of strata: layer index plus the fraction through it, over 8. 0 off the walls. */
+	/** Position in the stack of strata on a wall: layer index plus the fraction through it, over 8, by the canyon's
+	 *  staircase on its walls and by height on a scarp's and its islands' flanks. 0 off the walls. */
 	float Stratum = 0.f;
+	/** 0..1 badlands: the soft beds bared below an escarpment, which the refinement cuts into gullies. */
+	float Badland = 0.f;
 	bool bWater = false;
 };
 
@@ -147,6 +150,11 @@ namespace SlonkTerrain
 	 *  square root of the radius from the Earth-size figure (Earth 0.16% keeps 10 km; a world a tenth the size gets
 	 *  3 km, not 1; at Mars's size and 0.6%, 28 km, near Mars's own 29). */
 	SLONK_API double ReliefForRadius(double FractionAtEarthSize, double RadiusCm);
+
+	/** A length of the landscape given at an Earth's size (a canyon's depth or width), on a world of this radius: by
+	 *  the same square root as the relief (ReliefForRadius), so a world's canyons keep their proportion to its
+	 *  mountains and plateaus (the Grand Canyon's 1.6 km on an Earth is 506 m on a world a tenth the size, not 150). */
+	SLONK_API double ScaleWithWorld(double AtEarthSizeCm, double RadiusCm);
 
 	/** Gradient noise in doubles on an integer lattice: stable at any frequency the sphere can carry. */
 	SLONK_API double Noise3(const FVector& P);
