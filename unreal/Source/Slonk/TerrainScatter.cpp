@@ -215,7 +215,8 @@ namespace
 		{
 			TArray<FTownSite> Sites;
 			SlonkCities::EnumerateTowns(P, People.bInhabited ? People : SlonkCivs::Colonists(), G.Origin, G.EdgeCm * 0.75 + SlonkCities::CityRadiusCm(1.f) + 5000.0, Sites, 64);
-			for (const FTownSite& T : Sites) { Towns.Add({ T.LocalCm, FMath::Square(T.RadiusCm + 2500.0) }); }
+			// A cliff town runs its radius along the wall and its profile 300 m across it, either way.
+			for (const FTownSite& T : Sites) { Towns.Add({ T.LocalCm, FMath::Square((T.bCliff ? FMath::Sqrt(FMath::Square(T.RadiusCm) + FMath::Square(30000.0)) : T.RadiusCm) + 2500.0) }); }
 		}
 		bool Contains(const FVector& Up, double R) const
 		{

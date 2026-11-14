@@ -183,14 +183,14 @@ bool UFrontierSubsystem::CanFound(ESettlementKind Kind, const FString& SystemNam
 	{
 	case ESettlementKind::Outpost:
 		// Off the world a colony would take, never the pre-warp one (the Prime Directive: nothing of ours in their sky).
-		for (const FString& W : E->HabitableWorlds) { if (!E->IsLit(W)) { OutWorld = W; break; } }
-		if (OutWorld.IsEmpty()) { for (const FString& W : E->SolidWorlds) { if (!E->IsLit(W)) { OutWorld = W; break; } } }
+		for (const FString& W : E->HabitableWorlds) { if (!(E->IsLit(W) || APlanetBody::IsNamedWorldInhabited(GetWorld(), W))) { OutWorld = W; break; } }
+		if (OutWorld.IsEmpty()) { for (const FString& W : E->SolidWorlds) { if (!(E->IsLit(W) || APlanetBody::IsNamedWorldInhabited(GetWorld(), W))) { OutWorld = W; break; } } }
 		if (OutWorld.IsEmpty()) { OutWhy = FString::Printf(TEXT("%s has no solid world to put it off%s"), *Name, E->PreWarpWorld.IsEmpty() ? TEXT("") : TEXT(" that is not theirs")); return false; }
 		return true;
 	case ESettlementKind::Colony:
 	{
 		if (!Find(Name, ESettlementKind::Outpost) && !Find(Name, ESettlementKind::Starbase)) { OutWhy = FString::Printf(TEXT("%s has no outpost yet; the settlers need somewhere to land to"), *Name); return false; }
-		for (const FString& W : E->HabitableWorlds) { if (!E->IsLit(W)) { OutWorld = W; break; } }
+		for (const FString& W : E->HabitableWorlds) { if (!(E->IsLit(W) || APlanetBody::IsNamedWorldInhabited(GetWorld(), W))) { OutWorld = W; break; } }
 		if (OutWorld.IsEmpty()) { OutWhy = FString::Printf(TEXT("%s has no habitable world%s"), *Name, E->HabitableWorlds.Num() > 0 ? TEXT(" that is not already someone's") : TEXT("")); return false; }
 		return true;
 	}
@@ -370,6 +370,9 @@ void UFrontierSubsystem::LightWorld(UWorld* World, const FSettlement& S)
 	for (TActorIterator<APlanetBody> B(World); B; ++B)
 	{
 		if (B->GetDisplayName() != S.World) { continue; }
+		// A world with a people of its own is theirs: a settlement on it (an old save's, from before the world had
+		// them) neither relights it nor, emptied, puts them out.
+		if (B->HasNatives()) { UE_LOG(LogTemp, Warning, TEXT("Frontier: %s on %s, a world with a people of its own; left to them"), *S.Name, *S.World); return; }
 		B->SetNightLights(L);
 		return;
 	}

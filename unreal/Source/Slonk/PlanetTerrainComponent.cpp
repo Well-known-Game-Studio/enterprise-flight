@@ -836,38 +836,57 @@ FPlanetTerrainSample UPlanetTerrainComponent::SampleAtWorld(const FVector& World
 bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& NearDir, FVector& OutDir, double& OutHeightCm, const FVector& SunDirLocal) const
 {
 	if (!bConfigured) { return false; }
-	if (Kind.ToLower() == TEXT("cliffs"))
+	if ((Kind.ToLower() == TEXT("cliffs") || Kind.ToLower() == TEXT("city") || Kind.ToLower() == TEXT("town")) && !Scatter.bCities) { return false; }
+	if (Kind.ToLower() == TEXT("cliffs") || Kind.ToLower() == TEXT("city") || Kind.ToLower() == TEXT("town"))
 	{
-		// The nearest town built into a cliff within 600 km of the bearing, the view 350 m out from its wall.
+		// Searched in widening rings out to 600 km from the bearing (or the sub-point), stopping at the first ring with
+		// what is wanted: the cliffs a people build into are dear to find, and the near ones are wanted anyway.
+		const bool bCliffs = Kind.ToLower() == TEXT("cliffs");
 		const FVector Centre = (NearDir.IsNearlyZero() ? FVector::ZAxisVector : NearDir.GetSafeNormal()) * Params.RadiusCm;
-		TArray<FTownSite> Towns;
-		SlonkCities::EnumerateTowns(Params, Scatter.People.bInhabited ? Scatter.People : SlonkCivs::Colonists(), Centre, 6.0e7, Towns, 2000);
-		const FTownSite* Best = nullptr; double BestD = 1.0e30;
-		for (const FTownSite& T : Towns) { if (T.bCliff && FVector::DistSquared(T.LocalCm, Centre) < BestD) { BestD = FVector::DistSquared(T.LocalCm, Centre); Best = &T; } }
-		if (!Best) { return false; }
-		OutDir = (Best->Dir * Params.RadiusCm + Best->Face * 35000.0).GetSafeNormal();
-		OutHeightCm = SlonkTerrain::SurfaceHeightCm(Params, OutDir);
-		return true;
-	}
-	if (Kind.ToLower() == TEXT("city") || Kind.ToLower() == TEXT("town"))
-	{
-		// The biggest town within 600 km of the bearing (or of the sub-point), weighted toward the near ones.
-		const FVector Centre = (NearDir.IsNearlyZero() ? FVector::ZAxisVector : NearDir.GetSafeNormal()) * Params.RadiusCm;
-		TArray<FTownSite> Towns;
-		SlonkCities::EnumerateTowns(Params, Scatter.People.bInhabited ? Scatter.People : SlonkCivs::Colonists(), Centre, 6.0e7, Towns, 2000);
-		const FTownSite* Best = nullptr; double BestScore = -1.0e9;
-		for (const FTownSite& T : Towns)
+		const FCivilization& Who = Scatter.People.bInhabited ? Scatter.People : SlonkCivs::Colonists();
+		const double Rings[] = { 2.0e6, 8.0e6, 2.5e7, 6.0e7 };
+		// The nearest town built into a cliff round a point, the view 350 m out from its wall.
+		auto NearestCliffTown = [&](const FVector& From, double Reach) -> bool
 		{
-			// Daylight preferred, not required.
-			const double Lit = SunDirLocal.IsNearlyZero() ? 0.0 : (FVector::DotProduct(T.Dir, SunDirLocal.GetSafeNormal()) < 0.26 ? -20.0 : 0.0);
-			// Cities first, then the big ones, near ones, lit ones, and the temperate latitudes over the snow.
-			const double Score = (T.bCity ? 6.0 : 0.0) + T.Strength * 10.0 - FVector::Dist(T.LocalCm, Centre) / 6.0e7 * 3.0 + Lit - FMath::Max(0.0, FMath::Abs(T.Dir.Z) - 0.5) * 12.0;
-			if (Score > BestScore) { BestScore = Score; Best = &T; }
+			TArray<FTownSite> Towns;
+			SlonkCities::EnumerateTowns(Params, Who, From, Reach, Towns, 2000);
+			const FTownSite* Best = nullptr; double BestD = 1.0e30;
+			for (const FTownSite& T : Towns) { if (T.bCliff && FVector::DistSquared(T.LocalCm, From) < BestD) { BestD = FVector::DistSquared(T.LocalCm, From); Best = &T; } }
+			if (!Best) { return false; }
+			OutDir = (Best->Dir * Params.RadiusCm + Best->Face * 35000.0).GetSafeNormal();
+			OutHeightCm = SlonkTerrain::SurfaceHeightCm(Params, OutDir);
+			return true;
+		};
+		if (bCliffs)
+		{
+			for (const double Reach : Rings) { if (NearestCliffTown(Centre, Reach)) { return true; } }
+			// None near (from open country or the sea the nearest two thousand towns are all on the land): the cliffs
+			// are where the tablelands end, so look again round the nearest scarp.
+			FVector Scarp; double ScarpH = 0.0;
+			return FindFeature(TEXT("mesa"), NearDir, Scarp, ScarpH, FVector::ZeroVector) && NearestCliffTown(Scarp * Params.RadiusCm, 8.0e6);
 		}
-		if (!Best) { return false; }
-		OutDir = Best->Dir;
-		OutHeightCm = SlonkTerrain::SampleStructure(Params, Best->Dir).HeightCm;
-		return true;
+		for (const double Reach : Rings)
+		{
+			TArray<FTownSite> Towns;
+			SlonkCities::EnumerateTowns(Params, Who, Centre, Reach, Towns, 2000);
+			// The biggest town, weighted toward the near ones: in the first ring with a city, or the last.
+			const bool bLast = Reach == Rings[UE_ARRAY_COUNT(Rings) - 1];
+			if (!bLast && !Towns.ContainsByPredicate([](const FTownSite& T) { return T.bCity; })) { continue; }
+			const FTownSite* Best = nullptr; double BestScore = -1.0e9;
+			for (const FTownSite& T : Towns)
+			{
+				// Daylight preferred, not required.
+				const double Lit = SunDirLocal.IsNearlyZero() ? 0.0 : (FVector::DotProduct(T.Dir, SunDirLocal.GetSafeNormal()) < 0.26 ? -20.0 : 0.0);
+				// Cities first, then the big ones, near ones, lit ones, and the temperate latitudes over the snow.
+				const double Score = (T.bCity ? 6.0 : 0.0) + T.Strength * 10.0 - FVector::Dist(T.LocalCm, Centre) / 6.0e7 * 3.0 + Lit - FMath::Max(0.0, FMath::Abs(T.Dir.Z) - 0.5) * 12.0;
+				if (Score > BestScore) { BestScore = Score; Best = &T; }
+			}
+			if (!Best) { return false; }
+			OutDir = Best->Dir;
+			OutHeightCm = SlonkTerrain::SampleStructure(Params, Best->Dir).HeightCm;
+			return true;
+		}
+		return false;
 	}
 	const FString K = Kind.ToLower();
 	// Fibonacci sphere: even coverage; the coarse pass samples at ~30 km, the refine pass walks the best few.

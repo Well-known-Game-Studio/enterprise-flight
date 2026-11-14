@@ -21,7 +21,6 @@
 #include "Impactor.h"
 
 const TCHAR* UMissionSubsystem::SlotName = TEXT("Missions");
-
 namespace
 {
 	const TCHAR* CivilianShips[] = { TEXT("Calypso"), TEXT("Meridian"), TEXT("Brightwater"), TEXT("Alderaan Dawn"), TEXT("Kestrel"), TEXT("Halcyon"), TEXT("Tanager"), TEXT("Sable Coast"), TEXT("Wayfarer"), TEXT("Elan"), TEXT("Marigold"), TEXT("Tycho's Hope") };
@@ -546,7 +545,7 @@ FMission UMissionSubsystem::MakeMission(EMissionKind Kind, EMissionSource Source
 	case EMissionKind::PreWarp:
 	{
 		M.Title = FString::Printf(TEXT("A civilisation on %s"), *T); M.Standing = 12; M.FailLoss = 30;
-		M.Brief = FString::Printf(TEXT("The night side of %s is lit: cities, roads, a people who have not left their world. The Prime Directive applies. Nothing the ship does here can be undone."), *T);
+		M.Brief = FString::Printf(TEXT("%s has a people of its own: their towns, their roads, a people who have not left their world. The Prime Directive applies. Nothing the ship does here can be undone."), *T);
 		FMissionStage S0 = Stage(TEXT("In orbit"), FString::Printf(TEXT("%s turns below, its lights coming on along the terminator. Their sky is clear of anything that might see the ship, so far."), *T));
 		S0.Options.Add(Opt(TEXT("Observe from high orbit, sensors passive"), S::Science, 40.f, D::Science, TEXT("Discovery"), TEXT(""), TEXT("Days of patient listening: their broadcasts, their cities, their arguments. A people, recorded."), TEXT("The sensors catch little through their weather; the record is thin."), -1, -1, false, 0.f, 150));
 		S0.Options.Add(Opt(TEXT("A survey party in disguise, on the ground"), S::Science, 60.f, D::Science, TEXT("Away.Routine"), TEXT("Away.Danger"), TEXT("The party walks their streets for a day and comes back with more than any orbit could give."), TEXT("A face seen too closely; the party comes back in a hurry and leaves a story behind."), -1, -1, false, 0.35f, 250));
@@ -698,7 +697,7 @@ void UMissionSubsystem::AfterOption(FMission& M, const FMissionOption& O, bool b
 		{
 			if (const FCatalogueEntry* E = X->Find(M.TargetName))
 			{
-				TArray<FString> Free; for (const FString& W : E->SolidWorlds) { if (!E->IsLit(W)) { Free.Add(W); } }   // never in someone's sky
+				TArray<FString> Free; for (const FString& W : E->SolidWorlds) { if (!(E->IsLit(W) || APlanetBody::IsNamedWorldInhabited(GetWorld(), W))) { Free.Add(W); } }   // never in someone's sky
 				if (Free.Num() > 0) { M.Site = bSuccess ? Free[0] : Free.Last(); }
 			}
 		}
@@ -842,7 +841,7 @@ bool UMissionSubsystem::PickInhabitedWorld(FMission& M, FRandomStream& R, bool b
 	{
 		for (TActorIterator<APlanetBody> It(W); It; ++It)
 		{
-			if (It->IsMoon() || It->Style.NightLightIntensity <= 0.01f || Taken.Contains(It->GetDisplayName())) { continue; }
+			if (It->IsMoon() || !It->IsInhabited() || Taken.Contains(It->GetDisplayName())) { continue; }
 			const AStarSystem* Sys = AStarSystem::Nearest(W, It->GetActorLocation());
 			if (!Sys || !Sys->bCharted || (Sys->SystemName == Last.SystemName) != bHere) { continue; }
 			Worlds.AddUnique(It->GetDisplayName());

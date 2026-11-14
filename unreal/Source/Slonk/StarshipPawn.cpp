@@ -2090,7 +2090,10 @@ void AStarshipPawn::ProcessDebugCommand()
 		// Towns are searched out from where the ship is, not from the giant's bearing.
 		const bool bTown = ArgStr(2).ToLower() == TEXT("city") || ArgStr(2).ToLower() == TEXT("town") || ArgStr(2).ToLower() == TEXT("cliffs");
 		const FVector ShipLocal = Planet && Planet->Terrain ? Planet->Terrain->GetComponentTransform().InverseTransformPosition(GetActorLocation()).GetSafeNormal() : FVector::ZeroVector;
-		if (Planet && Planet->Terrain && Planet->HasTerrain() && Planet->Terrain->FindFeature(ArgStr(2), bTown ? ShipLocal : NearLocal, Dir, H, SunLocal))
+		// "night": search from the middle of the night side and prefer what is dark, to look at the lights.
+		const bool bNight = ArgStr(4) == TEXT("night") || ArgStr(5) == TEXT("night");
+		const FVector SearchFrom = bNight ? -SunLocal : (bTown ? ShipLocal : NearLocal);
+		if (Planet && Planet->Terrain && Planet->HasTerrain() && Planet->Terrain->FindFeature(ArgStr(2), SearchFrom, Dir, H, bNight ? -SunLocal : SunLocal))
 		{
 			const FTransform& TT = Planet->Terrain->GetComponentTransform();
 			const FVector Up = TT.TransformVectorNoScale(Dir).GetSafeNormal();
@@ -2552,7 +2555,7 @@ void AStarshipPawn::ProcessDebugCommand()
 			TEXT("ship impact [status|raise [<world>]|deflect|shatter|hit]  (a rock on a course for an inhabited world; the dev ops for testing)"),
 			TEXT("ship camera [chase|bridge|cinematic|front|port|starboard|top|bottom] | zoom <x> | look <yaw> <pitch> [s]"),
 			TEXT("ship warpvis [classic|real] | cscale <0..1> | systems | shipwarp [km] [far]"),
-			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mesa|badlands|cliffs|city|mountain|coast|river|linea|green|land> <alt m> [across|sun|away|along|uphill|giant] | terrain rocks [on|off|density <x>|check]"),
+			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mesa|badlands|cliffs|city|mountain|coast|river|linea|green|land> <alt m> [across|sun|away|along|uphill|giant] [night] | terrain rocks [on|off|density <x>|check]"),
 			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km] | people [none|stone|iron|industrial|modern|starfaring] [organic] [cliff]"),
 			TEXT("ship shuttle  (launch the shuttlecraft; aboard it, dock when the bay is within 500 m) | ship takeoff"),
 			TEXT("ship scan [stop]  (sensors on the locked / nav target; landed: survey the ground) | ship science [reset]"),
@@ -4505,7 +4508,7 @@ void AStarshipPawn::HandleChartCommand(const TArray<FString>& Args)
 	{
 		const double Ly = FVector::Dist(X->StarLocation(E), GetActorLocation()) / AStarSystem::LightYearCm;
 		FString T = FString::Printf(TEXT("   %-9s %-14s %-9s %4.1f ly"), *E.Designation, E.GivenName.IsEmpty() ? TEXT("-") : *E.GivenName, *UExplorationSubsystem::StateName(E.State), Ly);
-		if (E.State != EChartState::Unknown || E.Worlds > 0) { T += FString::Printf(TEXT("  %d worlds, %d habitable%s%s"), E.Worlds, E.HabitableWorlds.Num(), E.PreWarpWorld.IsEmpty() ? TEXT("") : TEXT(", a lit world"), E.Contact.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(", the %s"), *E.Contact)); }
+		if (E.State != EChartState::Unknown || E.Worlds > 0) { T += FString::Printf(TEXT("  %d worlds, %d habitable%s%s"), E.Worlds, E.HabitableWorlds.Num(), E.PreWarpWorld.IsEmpty() ? TEXT("") : TEXT(", a world with a people"), E.Contact.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(", the %s"), *E.Contact)); }
 		Say(T, E.State == EChartState::Unknown ? FColor::White : FColor::Yellow, 15.f);
 	};
 	const FString What = Word(1).ToLower();

@@ -474,7 +474,9 @@ void UScienceScannerComponent::FactsForWorld(const APlanetBody* P, FScanRecord& 
 	if (Who.bInhabited && !Who.bColonists)
 	{
 		const bool bPreWarp = Who.Age < ETechAge::Starfaring;
-		R.Discovery = FString::Printf(TEXT("A %s %s%s%s%s"), *Who.AgeName(), Who.Age <= ETechAge::Iron ? TEXT("people") : TEXT("civilisation"), Who.IsOrganic() ? TEXT(" that grows its cities") : TEXT(""),
+		const FString Age = Who.AgeName();
+		const bool bVowel = Age.Len() > 0 && FString(TEXT("aeiou")).Contains(Age.Left(1));
+		R.Discovery = FString::Printf(TEXT("%s %s %s%s%s%s"), bVowel ? TEXT("An") : TEXT("A"), *Age, Who.Age <= ETechAge::Iron ? TEXT("people") : TEXT("civilisation"), Who.IsOrganic() ? TEXT(" that grows its cities") : TEXT(""),
 			bPreWarp ? TEXT(", pre-warp") : TEXT(", warp-capable"), Who.CliffAffinity >= 0.5f ? TEXT(", cliff dwellers") : TEXT(""));
 		R.Bonus += 200 + (Who.Age <= ETechAge::Iron ? 100 : 0) + (Who.IsOrganic() || Who.CliffAffinity >= 0.5f ? 50 : 0);
 	}

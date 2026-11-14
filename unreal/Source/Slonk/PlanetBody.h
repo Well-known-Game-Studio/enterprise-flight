@@ -283,6 +283,13 @@ public:
 	/** Who lives here (Civilization.h), rolled with the style; on a world with no people of its own that has been lit
 	 *  from outside, the Federation's colonists. */
 	const FCivilization& GetPeople() const;
+	/** A native people of its own (not the Federation's colonists), lit or not. */
+	bool HasNatives() const { return Civ.bInhabited; }
+	/** Someone lives here: a native people, whatever their lights, or whoever lights its night side. */
+	bool IsInhabited() const { return Civ.bInhabited || Style.NightLightIntensity > 0.001f; }
+	/** Whether the world of that display name has anyone living on it now (IsInhabited), for a chart made before it
+	 *  had a people of its own: nothing of ours goes in their sky. False if there is no such world. */
+	static bool IsNamedWorldInhabited(UWorld* World, const FString& Name);
 	/** Who lives here from now on (the `ship people` command): their lights, their colours, their towns rebuilt. */
 	void SetPeople(const FCivilization& People);
 	/** Reach (km) within which towns are built around the view; 0 switches the buildings off. */
@@ -508,9 +515,10 @@ private:
 	/** One instanced mesh per building shape (block, tower, house). */
 	UPROPERTY() TArray<TObjectPtr<UHierarchicalInstancedStaticMeshComponent>> BuildingSets;
 	/** The few hundred buildings around the view carry collision; the planet turns every tick and a body per
-	 *  instance across the whole town set cost 300 ms a frame in the physics scene. */
-	UPROPERTY() TObjectPtr<UHierarchicalInstancedStaticMeshComponent> BuildingsNear;
-	TArray<FTransform> CityInstances;
+	 *  instance across the whole town set cost 300 ms a frame in the physics scene. A set per shape, each with its
+	 *  own hulls (none for a fire, whose entry is null). */
+	UPROPERTY() TArray<TObjectPtr<UHierarchicalInstancedStaticMeshComponent>> BuildingsNear;
+	TArray<FTransform> CityInstances[(int32)EBuildingKind::Count];
 	FVector CityNearCentre = FVector(1.0e30, 0.0, 0.0);
 	void UpdateNearCollision(const FVector& ViewLocal, bool bForce);
 public:

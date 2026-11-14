@@ -10,8 +10,8 @@ enum class EPlanetArchetype : uint8;
 /** How far a people has come: what they build with and what lights their nights. */
 enum class ETechAge : uint8
 {
-	Stone,			// hamlets of huts; firelight
-	Iron,			// villages of stone, timber or adobe round a keep; lamps
+	Stone,			// hamlets of huts round their fires; firelight
+	Iron,			// villages of stone, timber or adobe round a keep; hearths, torches and lamps
 	Industrial,		// brick towns on a grid, works and chimneys; sodium light
 	Modern,			// blocks, towers and suburbs; a landing pad in a city
 	Starfaring,		// spires and domes; cool white light
@@ -34,7 +34,8 @@ struct FCivilization
 	float Density = 1.f;
 	/** The driest ground (the sample's Wet) they settle; a desert people none at all. */
 	float WetMin = 0.3f;
-	/** The terrain's own night glow under their towns (its NightLightIntensity): seen from orbit. */
+	/** The terrain's own night glow under their towns (its NightLightIntensity), seen from orbit: a city's electric
+	 *  light, or the dim warm glow of a fire-lit people's hearths. */
 	float GroundLights = 0.f;
 	/** 1 paves and lights a street grid under their towns (the terrain material), 0 lays none. */
 	float StreetGrid = 0.f;

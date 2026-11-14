@@ -432,9 +432,16 @@ float3 townRel = 0; uint townH = 0u; float3 clusterRel = 0; uint clusterH = 0u; 
     cluster = 1.0 - smoothstep(0.02, 0.5, dmin[1]);
     town = 1.0 - smoothstep(0.03, 0.3, dmin[2]);
 }
-// Only a world with settlements has them: one without night lights (SlonkCities builds nothing there, HasCities)
-// keeps its bare ground by day as well as by night.
+// The ground's glow and its paving come with electric light: a world with nobody, and a people without it (their huts
+// and villages carry their own firelight, Civilization.h), keep their bare ground by day as well as by night.
 float settled = NightLightIntensity > 0.0 ? 1.0 : 0.0;
+// The people live at only SettleDensity of the settlement points (SlonkCities' cut on each point's hash): the ground
+// is paved and lit under the ones they live at.
+uint hdT = townH ^ (0xD5u + 0x9e3779b9u + (townH << 6) + (townH >> 2)); hdT = (hdT ^ (hdT >> 13)) * 0x5bd1e995u; hdT ^= hdT >> 15;
+uint hdC = clusterH ^ (0xD5u + 0x9e3779b9u + (clusterH << 6) + (clusterH >> 2)); hdC = (hdC ^ (hdC >> 13)) * 0x5bd1e995u; hdC ^= hdC >> 15;
+float keptT = (float)(hdT & 0xffffu) / 65535.0 <= SettleDensity ? 1.0 : 0.0;
+float keptC = (float)(hdC & 0xffffu) / 65535.0 <= SettleDensity ? 1.0 : 0.0;
+settled *= max(keptT, keptC * step(0.35, region));
 // SettleWet is the driest ground the world's people settle (Civilization.h: 0.3, or none at all for a desert people), as
 // SlonkCities gates its towns.
 float city = settled * region * cluster * town * (1.0 - water) * saturate((wet - SettleWet + 0.05) * 4.0) * (1.0 - saturate(slope * 12.0)) * lowland * saturate(fb0 * 4.0 + 0.6);
@@ -457,6 +464,7 @@ if (water < 0.5 && settled * StreetGrid > 0.0)
     float townR = 160000.0 * (0.2 + 0.3 * townS);
     float3 rel = inCity ? relC : relW;
     uint H = inCity ? clusterH : townH;
+    float kept = inCity ? keptC : keptT;
     float Rr = inCity ? cityR : townR;
     if (inCity || (townS > 0.3 && length(rel) < townR * 1.05))
     {
@@ -476,7 +484,7 @@ if (water < 0.5 && settled * StreetGrid > 0.0)
         float aveX = (ix % 5 == 0) ? 1.0 - smoothstep(0.38, 0.46, abs(frac(gx + 0.5) - 0.5)) : 0.0;
         float aveY = (iy % 7 == 0) ? 1.0 - smoothstep(0.38, 0.46, abs(frac(gy + 0.5) - 0.5)) : 0.0;
         // The same land gating the lights and the builder use: level, wet, low ground only.
-        float landOk = saturate((wet - SettleWet + 0.05) * 4.0) * (1.0 - saturate(slope * 12.0)) * lowland;
+        float landOk = saturate((wet - SettleWet + 0.05) * 4.0) * (1.0 - saturate(slope * 12.0)) * lowland * kept;
         inTown *= landOk;
         paving = max(street, max(aveX, aveY)) * inTown;
         base = lerp(base, float3(0.30, 0.29, 0.28), inTown * 0.35);
@@ -509,7 +517,7 @@ WPO_INPUTS = ["Fn", "LP", "Col", "OX", "OY", "OZ", "ORX", "ORY", "ORZ", "Cam", "
 INPUTS = ["Fn", "N", "LP", "UV0", "UV1", "UV2", "UV3", "Col", "ColA", "OX", "OY", "OZ", "Cell", "ORX", "ORY", "ORZ", "Cam", "WP", "PlanetRadiusCm", "WaterNR", "Time", "SwellCm"] + TEX_INPUTS + [
           "OceanColor", "ShallowColor", "LandColor", "LandColor2", "MountainColor", "IceColor", "NightLightColor",
           "OceanRoughness", "LandRoughness", "NightLightIntensity", "LavaEmissive", "SunDirection",
-          "NoisePeriodCm", "ReliefCm", "OceanDepthCm", "TX", "TY", "TZ", "StreetGrid", "SettleWet"]
+          "NoisePeriodCm", "ReliefCm", "OceanDepthCm", "TX", "TY", "TZ", "StreetGrid", "SettleWet", "SettleDensity"]
 
 
 def build():
@@ -531,7 +539,7 @@ def build():
         "OceanColor": (0.05, 0.17, 0.35), "ShallowColor": (0.1, 0.35, 0.5), "LandColor": (0.30, 0.36, 0.18), "LandColor2": (0.55, 0.45, 0.28),
         "MountainColor": (0.55, 0.52, 0.50), "IceColor": (0.90, 0.93, 0.97), "NightLightColor": (1.0, 0.8, 0.5), "SunDirection": (1.0, 0.0, 0.0),
     }
-    scal = {"OceanRoughness": 0.22, "LandRoughness": 0.9, "NightLightIntensity": 0.0, "LavaEmissive": 0.0, "NoisePeriodCm": 1048576.0, "ReliefCm": 3.8e6, "OceanDepthCm": 5.0e5, "PlanetRadiusCm": 6.371e8, "SwellCm": 120.0, "StreetGrid": 1.0, "SettleWet": 0.3}
+    scal = {"OceanRoughness": 0.22, "LandRoughness": 0.9, "NightLightIntensity": 0.0, "LavaEmissive": 0.0, "NoisePeriodCm": 1048576.0, "ReliefCm": 3.8e6, "OceanDepthCm": 5.0e5, "PlanetRadiusCm": 6.371e8, "SwellCm": 120.0, "StreetGrid": 1.0, "SettleWet": 0.3, "SettleDensity": 1.0}
     e = g.custom(CODE, INPUTS, "CMOT_Float3", "terrain layers, textures, bump, lights", extra_outputs=(("Nrm", "CMOT_Float3"), ("Rough", "CMOT_Float1"), ("Emis", "CMOT_Float3"), ("AO", "CMOT_Float1")))
     for pin, src in [("Fn", fn), ("N", n), ("LP", vi), ("UV0", uv0), ("UV1", uv1), ("UV2", uv2), ("UV3", uv3), ("Col", col), ("OX", ox), ("OY", oy), ("OZ", oz), ("Cell", cell), ("ORX", orx), ("ORY", ory), ("ORZ", orz), ("Cam", cam), ("WP", wp), ("TX", tx), ("TY", ty), ("TZ", tz)]:
         g.c(src, e, pin)

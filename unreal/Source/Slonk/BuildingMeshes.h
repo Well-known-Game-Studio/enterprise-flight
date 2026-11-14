@@ -21,13 +21,22 @@ enum class EBuildingKind : uint8
 	Dome,			// a half ellipsoid on the ground
 	Pod,			// an egg, its foot flattened: grown, not built
 	BulbTower,		// three bulbs on a stem, shrinking upward
+	Fire,			// a hearth or campfire: a cone of flame the building material lights and flickers
+	Footing,		// plain masonry under a building, down to the ground at its low side: a cliff house's, a plinth on a slope
 	Count
 };
 
 namespace SlonkBuildings
 {
-	/** The transient static mesh for a kind, built once; unit size, simple box collision. */
+	/** The transient static mesh for a kind, built once; unit size. Its simple collision is a convex hull per part of
+	 *  the shape (a box, a roof, a band of a lathe), so the crew stand on a dome's curve and walk round a spire's foot,
+	 *  not on an invisible box; a fire has none. (M_Building reads the kind's index from custom data 3: the order of
+	 *  EBuildingKind is the material's too.) */
 	SLONK_API UStaticMesh* GetMesh(EBuildingKind Kind);
 	/** The kind's name, for logs and tests. */
 	SLONK_API const TCHAR* KindName(EBuildingKind Kind);
+	/** The kind's shape as built, for the tests: its enclosed volume (m^3 of the 1 m unit box; positive when its faces
+	 *  are wound outward), the worst agreement of a face's winding with the normals at its corners (-1..1; above 0
+	 *  when every face shows its outside and shades as it faces) and how many convex parts its collision has. */
+	SLONK_API void ShapeStats(EBuildingKind Kind, double& OutVolume, double& OutWorstFacing, int32& OutCollisionParts);
 }

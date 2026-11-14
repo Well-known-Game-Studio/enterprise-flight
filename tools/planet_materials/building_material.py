@@ -1,7 +1,9 @@
 """Builds M_Building, the material of the settlements' buildings (BuildingMeshes.h, laid out by PlanetCities.h).
 
 Every building is a unit mesh scaled to its lot; the instance's size in metres is per-instance custom data 0-2
-(written by APlanetBody::UpdateCities), so windows keep their size whatever the building's. Who lives on the world
+(written by APlanetBody::UpdateCities), so windows keep their size whatever the building's, and its kind (the index
+of EBuildingKind, BuildingMeshes.h) is custom data 3: a fire (11) burns, flickering, brightest at night; a footing
+(12) is plain masonry with no windows. Who lives on the world
 (Civilization.h) sets, per planet, through the MID (APlanetBody::ApplyBuildingParams):
     ToneA, ToneB    the walls: each building takes a colour between the two by its random (adobe, stone, brick,
                     concrete, white and glass, ivory and moss)
@@ -29,6 +31,29 @@ float roof = an.z > 0.5 ? 1.0 : 0.0;
 float night = saturate(-dot(Up, Sun) * 5.0 + 0.3);
 float3 tone = lerp(ToneA, ToneB, R);
 Rough = lerp(0.78, 0.45, saturate(Organic));
+// a fire: a ring of stones with embers among them, a cone of flame in it that flickers (each its own way), yellow at
+// the foot to red at the tip; lit by day, bright by night
+if (abs(Kind - 11.0) < 0.5)
+{
+    float z = LP.z / 100.0 + 0.5;
+    if (z < 0.125)
+    {
+        Base = float3(0.24, 0.22, 0.2); Rough = 0.95;
+        return float3(1.0, 0.3, 0.05) * 0.3 * (0.4 + 2.0 * night);
+    }
+    float fl = 0.75 + 0.15 * sin(Time * 11.0 + R * 40.0) + 0.1 * sin(Time * 23.0 + R * 13.0 + z * 6.0);
+    float3 flame = lerp(float3(1.0, 0.72, 0.25), float3(1.0, 0.25, 0.04), saturate(z * 1.2));
+    Base = float3(0.05, 0.03, 0.02);
+    return flame * fl * (4.0 + 30.0 * night) * (1.0 - 0.5 * z);
+}
+// a footing: the walls' own stone or adobe a shade darker, laid in courses, no windows
+if (abs(Kind - 12.0) < 0.5)
+{
+    float course = step(0.5, frac(m.z / 0.6));
+    Base = tone * (0.72 + 0.08 * course);
+    Rough = 0.9;
+    return float3(0, 0, 0);
+}
 // a landing pad (a slab under a metre tall): grey, a lit ring and a cross on top, dark otherwise
 if (OS.z < 3.0)
 {
@@ -70,6 +95,8 @@ def build():
     g = G(NAME, {"bUsedWithInstancedStaticMeshes": True})
     lp = g.node("LocalPosition")
     os_ = g.node("PerInstanceCustomData3Vector", {"DataIndex": 0, "ConstDefaultValue": {"R": 0, "G": 0, "B": 0, "A": 0}})
+    kind = g.node("PerInstanceCustomData", {"DataIndex": 3, "ConstDefaultValue": 0.0})
+    time = g.node("Time")
     # The normal in the instance's own frame, for which face a window grid runs on.
     n = g.node("Transform", {"TransformSourceType": "TRANSFORMSOURCE_World", "TransformType": "TRANSFORM_Instance"})
     g.c(g.node("VertexNormalWS"), n, "")
@@ -85,10 +112,11 @@ def build():
     lit = g.scalar("WindowLit", 0.55)
     glow = g.scalar("WindowGlow", 12.0)
     organic = g.scalar("Organic", 0.0)
-    e = g.custom(CODE, ["LP", "OS", "N", "R", "Sun", "Up", "ToneA", "ToneB", "LightColor", "WindowLit", "WindowGlow", "Organic"], "CMOT_Float3", "building",
+    e = g.custom(CODE, ["LP", "OS", "N", "R", "Sun", "Up", "ToneA", "ToneB", "LightColor", "WindowLit", "WindowGlow", "Organic", "Kind", "Time"], "CMOT_Float3", "building",
                  extra_outputs=(("Base", "CMOT_Float3"), ("Rough", "CMOT_Float1")))
     for pin, src in [("LP", lp), ("OS", os_), ("N", n), ("R", rnd), ("Sun", sun), ("Up", up), ("ToneA", tone_a), ("ToneB", tone_b),
-                     ("LightColor", light), ("WindowLit", lit), ("WindowGlow", glow), ("Organic", organic)]:
+                     ("LightColor", light), ("WindowLit", lit), ("WindowGlow", glow), ("Organic", organic),
+                     ("Kind", kind), ("Time", time)]:
         g.c(src, e, pin)
     g.out(e, "MP_EmissiveColor")
     g.out(e, "MP_BaseColor", "Base")
