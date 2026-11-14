@@ -42,6 +42,9 @@ struct FPlanetTerrainParams
 	float IceCapStart = 0.82f;
 	/** 0..1 moisture bias (deserts are dry, ocean worlds wet). */
 	float Moisture = 0.5f;
+	/** Height of the permanent snowline at the equator, cm (an Earth's is about 5 km). It falls with latitude, as
+	 *  cos^1.5, to the sea at the poles (SnowlineCm()); the treeline follows it. 0 for a world with no snow. */
+	double SnowlineCm = 5.0e5;
 	/** Molten "ocean" worlds: the sea is lava. */
 	bool bLava = false;
 	/** Airless bodies get no erosion smoothing and no oceans. */
@@ -52,7 +55,7 @@ struct FPlanetTerrainParams
 		return Seed == O.Seed && RadiusCm == O.RadiusCm && ReliefCm == O.ReliefCm && OceanDepthCm == O.OceanDepthCm && SeaLevel == O.SeaLevel
 			&& ContinentScale == O.ContinentScale && Mountains == O.Mountains && Canyons == O.Canyons && CanyonDepthCm == O.CanyonDepthCm
 			&& CanyonWidthCm == O.CanyonWidthCm && Strata == O.Strata && Craters == O.Craters && CraterScale == O.CraterScale && Maria == O.Maria && Lineae == O.Lineae
-			&& IceCapStart == O.IceCapStart && Moisture == O.Moisture && bLava == O.bLava && bAirless == O.bAirless;
+			&& IceCapStart == O.IceCapStart && Moisture == O.Moisture && SnowlineCm == O.SnowlineCm && bLava == O.bLava && bAirless == O.bAirless;
 	}
 	bool operator!=(const FPlanetTerrainParams& O) const { return !(*this == O); }
 };
@@ -126,6 +129,16 @@ namespace SlonkTerrain
 
 	/** Just the surface height (cm above the sea-level sphere; the sea itself is 0) at full detail. */
 	SLONK_API double SurfaceHeightCm(const FPlanetTerrainParams& P, const FVector& Dir);
+
+	/** The permanent snowline at a direction, cm above the sea: P.SnowlineCm at the equator falling as cos(latitude)^1.5
+	 *  (an Earth's 5 km gives 3 km at 45 degrees, 1.8 km at 60, 1 km at 70), 0 at the poles. */
+	SLONK_API double SnowlineCm(const FPlanetTerrainParams& P, const FVector& Dir);
+
+	/** The height of a world's tallest ground, cm, from the fraction of the radius it would be on an Earth-size world.
+	 *  Weaker gravity holds up taller mountains, so smaller worlds get more relief for their size: it goes as the
+	 *  square root of the radius from the Earth-size figure (Earth 0.16% keeps 10 km; a world a tenth the size gets
+	 *  3 km, not 1; at Mars's size and 0.6%, 28 km, near Mars's own 29). */
+	SLONK_API double ReliefForRadius(double FractionAtEarthSize, double RadiusCm);
 
 	/** Gradient noise in doubles on an integer lattice: stable at any frequency the sphere can carry. */
 	SLONK_API double Noise3(const FVector& P);

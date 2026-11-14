@@ -53,6 +53,55 @@ namespace
 	}
 	FORCEINLINE double Perlin(const FVector& P) { return Perlin(P.X, P.Y, P.Z); }
 
+	/** The gradient Grad() takes the dot product with. */
+	FORCEINLINE FVector GradVec(uint32 H)
+	{
+		switch (H & 15)
+		{
+		case 0: case 12: return FVector(1.0, 1.0, 0.0);
+		case 1: case 13: return FVector(-1.0, 1.0, 0.0);
+		case 2: return FVector(1.0, -1.0, 0.0);
+		case 3: return FVector(-1.0, -1.0, 0.0);
+		case 4: return FVector(1.0, 0.0, 1.0);
+		case 5: return FVector(-1.0, 0.0, 1.0);
+		case 6: return FVector(1.0, 0.0, -1.0);
+		case 7: return FVector(-1.0, 0.0, -1.0);
+		case 8: return FVector(0.0, 1.0, 1.0);
+		case 9: case 14: return FVector(0.0, -1.0, 1.0);
+		case 10: return FVector(0.0, 1.0, -1.0);
+		default: return FVector(0.0, -1.0, -1.0);
+		}
+	}
+	FORCEINLINE double FadeD(double T) { return 30.0 * T * T * (T * (T - 2.0) + 1.0); }
+
+	/** Perlin() with its analytic gradient (the same field: the corner gradients interpolated, plus the fade's slope
+	 *  across each axis's corner differences), for the erosion the mountains take from their own slope. */
+	double PerlinD(const FVector& Pt, FVector& OutGrad)
+	{
+		const double FX = FMath::Floor(Pt.X), FY = FMath::Floor(Pt.Y), FZ = FMath::Floor(Pt.Z);
+		const int64 IX = (int64)FX, IY = (int64)FY, IZ = (int64)FZ;
+		const double x = Pt.X - FX, y = Pt.Y - FY, z = Pt.Z - FZ;
+		const double u = Fade(x), v = Fade(y), w = Fade(z);
+		const double du = FadeD(x), dv = FadeD(y), dw = FadeD(z);
+		const FVector ga = GradVec(Hash3(IX, IY, IZ)), gb = GradVec(Hash3(IX + 1, IY, IZ));
+		const FVector gc = GradVec(Hash3(IX, IY + 1, IZ)), gd = GradVec(Hash3(IX + 1, IY + 1, IZ));
+		const FVector ge = GradVec(Hash3(IX, IY, IZ + 1)), gf = GradVec(Hash3(IX + 1, IY, IZ + 1));
+		const FVector gg = GradVec(Hash3(IX, IY + 1, IZ + 1)), gh = GradVec(Hash3(IX + 1, IY + 1, IZ + 1));
+		const double A = FVector::DotProduct(ga, FVector(x, y, z)), B = FVector::DotProduct(gb, FVector(x - 1.0, y, z));
+		const double C = FVector::DotProduct(gc, FVector(x, y - 1.0, z)), D = FVector::DotProduct(gd, FVector(x - 1.0, y - 1.0, z));
+		const double E = FVector::DotProduct(ge, FVector(x, y, z - 1.0)), F = FVector::DotProduct(gf, FVector(x - 1.0, y, z - 1.0));
+		const double G = FVector::DotProduct(gg, FVector(x, y - 1.0, z - 1.0)), H = FVector::DotProduct(gh, FVector(x - 1.0, y - 1.0, z - 1.0));
+		const double k1 = B - A, k2 = C - A, k3 = E - A, k4 = A - B - C + D, k5 = A - C - E + G, k6 = A - B - E + F, k7 = -A + B + C - D + E - F - G + H;
+		const double N = A + k1 * u + k2 * v + k3 * w + k4 * u * v + k5 * v * w + k6 * w * u + k7 * u * v * w;
+		FVector Gr = ga + (gb - ga) * u + (gc - ga) * v + (ge - ga) * w + (ga - gb - gc + gd) * (u * v) + (ga - gc - ge + gg) * (v * w)
+			+ (ga - gb - ge + gf) * (w * u) + (gb + gc + ge + gh - ga - gd - gf - gg) * (u * v * w);
+		Gr.X += du * (k1 + k4 * v + k6 * w + k7 * v * w);
+		Gr.Y += dv * (k2 + k4 * u + k5 * w + k7 * u * w);
+		Gr.Z += dw * (k3 + k5 * v + k6 * u + k7 * u * v);
+		OutGrad = Gr * 1.15;
+		return N * 1.15;
+	}
+
 	/** Fractal sum; Octaves already limited by the caller. Output roughly -1..1. */
 	double FbmN(const FVector& P, int32 Octaves, double Lacunarity, double Gain)
 	{
@@ -91,6 +140,61 @@ namespace
 			Sum += S * Amp;
 			Norm += Amp;
 			Amp *= Gain;
+			Q *= Lacunarity;
+			Q += FVector(5.13, 31.7, 11.9);
+		}
+		return Norm > 0.0 ? FMath::Clamp(Sum / Norm, 0.0, 1.0) : 0.0;
+	}
+
+	/** How strongly the ranges' slope damps their finer ridges (ErodedRidged()): halved where the coarser ground
+	 *  climbs 1 in 2, about 27 degrees. Weaker left the flanks as rough as the crests; stronger smooths the ranges
+	 *  into domes. */
+	constexpr double MountainErode = 4.0;
+
+	/** RidgeBase() with its gradient. */
+	FORCEINLINE double RidgeBaseD(const FVector& Q, FVector& OutGrad)
+	{
+		FVector G1, G2;
+		const double N1 = PerlinD(Q, G1);
+		const double N2 = PerlinD(FVector(Q.Y * 0.613 + 3.17, Q.Z * 0.587 - 7.9, Q.X * 0.641 + 1.3), G2);
+		// The second field's axes are the first's permuted and scaled: its gradient comes back through the same map.
+		OutGrad = (G1 + FVector(G2.Z * 0.641, G2.X * 0.613, G2.Y * 0.587) * 0.6) / 1.25;
+		return (N1 + 0.6 * N2) / 1.25;
+	}
+
+	/**
+	 * A ridged multifractal that erodes. Each octave is damped by the slope the coarser octaves have already built
+	 * across the ground, so the finer ridges fade on the steep flanks and gather on the crests and the gentler
+	 * ground: sharp crest lines, smooth spurs running down from them, open valleys between, as frost and water leave a
+	 * real range, where plain ridged noise is equally rough everywhere (after Quilez's eroded fbm). The slope is a sum
+	 * of each octave's squared slope rather than of the gradients themselves: a ridge's gradient flips across its
+	 * crest, and a summed vector would carry that jump into the damping as a crease line. Up is the radial direction,
+	 * so only the slope across the ground counts. SlopeScale turns a slope in the noise's own units into rise over
+	 * run on the ground (the height of the output's 1 over the length of the first octave's unit), so Erode means the
+	 * same steepness on every world: an octave is halved where the ground under it climbs 1 in 1/sqrt(Erode).
+	 * 0..1, ridges at 1; Erode 0 is Ridged().
+	 */
+	double ErodedRidged(const FVector& P, const FVector& Up, int32 Octaves, double Lacunarity, double Gain, double Sharp, double SlopeScale, double Erode)
+	{
+		double Sum = 0.0, Amp = 0.5, Weight = 1.0, Norm = 0.0, Freq = 1.0, SlopeSq = 0.0;
+		FVector Q = P;
+		for (int32 i = 0; i < Octaves; ++i)
+		{
+			FVector G;
+			const double N = RidgeBaseD(Q, G);
+			const double S0 = FMath::Max(1.0 - FMath::Abs(N), 0.0);
+			const double SP = FMath::Pow(S0, Sharp);
+			const double S = S0 * SP * Weight;
+			Sum += S * Amp / (1.0 + Erode * SlopeSq);
+			// This octave's slope on the ground, d/dQ (1 - |n|)^(1 + Sharp) as weighted and as it reaches the output
+			// (over the amplitudes' sum, 1.25 for a full stack), for the octaves after it.
+			FVector D = G * ((1.0 + Sharp) * SP * Weight * Amp * Freq / 1.25 * SlopeScale);
+			D -= Up * FVector::DotProduct(D, Up);
+			SlopeSq += D.SizeSquared();
+			Weight = FMath::Clamp(S * 2.0, 0.0, 1.0);
+			Norm += Amp;
+			Amp *= Gain;
+			Freq *= Lacunarity;
 			Q *= Lacunarity;
 			Q += FVector(5.13, 31.7, 11.9);
 		}
@@ -155,6 +259,18 @@ namespace
 
 namespace SlonkTerrain
 {
+	double SnowlineCm(const FPlanetTerrainParams& P, const FVector& Dir)
+	{
+		const double Cos2 = FMath::Max(1.0 - Dir.Z * Dir.Z / FMath::Max(Dir.SizeSquared(), 1e-12), 0.0);
+		return P.SnowlineCm * FMath::Pow(Cos2, 0.75);
+	}
+
+	double ReliefForRadius(double FractionAtEarthSize, double RadiusCm)
+	{
+		constexpr double EarthCm = 6.371e8;
+		return FMath::Max(FractionAtEarthSize * EarthCm * FMath::Sqrt(FMath::Max(RadiusCm, 1.0) / EarthCm), 1.0);
+	}
+
 	double Noise3(const FVector& P) { return Perlin(P); }
 	double Fbm(const FVector& P, int32 Octaves, double Lacunarity, double Gain) { return FbmN(P, Octaves, Lacunarity, Gain); }
 
@@ -227,14 +343,22 @@ namespace SlonkTerrain
 		const double Base = FMath::Pow(HN, 1.3);
 
 		// ---- mountain ranges ----
+		// Mountains sets how much of the land the ranges cover, never how tall they stand: a range's core reaches the
+		// full relief (its tallest peaks are the world's), and its foothills fall away over the mask's edge.
 		const double MtnField = FbmN(Q * 1.7 + FVector(31.0, 0.0, 0.0), 3, 2.0, 0.5) * 0.5 + 0.5;
-		const double MtnMask = SmoothStep(0.42, 0.68, MtnField) * Land * P.Mountains;
+		const double MtnLo = 0.62 - 0.25 * FMath::Clamp((double)P.Mountains, 0.0, 1.0);
+		const double MtnMask = P.Mountains > 0.f ? SmoothStep(MtnLo, MtnLo + 0.2, MtnField) * Land : 0.0;
 		double Mtn = 0.0;
 		if (MtnMask > 0.001)
 		{
-			// Ridges every ~50 km on an Earth (base wavelength Lambda0/40), twelve octaves at gain 0.6: about a
-			// kilometre of relief per 5 km, which is what a real range has. The range mask above sets where.
-			Mtn = Ridged(QW * 40.0 + FVector(3.0, 71.0, 0.0), OctavesFor(Lambda0 / 40.0, MinWavelengthCm, 14, 2.1), 2.1, 0.6, 0.9);
+			// Ridges every ~50 km on an Earth (base wavelength Lambda0/40), fourteen octaves at gain 0.5 (at 0.6 the
+			// fine octaves drowned the ranges' own shape in an even roughness; at 0.5 the crest lines join into a
+			// network round basins and valleys). The range mask above sets where. Eroded: the finer ridges fade on
+			// the steep flanks the coarser ones build, so the crests stay sharp, the spurs below them run smooth and
+			// the valleys between open out.
+			// The range's height per unit of the ridge noise over the length of its first octave's unit: its slope.
+			const double SlopeScale = 0.65 * MtnMask * P.ReliefCm / (Lambda0 / 40.0);
+			Mtn = ErodedRidged(QW * 40.0 + FVector(3.0, 71.0, 0.0), Dir, OctavesFor(Lambda0 / 40.0, MinWavelengthCm, 14, 2.1), 2.1, 0.5, 0.9, SlopeScale, MountainErode);
 			Mtn = FMath::Pow(Mtn, 1.3);
 		}
 
@@ -493,7 +617,10 @@ namespace SlonkTerrain
 		if (P.bAirless) { Wet = 0.0; }
 		const double Lat = FMath::Abs(Dir.Z);
 		const double Polar = SmoothStep(P.IceCapStart - 0.06, P.IceCapStart + 0.04, Lat);
-		const double Snow = P.bAirless || P.bLava ? 0.0 : SmoothStep(0.5, 0.72, Hr + 0.45 * Lat);
+		// Snow above the snowline for the latitude, a few hundred metres of patchy cover below it to deep snow above.
+		const double Line = SnowlineCm(P, Dir);
+		const double Band = FMath::Max(P.SnowlineCm * 0.06, 2000.0);
+		const double Snow = P.bAirless || P.bLava || P.SnowlineCm <= 0.0 ? 0.0 : SmoothStep(Line - Band, Line + 2.0 * Band, HeightCm);
 		Out.Ice = (float)FMath::Clamp(FMath::Max(Polar, Snow) * (P.bLava ? 0.0 : 1.0), 0.0, 1.0);
 		Out.Rock = (float)FMath::Clamp(MtnMask * Mtn * 2.5 + Wall + CraterShade * 0.5, 0.0, 1.0);
 		Out.Wet = (float)Wet;

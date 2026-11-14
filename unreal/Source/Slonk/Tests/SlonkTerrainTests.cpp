@@ -454,4 +454,103 @@ bool FSlonkTerrainShrubsAcrossWrapTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+namespace
+{
+	/** An Earth-like world of a given radius, its relief and ocean depth by SlonkTerrain::ReliefForRadius, as
+	 *  APlanetBody::MakeTerrainParams gives them. */
+	FPlanetTerrainParams EarthLike(double RadiusKm)
+	{
+		FPlanetTerrainParams P = RockWorld();
+		P.RadiusCm = RadiusKm * 1.0e5;
+		P.ReliefCm = SlonkTerrain::ReliefForRadius(0.0016, P.RadiusCm);
+		P.OceanDepthCm = SlonkTerrain::ReliefForRadius(0.0008, P.RadiusCm);
+		P.Mountains = 0.6f;
+		P.Moisture = 0.55f;
+		const double Earth = P.RadiusCm / 6.371e8;
+		P.CanyonDepthCm = 1.6e5 * Earth;
+		P.CanyonWidthCm = 7.0e5 * Earth;
+		P.SnowlineCm = 5.0e5;
+		return P;
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkTerrainMountainsReliefTest, "Slonk.Terrain.MountainsRelief", SLONK_TEST_FLAGS)
+bool FSlonkTerrainMountainsReliefTest::RunTest(const FString& Parameters)
+{
+	// Smaller worlds hold up more relief for their size: an Earth keeps its 10 km, a world a tenth its size gets
+	// 3 km rather than 1, a Mars-size one at Mars's 0.6% 28 km. And a range's core reaches the relief: the world's
+	// tallest ground is in its mountains, well up toward the relief, on a small world and an Earth-size one.
+	TestTrue(TEXT("an Earth-size world keeps 10 km"), FMath::IsNearlyEqual(SlonkTerrain::ReliefForRadius(0.0016, 6.371e8) / 1e5, 10.19, 0.05));
+	TestTrue(TEXT("a world a tenth the size gets about 3 km"), FMath::IsNearlyEqual(SlonkTerrain::ReliefForRadius(0.0016, 6.371e7) / 1e5, 3.22, 0.05));
+	TestTrue(TEXT("a Mars-size world at 0.6% gets about 28 km"), FMath::IsNearlyEqual(SlonkTerrain::ReliefForRadius(0.006, 3.39e8) / 1e5, 27.9, 0.3));
+	for (const double Km : { 600.0, 6371.0 })
+	{
+		const FPlanetTerrainParams P = EarthLike(Km);
+		double Best = -1e30, BestRock = 0.0;
+		const int32 N = 20000;
+		for (int32 i = 0; i < N; ++i)
+		{
+			const FVector Dir = Fibonacci(i, N);
+			const FPlanetTerrainSample S = SlonkTerrain::SampleStructure(P, Dir, 2.0e5);
+			if (S.HeightCm > Best) { Best = S.HeightCm; BestRock = S.Rock; }
+		}
+		AddInfo(FString::Printf(TEXT("R %.0f km: relief %.2f km, tallest ground %.2f km (%.0f%%), rock there %.2f"), Km, P.ReliefCm / 1e5, Best / 1e5, Best / P.ReliefCm * 100.0, BestRock));
+		TestTrue(FString::Printf(TEXT("the tallest ground of the %.0f km world reaches half its relief"), Km), Best >= P.ReliefCm * 0.5);
+		TestTrue(FString::Printf(TEXT("and is in its mountains (bare rock), on the %.0f km world"), Km), BestRock > 0.5);
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkTerrainSnowlineTest, "Slonk.Terrain.Snowline", SLONK_TEST_FLAGS)
+bool FSlonkTerrainSnowlineTest::RunTest(const FString& Parameters)
+{
+	// Snow lies above the snowline for the latitude and not below it (away from the polar caps), and the forest
+	// stops under it: on high ground trees grow up toward the treeline, about three quarters of the snowline, and
+	// none stands above it.
+	const FPlanetTerrainParams P = EarthLike(6371.0);
+	const double Band = FMath::Max(P.SnowlineCm * 0.06, 2000.0);
+	int32 Above = 0, AboveBare = 0, Below = 0, BelowSnowy = 0;
+	TArray<FVector> High;
+	const int32 N = 8000;
+	for (int32 i = 0; i < N; ++i)
+	{
+		const FVector Dir = Fibonacci(i, N);
+		if (FMath::Abs(Dir.Z) > P.IceCapStart - 0.1f) { continue; }
+		const FPlanetTerrainSample S = SlonkTerrain::SampleStructure(P, Dir, 2.0e4);
+		if (S.bWater) { continue; }
+		const double Line = SlonkTerrain::SnowlineCm(P, Dir);
+		if (S.HeightCm > Line + 2.5 * Band) { ++Above; AboveBare += S.Ice < 0.95f ? 1 : 0; }
+		else if (S.HeightCm < Line - 1.2 * Band) { ++Below; BelowSnowy += S.Ice > 0.01f ? 1 : 0; }
+		if (S.HeightCm > Line * 0.55 && S.HeightCm < Line && S.Wet > 0.4f && High.Num() < 10) { High.Add(Dir); }
+	}
+	AddInfo(FString::Printf(TEXT("%d samples well above the snowline (%d bare), %d below it (%d snowy)"), Above, AboveBare, Below, BelowSnowy));
+	TestTrue(TEXT("some ground stands above the snowline"), Above > 20);
+	TestEqual(TEXT("ground well above the snowline is snow"), AboveBare, 0);
+	TestEqual(TEXT("ground below it is not"), BelowSnowy, 0);
+	// The treeline.
+	const int32 D = DepthFor(P, 31000.0);
+	int32 Trees = 0, OverLine = 0;
+	double Highest = 0.0;
+	for (const FVector& Dir : High)
+	{
+		int32 Face; int64 X, Y;
+		if (!UPlanetTerrainComponent::ChunkAt(Dir, D, Face, X, Y)) { continue; }
+		const FRocks R = Build(P, Living(), Face, D, X, Y);
+		for (const int32 M : TreeMeshes)
+		{
+			for (int32 i = 0; i < R.Xf[M].Num(); ++i)
+			{
+				const double Alpine = R.Drawn[M][i] / FMath::Max(SlonkTerrain::SnowlineCm(P, R.Xf[M][i].GetLocation().GetSafeNormal()), 1.0);
+				++Trees;
+				Highest = FMath::Max(Highest, Alpine);
+				OverLine += Alpine > 0.92 ? 1 : 0;
+			}
+		}
+	}
+	AddInfo(FString::Printf(TEXT("%d trees on %d high chunks: the highest at %.0f%% of the snowline, %d above the treeline"), Trees, High.Num(), Highest * 100.0, OverLine));
+	TestTrue(TEXT("trees grow on the high ground"), Trees > 0);
+	TestEqual(TEXT("none stands above the treeline"), OverLine, 0);
+	return true;
+}
+
 #endif

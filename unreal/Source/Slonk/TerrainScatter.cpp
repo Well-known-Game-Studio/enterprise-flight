@@ -225,11 +225,23 @@ namespace
 		}
 	};
 
-	/** How cold it is, 0 at a warm lowland up to about 1.5 on a polar height: latitude and altitude together. */
-	double ColdAt(const FPlanetTerrainParams& P, const FSpot& Sp)
+	/** The climate a plant grows in, from the world's snowline (SlonkTerrain::SnowlineCm), so the treeline is a
+	 *  height for the latitude, as on an Earth, not a fraction of the world's relief. */
+	struct FClimate
 	{
-		const double Hr = FMath::Max(Sp.HeightCm, 0.0) / FMath::Max(P.ReliefCm, 1.0);
-		return FMath::Clamp(Hr * 3.0 + SmoothStep(0.35, 0.95, FMath::Abs(Sp.Up.Z)), 0.0, 1.5);
+		/** The height over the snowline there: 0 at the sea, 1 at the snowline. The treeline is about 0.75 of it. */
+		double Alpine = 0.0;
+		/** How cold it is for what grows, 0 in a warm lowland: the snowline's drop toward the poles, and the height. */
+		double Cold = 0.0;
+	};
+	FClimate ClimateAt(const FPlanetTerrainParams& P, const FSpot& Sp)
+	{
+		FClimate C;
+		if (P.SnowlineCm <= 0.0) { return C; }
+		const double Line = SlonkTerrain::SnowlineCm(P, Sp.Up);
+		C.Alpine = FMath::Clamp(FMath::Max(Sp.HeightCm, 0.0) / FMath::Max(Line, 1.0), 0.0, 1.5);
+		C.Cold = FMath::Clamp(1.0 - Line / P.SnowlineCm + 0.5 * C.Alpine, 0.0, 1.5);
+		return C;
 	}
 
 	/** How parched a plant is, 0 lush to 1 dry: the per-instance dryness the foliage material yellows it by. */
@@ -334,8 +346,8 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 			if (Sp.Cliff > (bRock ? 0.6 : 0.3)) { continue; }
 			const double Air = P.bAirless ? 1.0 : 0.0;
 			const double Dry = 1.0 - Sp.Wet;
-			// For a plant: how cold it is (latitude and height), which sets how much grows and what.
-			const double Cold = bRock ? 0.0 : ColdAt(P, Sp);
+			// For a plant: the climate, which sets how much grows and what (the treeline, the conifers).
+			const FClimate Clim = bRock ? FClimate() : ClimateAt(P, Sp);
 			double Density = 0.0;
 			if (bRock)
 			{
@@ -366,12 +378,12 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 					Density = (Forest * SmoothStep(0.3, 0.65, Sp.Wet) * (1.0 - SmoothStep(0.35, 0.75, Sp.Slope)) * (1.0 - 0.7 * Sp.Rocky) * 0.8
 						// A line of trees along the river on a canyon floor, whatever the forest does.
 						+ Sp.Gorge * Sp.Wet * 0.35)
-						* (1.0 - SmoothStep(0.65, 0.9, Cold)) * (1.0 - SnowLying);
+						* (1.0 - SmoothStep(0.65, 0.9, Clim.Alpine)) * (1.0 - SnowLying);
 				}
 				else
 				{
 					Density = SmoothStep(0.15, 0.45, Sp.Wet) * (1.0 - SmoothStep(0.3, 0.7, Sp.Slope)) * (1.0 - Sp.Rocky) * (1.0 - SnowLying)
-						* (1.0 - SmoothStep(0.75, 1.0, Cold)) * (1.0 - 0.5 * Forest * Sp.Wet) * 0.9;
+						* (1.0 - SmoothStep(0.75, 1.0, Clim.Alpine)) * (1.0 - 0.5 * Forest * Sp.Wet) * 0.9;
 				}
 				Density *= S.Life;
 			}
@@ -441,12 +453,12 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 				const double Dryness = DrynessAt(Sp);
 				const bool bTree = Cl.Kind == EClass::Tree;
 				// The cold, the heights and the poor ground grow conifers; the warm, wet lowlands broadleaves.
-				const bool bConifer = bTree && D.Next() < SmoothStep(0.25, 0.6, Cold) + 0.3 * Sp.Rocky;
+				const bool bConifer = bTree && D.Next() < SmoothStep(0.25, 0.6, Clim.Cold) + 0.3 * Sp.Rocky;
 				const EPlant Kind = bTree ? (bConifer ? EPlant::Conifer : EPlant::Broadleaf) : EPlant::Grass;
 				double H = Cl.MinCm * FMath::Pow(Cl.MaxCm / Cl.MinCm, FMath::Pow(D.Next(), 1.3));
 				if (bConifer) { H *= 1.15; }
 				// Near the treeline what grows is stunted.
-				if (bTree) { H *= 1.0 - 0.45 * SmoothStep(0.45, 0.85, Cold); }
+				if (bTree) { H *= 1.0 - 0.45 * SmoothStep(0.45, 0.85, Clim.Alpine); }
 				const double Wx = FMath::Lerp(0.85, 1.15, D.Next()), Wy = Wx * FMath::Lerp(0.9, 1.1, D.Next());
 				// Upright: trees grow to the vertical whatever the slope; a tuft of grass follows the ground a little.
 				const FQuat Rot = StandingFrame(Sp, bTree ? 0.05 : 0.35, bTree ? 3.0 : 8.0, D);

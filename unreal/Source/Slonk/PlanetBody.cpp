@@ -1243,7 +1243,8 @@ FPlanetTerrainParams APlanetBody::MakeTerrainParams() const
 	P.Seed = FVector(FMath::Frac(L.X / 7.3e9) * 100.0, FMath::Frac(L.Y / 5.1e9) * 100.0, FMath::Frac(L.Z / 3.7e9) * 100.0);
 	P.RadiusCm = R;
 	// Real proportions: Earth's tallest peak is 0.14% of its radius, Mars's 0.6%. The style's ReliefFraction was
-	// tuned for relief visible from orbit on the old displaced sphere, four times too tall for flying through.
+	// tuned for relief visible from orbit on the old displaced sphere, four times too tall for flying through. The caps
+	// are fractions at an Earth's size (ReliefForRadius below): Mars's 0.6% gives 28 km at Mars's size, near its 29.
 	double ReliefFraction = S.ReliefFraction;
 	switch (ResolvedArchetype)
 	{
@@ -1252,8 +1253,11 @@ FPlanetTerrainParams APlanetBody::MakeTerrainParams() const
 	case EPlanetArchetype::Desert: case EPlanetArchetype::Venus: ReliefFraction = FMath::Min(ReliefFraction, 0.002f); break;
 	default: ReliefFraction = FMath::Min(ReliefFraction, 0.0016f); break;
 	}
-	P.ReliefCm = FMath::Max(ReliefFraction * R, 1.0);
-	P.OceanDepthCm = 0.0008 * R;
+	// The fraction is what it would be on an Earth-size world: a smaller world, with its weaker gravity, holds up
+	// more relief for its size (SlonkTerrain::ReliefForRadius; a world a tenth of an Earth gets 3 km of mountains,
+	// not the 1 km of the plain fraction). A moon keeps its style's fraction, tuned for its craters.
+	P.ReliefCm = ResolvedArchetype == EPlanetArchetype::Moon ? FMath::Max(ReliefFraction * R, 1.0) : SlonkTerrain::ReliefForRadius(ReliefFraction, R);
+	P.OceanDepthCm = SlonkTerrain::ReliefForRadius(0.0008, R);
 	P.SeaLevel = S.SeaLevel;
 	P.ContinentScale = S.NoiseScale;
 	P.Craters = S.CraterStrength;
@@ -1274,6 +1278,16 @@ FPlanetTerrainParams APlanetBody::MakeTerrainParams() const
 	case EPlanetArchetype::Venus:   P.Mountains = 0.5f; P.Canyons = 0.3f; P.Strata = 0.3f; P.Moisture = 0.f; P.bAirless = true; P.CanyonDepthCm = 1.5e5 * Earth; P.CanyonWidthCm = 8.0e5 * Earth; break;
 	case EPlanetArchetype::Moon:    P.Mountains = 0.3f; P.Canyons = 0.f; P.Strata = 0.2f; P.Moisture = 0.f; P.bAirless = true; break;
 	default:                        P.Mountains = 0.6f; P.Canyons = 0.5f; P.Strata = 0.6f; P.Moisture = 0.55f; P.CanyonDepthCm = 1.6e5 * Earth; P.CanyonWidthCm = 7.0e5 * Earth; break;
+	}
+	// The equator's snowline, which falls with latitude to the sea at the poles; the treeline follows it. An Earth's is
+	// about 5 km; a maritime world's a little lower, a desert's higher, an ice world's low; none where nothing falls.
+	switch (ResolvedArchetype)
+	{
+	case EPlanetArchetype::Ocean:  P.SnowlineCm = 4.6e5; break;
+	case EPlanetArchetype::Desert: P.SnowlineCm = 6.5e5; break;
+	case EPlanetArchetype::Ice:    P.SnowlineCm = 1.0e5; break;
+	case EPlanetArchetype::Lava: case EPlanetArchetype::Mars: case EPlanetArchetype::Venus: case EPlanetArchetype::Moon: P.SnowlineCm = 0.0; break;
+	default:                       P.SnowlineCm = 5.0e5; break;
 	}
 	return P;
 }
