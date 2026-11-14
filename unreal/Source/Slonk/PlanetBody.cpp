@@ -1254,8 +1254,8 @@ FPlanetTerrainParams APlanetBody::MakeTerrainParams() const
 	default: ReliefFraction = FMath::Min(ReliefFraction, 0.0016f); break;
 	}
 	// The fraction is what it would be on an Earth-size world: a smaller world, with its weaker gravity, holds up
-	// more relief for its size (SlonkTerrain::ReliefForRadius; a world a tenth of an Earth gets 3 km of mountains,
-	// not the 1 km of the plain fraction). A moon keeps its style's fraction, tuned for its craters.
+	// more relief for its size (SlonkTerrain::ReliefForRadius; a world half an Earth's size keeps seven tenths of its
+	// relief, not half). A moon keeps its style's fraction, tuned for its craters.
 	P.ReliefCm = ResolvedArchetype == EPlanetArchetype::Moon ? FMath::Max(ReliefFraction * R, 1.0) : SlonkTerrain::ReliefForRadius(ReliefFraction, R);
 	P.OceanDepthCm = SlonkTerrain::ReliefForRadius(0.0008, R);
 	P.SeaLevel = S.SeaLevel;
@@ -1276,7 +1276,9 @@ FPlanetTerrainParams APlanetBody::MakeTerrainParams() const
 	case EPlanetArchetype::Lava:    P.Mountains = 0.5f; P.Canyons = 0.3f; P.Strata = 0.3f; P.Moisture = 0.f; P.CanyonDepthCm = 1.5e5 * Earth; P.CanyonWidthCm = 7.0e5 * Earth; break;
 	case EPlanetArchetype::Mars:    P.Mountains = 0.7f; P.Canyons = 1.0f; P.Strata = 0.8f; P.Moisture = 0.f; P.bAirless = true; P.CanyonDepthCm = 6.0e5 * Earth * 1.9; P.CanyonWidthCm = 1.2e7 * Earth * 1.9; break;
 	case EPlanetArchetype::Venus:   P.Mountains = 0.5f; P.Canyons = 0.3f; P.Strata = 0.3f; P.Moisture = 0.f; P.bAirless = true; P.CanyonDepthCm = 1.5e5 * Earth; P.CanyonWidthCm = 8.0e5 * Earth; break;
-	case EPlanetArchetype::Moon:    P.Mountains = 0.3f; P.Canyons = 0.f; P.Strata = 0.2f; P.Moisture = 0.f; P.bAirless = true; break;
+	// A moon's ranges stay a third of its relief, as they stood before Mountains became coverage alone: the relief
+	// was tuned for its craters.
+	case EPlanetArchetype::Moon:    P.Mountains = 0.3f; P.MountainHeight = 0.3f; P.Canyons = 0.f; P.Strata = 0.2f; P.Moisture = 0.f; P.bAirless = true; break;
 	default:                        P.Mountains = 0.6f; P.Canyons = 0.5f; P.Strata = 0.6f; P.Moisture = 0.55f; P.CanyonDepthCm = 1.6e5 * Earth; P.CanyonWidthCm = 7.0e5 * Earth; break;
 	}
 	// The equator's snowline, which falls with latitude to the sea at the poles; the treeline follows it. An Earth's is

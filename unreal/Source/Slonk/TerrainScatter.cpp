@@ -237,10 +237,12 @@ namespace
 	FClimate ClimateAt(const FPlanetTerrainParams& P, const FSpot& Sp)
 	{
 		FClimate C;
-		if (P.SnowlineCm <= 0.0) { return C; }
-		const double Line = SlonkTerrain::SnowlineCm(P, Sp.Up);
+		// A world with no snow still has a treeline: as if its snowline stood at its relief.
+		FPlanetTerrainParams Q = P;
+		if (Q.SnowlineCm <= 0.0) { Q.SnowlineCm = FMath::Max(P.ReliefCm, 1.0); }
+		const double Line = SlonkTerrain::SnowlineCm(Q, Sp.Up);
 		C.Alpine = FMath::Clamp(FMath::Max(Sp.HeightCm, 0.0) / FMath::Max(Line, 1.0), 0.0, 1.5);
-		C.Cold = FMath::Clamp(1.0 - Line / P.SnowlineCm + 0.5 * C.Alpine, 0.0, 1.5);
+		C.Cold = FMath::Clamp(1.0 - Line / Q.SnowlineCm + 0.5 * C.Alpine, 0.0, 1.5);
 		return C;
 	}
 

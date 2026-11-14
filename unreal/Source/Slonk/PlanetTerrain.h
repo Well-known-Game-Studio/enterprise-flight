@@ -12,7 +12,8 @@ struct FPlanetTerrainParams
 	/** Shifts the whole noise field so two planets with the same style share no coastline. */
 	FVector Seed = FVector::ZeroVector;
 	double RadiusCm = 6.371e8;
-	/** Height of the tallest peak above sea level, cm. */
+	/** The relief, cm: the scale of the land's heights. The highest peaks of the ranges stand at about seven tenths
+	 *  of it (an Earth's 10 km gives about 7 km), the plateaus and lowlands lower. */
 	double ReliefCm = 3.8e6;
 	/** Depth of the deepest ocean floor below sea level, cm. */
 	double OceanDepthCm = 5.0e5;
@@ -20,8 +21,11 @@ struct FPlanetTerrainParams
 	float SeaLevel = 0.5f;
 	/** Continent frequency (cycles across the sphere at the lowest octave). */
 	float ContinentScale = 3.f;
-	/** 0..1: how much of the land is ridged mountain ranges. */
+	/** 0..1: how much of the land is ridged mountain ranges (coverage, not height; below 0.2 they fade out). */
 	float Mountains = 0.6f;
+	/** 0..1: how tall a range's core stands, as a share of what the relief allows. 1 puts a world's tallest ground
+	 *  in its mountains; a moon's ranges stay low beside the craters its relief was tuned for. */
+	float MountainHeight = 1.f;
 	/** 0..1: river canyons cut into the plateaus (0 none). */
 	float Canyons = 0.5f;
 	/** Depth of the canyons, cm (floor below the surrounding plateau). */
@@ -53,7 +57,7 @@ struct FPlanetTerrainParams
 	bool operator==(const FPlanetTerrainParams& O) const
 	{
 		return Seed == O.Seed && RadiusCm == O.RadiusCm && ReliefCm == O.ReliefCm && OceanDepthCm == O.OceanDepthCm && SeaLevel == O.SeaLevel
-			&& ContinentScale == O.ContinentScale && Mountains == O.Mountains && Canyons == O.Canyons && CanyonDepthCm == O.CanyonDepthCm
+			&& ContinentScale == O.ContinentScale && Mountains == O.Mountains && MountainHeight == O.MountainHeight && Canyons == O.Canyons && CanyonDepthCm == O.CanyonDepthCm
 			&& CanyonWidthCm == O.CanyonWidthCm && Strata == O.Strata && Craters == O.Craters && CraterScale == O.CraterScale && Maria == O.Maria && Lineae == O.Lineae
 			&& IceCapStart == O.IceCapStart && Moisture == O.Moisture && SnowlineCm == O.SnowlineCm && bLava == O.bLava && bAirless == O.bAirless;
 	}
@@ -134,7 +138,11 @@ namespace SlonkTerrain
 	 *  (an Earth's 5 km gives 3 km at 45 degrees, 1.8 km at 60, 1 km at 70), 0 at the poles. */
 	SLONK_API double SnowlineCm(const FPlanetTerrainParams& P, const FVector& Dir);
 
-	/** The height of a world's tallest ground, cm, from the fraction of the radius it would be on an Earth-size world.
+	/** How far round a snowline LineCm high its snow thins out: patchy cover from this far below it, deep from twice
+	 *  this above it. A few hundred metres at an Earth's equator, never under 20 m. */
+	SLONK_API double SnowBandCm(double LineCm);
+
+	/** A world's relief (FPlanetTerrainParams::ReliefCm), cm, from the fraction of the radius it would be on an Earth-size world.
 	 *  Weaker gravity holds up taller mountains, so smaller worlds get more relief for their size: it goes as the
 	 *  square root of the radius from the Earth-size figure (Earth 0.16% keeps 10 km; a world a tenth the size gets
 	 *  3 km, not 1; at Mars's size and 0.6%, 28 km, near Mars's own 29). */
