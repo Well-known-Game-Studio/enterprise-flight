@@ -25,6 +25,15 @@ namespace
 		return FVector(Rr * FMath::Cos(A), Rr * FMath::Sin(A), Z);
 	}
 
+	/** SlonkCities' roll of a point against a people's liking for cliffs: under it, a point they would sooner have
+	 *  built into a cliff, where no ways of its own are laid. */
+	float CliffRoll(uint32 Seed)
+	{
+		uint32 H = Seed ^ (0xC1u + 0x9e3779b9u + (Seed << 6) + (Seed >> 2));
+		H = (H ^ (H >> 13)) * 0x5bd1e995u; H ^= H >> 15;
+		return (H & 0xffffu) / 65535.f;
+	}
+
 	/** An Earth-like world and a desert one, as APlanetBody::MakeTerrainParams gives them. */
 	FPlanetTerrainParams Earthish()
 	{
@@ -308,26 +317,32 @@ bool FSlonkCitiesTownsByAgeTest::RunTest(const FString& Parameters)
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkCitiesWaysTest, "Slonk.Cities.Ways", SLONK_TEST_FLAGS)
 bool FSlonkCitiesWaysTest::RunTest(const FString& Parameters)
 {
-	// Each people's ways, as the terrain paints them (terrain_material.py mirrors SlonkCities' FWays): a hamlet's paths,
-	// a village's lanes, a grown town's ring ways and spiral spokes, and the roads between their settlements, straight
-	// for a grid-building people. The builders keep every building off them: no part of one stands on a way (sampled
-	// every metre over its footprint wherever it comes near one). The ways are there: a share of a town's ground, and
-	// roads leaving the towns (crossing a ring round each, a little outside it). Near its lane, a village house fronts
-	// onto it.
+	// Each people's ways, as the terrain paints them (terrain_material.py mirrors SlonkCities' PaintedWayCm): a hamlet's
+	// paths, a village's lanes, a grown town's ring ways and spiral spokes, and the roads between their settlements,
+	// straight for a grid-building people. No part of any building stands on one: every footprint is sampled all over
+	// (every metre, or every metre and a half for a grid people whose only ways are roads nine metres wide), whatever the builder
+	// checked and wherever the material gives the ground to another settlement. The ways are there: in most towns a
+	// share of the ground, and roads leaving most of them. And a village house near its lane fronts onto it: its front
+	// (the mesh's -Y) faces down the slope of the way's clearance there, toward the lane, measured from the painted
+	// ways alone.
 	const FPlanetTerrainParams P = Earthish();
-	struct FCase { const TCHAR* Name; FCivilization Civ; bool bTownWays; };
+	struct FCase { const TCHAR* Name; FCivilization Civ; double MinShare; };
 	const TArray<FCase> Cases = {
-		{ TEXT("stone"), SlonkCivs::Make(ETechAge::Stone, 0.f, 0.f, false), true },
-		{ TEXT("iron"), SlonkCivs::Make(ETechAge::Iron, 0.f, 0.f, false), true },
-		{ TEXT("modern"), SlonkCivs::Make(ETechAge::Modern, 0.f, 0.f, false), false },
-		{ TEXT("grown"), SlonkCivs::Make(ETechAge::Starfaring, 1.f, 0.f, false), true },
+		{ TEXT("stone"), SlonkCivs::Make(ETechAge::Stone, 0.f, 0.f, false), 0.0015 },
+		{ TEXT("iron"), SlonkCivs::Make(ETechAge::Iron, 0.f, 0.f, false), 0.004 },
+		{ TEXT("modern"), SlonkCivs::Make(ETechAge::Modern, 0.f, 0.f, false), 0.0 },
+		{ TEXT("grown"), SlonkCivs::Make(ETechAge::Starfaring, 1.f, 0.f, false), 0.06 },
 	};
 	for (const FCase& C : Cases)
 	{
+		const bool bGrid = C.Civ.Ways() == EWayStyle::Grid;
+		auto Painted = [&](const FVector& At) { return SlonkCities::PaintedWayCm(P, C.Civ, At.GetSafeNormal()); };
 		TArray<FTownSite> Built;
-		int32 Buildings = 0, Checked = 0, OnWay = 0, Ground = 0, WayGround = 0, Near = 0, Fronting = 0, Roads = 0, RoadTowns = 0;
+		int32 Buildings = 0, OnWay = 0, Near = 0, Fronting = 0, WithWays = 0, WaysTowns = 0, WithRoads = 0, RoadTowns = 0;
 		TSet<uint32> Seen;
-		for (int32 i = 0; i < 120 && Built.Num() < 8; ++i)
+		// The early peoples' villages are small and cheap: twice as many of them.
+		const int32 MaxTowns = C.Civ.Age <= ETechAge::Iron ? 16 : 8;
+		for (int32 i = 0; i < 120 && Built.Num() < MaxTowns; ++i)
 		{
 			const FVector Dir = Fib(i * 11 + 5, 1320);
 			if (SlonkTerrain::SampleStructure(P, Dir, 2.0e5).bWater) { continue; }
@@ -335,12 +350,14 @@ bool FSlonkCitiesWaysTest::RunTest(const FString& Parameters)
 			SlonkCities::EnumerateTowns(P, C.Civ, Dir * P.RadiusCm, 6.0e5, Sites, 8);
 			for (const FTownSite& T : Sites)
 			{
-				if (T.bCliff || Seen.Contains(T.Seed) || Built.Num() >= 8) { continue; }
+				if (T.bCliff || Seen.Contains(T.Seed) || Built.Num() >= MaxTowns) { continue; }
 				Seen.Add(T.Seed);
 				Built.Add(T);
 				TArray<FTransform> ByKind[(int32)EBuildingKind::Count];
 				SlonkCities::BuildTown(P, C.Civ, T, ByKind, 2500);
-				auto Clearance = [&](const FVector& At) { return SlonkCities::WayClearanceCm(P, C.Civ, T, At.GetSafeNormal()); };
+				int32 TownBuildings = 0;
+				for (int32 k = 0; k < (int32)EBuildingKind::Count; ++k) { TownBuildings += ByKind[k].Num(); }
+				const double Step = bGrid ? 150.0 : 100.0;
 				for (int32 k = 0; k < (int32)EBuildingKind::Count; ++k)
 				{
 					for (const FTransform& Xf : ByKind[k])
@@ -349,66 +366,80 @@ bool FSlonkCitiesWaysTest::RunTest(const FString& Parameters)
 						const FVector Ctr = Xf.GetLocation().GetSafeNormal() * P.RadiusCm;
 						const FVector X = Xf.GetRotation().GetAxisX(), Y = Xf.GetRotation().GetAxisY();
 						const double W = Xf.GetScale3D().X * 100.0, D = Xf.GetScale3D().Y * 100.0;
-						// Far from every way (its clearance is a distance): nothing of it can be on one.
-						const double C0 = Clearance(Ctr);
-						if (C0 > 0.5 * FMath::Sqrt(W * W + D * D) + 10.0) { continue; }
-						++Checked;
+						const int32 Nx = FMath::Max(1, FMath::CeilToInt(W / Step)), Ny = FMath::Max(1, FMath::CeilToInt(D / Step));
 						bool bOn = false;
-						const int32 Nx = FMath::CeilToInt(W / 100.0), Ny = FMath::CeilToInt(D / 100.0);
 						for (int32 a = 0; a <= Nx && !bOn; ++a)
 						{
-							for (int32 b = 0; b <= Ny && !bOn; ++b)
-							{
-								bOn = Clearance(Ctr + X * ((a / (double)Nx - 0.5) * W) + Y * ((b / (double)Ny - 0.5) * D)) < 0.0;
-							}
+							for (int32 b = 0; b <= Ny && !bOn; ++b) { bOn = Painted(Ctr + X * ((a / (double)Nx - 0.5) * W) + Y * ((b / (double)Ny - 0.5) * D)) < 0.0; }
 						}
 						OnWay += bOn ? 1 : 0;
-						// A village house near a lane: its front (the mesh's -Y) nearer the lane than its back by most of
-						// its depth.
-						if (C.Civ.Age == ETechAge::Iron && (EBuildingKind)k == EBuildingKind::House && C0 < D * 0.5 + 500.0)
+						// A village house within a few metres of a lane: the clearance's slope at its front, from the painted
+						// ways (a metre each way across the ground), against its front's direction.
+						if (C.Civ.Age == ETechAge::Iron && (EBuildingKind)k == EBuildingKind::House)
 						{
-							++Near;
-							Fronting += Clearance(Ctr - Y * (D * 0.5)) < Clearance(Ctr + Y * (D * 0.5)) - D * 0.7 ? 1 : 0;
+							const FVector Front = Ctr - Y * (D * 0.5);
+							if (Painted(Front) < 500.0)
+							{
+								++Near;
+								const FVector Up = Front.GetSafeNormal();
+								const FVector E = FVector::CrossProduct(FVector::ZAxisVector, Up).GetSafeNormal(), N = FVector::CrossProduct(Up, E);
+								const FVector Grad = E * (Painted(Front + E * 100.0) - Painted(Front - E * 100.0)) + N * (Painted(Front + N * 100.0) - Painted(Front - N * 100.0));
+								Fronting += FVector::DotProduct(-Y, -Grad.GetSafeNormal()) > 0.82 ? 1 : 0;
+							}
 						}
 					}
 				}
-				// How much of the town's ground is way: a 4 m grid over it (a hamlet's is small whatever its point's
-				// weight, a village's under 400 m).
+				// Its own ways' share of its ground (a 4 m grid over it; a hamlet's is small whatever its point's weight,
+				// a village's under 400 m), and the roads leaving it (how often a ring 30% beyond its edge goes onto one).
 				const FVector Up = T.Dir;
 				const FVector E = FVector::CrossProduct(FVector::ZAxisVector, Up).GetSafeNormal(), N = FVector::CrossProduct(Up, E);
 				const double Rad = C.Civ.Age == ETechAge::Stone ? FMath::Min(T.RadiusCm, 18000.0) : C.Civ.Age == ETechAge::Iron ? FMath::Min(T.RadiusCm, 40000.0) : T.RadiusCm;
-				for (double u = -Rad; u <= Rad; u += 400.0)
+				// (Of the towns built: a point the walk finds but whose ground at the surface is all another's builds nothing.)
+				if (C.MinShare > 0.0 && TownBuildings >= 10 && CliffRoll(T.Seed) >= C.Civ.CliffAffinity)
 				{
-					for (double v = -Rad; v <= Rad; v += 400.0)
+					int32 Ground = 0, Way = 0;
+					for (double u = -Rad; u <= Rad; u += 400.0)
 					{
-						if (u * u + v * v > Rad * Rad) { continue; }
-						++Ground;
-						WayGround += Clearance(T.LocalCm + E * u + N * v) < 0.0 ? 1 : 0;
+						for (double v = -Rad; v <= Rad; v += 400.0)
+						{
+							if (u * u + v * v > Rad * Rad) { continue; }
+							++Ground;
+							Way += Painted(T.LocalCm + E * u + N * v) < 0.0 ? 1 : 0;
+						}
+					}
+					++WaysTowns;
+					WithWays += Way >= Ground * C.MinShare ? 1 : 0;
+					if (Way < Ground * C.MinShare)
+					{
+						// What the material paints there instead, to say why.
+						AddInfo(FString::Printf(TEXT("  %s town %u (%d buildings, radius %.0f m) has few ways: at its centre %s"), C.Name, T.Seed, TownBuildings, T.RadiusCm / 100.0, *SlonkCities::DescribePaint(P, C.Civ, T.Dir)));
 					}
 				}
-				// The roads leaving it: how many times a ring 40% beyond its edge goes onto one, 2.5 m a step.
-				if (!T.bCity)
 				{
-					const double Rr = T.RadiusCm * 1.4;
+					// (A city's ground is a disc no road crosses; a road comes up to it, as to a town's edge.)
+					const double Rr = T.RadiusCm * (T.bCity ? 1.15 : 1.3);
 					const int32 Steps = FMath::CeilToInt(2.0 * PI * Rr / 250.0);
+					int32 Crossings = 0;
 					bool bWas = false;
 					for (int32 s = 0; s <= Steps; ++s)
 					{
 						const double A = 2.0 * PI * s / Steps;
-						const bool bOn = Clearance(T.LocalCm + (E * FMath::Cos(A) + N * FMath::Sin(A)) * Rr) < 0.0;
-						Roads += bOn && !bWas && s > 0 ? 1 : 0;
-						bWas = bOn;
+						const bool bOnRoad = Painted(T.LocalCm + (E * FMath::Cos(A) + N * FMath::Sin(A)) * Rr) < 0.0;
+						Crossings += bOnRoad && !bWas && s > 0 ? 1 : 0;
+						bWas = bOnRoad;
 					}
 					++RoadTowns;
+					WithRoads += Crossings > 0 ? 1 : 0;
 				}
 			}
 		}
-		AddInfo(FString::Printf(TEXT("%s: %d towns, %d buildings, %d near a way, %d of them on one; ways %.1f%% of the towns' ground; %d roads leaving %d towns; %d of %d houses near a lane fronting onto it"),
-			C.Name, Built.Num(), Buildings, Checked, OnWay, Ground > 0 ? 100.0 * WayGround / Ground : 0.0, Roads, RoadTowns, Fronting, Near));
+		AddInfo(FString::Printf(TEXT("%s: %d towns, %d buildings, %d on a way; %d of %d towns with ways of their own; %d of %d towns with a road leaving; %d of %d houses near a lane fronting onto it"),
+			C.Name, Built.Num(), Buildings, OnWay, WithWays, WaysTowns, WithRoads, RoadTowns, Fronting, Near));
 		TestTrue(FString::Printf(TEXT("the %s people build towns"), C.Name), Buildings > 20);
 		TestEqual(FString::Printf(TEXT("no %s building stands on a way"), C.Name), OnWay, 0);
-		if (C.bTownWays) { TestTrue(FString::Printf(TEXT("the %s towns have ways of their own"), C.Name), WayGround * 300 >= Ground); }
-		TestTrue(FString::Printf(TEXT("roads run between the %s towns"), C.Name), Roads > 0);
+		if (WaysTowns > 0) { TestTrue(FString::Printf(TEXT("most %s towns have ways of their own"), C.Name), WithWays * 4 >= WaysTowns * 3); }
+		// A hamlet's people live at a third of the points, so its neighbours are few; the rest have roads to most.
+		TestTrue(FString::Printf(TEXT("roads leave the %s towns"), C.Name), C.Civ.Age == ETechAge::Stone ? WithRoads > 0 : WithRoads * 5 >= RoadTowns * 2);
 		if (Near > 0) { TestTrue(TEXT("a village's houses front onto their lanes"), Fronting * 10 >= Near * 8); }
 	}
 	return true;

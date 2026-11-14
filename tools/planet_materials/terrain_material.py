@@ -127,6 +127,25 @@ void SlonkGerstner(float2 pu, float time, float periodCm, float swellCm, out flo
 // The settlements' hash (SlonkCities' Mix and Hash01).
 uint SlonkMix(uint a, uint b) { uint h = a ^ (b + 0x9e3779b9u + (a << 6) + (a >> 2)); h = (h ^ (h >> 13)) * 0x5bd1e995u; return h ^ (h >> 15); }
 float SlonkU(uint h) { return (float)(h & 0xffffu) / 65535.0; }
+// The squared distance (cells) to the nearest present point of a level from a point given as a pixel's cell (fl) plus
+// an offset in cells (fr, any size): SlonkCities' NearestSq at a settlement point, from the pixel's own cell.
+float SlonkNearestSqAt(int3 fl, float3 fr, uint kw)
+{
+    float3 fq = floor(fr); int3 b = fl + (int3)fq; float3 f = fr - fq;
+    float best = 9.0;
+    [unroll] for (int i = 0; i < 8; i++)
+    {
+        int3 off = int3(i & 1, (i >> 1) & 1, (i >> 2) & 1);
+        int3 ck = (b + off) & 4095;
+        uint h = ((uint)ck.x * 73856093u) ^ ((uint)ck.y * 19349663u) ^ ((uint)ck.z * 83492791u) ^ (0x9e3779b9u + kw * 0x85ebca6bu);
+        h = (h ^ (h >> 13)) * 0x5bd1e995u; h ^= h >> 15;
+        if ((h >> 30) >= 3u) { continue; }
+        float3 jit = float3(h & 0x3ffu, (h >> 10) & 0x3ffu, (h >> 20) & 0x3ffu) / 1023.0;
+        float3 dp = float3(off) + jit - f;
+        best = min(best, dot(dp, dp));
+    }
+    return best;
+}
 // A town's own ways, number for number as PlanetCities.cpp's FWays::TownClearance lays them for its builders: how far
 // a point at (x, y) in the town's frame is from the edge of the nearest, cm (below 0 on one). style 3: a grown town's
 // ring ways halfway between its rings of pods (one lobed shape scaled ring by ring) and its spokes, logarithmic
@@ -146,22 +165,23 @@ float SlonkTownWays(float x, float y, uint H, float style, bool isCity, float ra
         float w = 1.0 + 0.18 * sin(3.0 * A + lobes);
         float rho = r / (ring * w);
         float inner = k0 - 0.5;
-        if (rho < inner) { plaza = 1.0; return 1e9; }
-        if (rho > rings + 0.5 + hw / ring) { return 1e9; }
         float kk = clamp(round(rho - 0.5), k0 - 1.0, rings);
         float ringClr = abs(rho - (kk + 0.5)) * ring * w - hw;
+        if (rho < inner) { plaza = 1.0; return ringClr; }
+        if (rho > rings + 0.5) { return ringClr; }
         float ns = 3.0 + (float)(SlonkMix(H, 0x52u) % 3u);
         float phi0 = SlonkU(SlonkMix(H, 0x53u)) * 6.2831853;
         float tw = SlonkU(SlonkMix(H, 0x54u)) < 0.5 ? -0.55 : 0.55;
         float sector = 6.2831853 / ns;
-        float d0 = A - phi0 - tw * log(max(rho, inner) / inner);
+        float d0 = A - phi0 - tw * log(rho / inner);
         float dl = d0 - sector * round(d0 / sector);
         return min(ringClr, r * abs(dl) / sqrt(1.0 + tw * tw) - hw);
     }
     bool stone = style > 1.5;
     float vr = min(radiusCm, stone ? 18000.0 : 40000.0);
     float r0 = stone ? 500.0 : 1200.0;
-    if (r < r0 || r > vr) { return 1e9; }
+    if (r < r0) { return r0 - r; }
+    if (r > vr) { return r - vr; }
     float nl = stone ? 2.0 + (float)(SlonkMix(H, 0x60u) % 2u) : 3.0 + (float)(SlonkMix(H, 0x60u) % 3u);
     float p0 = SlonkU(SlonkMix(H, 0x61u)) * 6.2831853;
     float lw = stone ? 300.0 : 600.0, lam = stone ? 1800.0 : 2600.0, hw = stone ? 75.0 : 175.0;
@@ -174,7 +194,7 @@ float SlonkTownWays(float x, float y, uint H, float style, bool isCity, float ra
         float phil = p0 + 6.2831853 * (float)l / nl + (SlonkU(hl) - 0.5) * 1.8849556 / nl;
         float psi = SlonkU(SlonkMix(hl, 5u)) * 6.2831853;
         float da = A - phil; da -= 6.2831853 * round(da / 6.2831853);
-        if (abs(da) > 1.5707963) { continue; }
+        if (abs(da) > 1.5707963) { best = min(best, max(r0, r - lw) - hw); continue; }
         float lat = lw * sin(r / lam + psi) * ramp;
         best = min(best, abs(r * sin(da) - lat) - hw);
     }
@@ -188,7 +208,6 @@ float SlonkRoad(float3 ap, float3 ab, float3 U, uint hA, uint hB, float style, f
 {
     float L2 = max(dot(ab, ab), 1.0); float L = sqrt(L2);
     float t = saturate(dot(ap, ab) / L2);
-    if (t * L < townR) { return 1e9; }
     float3 perp = normalize(cross(U, ab));
     float sgn = (SlonkMix(hA ^ hB, 0x70u) & 1u) != 0u ? 1.0 : -1.0;
     float st = sin(6.2831853 * t);
@@ -197,7 +216,8 @@ float SlonkRoad(float3 ap, float3 ab, float3 U, uint hA, uint hB, float style, f
     else if (style > 1.5) { off = 0.06 * st + 0.03 * sin(18.849556 * t); hw = 75.0; }
     else if (style > 0.5) { off = 0.05 * st + 0.025 * sin(12.566371 * t); hw = 200.0; }
     float along = dot(ap, ab) / L, lat = dot(ap, perp);
-    return length(float2(along - t * L, lat - sgn * off * L)) - hw;
+    float curve = length(float2(along - t * L, lat - sgn * off * L)) - hw;
+    return t * L < townR ? max(curve, townR - t * L) : curve;
 }
 float SlonkTexFuncsEnd1(FMaterialPixelParameters Parameters)
 {
@@ -470,8 +490,13 @@ float lowland = 1.0 - saturate(hN * ReliefCm / 250000.0);
 // and the cells 2^12, 2^10 and 2^8 times 625 cm (a tile is 256, 1024 or 4096 625ths of a cell), and the fraction
 // from what is left, small enough to keep its centimetres. The points are kept as offsets from the pixel (townRel
 // is the pixel less the town's point), never as planet positions a float would round to metres.
+// They are taken at sea level under the pixel (SlonkCities places its towns on the sea-level sphere): at a height the
+// nearest point, and so the town, would be another.
+float3 pS = p - U * (hN >= 0.0 ? hN * ReliefCm : hN * OceanDepthCm * (1.0 - water));
+int3 fl0 = 0, fl1 = 0; float3 fr0 = 0, fr1 = 0;
 float town = 0.0, cluster = 0.0, region = 0.0;
-float3 townRel = 0; uint townH = 0u; float3 clusterRel = 0; uint clusterH = 0u; float3 town2Rel = 0; uint town2H = 0u; float dmin2b = 9.0; float paving = 0.0;
+float3 townRel = 0; uint townH = 0u; float3 clusterRel = 0; uint clusterH = 0u; float3 town2Rel = 0; uint town2H = 0u; float paving = 0.0;
+float dt1 = 99.0, dt2 = 99.0, dc1 = 99.0;
 float wayCover = 0.0, wayGlow = 0.0;
 {
     int3 tile = int3(round(TX), round(TY), round(TZ));
@@ -483,25 +508,31 @@ float wayCover = 0.0, wayGlow = 0.0;
         uint keep = kw == 0 ? 3u : (kw == 1 ? 3u : 3u);        // of four cells
         int3 tn = tile * per;
         int3 ti = (int3)floor((float3)tn / 625.0);
-        float3 qw = (float3)(tn - ti * 625) / 625.0 + p / wcs - 0.5;
+        float3 qw = (float3)(tn - ti * 625) / 625.0 + pS / wcs - 0.5;
         float3 fq = floor(qw); float3 frw = qw - fq;
         int3 flw = ti + (int3)fq;
-        [unroll] for (int iw = 0; iw < 8; iw++)
+        if (kw == 0) { fl0 = flw; fr0 = frw; } else if (kw == 1) { fl1 = flw; fr1 = frw; }
+        // The weights from the eight cells round the pixel (SlonkCities' NearestSq); the nearest settlement points from
+        // the 27 round its nearest cell corner, only those near enough the surface to be settlements (its NearestPoints).
+        int3 rb = int3(frw >= 0.5) - 1;
+        int nw = kw == 0 ? 8 : 27;
+        [loop] for (int iw = 0; iw < nw; iw++)
         {
-            int3 off = int3(iw & 1, (iw >> 1) & 1, (iw >> 2) & 1);
-            int3 cw = flw + off;
-            int3 cwk = cw & 4095;
+            int3 off = kw == 0 ? int3(iw & 1, (iw >> 1) & 1, (iw >> 2) & 1) : rb + int3(iw % 3, (iw / 3) % 3, iw / 9);
+            int3 cwk = (flw + off) & 4095;
             uint hw = ((uint)cwk.x * 73856093u) ^ ((uint)cwk.y * 19349663u) ^ ((uint)cwk.z * 83492791u) ^ (0x9e3779b9u + (uint)kw * 0x85ebca6bu);
             hw = (hw ^ (hw >> 13)) * 0x5bd1e995u; hw ^= hw >> 15;
             if ((hw >> 30) >= keep) continue;
             float3 jit = float3(hw & 0x3ffu, (hw >> 10) & 0x3ffu, (hw >> 20) & 0x3ffu) / 1023.0;
             float3 dp = float3(off) + jit - frw;
             float dd = dot(dp, dp);
+            if (all(off >= 0) && all(off <= 1)) { dmin[kw] = min(dmin[kw], dd); }
+            if (kw == 0) continue;
             float3 rel = -dp * wcs;
-            if (kw == 2 && dd < dmin[2]) { town2Rel = townRel; town2H = townH; dmin2b = dmin[2]; townRel = rel; townH = hw; }
-            else if (kw == 2 && dd < dmin2b) { town2Rel = rel; town2H = hw; dmin2b = dd; }
-            if (kw == 1 && dd < dmin[1]) { clusterRel = rel; clusterH = hw; }
-            dmin[kw] = min(dmin[kw], dd);
+            if (abs(dot(rel, U)) > 0.9 * wcs) continue;
+            if (kw == 2 && dd < dt1) { town2Rel = townRel; town2H = townH; dt2 = dt1; townRel = rel; townH = hw; dt1 = dd; }
+            else if (kw == 2 && dd < dt2) { town2Rel = rel; town2H = hw; dt2 = dd; }
+            if (kw == 1 && dd < dc1) { clusterRel = rel; clusterH = hw; dc1 = dd; }
         }
     }
     region = 1.0 - smoothstep(0.05, 0.7, dmin[0]);
@@ -510,7 +541,8 @@ float wayCover = 0.0, wayGlow = 0.0;
 }
 // The ground's glow comes with the people's light (Civilization.h's GroundLights): a city's electric light, or the dim
 // warm firelight of a stone- or iron-age people's hearths; a world with nobody keeps its bare ground.
-float settled = NightLightIntensity > 0.0 ? 1.0 : 0.0;
+float lit = NightLightIntensity > 0.0 ? 1.0 : 0.0;
+float settled = lit;
 // The people live at only SettleDensity of the settlement points (SlonkCities' cut on each point's hash): the ground
 // is paved and lit under the ones they live at.
 uint hdT = townH ^ (0xD5u + 0x9e3779b9u + (townH << 6) + (townH >> 2)); hdT = (hdT ^ (hdT >> 13)) * 0x5bd1e995u; hdT ^= hdT >> 15;
@@ -532,17 +564,31 @@ base = lerp(base, float3(0.30, 0.29, 0.28), saturate(city * 1.5) * 0.7 * StreetG
 // night; a village's dirt lanes, a hamlet's trodden paths. Not at a point the people would sooner have built into a
 // cliff (CliffAffinity: whether they found one is not known here), where the grid-builders' streets are all the same,
 // as they try the open land first.
-if (water < 0.5 && settled > 0.0)
+if (water < 0.5 && lit > 0.0)
 {
-    float cityR = 640000.0 * (0.25 + 0.2 * region);
+    // Which settlement's ground this is, as SlonkCities chooses (its PaintAt mirrors this): the weights at the points
+    // themselves, as EnumerateTowns measures them, not at the pixel (the cluster point's region, a city's weight; the
+    // town point's region and cluster, a town's), the points themselves found among those near the surface.
+    float regionC = 1.0 - smoothstep(0.05, 0.7, SlonkNearestSqAt(fl0, fr0 - clusterRel / 2560000.0, 0u));
+    float regionT = 1.0 - smoothstep(0.05, 0.7, SlonkNearestSqAt(fl0, fr0 - townRel / 2560000.0, 0u));
+    float clusterT = 1.0 - smoothstep(0.02, 0.5, SlonkNearestSqAt(fl1, fr1 - townRel / 640000.0, 1u));
+    bool nearC = dc1 < 99.0, nearT = dt1 < 99.0;
+    float cityR = 640000.0 * (0.25 + 0.2 * regionC);
+    float townS = regionT * clusterT;
+    float townR = 160000.0 * (0.2 + 0.3 * townS);
     // The footprints are round the sites SlonkCities builds on: each Worley point taken down onto the sphere (it lies
     // off the surface by up to half its cell, kilometres), the pixel's offset from it measured across the ground.
     float3 upC = normalize(U * PlanetRadiusCm - clusterRel), upW = normalize(U * PlanetRadiusCm - townRel);
     float3 relC = clusterRel - upC * dot(clusterRel, upC);
     float3 relW = townRel - upW * dot(townRel, upW);
-    bool inCity = region > 0.35 && length(relC) < cityR * 1.05;
-    float townS = region * cluster;
-    float townR = 160000.0 * (0.2 + 0.3 * townS);
+    // A city's ground, lived at or not (no road crosses it); a town's, where no city has claimed it.
+    bool cityClaim = nearC && regionC >= 0.35;
+    bool inCity = cityClaim && length(relC) < cityR * 1.05;
+    float3 relCU = clusterRel - U * dot(clusterRel, U), relTU = townRel - U * dot(townRel, U);
+    bool claimed = cityClaim && length(relCU - relTU) < cityR + townR + 30000.0;
+    bool inTownSite = !inCity && nearT && townS >= 0.3 && !claimed && length(relW) < townR * 1.05;
+    // The roads' gate is the settlement weight at the pixel.
+    float townSp = region * cluster;
     float3 rel = inCity ? relC : relW;
     uint H = inCity ? clusterH : townH;
     float kept = inCity ? keptC : keptT;
@@ -555,7 +601,7 @@ if (water < 0.5 && settled > 0.0)
     float ang = SlonkU(SlonkMix(H, 11u)) * 3.14159265;
     float3 gX = eT * cos(ang) + nT * sin(ang); float3 gY = cross(upT, gX);
     float lx = dot(rel, gX), ly = dot(rel, gY);
-    bool inSite = inCity || (townS > 0.3 && length(rel) < townR * 1.05);
+    bool inSite = inCity || inTownSite;
     // A way fades out as it narrows to under a pixel on the screen, before it shimmers (a telephoto view shows it from
     // far off, a wide one loses it near); a grown way's glow widens to a pixel and a half instead, dimmed to match.
     float pixCm = max(max(length(dpx), length(dpy)), 1.0);
@@ -581,15 +627,15 @@ if (water < 0.5 && settled > 0.0)
     {
         float plaza;
         float clr = SlonkTownWays(lx, ly, H, WayStyle, inCity, Rr, plaza);
-        float inTown = (1.0 - smoothstep(0.95, 1.05, length(rel) / Rr)) * landOk;
+        float inTown = (1.0 - smoothstep(1.0, 1.05, length(rel) / Rr)) * landOk;
         wayCover = max((1.0 - smoothstep(-50.0, 30.0, clr)) * wayFade, WayStyle > 2.5 ? plaza : 0.0) * inTown;
         if (WayStyle > 2.5) { wayGlow = (1.0 - smoothstep(0.0, gw, abs(clr + 45.0))) * glowFade * inTown; }
     }
-    // A road between the two nearest settlement points (the pair this pixel lies between), out of the towns at its
-    // ends, where both are lived at (and, for a people who do not pave, neither is one they would sooner have built
-    // into a cliff) and the pixel's ground will take one.
+    // A road between the two nearest settlement points (the pair this pixel lies between), out of the town at its near
+    // end and off any city's ground, where both are lived at (and, for a people who do not pave, neither is one they
+    // would sooner have built into a cliff) and the pixel's ground will take one.
     bool roadEnds = keptT * keptT2 > 0.0 && (WayStyle < 0.5 || (SlonkU(SlonkMix(townH, 0xC1u)) >= CliffAffinity && SlonkU(SlonkMix(town2H, 0xC1u)) >= CliffAffinity));
-    if (dmin2b < 9.0 && townS > 0.08 && roadEnds)
+    if (dt2 < 99.0 && !inCity && townSp > 0.08 && roadEnds)
     {
         // From the nearest site to the second, across the ground: both points' offsets laid in the pixel's own
         // tangent plane, so their heights off the sphere do not hold the road off the ground.

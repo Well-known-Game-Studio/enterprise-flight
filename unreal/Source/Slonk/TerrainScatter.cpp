@@ -207,14 +207,19 @@ namespace
 		return FRotationMatrix::MakeFromZX(Z, Ta * FMath::Cos(Yaw) + Tb * FMath::Sin(Yaw)).ToQuat();
 	}
 
-	/** The settlements near a chunk, as circles the scatter keeps out of. */
+	/** The settlements near a chunk, as circles the scatter keeps out of, and the ways the terrain paints round them
+	 *  (the roads between them, a grown town's outer ring ways). */
 	struct FKeepOut
 	{
 		TArray<TPair<FVector, double>> Towns;
+		FPlanetTerrainParams Params;
+		FCivilization Civ;
 		void Build(const FPlanetTerrainParams& P, const FCivilization& People, const SlonkScatter::FChunkGrid& G)
 		{
+			Params = P;
+			Civ = People.bInhabited ? People : SlonkCivs::Colonists();
 			TArray<FTownSite> Sites;
-			SlonkCities::EnumerateTowns(P, People.bInhabited ? People : SlonkCivs::Colonists(), G.Origin, G.EdgeCm * 0.75 + SlonkCities::CityRadiusCm(1.f) + 5000.0, Sites, 64);
+			SlonkCities::EnumerateTowns(P, Civ, G.Origin, G.EdgeCm * 0.75 + SlonkCities::CityRadiusCm(1.f) + 5000.0, Sites, 64);
 			// A cliff town runs its radius along the wall and its profile 300 m across it, either way.
 			for (const FTownSite& T : Sites) { Towns.Add({ T.LocalCm, FMath::Square((T.bCliff ? FMath::Sqrt(FMath::Square(T.RadiusCm) + FMath::Square(30000.0)) : T.RadiusCm) + 2500.0) }); }
 		}
@@ -224,6 +229,8 @@ namespace
 			for (const TPair<FVector, double>& T : Towns) { if (FVector::DistSquared(OnSphere, T.Key) < T.Value) { return true; } }
 			return false;
 		}
+		/** On a way the terrain paints, or within a couple of metres of one. */
+		bool OnWay(const FVector& Up) const { return SlonkCities::PaintedWayCm(Params, Civ, Up) < 200.0; }
 	};
 
 	/** The climate a plant grows in, from the world's snowline (SlonkTerrain::SnowlineCm), so the treeline is a
@@ -392,7 +399,7 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 			}
 			Density = FMath::Min(Density * S.Density, 0.9);
 			if (D.Next() >= Density) { continue; }
-			if (KeepOut.Towns.Num() > 0 && KeepOut.Contains(Sp.Up, R)) { continue; }
+			if (KeepOut.Towns.Num() > 0 && (KeepOut.Contains(Sp.Up, R) || KeepOut.OnWay(Sp.Up))) { continue; }
 			const double Seed = D.Next();
 			const double Snow = FMath::Clamp(Sp.Ice * 1.2, 0.0, 1.0) * (1.0 - FMath::Clamp(Sp.Slope * 2.0, 0.0, 1.0));
 
@@ -526,7 +533,7 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 			const FIntVector Key = ScrubCellKey(Cell);
 			FDraw D(Mix64(((uint64)(uint32)Key.X << 42) ^ ((uint64)(uint32)Key.Y << 21) ^ (uint64)(uint32)Key.Z ^ 0x6a09e667f3bcc909ULL));
 			if (D.Next() >= S.Life * S.Density * SmoothStep(0.25, 0.55, Zone)) { continue; }
-			if (KeepOut.Towns.Num() > 0 && KeepOut.Contains(Sp.Up, R)) { continue; }
+			if (KeepOut.Towns.Num() > 0 && (KeepOut.Contains(Sp.Up, R) || KeepOut.OnWay(Sp.Up))) { continue; }
 			// As wide as the painted dot, a little over half as tall; the mesh's crown is 110 cm across at unit scale.
 			const double Wide = DotR * 2.0 * FMath::Lerp(0.95, 1.15, D.Next());
 			const double H = Wide * FMath::Lerp(0.55, 0.85, D.Next());
