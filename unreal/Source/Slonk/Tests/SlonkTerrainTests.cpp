@@ -70,10 +70,11 @@ namespace
 		int32 Num() const { int32 N = 0; for (const TArray<FTransform>& T : Xf) { N += T.Num(); } return N; }
 		int32 NumPlants() const { int32 N = 0; for (int32 M = SlonkScatter::FirstPlant; M < SlonkScatter::NumMeshes; ++M) { N += Xf[M].Num(); } return N; }
 	};
-	FRocks Build(const FPlanetTerrainParams& P, const FScatterSettings& S, int32 Face, int32 Depth, int64 X, int64 Y)
+	/** A chunk's scatter at the terrain's default grid (64 steps a side), or at another the component allows. */
+	FRocks Build(const FPlanetTerrainParams& P, const FScatterSettings& S, int32 Face, int32 Depth, int64 X, int64 Y, int32 Steps = 64)
 	{
 		FRocks R;
-		UPlanetTerrainComponent::BuildChunkScatterForTest(P, S, Face, Depth, X, Y, 64, R.Xf, R.Drawn, &R.Origin);
+		UPlanetTerrainComponent::BuildChunkScatterForTest(P, S, Face, Depth, X, Y, Steps, R.Xf, R.Drawn, &R.Origin);
 		return R;
 	}
 
@@ -350,38 +351,46 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkTerrainShrubsOnDotsTest, "Slonk.Terrain.S
 bool FSlonkTerrainShrubsOnDotsTest::RunTest(const FString& Parameters)
 {
 	// Every bush stands on a scrub dot the terrain material paints: in a cell the shader's hash gives a dot, at the
-	// dot's centre, about as wide as the dot.
+	// dot's centre, about as wide as the dot. And on the coarsest grid the terrain allows (8 steps a side, vertices ten
+	// metres apart, the dots' cells under five) the chunk finds about as many as on the default one: every dot the
+	// drawn ground passes through, not only those in a cell that happens to hold a vertex.
 	const FPlanetTerrainParams P = RockWorld();
 	const int32 D = DepthFor(P, 8000.0);
 	const int32 M = SlonkScatter::PlantMesh(EPlant::Shrub);
-	int32 Shrubs = 0, OffDot = 0, WrongSize = 0;
+	int32 Shrubs = 0, OffDot = 0, WrongSize = 0, Fine = 0, Coarse = 0;
 	for (const FVector& Dir : GreenSpots(P, 6))
 	{
 		int32 Face; int64 X, Y;
 		if (!UPlanetTerrainComponent::ChunkAt(Dir, D, Face, X, Y)) { continue; }
-		const FRocks R = Build(P, Living(), Face, D, X, Y);
-		const FVector OriginNoise = SlonkScatter::ToNoiseSpace(R.Origin);
-		for (const FTransform& T : R.Xf[M])
+		for (const int32 Steps : { 64, 8 })
 		{
-			++Shrubs;
-			// The point of the ground the bush stands on (its foot, raised back out of the ground by the 4% of its
-			// height it is sunk), in the material's noise space as the chunk hands it to the shader.
-			const FVector Ground = T.GetLocation() + T.GetRotation().GetAxisZ() * (T.GetScale3D().Z * SlonkPlants::UnitCm * 0.04);
-			const FVector Foot = OriginNoise + (Ground - R.Origin);
-			FVector Centre; double Radius;
-			if (!SlonkScatter::ScrubDotAt(Foot, Centre, Radius)) { ++OffDot; continue; }
-			// Across the ground from the dot's centre: the centre lies above or below the surface, never beside it.
-			const FVector Up = T.GetLocation().GetSafeNormal();
-			const FVector Off = Foot - Centre;
-			if ((Off - Up * FVector::DotProduct(Off, Up)).Size() > 25.0) { ++OffDot; }
-			const double Wide = T.GetScale3D().X * 110.0;
-			if (Wide < Radius * 1.8 || Wide > Radius * 2.4) { ++WrongSize; }
+			const FRocks R = Build(P, Living(), Face, D, X, Y, Steps);
+			const FVector OriginNoise = SlonkScatter::ToNoiseSpace(R.Origin);
+			(Steps == 64 ? Fine : Coarse) += R.Xf[M].Num();
+			for (const FTransform& T : R.Xf[M])
+			{
+				++Shrubs;
+				// The point of the ground the bush stands on (its foot, raised back out of the ground by the 4% of its
+				// height it is sunk), in the material's noise space as the chunk hands it to the shader.
+				const FVector Ground = T.GetLocation() + T.GetRotation().GetAxisZ() * (T.GetScale3D().Z * SlonkPlants::UnitCm * 0.04);
+				const FVector Foot = OriginNoise + (Ground - R.Origin);
+				FVector Centre; double Radius;
+				if (!SlonkScatter::ScrubDotAt(Foot, Centre, Radius)) { ++OffDot; continue; }
+				// Across the ground from the dot's centre: the centre lies above or below the surface, never beside it.
+				const FVector Up = T.GetLocation().GetSafeNormal();
+				const FVector Off = Foot - Centre;
+				if ((Off - Up * FVector::DotProduct(Off, Up)).Size() > 25.0) { ++OffDot; }
+				const double Wide = T.GetScale3D().X * 110.0;
+				if (Wide < Radius * 1.8 || Wide > Radius * 2.4) { ++WrongSize; }
+			}
 		}
 	}
-	AddInfo(FString::Printf(TEXT("%d bushes: %d off their dot, %d not the dot's size"), Shrubs, OffDot, WrongSize));
-	TestTrue(TEXT("bushes were placed"), Shrubs > 10);
+	AddInfo(FString::Printf(TEXT("%d bushes (%d on the 64-step grids, %d on the 8-step): %d off their dot, %d not the dot's size"), Shrubs, Fine, Coarse, OffDot, WrongSize));
+	TestTrue(TEXT("bushes were placed"), Fine > 10);
 	TestEqual(TEXT("every bush stands on a painted dot's centre"), OffDot, 0);
 	TestEqual(TEXT("every bush is as wide as its dot"), WrongSize, 0);
+	// The two grids draw slightly different ground, so a few dots fall in or out; a missed cell would lose most.
+	TestTrue(TEXT("a coarse grid finds about as many bushes as the default one"), Coarse >= Fine * 0.75 && Coarse <= Fine * 1.25);
 	return true;
 }
 

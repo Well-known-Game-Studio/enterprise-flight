@@ -469,15 +469,24 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 	if (bLiving && G.EdgeCm <= ShrubMaxEdgeCm)
 	{
 		const FVector OriginNoise = ToNoiseSpace(G.Origin);
+		auto CellOf = [](const FVector& Pn) { return FIntVector((int32)FMath::FloorToDouble(Pn.X / ScrubCellCm), (int32)FMath::FloorToDouble(Pn.Y / ScrubCellCm), (int32)FMath::FloorToDouble(Pn.Z / ScrubCellCm)); };
+		// Every cell the drawn ground passes through, from each grid cell's box (its two triangles lie inside it):
+		// on a coarse grid the vertices are metres further apart than the dots' cells, and most of those cells hold
+		// none. A cell with water at a corner carries nothing (SpotAt), so it adds none.
 		TSet<FIntVector> Cells;
-		for (int32 j = 0; j <= G.Steps; ++j)
+		for (int32 j = 0; j < G.Steps; ++j)
 		{
-			for (int32 i = 0; i <= G.Steps; ++i)
+			for (int32 i = 0; i < G.Steps; ++i)
 			{
-				const int32 k = F.Index(i, j);
-				if (G.Samples[k].bWater) { continue; }
-				const FVector Pn = OriginNoise + G.Pos[k];
-				Cells.Add(FIntVector((int32)FMath::FloorToDouble(Pn.X / ScrubCellCm), (int32)FMath::FloorToDouble(Pn.Y / ScrubCellCm), (int32)FMath::FloorToDouble(Pn.Z / ScrubCellCm)));
+				const int32 Corner[4] = { F.Index(i, j), F.Index(i + 1, j), F.Index(i, j + 1), F.Index(i + 1, j + 1) };
+				FBox Box(ForceInit);
+				bool bWet = false;
+				for (const int32 k : Corner) { bWet |= G.Samples[k].bWater; Box += OriginNoise + G.Pos[k]; }
+				if (bWet) { continue; }
+				const FIntVector Lo = CellOf(Box.Min), Hi = CellOf(Box.Max);
+				for (int32 z = Lo.Z; z <= Hi.Z; ++z)
+				for (int32 y = Lo.Y; y <= Hi.Y; ++y)
+				for (int32 x = Lo.X; x <= Hi.X; ++x) { Cells.Add(FIntVector(x, y, z)); }
 			}
 		}
 		for (const FIntVector& Cell : Cells)
@@ -490,8 +499,7 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 			if (!SlonkTerrain::FaceUV(Planet.GetSafeNormal(), Face, U, V) || Face != G.Face || !F.Inside(U, V)) { continue; }
 			FSpot Sp;
 			if (!F.SpotAt(U, V, Sp) || Sp.River > 0.08 || Sp.Cliff > 0.3 || Sp.Ice > 0.3) { continue; }
-			const FVector At = OriginNoise + Sp.Pt;
-			if (FIntVector((int32)FMath::FloorToDouble(At.X / ScrubCellCm), (int32)FMath::FloorToDouble(At.Y / ScrubCellCm), (int32)FMath::FloorToDouble(At.Z / ScrubCellCm)) != Cell) { continue; }
+			if (CellOf(OriginNoise + Sp.Pt) != Cell) { continue; }
 			const double Zone = F.ScrubZoneAt(P, Sp);
 			FDraw D(Mix64(((uint64)(uint32)Cell.X << 42) ^ ((uint64)(uint32)Cell.Y << 21) ^ (uint64)(uint32)Cell.Z ^ 0x6a09e667f3bcc909ULL));
 			if (D.Next() >= S.Life * S.Density * SmoothStep(0.25, 0.55, Zone)) { continue; }
