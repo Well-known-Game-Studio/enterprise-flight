@@ -432,20 +432,27 @@ float3 townRel = 0; uint townH = 0u; float3 clusterRel = 0; uint clusterH = 0u; 
     cluster = 1.0 - smoothstep(0.02, 0.5, dmin[1]);
     town = 1.0 - smoothstep(0.03, 0.3, dmin[2]);
 }
-float city = region * cluster * town * (1.0 - water) * saturate((wet - 0.25) * 4.0) * (1.0 - saturate(slope * 12.0)) * lowland * saturate(fb0 * 4.0 + 0.6);
+// Only a world with settlements has them: one without night lights (SlonkCities builds nothing there, HasCities)
+// keeps its bare ground by day as well as by night.
+float settled = NightLightIntensity > 0.0 ? 1.0 : 0.0;
+float city = settled * region * cluster * town * (1.0 - water) * saturate((wet - 0.25) * 4.0) * (1.0 - saturate(slope * 12.0)) * lowland * saturate(fb0 * 4.0 + 0.6);
 // Built-up ground by day: paving and roofs grey the land where the lights are at night.
 base = lerp(base, float3(0.30, 0.29, 0.28), saturate(city * 1.5) * 0.7);
 // Streets: a city at a cluster point or a town at a town point lays its blocks on a grid (bearing and pitch from
 // its seed, as the buildings are laid); the streets between the lots and a wider avenue every fifth and seventh
 // row are paved, and the lots themselves greyed.
-if (water < 0.5)
+if (water < 0.5 && settled > 0.0)
 {
     float cityR = 640000.0 * (0.25 + 0.2 * region);
-    float3 relC = clusterRel;
+    // The footprints are round the sites SlonkCities builds on: each Worley point taken down onto the sphere (it lies
+    // off the surface by up to half its cell, kilometres), the pixel's offset from it measured across the ground.
+    float3 upC = normalize(U * PlanetRadiusCm - clusterRel), upW = normalize(U * PlanetRadiusCm - townRel);
+    float3 relC = clusterRel - upC * dot(clusterRel, upC);
+    float3 relW = townRel - upW * dot(townRel, upW);
     bool inCity = region > 0.35 && length(relC) < cityR * 1.05;
     float townS = region * cluster;
     float townR = 160000.0 * (0.2 + 0.3 * townS);
-    float3 rel = inCity ? relC : townRel;
+    float3 rel = inCity ? relC : relW;
     uint H = inCity ? clusterH : townH;
     float Rr = inCity ? cityR : townR;
     if (inCity || (townS > 0.3 && length(rel) < townR * 1.05))
@@ -454,8 +461,8 @@ if (water < 0.5)
         uint h17 = H ^ (17u + 0x9e3779b9u + (H << 6) + (H >> 2)); h17 = (h17 ^ (h17 >> 13)) * 0x5bd1e995u; h17 ^= h17 >> 15;
         float ang = (float)(h11 & 0xffffu) / 65535.0 * 3.14159265;
         float pitch = 3600.0 + 1400.0 * (float)(h17 & 0xffffu) / 65535.0;
-        // The settlement's own up: its point, the pixel less the offset (a direction keeps its precision).
-        float3 upT = normalize(U * PlanetRadiusCm - rel);
+        // The settlement's own up, at its site.
+        float3 upT = inCity ? upC : upW;
         float3 eT = normalize(cross(float3(0, 0, 1), upT)); float3 nT = cross(upT, eT);
         float3 gX = eT * cos(ang) + nT * sin(ang); float3 gY = cross(upT, gX);
         float gx = dot(rel, gX) / pitch, gy = dot(rel, gY) / pitch;
@@ -475,8 +482,10 @@ if (water < 0.5)
     // where both ends stand on land and the pixel does.
     if (dmin2b < 9.0 && townS > 0.08)
     {
-        // From the nearest point to the second, and the pixel's offset from the nearest.
-        float3 ab = townRel - town2Rel; float3 ap = townRel;
+        // From the nearest site to the second, across the ground: both points' offsets laid in the pixel's own
+        // tangent plane, so their heights off the sphere do not hold the road off the ground.
+        float3 ap = townRel - U * dot(townRel, U);
+        float3 ab = ap - (town2Rel - U * dot(town2Rel, U));
         float t = saturate(dot(ap, ab) / max(dot(ab, ab), 1.0));
         float dRoad = length(ap - ab * t);
         float road = (1.0 - smoothstep(350.0, 500.0, dRoad)) * (1.0 - saturate(slope * 8.0)) * saturate((wet - 0.2) * 5.0);

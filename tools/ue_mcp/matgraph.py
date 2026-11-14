@@ -43,6 +43,14 @@ def T(ts, tool, args):
     return mcp.unwrap(mcp.call_tool("call_tool", {"toolset_name": ts, "tool_name": tool, "arguments": args}))
 
 
+def need(r, what):
+    """The return value of a read that has to succeed: a failed one stops the dump (two failed dumps would compare
+    equal and pass the check without comparing anything)."""
+    if not isinstance(r, dict) or r.get("isError") or "returnValue" not in r:
+        raise SystemExit(f"matgraph: {what} failed: {json.dumps(r, default=str)[:400]}")
+    return r["returnValue"]
+
+
 def props(obj, names):
     """One call for all the names; if the class lacks one, one call each."""
     if not names:
@@ -62,7 +70,9 @@ def props(obj, names):
 
 def dump(name, path):
     mat = M(name)
-    exprs = T(MT, "get_expressions", {"material_or_function": mat}).get("returnValue", [])
+    exprs = need(T(MT, "get_expressions", {"material_or_function": mat}), f"reading the nodes of {name}")
+    if not exprs:
+        raise SystemExit(f"matgraph: {name} has no nodes (is it the right name, and is the editor's MCP up?)")
     info, ids = {}, {}
     for e in exprs:
         ref = e["refPath"]
@@ -88,7 +98,7 @@ def dump(name, path):
     nodes = {}
     for e in exprs:
         ref = e["refPath"]
-        wires = T(MT, "get_expression_inputs", {"material_or_function": mat, "expression": e}).get("returnValue", [])
+        wires = need(T(MT, "get_expression_inputs", {"material_or_function": mat, "expression": e}), f"reading the inputs of {ref}")
         w = {}
         for i, src in enumerate(wires or []):
             ex = (src or {}).get("expression")
@@ -103,11 +113,14 @@ def dump(name, path):
         nodes[ids[ref]] = {"props": p, "inputs": w}
     outs = {}
     for o in OUTS:
-        r = T(MT, "get_property_input", {"material": mat, "material_property": o}).get("returnValue") or {}
+        r = need(T(MT, "get_property_input", {"material": mat, "material_property": o}), f"reading {name}'s {o}") or {}
         ex = r.get("expression")
         if isinstance(ex, dict) and ex.get("refPath"):
             outs[o] = [ids.get(ex["refPath"], ex["refPath"]), r.get("output_name", "")]
-    data = {"material": props(mat, MATPROPS), "outputs": outs, "nodes": dict(sorted(nodes.items()))}
+    settings = props(mat, MATPROPS)
+    if not settings:
+        raise SystemExit(f"matgraph: reading {name}'s settings failed")
+    data = {"material": settings, "outputs": outs, "nodes": dict(sorted(nodes.items()))}
     json.dump(data, open(path, "w", encoding="utf-8"), indent=1, sort_keys=True)
     print(name, len(nodes), "nodes ->", path)
 
