@@ -1084,11 +1084,20 @@ void APlanetBody::UpdateNearCollision(const FVector& ViewLocal, bool bForce)
 		for (const FTransform& Tm : CityInstances[K])
 		{
 			// Round the view, and round a pinned spot (a transporter's destination) while its pin lasts.
-			if (FVector::DistSquared(Tm.GetLocation(), View) < ReachSq || (bPinned && FVector::DistSquared(Tm.GetLocation(), CityPinLocal) < ReachSq)) { Near.Add(Tm); }
+			if (FVector::DistSquared(Tm.GetLocation(), View) < ReachSq || (bPinned && FVector::DistSquared(Tm.GetLocation(), CityPinLocal) < ReachSq)) { Near.Add(ToCityFrame(Tm)); }
 		}
 		if (H->GetInstanceCount() > 0) { H->ClearInstances(); }
+		PlaceAtCityOrigin(H);
 		if (Near.Num() > 0) { H->AddInstances(Near, false, false); }
 	}
+}
+
+void APlanetBody::PlaceAtCityOrigin(USceneComponent* C) const
+{
+	if (!C) { return; }
+	// The components keep absolute scale, but their relative location is scaled by the root's (the sphere's).
+	const FVector RootScale = Body ? Body->GetComponentScale() : FVector::OneVector;
+	C->SetRelativeLocation(CityOriginLocal / RootScale.ComponentMax(FVector(UE_SMALL_NUMBER)));
 }
 
 void APlanetBody::PrepareGroundCollisionAt(const FVector& WorldPos, float Seconds)
@@ -1168,14 +1177,20 @@ void APlanetBody::UpdateCities(const FVector& ViewLoc, float DeltaTime)
 			if (CityPending->Towns.Difference(CityActiveTowns).Num() > 0 || CityActiveTowns.Difference(CityPending->Towns).Num() > 0)
 			{
 				for (TArray<FTransform>& Ks : CityInstances) { Ks.Reset(); }
+				// The components move to the ground the towns were built round; their instances go in relative to it.
+				CityOriginLocal = CityPending->Origin;
+				TArray<FTransform> Local;
 				for (int32 K = 0; K < BuildingSets.Num(); ++K)
 				{
 					UHierarchicalInstancedStaticMeshComponent* H = BuildingSets[K];
 					const TArray<FTransform>& Inst = CityPending->Instances[K];
 					H->ClearInstances();
+					PlaceAtCityOrigin(H);
 					if (Inst.Num() > 0)
 					{
-						H->AddInstances(Inst, false, false);
+						Local.Reset(Inst.Num());
+						for (const FTransform& T : Inst) { Local.Add(ToCityFrame(T)); }
+						H->AddInstances(Local, false, false);
 						for (int32 i = 0; i < Inst.Num(); ++i)
 						{
 							const FVector Sc = Inst[i].GetScale3D();
@@ -1224,6 +1239,7 @@ void APlanetBody::UpdateCities(const FVector& ViewLoc, float DeltaTime)
 	const double Reach = CityReachKm * 100000.0;
 	CityPending = MakeShared<FCityBuild, ESPMode::ThreadSafe>();
 	CityPending->Generation = CityGeneration;
+	CityPending->Origin = Centre;
 	TSharedPtr<FCityBuild, ESPMode::ThreadSafe> Res = CityPending;
 	CityFuture = Async(EAsyncExecution::ThreadPool, [P, Who, Centre, Reach, Res]()
 	{

@@ -66,6 +66,8 @@
 #include "WarpViewComponent.h"
 #include "GameClock.h"
 #include "Misc/FileHelper.h"
+#include "Misc/App.h"
+#include "Misc/CommandLine.h"
 #include "Misc/Paths.h"
 
 AStarshipPawn::AStarshipPawn()
@@ -1517,6 +1519,7 @@ void AStarshipPawn::Tick(float DeltaTime)
 	}
 	FSlonkScopeTimer SlonkTimer_(TEXT("Tick StarshipPawn"));
 	Super::Tick(DeltaTime);
+	TickScript();
 	ProcessDebugCommand();
 	TickClock(DeltaTime);
 	const float SimDt = UGameClockSubsystem::Sim(this, DeltaTime);
@@ -1726,8 +1729,20 @@ void AStarshipPawn::UpdateCameras(float DeltaTime)
 	const float Flash = WarpDrive ? WarpDrive->GetFlashIntensity() : 0.f;
 	const float ThrottleAbs = Movement ? FMath::Abs((float)Movement->Throttle) : 0.f;
 
+	// A scripted swing round the ship (camera orbit): eased in and out, held where it ends, let go once home.
+	if (bCameraOrbit)
+	{
+		CameraOrbitAge += DeltaTime;
+		const float T = FMath::Clamp(CameraOrbitAge / CameraOrbitSeconds, 0.f, 1.f);
+		FreeLookAngles = FMath::Lerp(CameraOrbitFrom, CameraOrbitTo, T * T * T * (T * (T * 6.f - 15.f) + 10.f));
+		if (T >= 1.f && FMath::IsNearlyZero(FMath::Fmod(CameraOrbitTo.X, 360.f), 0.5f) && FMath::IsNearlyZero(CameraOrbitTo.Y, 0.5f))
+		{
+			bCameraOrbit = false;
+			FreeLookAngles = FVector2D::ZeroVector;
+		}
+	}
 	// Free look: hold to orbit, release to spring back.
-	if (!bFreeLook && DebugLookTime <= 0.f)
+	else if (!bFreeLook && DebugLookTime <= 0.f)
 	{
 		const float A = 1.f - FMath::Exp(-FreeLookReturnRate * DeltaTime);
 		FreeLookAngles = FMath::Lerp(FreeLookAngles, FVector2D::ZeroVector, A);
@@ -1883,6 +1898,7 @@ void AStarshipPawn::ProcessDebugCommand()
 	UE_LOG(LogTemp, Log, TEXT("Starship debug command: %s"), *Cmd);
 
 	if (HandleCraftCommand(Op, Args)) {}
+	else if (Op == TEXT("script") && Args.Num() > 1) { StartScript(Cmd.TrimStartAndEnd().Mid(7).TrimStartAndEnd()); }
 	else if (Op == TEXT("throttle") && Movement) { Movement->SetThrottle(Arg(1, 0.f)); }
 	else if (Op == TEXT("bridge") && BridgeInterior)
 	{
@@ -1950,6 +1966,15 @@ void AStarshipPawn::ProcessDebugCommand()
 		else if (Mode == TEXT("bottom")) { SetCameraMode(EStarshipCameraMode::Bottom); }
 		else if (Mode == TEXT("stern")) { SetCameraMode(EStarshipCameraMode::Stern); }
 		else if (Mode == TEXT("bay")) { SetCameraMode(EStarshipCameraMode::Bay); }
+		else if (Mode == TEXT("orbit"))
+		{
+			// camera orbit <yaw> <pitch> <seconds>: swing the free look round the ship to there and hold it.
+			CameraOrbitFrom = FreeLookAngles;
+			CameraOrbitTo = FVector2D(Arg(2, 0.f), Arg(3, 0.f));
+			CameraOrbitSeconds = FMath::Max(Arg(4, 3.f), 0.05f);
+			CameraOrbitAge = 0.f;
+			bCameraOrbit = true;
+		}
 		else { CycleCameraMode(); }
 	}
 	else if (Op == TEXT("steer"))
@@ -2057,10 +2082,12 @@ void AStarshipPawn::ProcessDebugCommand()
 			UE_LOG(LogTemp, Log, TEXT("People on %s: %s"), *Planet->GetDisplayName(), *Planet->GetPeople().Describe());
 		}
 	}
-	else if (Op == TEXT("terrain") && Movement && ArgStr(1) == TEXT("goto"))
+	else if (Op == TEXT("terrain") && Movement && (ArgStr(1) == TEXT("goto") || ArgStr(1) == TEXT("glide")))
 	{
 		// terrain goto <canyon|mesa|badlands|mountain|coast|land> <altitude m> [heading: across|sun|away]: park over that feature of
 		// the nearest planet, level, nose along the horizon. "across" flies with the sun on the beam.
+		// terrain glide <the same> <seconds>: fly there over that long instead (UStarshipMovementComponent::StartGlide).
+		const bool bGlide = ArgStr(1) == TEXT("glide");
 		APlanetBody* Planet = Cast<APlanetBody>(Movement->GroundBody.Get());
 		if (!Planet)
 		{
@@ -2160,11 +2187,21 @@ void AStarshipPawn::ProcessDebugCommand()
 			Fwd = (Fwd - Up * FVector::DotProduct(Fwd, Up)).GetSafeNormal();
 			if (Fwd.IsNearlyZero()) { Fwd = FVector::CrossProduct(Up, FVector::ZAxisVector).GetSafeNormal(); }
 			if (Movement) { Movement->SetThrottle(0.0); Movement->Velocity = FVector::ZeroVector; Movement->AngularVelocity = FRotator::ZeroRotator; }
-			SetActorLocationAndRotation(Pos, FRotationMatrix::MakeFromXZ(Fwd, Up).ToQuat(), false, nullptr, ETeleportType::TeleportPhysics);
-			// Ride the ground from here: with the velocity zeroed the planet would otherwise turn under the ship at
-			// its surface speed (close to a kilometre a second on an Earth-size world) and carry the feature away.
-			if (Movement) { Movement->SetTerrainFollow(Arg(3, 1000.f) * 100.0); }
-			UE_LOG(LogTemp, Log, TEXT("Terrain goto %s on %s: ground %.1f m, parked %.0f m above it"), *ArgStr(2), *Planet->GetDisplayName(), H / 100.0, Arg(3, 1000.f));
+			if (bGlide)
+			{
+				// terrain glide: fly there instead, over the seconds given (the first number after the heading).
+				float Seconds = 20.f;
+				for (int32 i = 5; i < Args.Num(); ++i) { if (ArgStr(i).IsNumeric()) { Seconds = Arg(i, 20.f); break; } }
+				if (Movement) { Movement->SetCanyonFollow(false); Movement->StartGlide(Planet, FTransform(FRotationMatrix::MakeFromXZ(Fwd, Up).ToQuat(), Pos), Arg(3, 1000.f) * 100.0, Seconds); }
+			}
+			else
+			{
+				SetActorLocationAndRotation(Pos, FRotationMatrix::MakeFromXZ(Fwd, Up).ToQuat(), false, nullptr, ETeleportType::TeleportPhysics);
+				// Ride the ground from here: with the velocity zeroed the planet would otherwise turn under the ship at
+				// its surface speed (close to a kilometre a second on an Earth-size world) and carry the feature away.
+				if (Movement) { Movement->SetTerrainFollow(Arg(3, 1000.f) * 100.0); }
+			}
+			UE_LOG(LogTemp, Log, TEXT("Terrain %s %s on %s: ground %.1f m, %.0f m above it (nose.sun %.2f, up.sun %.2f)"), bGlide ? TEXT("glide") : TEXT("goto"), *ArgStr(2), *Planet->GetDisplayName(), H / 100.0, Arg(3, 1000.f), FVector::DotProduct(Fwd, Sun), FVector::DotProduct(Up, Sun));
 		}
 		else { UE_LOG(LogTemp, Log, TEXT("Terrain goto: no %s found"), *ArgStr(2)); }
 	}
@@ -2639,6 +2676,23 @@ bool AStarshipPawn::HandleCraftCommand(const FString& Op, const TArray<FString>&
 	{
 		// crewpose <thigh> <calf> <upperarm> <forearm> <lean>: re-pose the seated bridge crew (degrees), for tuning.
 		if (BridgeInterior) { BridgeInterior->ReposeCrew(FCString::Atof(*Args[1]), FCString::Atof(*Args[2]), FCString::Atof(*Args[3]), FCString::Atof(*Args[4]), FCString::Atof(*Args[5])); }
+		return true;
+	}
+	if (Op == TEXT("walk") && Args.Num() > 1)
+	{
+		// walk lift|use: the person on foot walks (for a filmed run) to the place's lift door or its own spot: the
+		// chair on the bridge, the shuttle in the bay, the pad in the transporter room.
+		if (APersonPawn* P = ActivePerson.Get())
+		{
+			FTransform Lift, Use; FString Label;
+			const FVector Feet = P->FeetInCraft();
+			if (P->IsAboard() && PlaceSpots(P->GetPlace(), P->GetRoom(), Lift, Use, Label, &Feet))
+			{
+				const FVector Target = (Args[1].ToLower() == TEXT("lift") ? Lift : Use).GetLocation();
+				P->ScriptWalkTo(Target);
+				UE_LOG(LogTemp, Log, TEXT("Walking to the %s in %s, %.1f m"), *Args[1].ToLower(), *UShipInteriorComponent::RoomName(P->GetRoom()), FVector::Dist2D(Feet, Target) / 100.0);
+			}
+		}
 		return true;
 	}
 	if (Op == TEXT("walkto") && Args.Num() > 1)
@@ -3920,6 +3974,62 @@ void AStarshipPawn::OnShuttleDocked(AShuttlecraftPawn* Shuttle)
 void AStarshipPawn::ScreenMessage(const FString& Text, FColor Color, float Seconds) const
 {
 	if (GEngine) { GEngine->AddOnScreenDebugMessage(-1, Seconds, Color, Text); }
+}
+
+void AStarshipPawn::StartScript(const FString& Path)
+{
+	ScriptLines.Reset();
+	ScriptLine = 0;
+	ScriptWaitUntil = 0.0;
+	bScriptWaitPilot = false;
+	if (!FFileHelper::LoadFileToStringArray(ScriptLines, *Path)) { UE_LOG(LogTemp, Warning, TEXT("Script: cannot read %s"), *Path); return; }
+	UE_LOG(LogTemp, Log, TEXT("Script: %s, %d lines"), *Path, ScriptLines.Num());
+}
+
+void AStarshipPawn::TickScript()
+{
+	// A capture's script from the command line, run once, by the ship the player flies (not every starship pawn in
+	// play, nor the shuttle when she is taken out).
+	static bool bCommandLineScriptTaken = false;
+	if (!bCommandLineScriptTaken && IsPlayerControlled() && !IsShuttle())
+	{
+		bCommandLineScriptTaken = true;
+		FString ScriptPath;
+		if (FParse::Value(FCommandLine::Get(), TEXT("SlonkScript="), ScriptPath)) { StartScript(ScriptPath); }
+	}
+	if (ScriptLine >= ScriptLines.Num()) { return; }
+	// The craft the player is flying (the shuttle once it is out), else this ship (which sees to its crew on foot):
+	// where the commands go, and whose autopilot "waitpilot" waits for.
+	AStarshipPawn* To = this;
+	APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+	if (PC) { if (AStarshipPawn* Flown = Cast<AStarshipPawn>(PC->GetPawn())) { To = Flown; } }
+	const double Now = FApp::GetCurrentTime();
+	if (Now < ScriptWaitUntil) { return; }
+	if (bScriptWaitPilot && To->AutopilotState != 0) { return; }
+	if (bScriptWaitWarp && !(To->Movement && To->Movement->bWarpActive)) { return; }
+	if (bScriptWaitFoot && !(PC && Cast<APersonPawn>(PC->GetPawn()))) { return; }
+	if (bScriptWaitGlide && To->Movement && To->Movement->IsGliding()) { return; }
+	if (bScriptWaitWalk && ActivePerson.IsValid() && ActivePerson->IsScriptWalking()) { return; }
+	bScriptWaitWalk = false;
+	bScriptWaitWarp = false;
+	bScriptWaitPilot = false;
+	bScriptWaitFoot = false;
+	bScriptWaitGlide = false;
+	while (ScriptLine < ScriptLines.Num())
+	{
+		const FString L = ScriptLines[ScriptLine++].TrimStartAndEnd();
+		if (L.IsEmpty() || L.StartsWith(TEXT("#"))) { continue; }
+		UE_LOG(LogTemp, Log, TEXT("Script %d: %s"), ScriptLine, *L);
+		if (L.StartsWith(TEXT("wait "))) { ScriptWaitUntil = Now + FCString::Atod(*L.Mid(5)); return; }
+		if (L == TEXT("waitpilot")) { bScriptWaitPilot = true; return; }
+		if (L == TEXT("waitwarp")) { bScriptWaitWarp = true; return; }
+		if (L == TEXT("waitfoot")) { bScriptWaitFoot = true; return; }
+		if (L == TEXT("waitglide")) { bScriptWaitGlide = true; return; }
+		if (L == TEXT("waitwalk")) { bScriptWaitWalk = true; return; }
+		if (L == TEXT("quit")) { FPlatformMisc::RequestExit(false); return; }
+		To->DebugCommand = L;
+		To->ProcessDebugCommand();
+	}
 }
 
 void AStarshipPawn::Ship(const FString& Command)

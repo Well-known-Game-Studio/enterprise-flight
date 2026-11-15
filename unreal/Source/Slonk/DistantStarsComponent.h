@@ -70,9 +70,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Distant Stars")
 	float NebulaMinAngularDeg = 0.02f;
 
-	/** The sprite never reads smaller than this many degrees, so a distant nebula is a smudge and not a dot. */
+	/** The sprite never reads smaller than this many degrees, so a distant nebula is a smudge of a few pixels and not
+	 *  a dot (any more and a far cloud is drawn many times its size, and shrinks into the volume at the hand-over). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Distant Stars")
-	float NebulaMinApparentDeg = 3.f;
+	float NebulaMinApparentDeg = 0.1f;
 
 	/** Glow brightness of a nebula sprite relative to its Brightness. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Distant Stars")

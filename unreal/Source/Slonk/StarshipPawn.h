@@ -509,6 +509,31 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
 	FString DebugCommand;
 
+	/**
+	 * A script of debug commands run in order from Tick, for a capture that has to be the same every time (with
+	 * -benchmark -fps=24 every frame is a 24th of a second, however long it takes to draw): `-SlonkScript=<file>`
+	 * on the command line, or `script <file>`. One command a line; `wait <seconds>` (the app's clock: the capture's,
+	 * not the game clock's scale), `waitpilot` (until the autopilot lets go), `waitwarp` (until the drive engages),
+	 * `waitfoot` (until the player is on foot: a shuttle home and docked), `waitglide` (until a terrain glide ends),
+	 * `waitwalk` (until the person's `walk` arrives), `quit`; `#` comments.
+	 */
+	TArray<FString> ScriptLines;
+	int32 ScriptLine = 0;
+	double ScriptWaitUntil = 0.0;
+	bool bScriptWaitPilot = false;
+	bool bScriptWaitWarp = false;
+	bool bScriptWaitFoot = false;
+	bool bScriptWaitGlide = false;
+	bool bScriptWaitWalk = false;
+	void StartScript(const FString& Path);
+	void TickScript();
+
+	/** camera orbit <yaw> <pitch> <seconds>: swing the outside camera's free look to there, easing in and out, and
+	 *  hold it (the free look otherwise springs back); a swing to 0 0 (or a whole turn) lets go at the end. */
+	FVector2D CameraOrbitFrom = FVector2D::ZeroVector, CameraOrbitTo = FVector2D::ZeroVector;
+	float CameraOrbitAge = 0.f, CameraOrbitSeconds = 0.f;
+	bool bCameraOrbit = false;
+
 	// ---- Warp FX ----
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Warp FX")

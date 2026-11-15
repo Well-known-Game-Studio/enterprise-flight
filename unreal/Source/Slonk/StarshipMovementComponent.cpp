@@ -83,6 +83,16 @@ void UStarshipMovementComponent::TickComponent(float DeltaTime, ELevelTick TickT
 		}
 	}
 
+	if (bGliding)
+	{
+		TickGlide(DeltaTime);
+		UpdateComponentVelocity();
+		SteeringInput = FVector::ZeroVector;
+		VerticalInput = 0.f;
+		ThrusterInput = FVector::ZeroVector;
+		return;
+	}
+
 	// ---- Attitude ----
 	const float SteerScale = bWarpActive ? WarpSteeringScale : 1.f;
 	const FRotator TargetRates(
@@ -245,6 +255,127 @@ double UStarshipMovementComponent::GroundVerticalRate(double AltitudeCm) const
 	// 600 at 10 km for the starship; floored at its own clearance so touchdown height is not a crawl.
 	const double Floor = FMath::Max(GroundClearanceCm, 300.0);
 	return VerticalRateScale * 6000.0 * FMath::Sqrt(FMath::Max(AltitudeCm, Floor) / 10000.0);
+}
+
+namespace
+{
+	/** A glide keeps this far over the ground on its way (it starts and ends where it is told). */
+	constexpr double GlideClearanceCm = 12000.0;
+	/** And climbs or descends to clear it no steeper than this (rise over run). */
+	constexpr double GlideSlope = 0.3;
+	/** Heights sampled along the way. */
+	constexpr int32 GlideSteps = 128;
+}
+
+void UStarshipMovementComponent::StartGlide(APlanetBody* Body, const FTransform& EndWorld, double EndAltitudeCm, float Seconds)
+{
+	if (!Body || !UpdatedComponent) { return; }
+	const FTransform PlanetT(Body->GetActorQuat(), Body->GetActorLocation());
+	const FTransform Here(UpdatedComponent->GetComponentQuat(), UpdatedComponent->GetComponentLocation());
+	GlideStartLocal = Here.GetRelativeTransform(PlanetT);
+	GlideEndLocal = FTransform(EndWorld.GetRotation(), EndWorld.GetLocation()).GetRelativeTransform(PlanetT);
+	const FVector D0 = GlideStartLocal.GetLocation().GetSafeNormal(), D1 = GlideEndLocal.GetLocation().GetSafeNormal();
+	const double R0 = GlideStartLocal.GetLocation().Size(), R1 = GlideEndLocal.GetLocation().Size();
+	const double Seg = FMath::Acos(FMath::Clamp(FVector::DotProduct(D0, D1), -1.0, 1.0)) * Body->GetRadiusCm() / GlideSteps;
+	const FQuat Turn = FQuat::FindBetweenNormals(D0, D1);
+	// The least height at each step: the straight run from the start's to the end's, or the ground plus a margin.
+	TArray<double> Least;
+	Least.SetNum(GlideSteps + 1);
+	for (int32 i = 0; i <= GlideSteps; ++i)
+	{
+		const double F = (double)i / GlideSteps;
+		const FVector D = FQuat::Slerp(FQuat::Identity, Turn, F).RotateVector(D0);
+		const double Ground = Body->GetSurfaceRadiusCm(PlanetT.TransformPosition(D * Body->GetRadiusCm()));
+		Least[i] = FMath::Max(FMath::Lerp(R0, R1, F), Ground + GlideClearanceCm);
+	}
+	// Each ridge raises the path round it on a slope, so the ship climbs before it rather than at it.
+	GlideHeights.SetNum(GlideSteps + 1);
+	for (int32 i = 0; i <= GlideSteps; ++i)
+	{
+		double H = Least[i];
+		for (int32 j = 0; j <= GlideSteps; ++j) { H = FMath::Max(H, Least[j] - GlideSlope * FMath::Abs(i - j) * Seg); }
+		GlideHeights[i] = H;
+	}
+	// The ends are where the ship is and where it is going, eased into over the first and last few steps (slow ones:
+	// the glide's own pace eases in and out).
+	const int32 Ease = FMath::Max(GlideSteps / 16, 1);
+	for (int32 i = 0; i <= Ease; ++i)
+	{
+		const double W = FMath::SmoothStep(0.0, 1.0, (double)i / Ease);
+		GlideHeights[i] = FMath::Lerp(R0, GlideHeights[i], W);
+		GlideHeights[GlideSteps - i] = FMath::Lerp(R1, GlideHeights[GlideSteps - i], W);
+	}
+	GlideBody = Body;
+	GlideEndAltitudeCm = EndAltitudeCm;
+	GlideSeconds = FMath::Max(Seconds, 0.5f);
+	GlideAge = 0.f;
+	GlideLastLocal = GlideStartLocal.GetLocation();
+	bGliding = true;
+	bLanded = false;
+	ClearTerrainFollow();
+	ClearOrbitHold();
+	Throttle = 0.0;
+	AngularVelocity = FRotator::ZeroRotator;
+	double Highest = R0;
+	for (const double H : GlideHeights) { Highest = FMath::Max(Highest, H); }
+	UE_LOG(LogTemp, Log, TEXT("Glide over %.0f s: %.2f km, from %.0f m to %.0f m above sea level, %.0f m at the highest"), GlideSeconds,
+		Seg * GlideSteps / 1.0e5, (R0 - Body->GetRadiusCm()) / 100.0, (R1 - Body->GetRadiusCm()) / 100.0, (Highest - Body->GetRadiusCm()) / 100.0);
+}
+
+void UStarshipMovementComponent::TickGlide(float DeltaTime)
+{
+	APlanetBody* Body = GlideBody.Get();
+	if (!Body || GlideHeights.Num() < 2 || !UpdatedComponent) { bGliding = false; return; }
+	GlideAge += DeltaTime;
+	const float T = FMath::Clamp(GlideAge / GlideSeconds, 0.f, 1.f);
+	// Smootherstep: no jolt at either end.
+	const double S = (double)T * T * T * (T * (T * 6.0 - 15.0) + 10.0);
+	const FTransform PlanetT(Body->GetActorQuat(), Body->GetActorLocation());
+	const FVector D0 = GlideStartLocal.GetLocation().GetSafeNormal(), D1 = GlideEndLocal.GetLocation().GetSafeNormal();
+	const FQuat Turn = FQuat::FindBetweenNormals(D0, D1);
+	const FVector D = FQuat::Slerp(FQuat::Identity, Turn, S).RotateVector(D0).GetSafeNormal();
+	const int32 N = GlideHeights.Num() - 1;
+	const double X = S * N;
+	const int32 I = FMath::Clamp((int32)X, 0, N - 1);
+	const FVector Local = D * FMath::Lerp(GlideHeights[I], GlideHeights[I + 1], FMath::Clamp(X - I, 0.0, 1.0));
+	// Heading: a run of more than a couple of hundred metres turns to face the way first and to the end's heading
+	// last, level on the ground under it; a short one turns straight from the one heading to the other.
+	const FQuat Q0 = GlideStartLocal.GetRotation(), Q1 = GlideEndLocal.GetRotation();
+	const FVector Axis = FVector::CrossProduct(D0, D1);
+	FQuat Q;
+	if (Axis.Size() * Body->GetRadiusCm() > 20000.0)
+	{
+		const FVector Way = FVector::CrossProduct(Axis.GetSafeNormal(), D).GetSafeNormal();
+		const FQuat Along = FRotationMatrix::MakeFromXZ(Way, D).ToQuat();
+		Q = FQuat::Slerp(Q0, Along, FMath::SmoothStep(0.f, 0.25f, T));
+		Q = FQuat::Slerp(Q, Q1, FMath::SmoothStep(0.75f, 1.f, T));
+	}
+	else
+	{
+		Q = FQuat::Slerp(Q0, Q1, (float)S);
+	}
+	const FVector World = PlanetT.TransformPosition(Local);
+	// The velocity over the ground (the world's turn is carried, not flown, as in ApplyTerrainFloor).
+	Velocity = PlanetT.GetRotation().RotateVector(Local - GlideLastLocal) / FMath::Max(DeltaTime, 1.0e-4f);
+	GlideLastLocal = Local;
+	UpdatedComponent->SetWorldLocationAndRotation(World, (PlanetT.GetRotation() * Q).GetNormalized(), false, nullptr, ETeleportType::TeleportPhysics);
+	// Keep the ground's bookkeeping current, or the first tick after would carry the ship through the whole glide's turn.
+	CarryBody = Body;
+	CarryBodyQuat = Body->GetActorQuat();
+	GroundBody = Body;
+	GroundCarry = 1.f;
+	const double SurfR = Body->GetSurfaceRadiusCm(World);
+	GroundHeightCm = SurfR - Body->GetRadiusCm();
+	AltitudeAGLCm = Local.Size() - SurfR;
+	if (T >= 1.f)
+	{
+		bGliding = false;
+		Velocity = FVector::ZeroVector;
+		AngularVelocity = FRotator::ZeroRotator;
+		Throttle = 0.0;
+		SetTerrainFollow(GlideEndAltitudeCm);
+		UE_LOG(LogTemp, Log, TEXT("Glide done: %.0f m over the ground"), AltitudeAGLCm / 100.0);
+	}
 }
 
 void UStarshipMovementComponent::SetTerrainFollow(double AltitudeCm)

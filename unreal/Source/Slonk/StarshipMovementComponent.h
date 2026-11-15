@@ -236,6 +236,16 @@ public:
 	void ClearTerrainFollow() { bTerrainFollow = false; bCanyonFollow = false; }
 	/** With terrain following on, steer along the canyon: yaw each tick toward the deeper cut ahead. */
 	void SetCanyonFollow(bool bOn) { bCanyonFollow = bOn; }
+
+	/**
+	 * A glide (for filmed runs: `terrain glide`): fly over Seconds to a pose fixed to a planet's ground, given in the
+	 * world now, and hover there EndAltitudeCm above the ground. The ship turns toward it, crosses on a height profile
+	 * that clears every ridge on the way by a margin and climbs or descends no steeper than a slope, then turns to the
+	 * end's heading; position and heading ease in and out. It all runs in the planet's frame, so the world turns with
+	 * it. Inputs are ignored meanwhile.
+	 */
+	void StartGlide(class APlanetBody* Body, const FTransform& EndWorld, double EndAltitudeCm, float Seconds);
+	bool IsGliding() const { return bGliding; }
 	UPROPERTY(BlueprintReadOnly, Category = "Terrain")
 	bool bCanyonFollow = false;
 
@@ -348,6 +358,16 @@ private:
 	/** The ground body's rotation when we last rode it: the carry follows its actual turn since then. */
 	TWeakObjectPtr<AActor> CarryBody;
 	FQuat CarryBodyQuat = FQuat::Identity;
+	/** The glide under way: its body, the start and end in that body's frame (unscaled), the heights along the path
+	 *  (planet radii, cm, at even steps from start to end), and the clock. */
+	bool bGliding = false;
+	TWeakObjectPtr<class APlanetBody> GlideBody;
+	FTransform GlideStartLocal, GlideEndLocal;
+	TArray<double> GlideHeights;
+	double GlideEndAltitudeCm = 0.0;
+	float GlideAge = 0.f, GlideSeconds = 1.f;
+	FVector GlideLastLocal = FVector::ZeroVector;
+	void TickGlide(float DeltaTime);
 	TArray<TWeakObjectPtr<class APlanetBody>> TerrainBodies;
 	float TerrainScanTimer = 0.f;
 

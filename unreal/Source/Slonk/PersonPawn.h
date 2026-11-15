@@ -94,6 +94,10 @@ public:
 	 *  behind nothing: the ship at warp moves a planet's width between one tick and the next). */
 	const FTransform& GetHullLocal() const { return HullLocal; }
 	FVector FeetInCraft() const { return HullLocal.TransformPosition(FVector(0.0, 0.0, -HalfHeightCm)); }
+	/** For filmed runs (the ship's `walk lift|use`): turn toward a point on the deck, in the craft's frame, and walk
+	 *  there at a walk, through the same steps and walls as the player's own; stops on arriving, or after 30 s. */
+	void ScriptWalkTo(const FVector& CraftTarget) { ScriptWalkTarget = CraftTarget; ScriptWalkTime = 0.f; bScriptWalk = true; }
+	bool IsScriptWalking() const { return bScriptWalk; }
 	UFUNCTION(BlueprintPure, Category = "Person") bool CanBoard() const;
 	UFUNCTION(BlueprintPure, Category = "Person") double DistanceToAirlock() const;
 
@@ -310,6 +314,11 @@ private:
 	float DebugVertical = 0.f; float DebugVerticalTime = 0.f;
 	FVector DebugSteer = FVector::ZeroVector; float DebugSteerTime = 0.f;
 	FVector2D DebugLook = FVector2D::ZeroVector; float DebugLookTime = 0.f;
+	/** A scripted walk aboard (ScriptWalkTo): the point in the craft's frame, and how long it has been going. */
+	bool bScriptWalk = false;
+	FVector ScriptWalkTarget = FVector::ZeroVector;
+	float ScriptWalkTime = 0.f;
+	void TickScriptWalk(float DeltaTime);
 
 	/** The crew material per slot (head and legs, torso), each with its own mannequin maps. */
 	UPROPERTY() TArray<TObjectPtr<UMaterialInstanceDynamic>> CrewMIDs;

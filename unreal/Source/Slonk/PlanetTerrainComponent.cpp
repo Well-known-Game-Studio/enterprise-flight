@@ -845,25 +845,31 @@ bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& Ne
 		const FVector Centre = (NearDir.IsNearlyZero() ? FVector::ZAxisVector : NearDir.GetSafeNormal()) * Params.RadiusCm;
 		const FCivilization& Who = Scatter.People.bInhabited ? Scatter.People : SlonkCivs::Colonists();
 		const double Rings[] = { 2.0e6, 8.0e6, 2.5e7, 6.0e7 };
-		// The nearest town built into a cliff round a point, the view 350 m out from its wall.
-		auto NearestCliffTown = [&](const FVector& From, double Reach) -> bool
+		// The nearest town built into a cliff round a point, the view 350 m out from its wall; with a sun given, one whose
+		// wall faces it with the sun up, lit rather than in its own shadow (bSunlitOnly), else the nearest. A wall stands
+		// upright, so a low sun in front of it lights it better than a high one: only the sun being up at all is asked.
+		const FVector Sun = SunDirLocal.GetSafeNormal();
+		auto Sunlit = [&](const FTownSite& T) { return Sun.IsNearlyZero() || (FVector::DotProduct(T.Face, Sun) > 0.3 && FVector::DotProduct(T.Dir, Sun) > 0.1); };
+		auto NearestCliffTown = [&](const FVector& From, double Reach, bool bSunlitOnly) -> bool
 		{
 			TArray<FTownSite> Towns;
 			SlonkCities::EnumerateTowns(Params, Who, From, Reach, Towns, 2000);
 			const FTownSite* Best = nullptr; double BestD = 1.0e30;
-			for (const FTownSite& T : Towns) { if (T.bCliff && FVector::DistSquared(T.LocalCm, From) < BestD) { BestD = FVector::DistSquared(T.LocalCm, From); Best = &T; } }
+			for (const FTownSite& T : Towns) { if (T.bCliff && (!bSunlitOnly || Sunlit(T)) && FVector::DistSquared(T.LocalCm, From) < BestD) { BestD = FVector::DistSquared(T.LocalCm, From); Best = &T; } }
 			if (!Best) { return false; }
+			UE_LOG(LogTemp, Log, TEXT("Cliff town: %.0f km off, sunlit pass %d, face.sun %.2f, up.sun %.2f, %d towns in %.0f km"), FMath::Sqrt(BestD) / 1.0e5, bSunlitOnly ? 1 : 0, FVector::DotProduct(Best->Face, Sun), FVector::DotProduct(Best->Dir, Sun), Towns.Num(), Reach / 1.0e5);
 			OutDir = (Best->Dir * Params.RadiusCm + Best->Face * 35000.0).GetSafeNormal();
 			OutHeightCm = SlonkTerrain::SurfaceHeightCm(Params, OutDir);
 			return true;
 		};
 		if (bCliffs)
 		{
-			for (const double Reach : Rings) { if (NearestCliffTown(Centre, Reach)) { return true; } }
+			for (const double Reach : Rings) { if (NearestCliffTown(Centre, Reach, true)) { return true; } }
+			for (const double Reach : Rings) { if (NearestCliffTown(Centre, Reach, false)) { return true; } }
 			// None near (from open country or the sea the nearest two thousand towns are all on the land): the cliffs
 			// are where the tablelands end, so look again round the nearest scarp.
 			FVector Scarp; double ScarpH = 0.0;
-			return FindFeature(TEXT("mesa"), NearDir, Scarp, ScarpH, FVector::ZeroVector) && NearestCliffTown(Scarp * Params.RadiusCm, 8.0e6);
+			return FindFeature(TEXT("mesa"), NearDir, Scarp, ScarpH, FVector::ZeroVector) && (NearestCliffTown(Scarp * Params.RadiusCm, 8.0e6, true) || NearestCliffTown(Scarp * Params.RadiusCm, 8.0e6, false));
 		}
 		for (const double Reach : Rings)
 		{

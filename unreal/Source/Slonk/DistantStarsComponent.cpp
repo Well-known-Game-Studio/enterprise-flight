@@ -153,9 +153,11 @@ void UDistantStarsComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 			Mid->SetScalarParameterValue(TEXT("Intensity"), Star->CoronaIntensity * GlowIntensityScale * (float)FarGlow);
 		}
 	}
-	// Nebulae: a soft glow in the cloud's own colours, at its true angular size (never under the minimum), from
-	// the moment it subtends NebulaMinAngularDeg until the volume takes over inside the render horizon. The
-	// sprite fades out as the volume grows past a few pixels, so nothing pops.
+	// Nebulae: a soft glow in the cloud's own colours at its true angular size (the glow reaching about the cloud's
+	// edge; never under NebulaMinApparentDeg, a smudge of a few pixels), brightening out of nothing as it grows past
+	// NebulaMinAngularDeg rather than switching on. Inside the render horizon the volume is drawn too, and the
+	// sprite gives way to it over the next doubling of the cloud's size, so the two are never different sizes and
+	// never both at full strength.
 	for (const TWeakObjectPtr<ANebula>& Weak : Nebulae)
 	{
 		const ANebula* Neb = Weak.Get();
@@ -165,10 +167,13 @@ void UDistantStarsComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 		const double R = Neb->GetRadiusCm();
 		if (Dist < 1.0) { continue; }
 		const double AngDeg = FMath::RadiansToDegrees(2.0 * FMath::Atan(R / Dist));
-		// Full beyond the horizon (the volume cannot be drawn there); inside it the sprite fades as the volume
-		// grows from a few pixels to a readable cloud.
-		const float Fade = Dist >= SlonkMaterials::RenderHorizonCm ? 1.f : 1.f - FMath::SmoothStep(NebulaMinApparentDeg * 0.25f, NebulaMinApparentDeg, (float)AngDeg);
-		if (AngDeg < NebulaMinAngularDeg || Fade <= 0.001f) { continue; }
+		if (AngDeg < NebulaMinAngularDeg) { continue; }
+		// The cloud's size where the volume comes on (the horizon), and the hand-over from there.
+		const float HorizonDeg = (float)FMath::RadiansToDegrees(2.0 * FMath::Atan(R / SlonkMaterials::RenderHorizonCm));
+		const float Appear = FMath::SmoothStep(NebulaMinAngularDeg, NebulaMinAngularDeg * 3.f, (float)AngDeg);
+		const float Handover = Dist >= SlonkMaterials::RenderHorizonCm ? 1.f : 1.f - FMath::SmoothStep(HorizonDeg, HorizonDeg * 2.f, (float)AngDeg);
+		const float Fade = Appear * Handover;
+		if (Fade <= 0.001f) { continue; }
 		const FVector Dir = To / Dist;
 		UStaticMeshComponent* Sprite = EnsureSprite(Used);
 		UMaterialInstanceDynamic* Mid = SpriteMIDs[Used];
