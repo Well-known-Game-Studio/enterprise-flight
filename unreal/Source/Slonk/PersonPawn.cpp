@@ -551,6 +551,26 @@ void APersonPawn::TickDeck(float DeltaTime)
 	}
 }
 
+void APersonPawn::TickScriptWalk(float DeltaTime)
+{
+	ScriptWalkTime += DeltaTime;
+	if (!IsAboard() || ScriptWalkTime > 30.f) { bScriptWalk = false; return; }
+	// All in the craft's frame, where the deck is level (its Z is the ship's up, about which TickDeck turns us).
+	FVector To = ScriptWalkTarget - FeetInCraft();
+	To.Z = 0.0;
+	const double Dist = To.Size();
+	if (Dist < 35.0) { bScriptWalk = false; UE_LOG(LogTemp, Log, TEXT("Walked there in %.1f s"), ScriptWalkTime); return; }
+	FVector Fwd = HullLocal.GetRotation().GetForwardVector();
+	Fwd.Z = 0.0;
+	Fwd = Fwd.GetSafeNormal();
+	const FVector Dir = To / Dist;
+	const double Delta = FMath::RadiansToDegrees(FMath::Atan2(Fwd.X * Dir.Y - Fwd.Y * Dir.X, FVector::DotProduct(Fwd, Dir)));
+	const double MaxTurn = 160.0 * DeltaTime;
+	LookDelta.X += (float)FMath::Clamp(Delta, -MaxTurn, MaxTurn);
+	// Under way once roughly facing it, easing off over the last metre.
+	MoveInput = FVector2D((float)(FMath::Clamp(FMath::Cos(FMath::DegreesToRadians(Delta)), 0.0, 1.0) * FMath::Clamp(Dist / 100.0, 0.35, 1.0)), 0.f);
+}
+
 void APersonPawn::Away(const FString& Command)
 {
 	DebugCommand = Command;
@@ -644,6 +664,7 @@ void APersonPawn::Tick(float DeltaTime)
 	if (DebugMoveTime > 0.f) { DebugMoveTime -= DeltaTime; MoveInput = DebugMove; }
 	if (DebugVerticalTime > 0.f) { DebugVerticalTime -= DeltaTime; VerticalInput = DebugVertical; }
 	if (DebugLookTime > 0.f) { DebugLookTime -= DeltaTime; LookDelta += DebugLook * DeltaTime; }
+	if (bScriptWalk) { TickScriptWalk(DeltaTime); }
 	StickGrace = FMath::Max(StickGrace - DeltaTime, 0.f);
 
 	FindWorld();

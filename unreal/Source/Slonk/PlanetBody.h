@@ -530,7 +530,20 @@ private:
 	double CityPinUntil = -1.0;
 	bool bCityPinApplied = false;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> BuildingMID;
-	struct FCityBuild { TSet<uint32> Towns; TArray<FTransform> Instances[(int32)EBuildingKind::Count]; int32 TownCount = 0; int32 Generation = 0; };
+	/** A build of the towns round a point: their buildings, in planet-local cm, and the point on the ground under the
+	 *  view it was made round (the building components are placed there, see CityOriginLocal). */
+	struct FCityBuild { TSet<uint32> Towns; TArray<FTransform> Instances[(int32)EBuildingKind::Count]; FVector Origin = FVector::ZeroVector; int32 TownCount = 0; int32 Generation = 0; };
+	/**
+	 * Where the building components sit, in planet-local cm: the ground under the view when the towns were last
+	 * built. Their instances are kept relative to it, a few kilometres at most, rather than to the planet's centre
+	 * 6e8 cm away, where a float resolves only to about 64 cm: turned with the world each frame, positions that far
+	 * out shook the buildings and gave them false motion (smeared by the motion blur). CityInstances stay planet-local.
+	 */
+	FVector CityOriginLocal = FVector::ZeroVector;
+	/** Places a building component at CityOriginLocal (its relative location is in the scaled root's units). */
+	void PlaceAtCityOrigin(USceneComponent* C) const;
+	/** An instance moved from planet-local cm to the building components' frame. */
+	FTransform ToCityFrame(const FTransform& PlanetLocal) const { FTransform T = PlanetLocal; T.SetLocation(T.GetLocation() - CityOriginLocal); return T; }
 	/** Counts the clearings of the towns (a new people, lights put out): a build started before one lands nowhere. */
 	int32 CityGeneration = 0;
 	/** The world's own people (nobody if not bInhabited). */
