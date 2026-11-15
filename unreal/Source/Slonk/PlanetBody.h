@@ -213,6 +213,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
 	float SpinDegPerSec = 0.0042f;
 
+	/** Whether the world is holding its spin this frame: the player is near its surface (slonk.Planet.HoldSpin). */
+	bool IsSpinHeld() const { return bSpinHeld; }
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
 	FString PlanetName;
 
@@ -480,6 +483,15 @@ private:
 	UPROPERTY() TObjectPtr<USceneComponent> RingFrame;
 	UPROPERTY() TArray<TObjectPtr<UHierarchicalInstancedStaticMeshComponent>> RingRocks;
 	float SpinAccumDeg = 0.f;
+	/**
+	 * The spin is held while the player is near the surface (slonk.Planet.HoldSpin, within
+	 * slonk.Planet.HoldSpinAltitudeKm of sea level): everything on a world turns with it, and every terrain chunk,
+	 * building, rock and plant that moves has each of its instances sent to the renderer again, every frame. Held,
+	 * none moves. The clock is held at x1 there anyway, where the sun moves a third of a degree a minute; the time of
+	 * day the world lost is not made up afterwards (the sky would jump), so its day runs that much behind the clock.
+	 */
+	bool bSpinHeld = false;
+	bool ShouldHoldSpin() const;
 	TArray<float> RingProfile;
 	TArray<float> RingTint;
 	float RingProfileSeed = -1.f;
