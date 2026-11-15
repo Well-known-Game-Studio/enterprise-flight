@@ -52,6 +52,15 @@ namespace SlonkCities
 	 *  towns at its ends and off a city's ground. The builders keep every building off them, and the scatter its rocks
 	 *  and plants; for the tests too. */
 	SLONK_API double PaintedWayCm(const FPlanetTerrainParams& P, const FCivilization& Civ, const FVector& Dir);
+	/** How cleared of forest a point (a unit direction, planet-local) is round the settlements, 0..1, as the terrain
+	 *  material clears its canopy colour (terrain_material.py's clearings, mirrored number for number): 1 on a
+	 *  settlement's own ground, then a soft edge that wanders in and out round it by its seed. The scatter thins its
+	 *  trees by it, so the trees and the ground's colour part at the same edge from any height. */
+	SLONK_API float ClearingAt(const FPlanetTerrainParams& P, const FCivilization& Civ, const FVector& Dir);
+	/** How much a point (a unit direction, planet-local) is a town's park or unbuilt ground, 0..1 (the material's
+	 *  SlonkParkOf): patches of forest left standing in a city or a larger town, more of them toward its edge; none in a
+	 *  village or a cliff town. Its builders keep every building out of a park, the scatter grows trees well inside one. */
+	SLONK_API float ParkAt(const FPlanetTerrainParams& P, const FTownSite& Town, const FVector& Dir);
 	/** What the material paints a point as, in words (whose ground, lived at or not, which road), for logs and tests. */
 	SLONK_API FString DescribePaint(const FPlanetTerrainParams& P, const FCivilization& Civ, const FVector& Dir);
 }

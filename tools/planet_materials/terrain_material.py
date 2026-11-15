@@ -146,6 +146,56 @@ float SlonkNearestSqAt(int3 fl, float3 fr, uint kw)
     }
     return best;
 }
+// Value noise on a lattice in a settlement's own frame: smooth, 0..1, a hash a corner (SlonkCities' Value2).
+float SlonkValue2(float2 q, uint h)
+{
+    float2 f = floor(q); float2 u = q - f; u = u * u * (3.0 - 2.0 * u);
+    int2 i = (int2)f;
+    float a = SlonkU(SlonkMix(SlonkMix(h, (uint)i.x), (uint)i.y));
+    float b = SlonkU(SlonkMix(SlonkMix(h, (uint)(i.x + 1)), (uint)i.y));
+    float c = SlonkU(SlonkMix(SlonkMix(h, (uint)i.x), (uint)(i.y + 1)));
+    float d = SlonkU(SlonkMix(SlonkMix(h, (uint)(i.x + 1)), (uint)(i.y + 1)));
+    return lerp(lerp(a, b, u.x), lerp(c, d, u.x), u.y);
+}
+// Parks and the ground not built on yet in a settlement of some size, at a point in its frame (cm from its heart along
+// its grid's axes): patches a few hundred metres across where its people left the forest standing, none at its very
+// heart, few in the middle and more toward the edge; a village has none. 0 built on, 1 forest. SlonkCities' ParkOf mirrors this: its builders keep
+// off the parks and the scatter grows trees in them.
+float SlonkParkOf(float2 l, float radiusCm, uint h)
+{
+    float size = smoothstep(45000.0, 120000.0, radiusCm);
+    if (size <= 0.0) { return 0.0; }
+    float d = length(l) / (radiusCm * 1.05 + 2500.0);
+    float n = 0.65 * SlonkValue2(l / 30000.0, SlonkMix(h, 61u)) + 0.35 * SlonkValue2(l / 12000.0, SlonkMix(h, 62u));
+    float t = 0.66 + 0.3 * (1.0 - smoothstep(0.0, 0.2, d)) - 0.28 * smoothstep(0.55, 1.0, d);
+    return size * smoothstep(t, t + 0.12, n);
+}
+// A settlement's clearing at a point (rel: the point less the settlement's point; up: the settlement's up): its own
+// ground out to its radius (as SlonkCities builds on it and the scatter keeps its trees off it), then the forest's
+// edge, soft, wandering between 1.05 and 1.9 times that by five harmonics round the settlement whose phases come from
+// its seed, so a clearing has a shape of its own; never past capCm, a cell of its level. Its parks and unbuilt ground
+// (SlonkParkOf) keep their forest. SlonkCities' ClearingOf mirrors this, number for number.
+float SlonkClearingOf(float3 rel, float3 up, float radiusCm, uint h, float capCm)
+{
+    float3 r = rel - up * dot(rel, up);
+    float d = length(r);
+    float rb = radiusCm * 1.05 + 2500.0;
+    if (d >= min(rb * 1.9, capCm)) { return 0.0; }
+    float3 e = cross(float3(0.0, 0.0, 1.0), up);
+    e = dot(e, e) > 1e-12 ? normalize(e) : float3(1.0, 0.0, 0.0);
+    float3 n = cross(up, e);
+    float th = atan2(dot(r, n), dot(r, e));
+    float w = (0.5 * sin(2.0 * th + 6.2831853 * SlonkU(SlonkMix(h, 51u)))
+             + 0.3 * sin(3.0 * th + 6.2831853 * SlonkU(SlonkMix(h, 52u)))
+             + 0.25 * sin(5.0 * th + 6.2831853 * SlonkU(SlonkMix(h, 53u)))
+             + 0.15 * sin(8.0 * th + 6.2831853 * SlonkU(SlonkMix(h, 54u)))
+             + 0.1 * sin(13.0 * th + 6.2831853 * SlonkU(SlonkMix(h, 55u)))) / 1.3;
+    // Its parks keep their forest: the grid's axes as the builder lays them (FTownFrame).
+    float ang = SlonkU(SlonkMix(h, 11u)) * 3.14159265;
+    float3 gx = e * cos(ang) + n * sin(ang); float3 gy = cross(up, gx);
+    float park = SlonkParkOf(float2(dot(r, gx), dot(r, gy)), radiusCm, h);
+    return (1.0 - smoothstep(rb, min(rb * (1.475 + 0.425 * w), capCm), d)) * (1.0 - park);
+}
 // A town's own ways, number for number as PlanetCities.cpp's FWays::TownClearance lays them for its builders: how far
 // a point at (x, y) in the town's frame is from the edge of the nearest, cm (below 0 on one). style 3: a grown town's
 // ring ways halfway between its rings of pods (one lobed shape scaled ring by ring) and its spokes, logarithmic
@@ -386,11 +436,142 @@ float chanf = (val[0] - 0.5) + 0.5 * (val[1] - 0.5) + 0.25 * (val[2] - 0.5);
 float chan = smoothstep(0.82, 0.97, 1.0 - abs(chanf) * 2.4) * wgt[1];
 float3 floorc = land * float3(1.08, 1.0, 0.9) * (1.0 - 0.28 * chan);
 land = lerp(land, floorc, sediment * 0.7);
+float3 U = normalize(float3(ORX, ORY, ORZ) + LP / PlanetRadiusCm);
+// Settlements: Worley points at three scales (25 km regions, 6 km clusters, 1.6 km towns), each level present in
+// only part of its cells, so the lights gather along a few belts with dark country between. Value noise peaked on
+// its lattice corners, which from orbit read as rows of dots fanning into the poles.
+// The points are SlonkCities' own, in planet space, so every town's buildings stand on its lit and paved ground: not
+// in the wrapped noise space p, whose 10 km period no Worley level divides. The chunk's tile of the period (TX, TY,
+// TZ: whole periods, exact in a float) and p within it give each level's cell in integers, as a period is 2^20 cm
+// and the cells 2^12, 2^10 and 2^8 times 625 cm (a tile is 256, 1024 or 4096 625ths of a cell), and the fraction
+// from what is left, small enough to keep its centimetres. The points are kept as offsets from the pixel (townRel
+// is the pixel less the town's point), never as planet positions a float would round to metres.
+// They are taken at sea level under the pixel (SlonkCities places its towns on the sea-level sphere): at a height the
+// nearest point, and so the town, would be another.
+float3 pS = p - U * (hN >= 0.0 ? hN * ReliefCm : hN * OceanDepthCm * (1.0 - water));
+int3 fl0 = 0, fl1 = 0, fl2 = 0; float3 fr0 = 0, fr1 = 0, fr2 = 0;
+float town = 0.0, cluster = 0.0, region = 0.0;
+float3 townRel = 0; uint townH = 0u; float3 clusterRel = 0; uint clusterH = 0u; float3 town2Rel = 0; uint town2H = 0u; float paving = 0.0;
+float dt1 = 99.0, dt2 = 99.0, dc1 = 99.0;
+float wayCover = 0.0, wayGlow = 0.0;
+{
+    int3 tile = int3(round(TX), round(TY), round(TZ));
+    float dmin[3] = { 9.0, 9.0, 9.0 };
+    [unroll] for (int kw = 0; kw < 3; kw++)
+    {
+        float wcs = kw == 0 ? 2560000.0 : (kw == 1 ? 640000.0 : 160000.0);
+        int per = kw == 0 ? 256 : (kw == 1 ? 1024 : 4096);      // 625ths of a cell to a period
+        uint keep = kw == 0 ? 3u : (kw == 1 ? 3u : 3u);        // of four cells
+        int3 tn = tile * per;
+        int3 ti = (int3)floor((float3)tn / 625.0);
+        float3 qw = (float3)(tn - ti * 625) / 625.0 + pS / wcs - 0.5;
+        float3 fq = floor(qw); float3 frw = qw - fq;
+        int3 flw = ti + (int3)fq;
+        if (kw == 0) { fl0 = flw; fr0 = frw; } else if (kw == 1) { fl1 = flw; fr1 = frw; } else { fl2 = flw; fr2 = frw; }
+        // The weights from the eight cells round the pixel (SlonkCities' NearestSq); the nearest settlement points from
+        // the 27 round its nearest cell corner, only those near enough the surface to be settlements (its NearestPoints).
+        int3 rb = int3(frw >= 0.5) - 1;
+        int nw = kw == 0 ? 8 : 27;
+        [loop] for (int iw = 0; iw < nw; iw++)
+        {
+            int3 off = kw == 0 ? int3(iw & 1, (iw >> 1) & 1, (iw >> 2) & 1) : rb + int3(iw % 3, (iw / 3) % 3, iw / 9);
+            int3 cwk = (flw + off) & 4095;
+            uint hw = ((uint)cwk.x * 73856093u) ^ ((uint)cwk.y * 19349663u) ^ ((uint)cwk.z * 83492791u) ^ (0x9e3779b9u + (uint)kw * 0x85ebca6bu);
+            hw = (hw ^ (hw >> 13)) * 0x5bd1e995u; hw ^= hw >> 15;
+            if ((hw >> 30) >= keep) continue;
+            float3 jit = float3(hw & 0x3ffu, (hw >> 10) & 0x3ffu, (hw >> 20) & 0x3ffu) / 1023.0;
+            float3 dp = float3(off) + jit - frw;
+            float dd = dot(dp, dp);
+            if (all(off >= 0) && all(off <= 1)) { dmin[kw] = min(dmin[kw], dd); }
+            if (kw == 0) continue;
+            float3 rel = -dp * wcs;
+            if (abs(dot(rel, U)) > 0.9 * wcs) continue;
+            if (kw == 2 && dd < dt1) { town2Rel = townRel; town2H = townH; dt2 = dt1; townRel = rel; townH = hw; dt1 = dd; }
+            else if (kw == 2 && dd < dt2) { town2Rel = rel; town2H = hw; dt2 = dd; }
+            if (kw == 1 && dd < dc1) { clusterRel = rel; clusterH = hw; dc1 = dd; }
+        }
+    }
+    region = 1.0 - smoothstep(0.05, 0.7, dmin[0]);
+    cluster = 1.0 - smoothstep(0.02, 0.5, dmin[1]);
+    town = 1.0 - smoothstep(0.03, 0.3, dmin[2]);
+}
+// The ground's glow comes with the people's light (Civilization.h's GroundLights): a city's electric light, or the dim
+// warm firelight of a stone- or iron-age people's hearths; a world with nobody keeps its bare ground.
+float lit = NightLightIntensity > 0.0 ? 1.0 : 0.0;
+float settled = lit;
+// The people live at only SettleDensity of the settlement points (SlonkCities' cut on each point's hash): the ground
+// is paved and lit under the ones they live at.
+uint hdT = townH ^ (0xD5u + 0x9e3779b9u + (townH << 6) + (townH >> 2)); hdT = (hdT ^ (hdT >> 13)) * 0x5bd1e995u; hdT ^= hdT >> 15;
+uint hdC = clusterH ^ (0xD5u + 0x9e3779b9u + (clusterH << 6) + (clusterH >> 2)); hdC = (hdC ^ (hdC >> 13)) * 0x5bd1e995u; hdC ^= hdC >> 15;
+float keptT = (float)(hdT & 0xffffu) / 65535.0 <= SettleDensity ? 1.0 : 0.0;
+float keptC = (float)(hdC & 0xffffu) / 65535.0 <= SettleDensity ? 1.0 : 0.0;
+float keptT2 = SlonkU(SlonkMix(town2H, 0xD5u)) <= SettleDensity ? 1.0 : 0.0;
+settled *= max(keptT, keptC * step(0.35, region));
+// Clearings round the settlements, where the people live: every city point within a cell of the pixel across the ground
+// whose region is strong enough, and every town point within a cell whose region x cluster is and that no city claims
+// (as EnumerateTowns skips one inside a city's ground; the city points listed for that, lived at or not, at most four).
+// The points of the 27 cells round the pixel's nearest corner, as the search above takes them: all within a cell are
+// among them. SlonkCities::ClearingAt mirrors this: the scatter thins its trees by it, so the ground and the trees part
+// at the same edge, and it is the pixel's own, the same from any height.
+float clearing = 0.0;
+if (lit > 0.0)
+{
+    float3 cityU[4] = { float3(0, 0, 0), float3(0, 0, 0), float3(0, 0, 0), float3(0, 0, 0) };
+    float cityR[4] = { 0.0, 0.0, 0.0, 0.0 };
+    int nCity = 0;
+    [unroll] for (int lv = 1; lv <= 2; lv++)
+    {
+        float wcs = lv == 1 ? 640000.0 : 160000.0;
+        int3 flv = lv == 1 ? fl1 : fl2; float3 frv = lv == 1 ? fr1 : fr2;
+        int3 rbv = int3(frv >= 0.5) - 1;
+        [loop] for (int iw = 0; iw < 27; iw++)
+        {
+            int3 off = rbv + int3(iw % 3, (iw / 3) % 3, iw / 9);
+            int3 cwk = (flv + off) & 4095;
+            uint hw = ((uint)cwk.x * 73856093u) ^ ((uint)cwk.y * 19349663u) ^ ((uint)cwk.z * 83492791u) ^ (0x9e3779b9u + (uint)lv * 0x85ebca6bu);
+            hw = (hw ^ (hw >> 13)) * 0x5bd1e995u; hw ^= hw >> 15;
+            if ((hw >> 30) >= 3u) { continue; }
+            float3 jit = float3(hw & 0x3ffu, (hw >> 10) & 0x3ffu, (hw >> 20) & 0x3ffu) / 1023.0;
+            float3 rel = -(float3(off) + jit - frv) * wcs;
+            if (abs(dot(rel, U)) > 0.9 * wcs) { continue; }
+            float3 relU = rel - U * dot(rel, U);
+            if (dot(relU, relU) >= wcs * wcs) { continue; }
+            float rg = 1.0 - smoothstep(0.05, 0.7, SlonkNearestSqAt(fl0, fr0 - rel / 2560000.0, 0u));
+            bool kept = SlonkU(SlonkMix(hw, 0xD5u)) <= SettleDensity;
+            if (lv == 1)
+            {
+                if (rg < 0.35) { continue; }
+                float cr = 640000.0 * (0.25 + 0.2 * rg);
+                if (nCity < 4) { cityU[nCity] = relU; cityR[nCity] = cr; nCity++; }
+                if (kept) { clearing = max(clearing, SlonkClearingOf(rel, normalize(U * PlanetRadiusCm - rel), cr, hw, wcs)); }
+            }
+            else
+            {
+                float sT = rg * (1.0 - smoothstep(0.02, 0.5, SlonkNearestSqAt(fl1, fr1 - rel / 640000.0, 1u)));
+                if (sT < 0.3 || !kept) { continue; }
+                float rT = 160000.0 * (0.2 + 0.3 * sT);
+                bool claimedT = false;
+                [unroll] for (int cj = 0; cj < 4; cj++) { if (cj < nCity && length(cityU[cj] - relU) < cityR[cj] + rT + 30000.0) { claimedT = true; } }
+                if (!claimedT) { clearing = max(clearing, SlonkClearingOf(rel, normalize(U * PlanetRadiusCm - rel), rT, hw, wcs)); }
+            }
+        }
+    }
+}
+// Forest: the share of the ground the trees' crowns cover there (UV3.y, from the density that places the trees,
+// SlonkScatter::TreeCover), painted the canopy's colour: the trees' own tint (the wet ground's colour browned toward
+// the dry's) darkened by the shade inside and between the crowns (CanopyShade, matched to drawn forest against this
+// ground with the trees hidden). A forest too far off for its trees to be drawn is there in colour, and the trees
+// fade in over their own colour, not over bare soil. UV3.y is the cover seen from straight above; looked at from the
+// side the crowns hide more of the ground between them, so the gap left (one minus the cover) goes as a canopy's by
+// the Beer-Lambert law, to the power of the slant (CoverGain for how tall the trees stand for their spacing).
+float vmu = max(dot(Nn, normalize(Cam - WP)), 0.08);
+float cover = 1.0 - pow(saturate(1.0 - UV3.y * (1.0 - clearing)), CoverGain / vmu);
+float3 canopy = lerp(LandColor, LandColor2, saturate(1.0 - wet * 1.3) * 0.55) * CanopyShade;
+land = lerp(land, canopy, saturate(cover));
 land *= 0.8 * (0.94 + 0.12 * (fb0 + 0.5));
 land *= 1.0 - saturate(rocky - sediment) * 0.45 * smoothstep(0.72, 1.0, crack);
 float snowy = ice * (1.0 - saturate(slope * 3.0)) ;
 land = lerp(land, IceColor, snowy);
-float3 U = normalize(float3(ORX, ORY, ORZ) + LP / PlanetRadiusCm);
 float3 dpx = ddx(p), dpy = ddy(p);
 // Turquoise over the first forty metres of water, the deep colour beyond; the depth is in cm, not a fraction
 // of the ocean floor, so a shelf sea reads as sea and not as a lagoon.
@@ -481,76 +662,7 @@ AO = lerp(1.0, texOrm.r, nearFade * (1.0 - water));
 
 float night = saturate(-dot(Nn, normalize(SunDirection)) * 6.0 + 0.1);
 float lowland = 1.0 - saturate(hN * ReliefCm / 250000.0);
-// Settlements: Worley points at three scales (25 km regions, 6 km clusters, 1.6 km towns), each level present in
-// only part of its cells, so the lights gather along a few belts with dark country between. Value noise peaked on
-// its lattice corners, which from orbit read as rows of dots fanning into the poles.
-// The points are SlonkCities' own, in planet space, so every town's buildings stand on its lit and paved ground: not
-// in the wrapped noise space p, whose 10 km period no Worley level divides. The chunk's tile of the period (TX, TY,
-// TZ: whole periods, exact in a float) and p within it give each level's cell in integers, as a period is 2^20 cm
-// and the cells 2^12, 2^10 and 2^8 times 625 cm (a tile is 256, 1024 or 4096 625ths of a cell), and the fraction
-// from what is left, small enough to keep its centimetres. The points are kept as offsets from the pixel (townRel
-// is the pixel less the town's point), never as planet positions a float would round to metres.
-// They are taken at sea level under the pixel (SlonkCities places its towns on the sea-level sphere): at a height the
-// nearest point, and so the town, would be another.
-float3 pS = p - U * (hN >= 0.0 ? hN * ReliefCm : hN * OceanDepthCm * (1.0 - water));
-int3 fl0 = 0, fl1 = 0; float3 fr0 = 0, fr1 = 0;
-float town = 0.0, cluster = 0.0, region = 0.0;
-float3 townRel = 0; uint townH = 0u; float3 clusterRel = 0; uint clusterH = 0u; float3 town2Rel = 0; uint town2H = 0u; float paving = 0.0;
-float dt1 = 99.0, dt2 = 99.0, dc1 = 99.0;
-float wayCover = 0.0, wayGlow = 0.0;
-{
-    int3 tile = int3(round(TX), round(TY), round(TZ));
-    float dmin[3] = { 9.0, 9.0, 9.0 };
-    [unroll] for (int kw = 0; kw < 3; kw++)
-    {
-        float wcs = kw == 0 ? 2560000.0 : (kw == 1 ? 640000.0 : 160000.0);
-        int per = kw == 0 ? 256 : (kw == 1 ? 1024 : 4096);      // 625ths of a cell to a period
-        uint keep = kw == 0 ? 3u : (kw == 1 ? 3u : 3u);        // of four cells
-        int3 tn = tile * per;
-        int3 ti = (int3)floor((float3)tn / 625.0);
-        float3 qw = (float3)(tn - ti * 625) / 625.0 + pS / wcs - 0.5;
-        float3 fq = floor(qw); float3 frw = qw - fq;
-        int3 flw = ti + (int3)fq;
-        if (kw == 0) { fl0 = flw; fr0 = frw; } else if (kw == 1) { fl1 = flw; fr1 = frw; }
-        // The weights from the eight cells round the pixel (SlonkCities' NearestSq); the nearest settlement points from
-        // the 27 round its nearest cell corner, only those near enough the surface to be settlements (its NearestPoints).
-        int3 rb = int3(frw >= 0.5) - 1;
-        int nw = kw == 0 ? 8 : 27;
-        [loop] for (int iw = 0; iw < nw; iw++)
-        {
-            int3 off = kw == 0 ? int3(iw & 1, (iw >> 1) & 1, (iw >> 2) & 1) : rb + int3(iw % 3, (iw / 3) % 3, iw / 9);
-            int3 cwk = (flw + off) & 4095;
-            uint hw = ((uint)cwk.x * 73856093u) ^ ((uint)cwk.y * 19349663u) ^ ((uint)cwk.z * 83492791u) ^ (0x9e3779b9u + (uint)kw * 0x85ebca6bu);
-            hw = (hw ^ (hw >> 13)) * 0x5bd1e995u; hw ^= hw >> 15;
-            if ((hw >> 30) >= keep) continue;
-            float3 jit = float3(hw & 0x3ffu, (hw >> 10) & 0x3ffu, (hw >> 20) & 0x3ffu) / 1023.0;
-            float3 dp = float3(off) + jit - frw;
-            float dd = dot(dp, dp);
-            if (all(off >= 0) && all(off <= 1)) { dmin[kw] = min(dmin[kw], dd); }
-            if (kw == 0) continue;
-            float3 rel = -dp * wcs;
-            if (abs(dot(rel, U)) > 0.9 * wcs) continue;
-            if (kw == 2 && dd < dt1) { town2Rel = townRel; town2H = townH; dt2 = dt1; townRel = rel; townH = hw; dt1 = dd; }
-            else if (kw == 2 && dd < dt2) { town2Rel = rel; town2H = hw; dt2 = dd; }
-            if (kw == 1 && dd < dc1) { clusterRel = rel; clusterH = hw; dc1 = dd; }
-        }
-    }
-    region = 1.0 - smoothstep(0.05, 0.7, dmin[0]);
-    cluster = 1.0 - smoothstep(0.02, 0.5, dmin[1]);
-    town = 1.0 - smoothstep(0.03, 0.3, dmin[2]);
-}
-// The ground's glow comes with the people's light (Civilization.h's GroundLights): a city's electric light, or the dim
-// warm firelight of a stone- or iron-age people's hearths; a world with nobody keeps its bare ground.
-float lit = NightLightIntensity > 0.0 ? 1.0 : 0.0;
-float settled = lit;
-// The people live at only SettleDensity of the settlement points (SlonkCities' cut on each point's hash): the ground
-// is paved and lit under the ones they live at.
-uint hdT = townH ^ (0xD5u + 0x9e3779b9u + (townH << 6) + (townH >> 2)); hdT = (hdT ^ (hdT >> 13)) * 0x5bd1e995u; hdT ^= hdT >> 15;
-uint hdC = clusterH ^ (0xD5u + 0x9e3779b9u + (clusterH << 6) + (clusterH >> 2)); hdC = (hdC ^ (hdC >> 13)) * 0x5bd1e995u; hdC ^= hdC >> 15;
-float keptT = (float)(hdT & 0xffffu) / 65535.0 <= SettleDensity ? 1.0 : 0.0;
-float keptC = (float)(hdC & 0xffffu) / 65535.0 <= SettleDensity ? 1.0 : 0.0;
-float keptT2 = SlonkU(SlonkMix(town2H, 0xD5u)) <= SettleDensity ? 1.0 : 0.0;
-settled *= max(keptT, keptC * step(0.35, region));
+// The settlement points were found above the forest, which their clearings thin.
 // SettleWet is the driest ground the world's people settle (Civilization.h: 0.3, or none at all for a desert people), as
 // SlonkCities gates its towns.
 float city = settled * region * cluster * town * (1.0 - water) * saturate((wet - SettleWet + 0.05) * 4.0) * (1.0 - saturate(slope * 12.0)) * lowland * saturate(fb0 * 4.0 + 0.6);
@@ -621,7 +733,7 @@ if (water < 0.5 && lit > 0.0)
         float aveY = (iy % 7 == 0) ? 1.0 - smoothstep(0.38, 0.46, abs(frac(gy + 0.5) - 0.5)) : 0.0;
         inTown *= landOk * kept;
         paving = max(street, max(aveX, aveY)) * inTown;
-        base = lerp(base, float3(0.30, 0.29, 0.28), inTown * 0.35);
+        base = lerp(base, float3(0.30, 0.29, 0.28), inTown * 0.35 * (1.0 - SlonkParkOf(float2(lx, ly), Rr, H)));
     }
     else if (WayStyle > 0.5 && inSite && kept > 0.0 && SlonkU(SlonkMix(H, 0xC1u)) >= CliffAffinity)
     {
@@ -669,7 +781,7 @@ WPO_INPUTS = ["Fn", "LP", "Col", "OX", "OY", "OZ", "ORX", "ORY", "ORZ", "Cam", "
 INPUTS = ["Fn", "N", "LP", "UV0", "UV1", "UV2", "UV3", "Col", "ColA", "OX", "OY", "OZ", "Cell", "ORX", "ORY", "ORZ", "Cam", "WP", "PlanetRadiusCm", "WaterNR", "Time", "SwellCm"] + TEX_INPUTS + [
           "OceanColor", "ShallowColor", "LandColor", "LandColor2", "MountainColor", "IceColor", "NightLightColor",
           "OceanRoughness", "LandRoughness", "NightLightIntensity", "LavaEmissive", "SunDirection",
-          "NoisePeriodCm", "ReliefCm", "OceanDepthCm", "TX", "TY", "TZ", "StreetGrid", "SettleWet", "SettleDensity", "WayStyle", "CliffAffinity"]
+          "NoisePeriodCm", "ReliefCm", "OceanDepthCm", "TX", "TY", "TZ", "StreetGrid", "SettleWet", "SettleDensity", "WayStyle", "CliffAffinity", "CanopyShade", "CoverGain"]
 
 
 def build():
@@ -691,7 +803,7 @@ def build():
         "OceanColor": (0.05, 0.17, 0.35), "ShallowColor": (0.1, 0.35, 0.5), "LandColor": (0.30, 0.36, 0.18), "LandColor2": (0.55, 0.45, 0.28),
         "MountainColor": (0.55, 0.52, 0.50), "IceColor": (0.90, 0.93, 0.97), "NightLightColor": (1.0, 0.8, 0.5), "SunDirection": (1.0, 0.0, 0.0),
     }
-    scal = {"OceanRoughness": 0.22, "LandRoughness": 0.9, "NightLightIntensity": 0.0, "LavaEmissive": 0.0, "NoisePeriodCm": 1048576.0, "ReliefCm": 3.8e6, "OceanDepthCm": 5.0e5, "PlanetRadiusCm": 6.371e8, "SwellCm": 120.0, "StreetGrid": 1.0, "SettleWet": 0.3, "SettleDensity": 1.0, "WayStyle": 0.0, "CliffAffinity": 0.0}
+    scal = {"OceanRoughness": 0.22, "LandRoughness": 0.9, "NightLightIntensity": 0.0, "LavaEmissive": 0.0, "NoisePeriodCm": 1048576.0, "ReliefCm": 3.8e6, "OceanDepthCm": 5.0e5, "PlanetRadiusCm": 6.371e8, "SwellCm": 120.0, "StreetGrid": 1.0, "SettleWet": 0.3, "SettleDensity": 1.0, "WayStyle": 0.0, "CliffAffinity": 0.0, "CanopyShade": 0.4, "CoverGain": 2.0}
     e = g.custom(CODE, INPUTS, "CMOT_Float3", "terrain layers, textures, bump, lights", extra_outputs=(("Nrm", "CMOT_Float3"), ("Rough", "CMOT_Float1"), ("Emis", "CMOT_Float3"), ("AO", "CMOT_Float1")))
     for pin, src in [("Fn", fn), ("N", n), ("LP", vi), ("UV0", uv0), ("UV1", uv1), ("UV2", uv2), ("UV3", uv3), ("Col", col), ("OX", ox), ("OY", oy), ("OZ", oz), ("Cell", cell), ("ORX", orx), ("ORY", ory), ("ORZ", orz), ("Cam", cam), ("WP", wp), ("TX", tx), ("TY", ty), ("TZ", tz)]:
         g.c(src, e, pin)

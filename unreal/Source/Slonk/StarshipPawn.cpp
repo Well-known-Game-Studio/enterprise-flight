@@ -2270,6 +2270,12 @@ void AStarshipPawn::ProcessDebugCommand()
 		}
 		else { UE_LOG(LogTemp, Log, TEXT("Terrain: no planet within 1.5 radii")); }
 	}
+	else if (Op == TEXT("terrain") && Movement && ArgStr(1) == TEXT("param") && Args.Num() > 3)
+	{
+		// terrain param <name> <value>: a scalar of the ground's material on the world below (CanopyShade, for tuning).
+		APlanetBody* Planet = Cast<APlanetBody>(Movement->GroundBody.Get());
+		if (UPlanetTerrainComponent* T = Planet ? Planet->Terrain.Get() : nullptr) { T->SetScalarParameter(FName(*Args[2]), Arg(3, 0.f)); UE_LOG(LogTemp, Log, TEXT("Terrain %s = %.3f"), *Args[2], Arg(3, 0.f)); }
+	}
 	else if (Op == TEXT("terrain") && Movement)
 	{
 		if (const APlanetBody* Planet = Cast<APlanetBody>(Movement->GroundBody.Get()))

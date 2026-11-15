@@ -111,6 +111,14 @@ namespace SlonkScatter
 
 	SLONK_API void ScatterChunk(const FPlanetTerrainParams& P, const FScatterSettings& S, const FChunkGrid& G, FChunkScatter& Out);
 
+	/**
+	 * How much of the ground the trees' crowns would cover at each vertex of a chunk's grid, 0..1 ((Steps + 1)^2, row
+	 * major, the margin left out), from the same density that places the trees. The terrain material paints the
+	 * ground the canopy's colour by it (UV3.y), so a forest too far off for its trees to be drawn is there in colour,
+	 * and its trees fade in over their own colour rather than over bare soil. Every chunk carries it, however coarse.
+	 */
+	SLONK_API void TreeCover(const FPlanetTerrainParams& P, const FScatterSettings& S, const FChunkGrid& G, TArray<float>& Out);
+
 	/** A planet-local position in the terrain material's noise space: each axis modulo NoisePeriodCm, as the chunk
 	 *  origins reach the shader. */
 	SLONK_API FVector ToNoiseSpace(const FVector& PlanetLocalCm);

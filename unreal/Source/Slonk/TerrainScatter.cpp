@@ -248,21 +248,28 @@ namespace
 	struct FKeepOut
 	{
 		TArray<TPair<FVector, double>> Towns;
+		TArray<FTownSite> Sites;
 		FPlanetTerrainParams Params;
 		FCivilization Civ;
 		void Build(const FPlanetTerrainParams& P, const FCivilization& People, const SlonkScatter::FChunkGrid& G)
 		{
 			Params = P;
 			Civ = People.bInhabited ? People : SlonkCivs::Colonists();
-			TArray<FTownSite> Sites;
 			SlonkCities::EnumerateTowns(P, Civ, G.Origin, G.EdgeCm * 0.75 + SlonkCities::CityRadiusCm(1.f) + 5000.0, Sites, 64);
 			// A cliff town runs its radius along the wall and its profile 300 m across it, either way.
 			for (const FTownSite& T : Sites) { Towns.Add({ T.LocalCm, FMath::Square((T.bCliff ? FMath::Sqrt(FMath::Square(T.RadiusCm) + FMath::Square(30000.0)) : T.RadiusCm) + 2500.0) }); }
 		}
-		bool Contains(const FVector& Up, double R) const
+		/** In a town's ground; a plant (bPlant) not where it stands well inside one of the town's parks, which its
+		 *  builder keeps every building out of (SlonkCities::ParkAt). */
+		bool Contains(const FVector& Up, double R, bool bPlant = false) const
 		{
 			const FVector OnSphere = Up * R;
-			for (const TPair<FVector, double>& T : Towns) { if (FVector::DistSquared(OnSphere, T.Key) < T.Value) { return true; } }
+			for (int32 i = 0; i < Towns.Num(); ++i)
+			{
+				if (FVector::DistSquared(OnSphere, Towns[i].Key) >= Towns[i].Value) { continue; }
+				if (bPlant && SlonkCities::ParkAt(Params, Sites[i], Up) >= 0.7f) { continue; }
+				return true;
+			}
 			return false;
 		}
 		/** On a way the terrain paints, or within a couple of metres of one. */
@@ -288,6 +295,24 @@ namespace
 		C.Alpine = FMath::Clamp(FMath::Max(Sp.HeightCm, 0.0) / FMath::Max(Line, 1.0), 0.0, 1.5);
 		C.Cold = FMath::Clamp(1.0 - Line / Q.SnowlineCm + 0.5 * C.Alpine, 0.0, 1.5);
 		return C;
+	}
+
+	/** Stands of forest with clearings between them, at the kilometre scale. */
+	double ForestAt(const FPlanetTerrainParams& P, const FSpot& Sp)
+	{
+		return SmoothStep(-0.15, 0.25, SlonkTerrain::Fbm(Sp.Up * (P.RadiusCm / 120000.0) + P.Seed * 3.7, 3));
+	}
+
+	/** How likely a tree is to stand in its lattice cell at a spot, before the world's life and the density setting:
+	 *  the forest's stands where it is wet and not steep or rocky, a line of trees along a canyon's river whatever
+	 *  the forest does, none above the treeline or through lying snow. The trees placed and the ground's cover
+	 *  (SlonkScatter::TreeCover) both read it. */
+	double TreeDensity(const FSpot& Sp, const FClimate& Clim, double Forest)
+	{
+		const double SnowLying = SmoothStep(0.2, 0.6, Sp.Ice);
+		return (Forest * SmoothStep(0.3, 0.65, Sp.Wet) * (1.0 - SmoothStep(0.35, 0.75, Sp.Slope)) * (1.0 - 0.7 * Sp.Rocky) * 0.8
+			+ Sp.Gorge * Sp.Wet * 0.35)
+			* (1.0 - SmoothStep(0.65, 0.9, Clim.Alpine)) * (1.0 - SnowLying);
 	}
 
 	/** How parched a plant is, 0 lush to 1 dry: the per-instance dryness the foliage material yellows it by. */
@@ -356,6 +381,33 @@ bool SlonkScatter::ScrubDotAt(const FVector& NoiseP, FVector& OutCentre, double&
 	return true;
 }
 
+void SlonkScatter::TreeCover(const FPlanetTerrainParams& P, const FScatterSettings& S, const FChunkGrid& G, TArray<float>& Out)
+{
+	const int32 GW = G.Steps + 1;
+	Out.Init(0.f, GW * GW);
+	if (!S.bEnabled || S.Density <= 0.f || S.Life <= 0.f || P.bAirless || !G.Samples || !G.Dirs || !G.Pos || G.Steps <= 0) { return; }
+	// A crown is about as wide as eight tenths of its tree is tall, and a typical tree eleven metres: a crown covers
+	// about one and seven tenths of its lattice cell (six metres a side), so a cell's chance of a tree is that much
+	// cover, the crowns overlapping at random.
+	constexpr double CrownsPerCell = 1.7;
+	const FChunkFrame F(G);
+	// The forest's alone: the settlements' clearings are the material's, cut per pixel from the same settlement points
+	// at any height (SlonkCities::ClearingAt, which thins the trees, mirrors them). Cut here, a town could be looked for
+	// only on the chunks a few of its size across (a coarse chunk's search would span a continent), and its clearing
+	// came and went with height.
+	for (int32 j = 0; j <= G.Steps; ++j)
+	{
+		for (int32 i = 0; i <= G.Steps; ++i)
+		{
+			const double U = F.U0 + F.Wd * (double)i / G.Steps, V = F.V0 + F.Wd * (double)j / G.Steps;
+			FSpot Sp;
+			if (!F.SpotAt(U, V, Sp) || Sp.River > 0.08 || Sp.Cliff > 0.3) { continue; }
+			const double D = FMath::Min(TreeDensity(Sp, ClimateAt(P, Sp), ForestAt(P, Sp)) * S.Life * S.Density, 0.9);
+			Out[j * GW + i] = (float)(1.0 - FMath::Exp(-D * CrownsPerCell));
+		}
+	}
+}
+
 void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSettings& S, const FChunkGrid& G, FChunkScatter& Out)
 {
 	if (!S.bEnabled || S.Density <= 0.f || G.EdgeCm > MaxChunkEdgeCm() || !G.Samples || !G.Dirs || !G.Pos || G.Steps <= 0) { return; }
@@ -365,6 +417,7 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 	const bool bLiving = S.Life > 0.f && !P.bAirless;
 	FKeepOut KeepOut;
 	if (S.bCities) { KeepOut.Build(P, S.People, G); }
+	const FCivilization ClearCiv = S.People.bInhabited ? S.People : SlonkCivs::Colonists();
 
 	int32 Rocks = 0, Plants = 0;
 	for (const FClass& Cl : Classes)
@@ -422,16 +475,11 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 			}
 			else
 			{
-				// Stands of forest with clearings between them, at the kilometre scale, thickest where it is wet.
-				const double Forest = SmoothStep(-0.15, 0.25, SlonkTerrain::Fbm(Sp.Up * (R / 120000.0) + P.Seed * 3.7, 3));
-				// Nothing grows through lying snow.
+				const double Forest = ForestAt(P, Sp);
 				const double SnowLying = SmoothStep(0.2, 0.6, Sp.Ice);
 				if (Cl.Kind == EClass::Tree)
 				{
-					Density = (Forest * SmoothStep(0.3, 0.65, Sp.Wet) * (1.0 - SmoothStep(0.35, 0.75, Sp.Slope)) * (1.0 - 0.7 * Sp.Rocky) * 0.8
-						// A line of trees along the river on a canyon floor, whatever the forest does.
-						+ Sp.Gorge * Sp.Wet * 0.35)
-						* (1.0 - SmoothStep(0.65, 0.9, Clim.Alpine)) * (1.0 - SnowLying);
+					Density = TreeDensity(Sp, Clim, Forest);
 				}
 				else
 				{
@@ -441,8 +489,12 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 				Density *= S.Life;
 			}
 			Density = FMath::Min(Density * S.Density, 0.9);
-			if (D.Next() >= Density) { continue; }
-			if (KeepOut.Towns.Num() > 0 && (KeepOut.Contains(Sp.Up, R) || KeepOut.OnWay(Sp.Up))) { continue; }
+			const double Draw = D.Next();
+			if (Draw >= Density) { continue; }
+			// In a settlement's clearing a tree thins out as the material clears the canopy's colour there, so the two part
+			// at the same edge (the same draw, so a tree outside every clearing stands where it did).
+			if (Cl.Kind == EClass::Tree && S.bCities && Draw >= Density * (1.0 - SlonkCities::ClearingAt(P, ClearCiv, Sp.Up))) { continue; }
+			if (KeepOut.Towns.Num() > 0 && (KeepOut.Contains(Sp.Up, R, !bRock) || KeepOut.OnWay(Sp.Up))) { continue; }
 			const double Seed = D.Next();
 			const double Snow = FMath::Clamp(Sp.Ice * 1.2, 0.0, 1.0) * (1.0 - FMath::Clamp(Sp.Slope * 2.0, 0.0, 1.0));
 
@@ -583,7 +635,7 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 			if (KeepDraw >= ShrubKeepHere) { continue; }
 			FDraw D(Mix64(KeyHash ^ 0x6a09e667f3bcc909ULL));
 			if (D.Next() >= S.Life * S.Density * SmoothStep(0.25, 0.55, Zone)) { continue; }
-			if (KeepOut.Towns.Num() > 0 && (KeepOut.Contains(Sp.Up, R) || KeepOut.OnWay(Sp.Up))) { continue; }
+			if (KeepOut.Towns.Num() > 0 && (KeepOut.Contains(Sp.Up, R, true) || KeepOut.OnWay(Sp.Up))) { continue; }
 			// As wide as the painted dot, a little over half as tall; the mesh's crown is 110 cm across at unit scale.
 			const double Wide = DotR * 2.0 * FMath::Lerp(0.95, 1.15, D.Next());
 			const double H = Wide * FMath::Lerp(0.55, 0.85, D.Next());

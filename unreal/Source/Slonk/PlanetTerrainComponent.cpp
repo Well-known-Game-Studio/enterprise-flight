@@ -1209,17 +1209,21 @@ void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, const FS
 		const double H = Smp[k].bWater ? Smp[k].WaterCm : Smp[k].HeightCm;
 		Pos[k] = Dirs[k] * (R + H) - Origin;
 	}
+	SlonkScatter::FChunkGrid Grid;
+	Grid.Face = Face; Grid.Depth = Depth; Grid.X = X; Grid.Y = Y;
+	Grid.Steps = Steps; Grid.Margin = Margin; Grid.W = W;
+	Grid.EdgeCm = N_EdgeCm;
+	Grid.Samples = Smp.GetData(); Grid.Dirs = Dirs.GetData(); Grid.Pos = Pos.GetData();
+	Grid.Origin = Origin;
 	// The rocks on this chunk, on these vertices' triangles.
 	if (Sc.bEnabled && N_EdgeCm <= SlonkScatter::MaxChunkEdgeCm())
 	{
-		SlonkScatter::FChunkGrid Grid;
-		Grid.Face = Face; Grid.Depth = Depth; Grid.X = X; Grid.Y = Y;
-		Grid.Steps = Steps; Grid.Margin = Margin; Grid.W = W;
-		Grid.EdgeCm = N_EdgeCm;
-		Grid.Samples = Smp.GetData(); Grid.Dirs = Dirs.GetData(); Grid.Pos = Pos.GetData();
-		Grid.Origin = Origin;
 		SlonkScatter::ScatterChunk(P, Sc, Grid, Out.Scatter);
 	}
+	// The trees' cover at every vertex, on every chunk however coarse: the material paints the ground the canopy's
+	// colour by it, so a forest is there in colour long before (and after) its trees are drawn.
+	TArray<float> Cover;
+	SlonkScatter::TreeCover(P, Sc, Grid, Cover);
 	// The grid's heights go back with the mesh: ground queries read the drawn surface from them.
 	Out.Steps = Steps;
 	Out.Heights.SetNumUninitialized((Steps + 1) * (Steps + 1));
@@ -1282,7 +1286,7 @@ void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, const FS
 			const float HeightN = (float)(S.HeightCm / FMath::Max(S.HeightCm >= 0.0 ? P.ReliefCm : P.OceanDepthCm, 1.0));
 			const FVector3f Nf(N);
 			Normals[j * GW + i] = Nf;
-			Vid[j * GW + i] = AddVert(Pos[k], Nf, FVector2f(HeightN, Slope), FVector2f(S.Wet, S.Rock), FVector2f(S.Ice, S.Canyon), FVector2f(S.Linea, 0.f),
+			Vid[j * GW + i] = AddVert(Pos[k], Nf, FVector2f(HeightN, Slope), FVector2f(S.Wet, S.Rock), FVector2f(S.Ice, S.Canyon), FVector2f(S.Linea, Cover.IsValidIndex(j * GW + i) ? Cover[j * GW + i] : 0.f),
 				FVector4f(S.Crater, S.bWater ? 1.f : 0.f, S.Wall, S.Stratum));
 			Bounds += Pos[k];
 		}
