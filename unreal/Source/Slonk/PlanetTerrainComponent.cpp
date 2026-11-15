@@ -16,6 +16,10 @@
 // earns full marks: low by default so one wall is lit and the other in shadow; raise it for a sunlit floor.
 static TAutoConsoleVariable<float> CVarTerrainSunUp(TEXT("slonk.TerrainSunUp"), 0.45f, TEXT("Preferred sine of sun elevation for terrain goto canyon/rim/river/mesa/badlands"));
 static TAutoConsoleVariable<float> CVarTerrainSunUpWidth(TEXT("slonk.TerrainSunUpWidth"), 0.25f, TEXT("Half-width of the preferred band"));
+// How far the ground's rocks and plants reach (the settings' ground detail sets it): each class's thinned far levels
+// drawn, up to this many. Every instance turns with the planet each frame, so each level costs the CPU a few ms.
+static TAutoConsoleVariable<int32> CVarScatterFarLevels(TEXT("slonk.Scatter.FarLevels"), 2,
+	TEXT("How many of each scatter class's thinned far levels to draw (0: each class ends with its own levels; trees reach about 1, 2.5 and 5 km at 0, 1, 2)"));
 
 using namespace UE::Geometry;
 
@@ -63,6 +67,7 @@ void UPlanetTerrainComponent::Configure(const FPlanetTerrainParams& InParams, UM
 	ResetTree();
 	Params = InParams;
 	Material = InMaterial;
+	Scatter.MaxFarLevels = FMath::Clamp(CVarScatterFarLevels.GetValueOnGameThread(), 0, 8);
 	MID = nullptr;
 	if (Material)
 	{
@@ -71,6 +76,7 @@ void UPlanetTerrainComponent::Configure(const FPlanetTerrainParams& InParams, UM
 		MID->SetScalarParameterValue(TEXT("ReliefCm"), (float)Params.ReliefCm);
 		MID->SetScalarParameterValue(TEXT("OceanDepthCm"), (float)Params.OceanDepthCm);
 		MID->SetScalarParameterValue(TEXT("NoisePeriodCm"), (float)NoisePeriodCm);
+		ApplyScatterToMaterial();
 	}
 	for (UDynamicMeshComponent* C : Pool)
 	{
@@ -119,6 +125,25 @@ void UPlanetTerrainComponent::SetScatterOptions(bool bEnabled, float Density, bo
 	Scatter.bCities = bCities;
 	Scatter.Life = Life;
 	Scatter.People = People;
+	ApplyScatterToMaterial();
+	if (bConfigured) { RebuildScatterChunks(); }
+}
+
+void UPlanetTerrainComponent::ApplyScatterToMaterial()
+{
+	if (!MID) { return; }
+	// The ground's forest colour follows the trees with no chunk built again: the vertices carry the forest's density
+	// alone (SlonkScatter::TreeCover), the material scales it by the world's life and the density setting.
+	MID->SetScalarParameterValue(TEXT("TreeLife"), Scatter.bEnabled ? Scatter.Life * Scatter.Density : 0.f);
+	// Its clearings round the settlements where the scatter thins its trees for them, and nowhere else.
+	MID->SetScalarParameterValue(TEXT("Clearings"), Scatter.bCities ? 1.f : 0.f);
+}
+
+void UPlanetTerrainComponent::SetScatterFarLevels(int32 Levels)
+{
+	Levels = FMath::Clamp(Levels, 0, 8);
+	if (Scatter.MaxFarLevels == Levels) { return; }
+	Scatter.MaxFarLevels = Levels;
 	if (bConfigured) { RebuildScatterChunks(); }
 }
 
@@ -338,7 +363,11 @@ void UPlanetTerrainComponent::ShowNode(FNode& N, bool bShow)
 	{
 		const bool bWant = bShow && bTerrainVisible;
 		SetChunkVisible(N, bWant);
-		if (bWant) { ++VisibleChunks; VisibleRocks += N.RockCount; VisiblePlants += N.PlantCount; DeepestVisible = FMath::Max(DeepestVisible, N.Depth); }
+		if (bWant)
+		{
+			++VisibleChunks; VisibleRocks += N.RockCount; VisiblePlants += N.PlantCount; DeepestVisible = FMath::Max(DeepestVisible, N.Depth);
+			for (int32 K = 0; K < SlonkScatter::NumMeshes; ++K) { if (N.Sets[K]) { VisibleByMesh[K] += N.Sets[K]->GetInstanceCount(); ++VisibleSetsByMesh[K]; } }
+		}
 	}
 }
 
@@ -417,11 +446,26 @@ void UPlanetTerrainComponent::ApplyScatter(FNode& N, SlonkScatter::FChunkScatter
 		R->SetRelativeTransform(FTransform::Identity);
 		R->SetPieces(Xf, Sc.Custom[K]);
 		if (R->CastShadow != bShadow) { R->SetCastShadow(bShadow); }
+		// In the ray-traced scene only near the view (as close as the trees cast shadows): every instance there turns
+		// with the planet each frame and is rebuilt into it, and Lumen gains nothing from pebbles a kilometre off.
+		const bool bTraced = N.EdgeCm < ScatterShadowEdgeCm * 2.f;
+		if (R->bVisibleInRayTracing != bTraced) { R->SetVisibleInRayTracing(bTraced); }
 		// The wind's reach as it is now, on a set made earlier too.
 		if (SlonkScatter::IsPlant(K) && R->GetWorldPositionOffsetDisableDistance() != (int32)PlantWindDistanceCm) { R->SetWorldPositionOffsetDisableDistance((int32)PlantWindDistanceCm); }
 		R->SetVisibility(N.Mesh->IsVisible());
 		(SlonkScatter::IsPlant(K) ? N.PlantCount : N.RockCount) += Xf.Num();
 	}
+}
+
+FString UPlanetTerrainComponent::DescribeVisibleScatter() const
+{
+	FString S;
+	for (int32 K = 0; K < SlonkScatter::NumMeshes; ++K)
+	{
+		const FString Name = SlonkScatter::IsPlant(K) ? FString::Printf(TEXT("plant%d"), K - SlonkScatter::FirstPlant) : FString::Printf(TEXT("rock%d"), K);
+		S += FString::Printf(TEXT("%s%s %d in %d"), K ? TEXT(", ") : TEXT(""), *Name, VisibleByMesh[K], VisibleSetsByMesh[K]);
+	}
+	return S;
 }
 
 void UPlanetTerrainComponent::ReleaseScatter(FNode& N)
@@ -637,7 +681,10 @@ void UPlanetTerrainComponent::LaunchBuilds()
 		N.Result = MakeShared<FBuildResult, ESPMode::ThreadSafe>();
 		TSharedPtr<FBuildResult, ESPMode::ThreadSafe> Out = N.Result;
 		const FPlanetTerrainParams P = Params;
-		const FScatterSettings Sc = Scatter;
+		FScatterSettings Sc = Scatter;
+		// A chunk of edge E splits with the view SplitFactor x E beyond its near side, so the finer chunks that carry a
+		// plant arrive with it at least about 2 x SplitFactor x E away: it is faded out a little before that.
+		Sc.FadeEdges = FMath::Max(2.0 * SplitFactor - 0.2, 1.0);
 		const int32 Face = N.Face, Depth = N.Depth, Steps = FMath::Clamp(GridSteps, 8, 128);
 		const int64 X = N.X, Y = N.Y;
 		N.Task = UE::Tasks::Launch(TEXT("SlonkTerrainChunk"), [P, Sc, Face, Depth, X, Y, Steps, Out]()
@@ -724,11 +771,18 @@ void UPlanetTerrainComponent::ApplyResult(FNode& N)
 void UPlanetTerrainComponent::UpdateView(const FVector& ViewLocationWorld, const FVector& PawnLocationWorld)
 {
 	if (!bConfigured) { return; }
+	// The ground detail setting changed: the chunks fine enough to carry any scatter build again.
+	if (const int32 Far = FMath::Clamp(CVarScatterFarLevels.GetValueOnGameThread(), 0, 8); Far != Scatter.MaxFarLevels) { SetScatterFarLevels(Far); }
 	++Stamp;
 	VisibleChunks = 0;
 	VisibleRocks = VisiblePlants = 0;
+	FMemory::Memzero(VisibleByMesh);
+	FMemory::Memzero(VisibleSetsByMesh);
 	DeepestVisible = 0;
 	const FVector CamLocal = GetComponentTransform().InverseTransformPositionNoScale(ViewLocationWorld);
+	// The plants fade by their distance from the camera (their custom data says where): from this parameter rather
+	// than the view's own position, so the shadow passes fade them by the same distance as the view does.
+	if (FoliageMID) { FoliageMID->SetVectorParameterValue(TEXT("ViewPos"), FLinearColor((float)ViewLocationWorld.X, (float)ViewLocationWorld.Y, (float)ViewLocationWorld.Z, 0.f)); }
 	// The chunks refine for the camera (what is seen) and for the pawn (what is stood on, a chase camera's length
 	// behind it): the split distance is the nearer of the two.
 	PawnLocal = GetComponentTransform().InverseTransformPositionNoScale(PawnLocationWorld);
@@ -1167,17 +1221,21 @@ void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, const FS
 		const double H = Smp[k].bWater ? Smp[k].WaterCm : Smp[k].HeightCm;
 		Pos[k] = Dirs[k] * (R + H) - Origin;
 	}
+	SlonkScatter::FChunkGrid Grid;
+	Grid.Face = Face; Grid.Depth = Depth; Grid.X = X; Grid.Y = Y;
+	Grid.Steps = Steps; Grid.Margin = Margin; Grid.W = W;
+	Grid.EdgeCm = N_EdgeCm;
+	Grid.Samples = Smp.GetData(); Grid.Dirs = Dirs.GetData(); Grid.Pos = Pos.GetData();
+	Grid.Origin = Origin;
 	// The rocks on this chunk, on these vertices' triangles.
 	if (Sc.bEnabled && N_EdgeCm <= SlonkScatter::MaxChunkEdgeCm())
 	{
-		SlonkScatter::FChunkGrid Grid;
-		Grid.Face = Face; Grid.Depth = Depth; Grid.X = X; Grid.Y = Y;
-		Grid.Steps = Steps; Grid.Margin = Margin; Grid.W = W;
-		Grid.EdgeCm = N_EdgeCm;
-		Grid.Samples = Smp.GetData(); Grid.Dirs = Dirs.GetData(); Grid.Pos = Pos.GetData();
-		Grid.Origin = Origin;
 		SlonkScatter::ScatterChunk(P, Sc, Grid, Out.Scatter);
 	}
+	// The trees' cover at every vertex, on every chunk however coarse: the material paints the ground the canopy's
+	// colour by it, so a forest is there in colour long before (and after) its trees are drawn.
+	TArray<float> Cover;
+	SlonkScatter::TreeCover(P, Grid, Cover);
 	// The grid's heights go back with the mesh: ground queries read the drawn surface from them.
 	Out.Steps = Steps;
 	Out.Heights.SetNumUninitialized((Steps + 1) * (Steps + 1));
@@ -1240,7 +1298,7 @@ void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, const FS
 			const float HeightN = (float)(S.HeightCm / FMath::Max(S.HeightCm >= 0.0 ? P.ReliefCm : P.OceanDepthCm, 1.0));
 			const FVector3f Nf(N);
 			Normals[j * GW + i] = Nf;
-			Vid[j * GW + i] = AddVert(Pos[k], Nf, FVector2f(HeightN, Slope), FVector2f(S.Wet, S.Rock), FVector2f(S.Ice, S.Canyon), FVector2f(S.Linea, 0.f),
+			Vid[j * GW + i] = AddVert(Pos[k], Nf, FVector2f(HeightN, Slope), FVector2f(S.Wet, S.Rock), FVector2f(S.Ice, S.Canyon), FVector2f(S.Linea, Cover.IsValidIndex(j * GW + i) ? Cover[j * GW + i] : 0.f),
 				FVector4f(S.Crater, S.bWater ? 1.f : 0.f, S.Wall, S.Stratum));
 			Bounds += Pos[k];
 		}

@@ -465,6 +465,96 @@ namespace
 		}
 		return FMath::Min(N, 2);
 	}
+	/** The present points of a level near the surface round a point on the sea-level sphere, as the material's search
+	 *  takes them: the 27 cells round the cell corner nearest it, in its order, only points within nine tenths of a
+	 *  cell of the surface along the point's up. Every such point within a cell of it across the ground is among them. */
+	template <typename FVisit>
+	void SurfacePointsAround(const FVector& Dir, double R, int32 Level, FVisit&& Visit)
+	{
+		const double Cell = LevelCm[Level];
+		const FVector X = Dir * R;
+		const FVector Q = X / Cell - FVector(0.5, 0.5, 0.5);
+		const FVector Fl(FMath::Floor(Q.X), FMath::Floor(Q.Y), FMath::Floor(Q.Z));
+		const FVector Fr = Q - Fl;
+		const FIntVector Base((int32)Fl.X + (Fr.X >= 0.5 ? 0 : -1), (int32)Fl.Y + (Fr.Y >= 0.5 ? 0 : -1), (int32)Fl.Z + (Fr.Z >= 0.5 ? 0 : -1));
+		for (int32 i = 0; i < 27; ++i)
+		{
+			const FIntVector C = Base + FIntVector(i % 3, (i / 3) % 3, i / 9);
+			const uint32 H = CellHash(C, LevelSalt(Level));
+			if ((H >> 30) >= LevelKeep[Level]) { continue; }
+			const FVector Pt = (FVector(C) + Jitter(H) + FVector(0.5, 0.5, 0.5)) * Cell;
+			if (FMath::Abs(FVector::DotProduct(Pt - X, Dir)) > Cell * 0.9) { continue; }
+			Visit(Pt, H);
+		}
+	}
+	/** Value noise on a lattice in a town's own frame, as the material's SlonkValue2: smooth, 0..1, a hash a corner. */
+	double Value2(double Qx, double Qy, uint32 H)
+	{
+		const double Fx = FMath::Floor(Qx), Fy = FMath::Floor(Qy);
+		double Ux = Qx - Fx, Uy = Qy - Fy;
+		Ux = Ux * Ux * (3.0 - 2.0 * Ux); Uy = Uy * Uy * (3.0 - 2.0 * Uy);
+		const int32 Ix = (int32)Fx, Iy = (int32)Fy;
+		auto Corner = [H](int32 X, int32 Y) { return (double)Hash01(Mix(Mix(H, (uint32)X), (uint32)Y)); };
+		return FMath::Lerp(FMath::Lerp(Corner(Ix, Iy), Corner(Ix + 1, Iy), Ux), FMath::Lerp(Corner(Ix, Iy + 1), Corner(Ix + 1, Iy + 1), Ux), Uy);
+	}
+	/** Parks and the ground not built on yet in a settlement of some size, at a point in its frame (cm from its heart
+	 *  along its grid's axes), as the material's SlonkParkOf: patches a few hundred metres across where its people left
+	 *  the forest standing, none at its very heart, few in the middle and more toward the edge; a village has none.
+	 *  0 built on, 1 forest. */
+	double ParkOf(double Lx, double Ly, double RadiusCm, uint32 H)
+	{
+		const double Size = FMath::SmoothStep(45000.0, 120000.0, RadiusCm);
+		if (Size <= 0.0) { return 0.0; }
+		const double D = FMath::Sqrt(Lx * Lx + Ly * Ly) / (RadiusCm * 1.05 + 2500.0);
+		const double N = 0.65 * Value2(Lx / 30000.0, Ly / 30000.0, Mix(H, 61u)) + 0.35 * Value2(Lx / 12000.0, Ly / 12000.0, Mix(H, 62u));
+		const double T = 0.66 + 0.3 * (1.0 - FMath::SmoothStep(0.0, 0.2, D)) - 0.28 * FMath::SmoothStep(0.55, 1.0, D);
+		return Size * FMath::SmoothStep(T, T + 0.12, N);
+	}
+	/** A town's parks to its builders: whether a footprint (W along Facing, D across, centred at C in the town's frame)
+	 *  keeps out of them with a margin (no corner, edge's middle or centre where a park is a third begun), so the trees
+	 *  the scatter lets stand well inside a park (SlonkCities::ParkAt) never stand in a building. */
+	struct FParks
+	{
+		double RadiusCm = 0.0;
+		uint32 Seed = 0;
+		bool bAny = false;
+		explicit FParks(const FTownSite& Town) : RadiusCm(Town.RadiusCm), Seed(Town.Seed), bAny(!Town.bCliff && Town.RadiusCm > 45000.0) {}
+		bool Clear(const FVector2D& C, const FVector2D& Facing, double W, double D) const
+		{
+			if (!bAny) { return true; }
+			const FVector2D X = Facing.GetSafeNormal(), Y(-X.Y, X.X);
+			for (int32 j = -1; j <= 1; ++j)
+			for (int32 i = -1; i <= 1; ++i)
+			{
+				const FVector2D Q = C + X * (i * W * 0.5) + Y * (j * D * 0.5);
+				if (ParkOf(Q.X, Q.Y, RadiusCm, Seed) > 0.3) { return false; }
+			}
+			return true;
+		}
+	};
+	/** One settlement's clearing at a point (Rel: the point less the settlement's point; Up: the settlement's up), as the
+	 *  material's SlonkClearingOf: its own ground out to its radius, then a soft edge wandering between 1.05 and 1.9
+	 *  times that by five harmonics round it, their phases from its seed; never past CapCm (a cell of its level). Its
+	 *  parks and unbuilt ground keep their forest. */
+	double ClearingOf(const FVector& Rel, const FVector& Up, double RadiusCm, uint32 H, double CapCm)
+	{
+		const FVector Rt = Rel - Up * FVector::DotProduct(Rel, Up);
+		const double D = Rt.Size();
+		const double Rb = RadiusCm * 1.05 + 2500.0;
+		if (D >= FMath::Min(Rb * 1.9, CapCm)) { return 0.0; }
+		FVector E = FVector::CrossProduct(FVector::ZAxisVector, Up);
+		E = E.SizeSquared() > 1e-12 ? E.GetUnsafeNormal() : FVector::XAxisVector;
+		const FVector N = FVector::CrossProduct(Up, E);
+		const double Th = FMath::Atan2(FVector::DotProduct(Rt, N), FVector::DotProduct(Rt, E));
+		auto Ph = [H](uint32 Salt) { return UE_DOUBLE_TWO_PI * Hash01(Mix(H, Salt)); };
+		const double W = (0.5 * FMath::Sin(2.0 * Th + Ph(51u)) + 0.3 * FMath::Sin(3.0 * Th + Ph(52u)) + 0.25 * FMath::Sin(5.0 * Th + Ph(53u))
+			+ 0.15 * FMath::Sin(8.0 * Th + Ph(54u)) + 0.1 * FMath::Sin(13.0 * Th + Ph(55u))) / 1.3;
+		// Its parks keep their forest: the grid's axes as the builder lays them (FTownFrame).
+		const float Angle = Hash01(Mix(H, 11u)) * PI;
+		const FVector GX = E * FMath::Cos(Angle) + N * FMath::Sin(Angle), GY = FVector::CrossProduct(Up, GX);
+		const double Park = ParkOf(FVector::DotProduct(Rt, GX), FVector::DotProduct(Rt, GY), RadiusCm, H);
+		return (1.0 - FMath::SmoothStep(Rb, FMath::Min(Rb * (1.475 + 0.425 * W), CapCm), D)) * (1.0 - Park);
+	}
 	float RegionAt(const FVector& LocalCm) { return 1.f - SmoothStep(0.05f, 0.7f, (float)NearestSq(LocalCm, 0)); }
 	float ClusterAt(const FVector& LocalCm) { return 1.f - SmoothStep(0.02f, 0.5f, (float)NearestSq(LocalCm, 1)); }
 	bool LikesCliffOf(const FCivilization& Civ, uint32 H) { return Hash01(Mix(H, 0xC1u)) < Civ.CliffAffinity; }
@@ -766,8 +856,9 @@ namespace
 		const FTownFrame F(Town);
 		const FOwnGround Own(P, Town);
 		FLots Lots;
-		// Keeps off the ways the terrain paints over its ground.
+		// Keeps off the ways the terrain paints over its ground, and out of its parks.
 		const FWays Ways(P, Civ, Town);
+		const FParks Parks(Town);
 		const double Pitch = 3600.0 + 1400.0 * Hash01(Mix(Town.Seed, 17u));		// 36 to 50 m lots
 		const int32 Half = FMath::CeilToInt(Town.RadiusCm / Pitch);
 		int32 Count = 0;
@@ -778,7 +869,8 @@ namespace
 		if (bPad)
 		{
 			const FPlanetTerrainSample S0 = SlonkTerrain::Sample(P, F.Up, 400.0);
-			if (!S0.bWater && Own.Owns(F.Up, HalfDiag(9000.0, 9000.0)) && Ways.Clear(FVector2D::ZeroVector, FVector2D(1.0, 0.0), 9000.0, 9000.0))
+			if (!S0.bWater && Own.Owns(F.Up, HalfDiag(9000.0, 9000.0)) && Ways.Clear(FVector2D::ZeroVector, FVector2D(1.0, 0.0), 9000.0, 9000.0)
+				&& Parks.Clear(FVector2D::ZeroVector, FVector2D(1.0, 0.0), 9000.0, 9000.0))
 			{
 				PlaceOnGround(OutByKind, EBuildingKind::Block, F.Up, F.GX, R, S0, 9000.0, 9000.0, 50.0, 150.0, true);
 				Lots.Take(FVector2D::ZeroVector, FVector2D(1.0, 0.0), 9000.0, 9000.0);
@@ -829,7 +921,7 @@ namespace
 			// building in the water, or on a cliff: a town at a scarp's or a canyon's rim ends at the edge rather than
 			// standing on stilts down the face), in the town's own cell, and clear of its neighbours (a works is broader
 			// than its lot).
-			if (!Ways.Clear(C2, FVector2D(1.0, 0.0), W, Dp)) { continue; }
+			if (!Ways.Clear(C2, FVector2D(1.0, 0.0), W, Dp) || !Parks.Clear(C2, FVector2D(1.0, 0.0), W, Dp)) { continue; }
 			const FVector Dir = Ways.DirOf(C2);
 			const FPlanetTerrainSample S = SlonkTerrain::Sample(P, Dir, 400.0);
 			if (!Buildable(S) || !Own.Owns(Dir, HalfDiag(W, Dp)) || !Lots.Take(C2, FVector2D(1.0, 0.0), W, Dp)) { continue; }
@@ -847,8 +939,9 @@ namespace
 		const FTownFrame F(Town);
 		const FOwnGround Own(P, Town);
 		FLots Lots;
-		// Keeps off the ways the terrain paints over its ground.
+		// Keeps off the ways the terrain paints over its ground, and out of its parks.
 		const FWays Ways(P, Civ, Town);
+		const FParks Parks(Town);
 		const bool bStone = Civ.Age == ETechAge::Stone;
 		const bool bAdobe = Civ.WetMin < 0.f;
 		const double Pitch = bStone ? 1500.0 + 500.0 * Hash01(Mix(Town.Seed, 17u)) : 2000.0 + 600.0 * Hash01(Mix(Town.Seed, 17u));
@@ -913,7 +1006,7 @@ namespace
 				const double Need = D * 0.5 + 250.0;
 				if (LaneClr < Need) { C2 += Away * (Need - LaneClr); }
 			}
-			if (!Ways.Clear(C2, X2, W, D)) { continue; }
+			if (!Ways.Clear(C2, X2, W, D) || !Parks.Clear(C2, X2, W, D)) { continue; }
 			const FVector Dir = Ways.DirOf(C2);
 			const FPlanetTerrainSample S = SlonkTerrain::Sample(P, Dir, 400.0);
 			if (!Buildable(S)) { continue; }
@@ -932,8 +1025,9 @@ namespace
 		const FTownFrame F(Town);
 		const FOwnGround Own(P, Town);
 		FLots Lots;
-		// Keeps off the ways the terrain paints over its ground.
+		// Keeps off the ways the terrain paints over its ground, and out of its parks.
 		const FWays Ways(P, Civ, Town);
+		const FParks Parks(Town);
 		const double Ring = Ways.Ring;
 		const int32 K0 = (int32)Ways.K0, Rings = (int32)Ways.Rings;
 		const double Plaza = Ways.PlazaCm();
@@ -954,7 +1048,8 @@ namespace
 			const FVector Dir = (Town.LocalCm + (F.GX * FMath::Cos(A) + F.GY * FMath::Sin(A)) * Rd).GetSafeNormal();
 			const FPlanetTerrainSample S = SlonkTerrain::Sample(P, Dir, 400.0);
 			if (!Buildable(S)) { continue; }
-			if (!Own.Owns(Dir, HalfDiag(W, W)) || !Ways.Clear(FVector2D(FMath::Cos(A), FMath::Sin(A)) * Rd, FVector2D(1.0, 0.0), W, W) || !Lots.Take(FVector2D(FMath::Cos(A), FMath::Sin(A)) * Rd, FVector2D(1.0, 0.0), W, W, 400.0)) { continue; }
+			if (!Own.Owns(Dir, HalfDiag(W, W)) || !Ways.Clear(FVector2D(FMath::Cos(A), FMath::Sin(A)) * Rd, FVector2D(1.0, 0.0), W, W)
+				|| !Parks.Clear(FVector2D(FMath::Cos(A), FMath::Sin(A)) * Rd, FVector2D(1.0, 0.0), W, W) || !Lots.Take(FVector2D(FMath::Cos(A), FMath::Sin(A)) * Rd, FVector2D(1.0, 0.0), W, W, 400.0)) { continue; }
 			PlaceOnGround(OutByKind, EBuildingKind::BulbTower, Dir, F.GX, R, S, W, W, Hgt, 200.0, false);
 			++Count;
 		}
@@ -980,7 +1075,7 @@ namespace
 				const bool bDome = Pick < 0.18f;
 				const double Wd = bDome ? W * 1.5 : W, Dd = bDome ? W * 1.5 : W * (0.8 + 0.4 * Hash01(Mix(H, 9u)));
 				const double Hgt = bDome ? W * 0.6 : W * (0.7 + 0.6 * Hash01(Mix(H, 13u)));
-				if (!Ways.Clear(C2, FVector2D(FMath::Cos(A), FMath::Sin(A)), Wd, Dd)) { continue; }
+				if (!Ways.Clear(C2, FVector2D(FMath::Cos(A), FMath::Sin(A)), Wd, Dd) || !Parks.Clear(C2, FVector2D(FMath::Cos(A), FMath::Sin(A)), Wd, Dd)) { continue; }
 				const FVector Dir = (Town.LocalCm + Out * Rr).GetSafeNormal();
 				const FPlanetTerrainSample S = SlonkTerrain::Sample(P, Dir, 400.0);
 				if (!Buildable(S) || !Own.Owns(Dir, HalfDiag(Wd, Dd)) || !Lots.Take(C2, FVector2D(FMath::Cos(A), FMath::Sin(A)), Wd, Dd)) { continue; }
@@ -1146,6 +1241,51 @@ namespace
 			}
 		}
 	}
+}
+
+float SlonkCities::ParkAt(const FPlanetTerrainParams& P, const FTownSite& Town, const FVector& Dir)
+{
+	if (Town.bCliff) { return 0.f; }
+	const FTownFrame F(Town);
+	const FVector Rel = Dir * P.RadiusCm - Town.LocalCm;
+	const FVector Rt = Rel - F.Up * FVector::DotProduct(Rel, F.Up);
+	return (float)ParkOf(FVector::DotProduct(Rt, F.GX), FVector::DotProduct(Rt, F.GY), Town.RadiusCm, Town.Seed);
+}
+
+float SlonkCities::ClearingAt(const FPlanetTerrainParams& P, const FCivilization& Civ, const FVector& Dir)
+{
+	// terrain_material.py's clearings: every point within a cell across the ground, the offsets taken as the material
+	// takes them (the point less the settlement's point, off the sphere as the point lies), each settlement's up through
+	// its point; the city points (lived at or not, the first four) listed for the towns' claims.
+	const double R = P.RadiusCm;
+	const FVector X = Dir * R;
+	double Clear = 0.0;
+	FVector CityU[4]; double CityR[4]; int32 NCity = 0;
+	for (int32 Level = 1; Level <= 2; ++Level)
+	{
+		const double Cell = LevelCm[Level];
+		SurfacePointsAround(Dir, R, Level, [&](const FVector& Pt, uint32 H)
+		{
+			const FVector Rel = X - Pt, RelU = Rel - Dir * FVector::DotProduct(Rel, Dir);
+			if (RelU.SizeSquared() >= Cell * Cell) { return; }
+			const float Region = RegionAt(Pt);
+			const bool bKept = KeptOf(Civ, H);
+			if (Level == 1)
+			{
+				if (Region < 0.35f) { return; }
+				const double CityRad = CityRadiusCm(Region);
+				if (NCity < 4) { CityU[NCity] = RelU; CityR[NCity] = CityRad; ++NCity; }
+				if (bKept) { Clear = FMath::Max(Clear, ClearingOf(Rel, Pt.GetSafeNormal(), CityRad, H, Cell)); }
+				return;
+			}
+			const float Strength = Region * ClusterAt(Pt);
+			if (Strength < 0.3f || !bKept) { return; }
+			const double TownR = TownRadiusCm(Strength);
+			for (int32 c = 0; c < NCity; ++c) { if ((CityU[c] - RelU).Size() < CityR[c] + TownR + 30000.0) { return; } }
+			Clear = FMath::Max(Clear, ClearingOf(Rel, Pt.GetSafeNormal(), TownR, H, Cell));
+		});
+	}
+	return (float)Clear;
 }
 
 double SlonkCities::PaintedWayCm(const FPlanetTerrainParams& P, const FCivilization& Civ, const FVector& Dir)

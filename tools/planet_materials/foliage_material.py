@@ -10,6 +10,9 @@ SlonkScatter::ScatterChunk:
     4   seed
     5-7 size in metres (7 is the height, which scales the sway)
     8   dryness: a parched plant yellows
+    9   the distance it fades out by, cm (0: never): over the last fifth of it the plant is dithered away, so it is
+        gone before the coarser chunk without it takes over and none pops in or out. The distance is from ViewPos,
+        the camera as the terrain component sets it each frame, so the shadow passes fade it the same.
 Two-sided foliage shading lets the sun through the leaves. The wind bends each plant from its root, along the lines
 of latitude (about the planet's axis, the instanced set's own up) so a stand sways one way, in slow gusts at its own phase, and the leaves and needles flutter on top;
 UPlanetTerrainComponent stops it beyond PlantWindDistanceCm. IceColor is set per planet by the terrain component.
@@ -44,6 +47,15 @@ else if (kind >= 0.85)
     // A card of needles: fine strands out from the stem, a little wavy, thinning toward the tips and the sides.
     float strands = abs(frac(UV.x * 17.0 + sin(UV.y * 9.0 + rnd * 20.0) * 0.18) - 0.5) * 2.0;
     mask = (strands < 0.6 * (1.0 - UV.y * 0.55) ? 1.0 : 0.0) * (abs(UV.x - 0.5) < 0.5 - UV.y * 0.12 ? 1.0 : 0.0);
+}
+// Fading out with distance: dithered against interleaved gradient noise that moves each frame, which the temporal
+// upscaler smooths into a fade.
+if (FadeFar > 0.0)
+{
+    float fade = saturate((FadeFar - length(WP - ViewPos)) / (0.2 * FadeFar));
+    float2 px = Parameters.SvPosition.xy + 5.588238 * (float)(View.StateFrameIndexMod8);
+    float ign = frac(52.9829189 * frac(dot(px, float2(0.06711056, 0.00583715))));
+    mask *= fade > ign ? 1.0 : 0.0;
 }
 Mask = mask;
 float3 bark = float3(0.24, 0.18, 0.13) * (0.8 + 0.4 * frac(Seed * 13.1));
@@ -89,10 +101,13 @@ def build():
     seed = g.node("PerInstanceCustomData", {"DataIndex": 4, "ConstDefaultValue": 0.0})
     sz = g.node("PerInstanceCustomData", {"DataIndex": 7, "ConstDefaultValue": 1.0})
     dry = g.node("PerInstanceCustomData", {"DataIndex": 8, "ConstDefaultValue": 0.0})
+    fade_far = g.node("PerInstanceCustomData", {"DataIndex": 9, "ConstDefaultValue": 0.0})
     ice = g.vec("IceColor", (0.90, 0.93, 0.97))
-    e = g.custom(CODE, ["VC", "VCA", "UV", "N", "PlantUp", "Tint", "Snow", "Seed", "Dry", "IceColor"], "CMOT_Float3", "foliage",
+    view_pos = g.vec("ViewPos", (0.0, 0.0, 0.0))
+    e = g.custom(CODE, ["VC", "VCA", "UV", "N", "PlantUp", "Tint", "Snow", "Seed", "Dry", "IceColor", "FadeFar", "WP", "ViewPos"], "CMOT_Float3", "foliage",
                  extra_outputs=(("Mask", "CMOT_Float1"), ("Rough", "CMOT_Float1"), ("Sub", "CMOT_Float3")))
-    for pin, src in [("VC", vc), ("UV", g.texcoord(0)), ("N", n), ("PlantUp", up), ("Tint", tint), ("Snow", snow), ("Seed", seed), ("Dry", dry), ("IceColor", ice)]:
+    for pin, src in [("VC", vc), ("UV", g.texcoord(0)), ("N", n), ("PlantUp", up), ("Tint", tint), ("Snow", snow), ("Seed", seed), ("Dry", dry), ("IceColor", ice),
+                     ("FadeFar", fade_far), ("WP", g.node("WorldPosition")), ("ViewPos", view_pos)]:
         g.c(src, e, pin)
     # The colour node's main output is RGB; the surface kind is its alpha pin.
     g.c(vc, e, "VCA", "A")

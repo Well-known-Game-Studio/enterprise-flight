@@ -41,6 +41,11 @@ struct FScatterSettings
 	/** How much grows, 0..1: 1 on a temperate living world, a little scrub on a desert, nothing on the dead ones. */
 	float Life = 0.f;
 	FScatterPalette Palette;
+	/** A plant fades out this many edges of the coarsest chunk carrying it from the camera: under the distance at which
+	 *  finer chunks carrying it arrive (the terrain component sets it from its split factor), so none pops in. */
+	double FadeEdges = 3.0;
+	/** At most this many of each class's far levels are used (0: each class on its own levels alone, as it ends). */
+	int32 MaxFarLevels = 8;
 };
 
 namespace SlonkScatter
@@ -54,7 +59,8 @@ namespace SlonkScatter
 	/** Per-instance custom data. For a rock: tint RGB, snow cover, seed, the size in metres along the mesh's three
 	 *  axes (its texture is laid in centimetres of rock, whatever the scale), and for a rock fallen from a canyon
 	 *  wall the bed it came from (-1 for none) and how much of its colour it wears. For a plant: the foliage tint
-	 *  RGB, snow, seed, the size in metres, how dry it is (0 lush, 1 parched), and 0. */
+	 *  RGB, snow, seed, the size in metres, how dry it is (0 lush, 1 parched), and the distance from the camera it
+	 *  fades out by, cm (M_Foliage dithers it away over the last fifth; 0 never). */
 	constexpr int32 NumCustomFloats = 10;
 	/** Rocks at least this big across (cm), and trees at least this tall, get collision near the crew. */
 	constexpr double SolidMinCm = 45.0;
@@ -104,6 +110,16 @@ namespace SlonkScatter
 	SLONK_API double MaxChunkEdgeCm();
 
 	SLONK_API void ScatterChunk(const FPlanetTerrainParams& P, const FScatterSettings& S, const FChunkGrid& G, FChunkScatter& Out);
+
+	/**
+	 * The forest's density at each vertex of a chunk's grid ((Steps + 1)^2, row major, the margin left out): the
+	 * chance of a tree in its lattice cell, the same that places the trees, before the world's life and the density
+	 * setting. The terrain material makes it the share of the ground the crowns cover (UV3.y, times its TreeLife, which
+	 * the terrain component sets from those) and paints the ground the canopy's colour by it, so a forest too far off
+	 * for its trees to be drawn is there in colour and its trees fade in over their own colour rather than over bare
+	 * soil. Every chunk carries it, however coarse; the settings reach it through the material, with no rebuild.
+	 */
+	SLONK_API void TreeCover(const FPlanetTerrainParams& P, const FChunkGrid& G, TArray<float>& Out);
 
 	/** A planet-local position in the terrain material's noise space: each axis modulo NoisePeriodCm, as the chunk
 	 *  origins reach the shader. */

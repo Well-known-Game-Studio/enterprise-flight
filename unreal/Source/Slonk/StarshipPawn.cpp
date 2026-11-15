@@ -68,6 +68,7 @@
 #include "Misc/FileHelper.h"
 #include "Misc/App.h"
 #include "Misc/CommandLine.h"
+#include "HAL/IConsoleManager.h"
 #include "Misc/Paths.h"
 
 AStarshipPawn::AStarshipPawn()
@@ -2238,8 +2239,9 @@ void AStarshipPawn::ProcessDebugCommand()
 	}
 	else if (Op == TEXT("terrain") && Movement && ArgStr(1) == TEXT("rocks"))
 	{
-		// terrain rocks [on|off|density <x>|check]: the rocks and plants on the ground of the world below, and how many
-		// are about; check traces the boots' channel through the solid rocks and trunks nearest the pawn.
+		// terrain rocks [on|off|density <x>|far <levels>|check]: the rocks and plants on the ground of the world below, and
+		// how many are about; far sets how many of each class's thinned far levels are drawn (0 none); check traces the
+		// boots' channel through the solid rocks and trunks nearest the pawn.
 		APlanetBody* Planet = Cast<APlanetBody>(Movement->GroundBody.Get());
 		if (UPlanetTerrainComponent* T = Planet ? Planet->Terrain.Get() : nullptr)
 		{
@@ -2247,6 +2249,13 @@ void AStarshipPawn::ProcessDebugCommand()
 			const FString Mode = ArgStr(2);
 			if (Mode == TEXT("on") || Mode == TEXT("off")) { T->SetScatterOptions(Mode == TEXT("on"), Was.Density, Was.bCities, Was.Life, Was.People); }
 			else if (Mode == TEXT("density")) { T->SetScatterOptions(true, Arg(3, 1.f), Was.bCities, Was.Life, Was.People); }
+			else if (Mode == TEXT("far"))
+			{
+				// Through the variable the settings use, so it holds for the next world too; at the settings' own priority,
+				// so the settings panel's ground detail still takes after it.
+				if (IConsoleVariable* V = IConsoleManager::Get().FindConsoleVariable(TEXT("slonk.Scatter.FarLevels"))) { V->Set((int32)Arg(3, 2.f), ECVF_SetByGameSetting); }
+				T->SetScatterFarLevels((int32)Arg(3, 2.f));
+			}
 			else if (Mode == TEXT("check"))
 			{
 				int32 Hits = 0;
@@ -2257,9 +2266,16 @@ void AStarshipPawn::ProcessDebugCommand()
 			const FString Line = FString::Printf(TEXT("Rocks and plants on %s: %s, density %.2f, life %.2f%s; %d rocks and %d plants on the chunks showing, %d solid round you, %d instance sets"), *Planet->GetDisplayName(),
 				Now.bEnabled ? TEXT("on") : TEXT("off"), Now.Density, Now.Life, Now.bCities ? TEXT(", clear of the towns") : TEXT(""), T->GetVisibleRockCount(), T->GetVisiblePlantCount(), T->GetSolidRockCount(), T->GetScatterSetCount());
 			UE_LOG(LogTemp, Log, TEXT("%s"), *Line);
+			UE_LOG(LogTemp, Log, TEXT("Scatter by mesh (instances in sets): %s"), *T->DescribeVisibleScatter());
 			ScreenMessage(Line, FColor::Cyan);
 		}
 		else { UE_LOG(LogTemp, Log, TEXT("Terrain: no planet within 1.5 radii")); }
+	}
+	else if (Op == TEXT("terrain") && Movement && ArgStr(1) == TEXT("param") && Args.Num() > 3)
+	{
+		// terrain param <name> <value>: a scalar of the ground's material on the world below (CanopyShade, for tuning).
+		APlanetBody* Planet = Cast<APlanetBody>(Movement->GroundBody.Get());
+		if (UPlanetTerrainComponent* T = Planet ? Planet->Terrain.Get() : nullptr) { T->SetScalarParameter(FName(*Args[2]), Arg(3, 0.f)); UE_LOG(LogTemp, Log, TEXT("Terrain %s = %.3f"), *Args[2], Arg(3, 0.f)); }
 	}
 	else if (Op == TEXT("terrain") && Movement)
 	{

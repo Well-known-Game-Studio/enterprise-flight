@@ -523,4 +523,81 @@ bool FSlonkCitiesCliffTownsTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkCitiesClearingsTest, "Slonk.Cities.Clearings", SLONK_TEST_FLAGS)
+bool FSlonkCitiesClearingsTest::RunTest(const FString& Parameters)
+{
+	// The forest's clearings round the settlements (the terrain material's, mirrored for the scatter's trees): a
+	// settlement's own ground cleared but for its parks, then an edge that wanders in and out round it rather than a
+	// circle; a city keeps some of its forest as parks and unbuilt ground, and builds nothing in them.
+	const FPlanetTerrainParams P = Earthish();
+	const FCivilization Civ = SlonkCivs::Colonists();
+	TArray<FTownSite> Sites;
+	for (int32 i = 0; i < 400 && Sites.Num() < 6; ++i)
+	{
+		const FVector Dir = Fib(i * 11 + 5, 4400);
+		if (SlonkTerrain::SampleStructure(P, Dir, 2.0e5).bWater) { continue; }
+		TArray<FTownSite> Towns;
+		SlonkCities::EnumerateTowns(P, Civ, Dir * P.RadiusCm, 2.0e6, Towns, 12);
+		for (const FTownSite& T : Towns) { if (!T.bCliff && Sites.Num() < 6 && !Sites.ContainsByPredicate([&](const FTownSite& O) { return O.Seed == T.Seed; })) { Sites.Add(T); } }
+	}
+	TestTrue(TEXT("open-ground settlements found to clear round"), Sites.Num() >= 3);
+	for (const FTownSite& T : Sites)
+	{
+		const double Rb = T.RadiusCm * 1.05 + 2500.0;
+		FVector E = FVector::CrossProduct(FVector::ZAxisVector, T.Dir).GetSafeNormal();
+		if (E.IsNearlyZero()) { E = FVector::XAxisVector; }
+		const FVector N = FVector::CrossProduct(T.Dir, E);
+		auto At = [&](double A, double Rcm) { return (T.Dir * P.RadiusCm + (E * FMath::Cos(A) + N * FMath::Sin(A)) * Rcm).GetSafeNormal(); };
+		// Cleared but for its parks, at its heart and all over its own ground.
+		auto Cleared = [&](const FVector& D) { return SlonkCities::ClearingAt(P, Civ, D) >= 0.99f * (1.f - SlonkCities::ParkAt(P, T, D)) - 0.01f; };
+		TestTrue(FString::Printf(TEXT("%s %u: cleared at its heart, but for a park"), T.bCity ? TEXT("city") : TEXT("town"), T.Seed), Cleared(T.Dir));
+		// Round it, and where the clearing falls to half, how far out, by bearing (the bearings clear of its parks).
+		double Lo = 1.0e30, Hi = 0.0;
+		int32 Bearings = 0;
+		bool bOwnCleared = true;
+		for (int32 a = 0; a < 48; ++a)
+		{
+			const double A = UE_DOUBLE_TWO_PI * a / 48.0;
+			bOwnCleared &= Cleared(At(A, Rb * 0.97));
+			double Edge = Rb * 2.0;
+			bool bPark = false;
+			for (double F = 1.0; F <= 2.0; F += 0.01)
+			{
+				bPark |= SlonkCities::ParkAt(P, T, At(A, Rb * F)) > 0.02f;
+				if (SlonkCities::ClearingAt(P, Civ, At(A, Rb * F)) < 0.5f) { Edge = Rb * F; break; }
+			}
+			if (bPark) { continue; }
+			Lo = FMath::Min(Lo, Edge); Hi = FMath::Max(Hi, Edge); ++Bearings;
+		}
+		if (Bearings > 0) { AddInfo(FString::Printf(TEXT("%s %u, %.0f m across: the forest's edge %.2f to %.2f of its ground's radius (%d bearings clear of parks)"), T.bCity ? TEXT("city") : TEXT("town"), T.Seed, Rb * 2.0 / 100.0, Lo / Rb, Hi / Rb, Bearings)); }
+		TestTrue(FString::Printf(TEXT("%u: its own ground cleared but for its parks"), T.Seed), bOwnCleared);
+		if (Bearings >= 8)
+		{
+			TestTrue(FString::Printf(TEXT("%u: the forest's edge stands outside its ground"), T.Seed), Lo > Rb);
+			TestTrue(FString::Printf(TEXT("%u: the edge wanders (not a circle)"), T.Seed), Hi - Lo > Rb * 0.12);
+		}
+		if (!T.bCity) { continue; }
+		// A city's parks: some of its ground, not most of it, and none of its buildings in them.
+		int32 InPark = 0, Samples = 0;
+		for (int32 s = 0; s < 400; ++s)
+		{
+			const double Rf = FMath::Sqrt((s + 0.5) / 400.0) * Rb;
+			InPark += SlonkCities::ParkAt(P, T, At(UE_DOUBLE_TWO_PI * s * 0.618034, Rf)) > 0.7f ? 1 : 0;
+			++Samples;
+		}
+		TArray<FTransform> ByKind[(int32)EBuildingKind::Count];
+		SlonkCities::BuildTown(P, Civ, T, ByKind, 2500);
+		int32 Built = 0, BuiltInPark = 0;
+		for (int32 k = 0; k < (int32)EBuildingKind::Count; ++k)
+		{
+			for (const FTransform& B : ByKind[k]) { ++Built; BuiltInPark += SlonkCities::ParkAt(P, T, B.GetLocation().GetSafeNormal()) > 0.3f ? 1 : 0; }
+		}
+		AddInfo(FString::Printf(TEXT("city %u: %d%% of its ground park or unbuilt; %d buildings, %d in a park"), T.Seed, InPark * 100 / FMath::Max(Samples, 1), Built, BuiltInPark));
+		TestTrue(FString::Printf(TEXT("city %u keeps some forest"), T.Seed), InPark * 25 >= Samples);
+		TestTrue(FString::Printf(TEXT("city %u is mostly built"), T.Seed), InPark * 4 <= Samples * 3);
+		TestEqual(FString::Printf(TEXT("city %u builds nothing in its parks"), T.Seed), BuiltInPark, 0);
+	}
+	return true;
+}
+
 #endif

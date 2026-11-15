@@ -39,24 +39,60 @@ namespace
 		EClass Kind;
 		/** Wanted spacing of the lattice, cm; it snaps to the nearest level of the quadtree on each planet. */
 		double SpacingCm;
-		/** Rides on chunks with edges this long or shorter, cm. */
+		/** Rides on chunks with edges this long or shorter, cm, all of it. */
 		double MaxEdgeCm;
 		/** A rock's size across its largest axis, a plant's height, cm. */
 		double MinCm, MaxCm;
 		uint64 Salt;
+		/** And on this many coarser levels besides, thinned: Keep of the candidates on the first, Keep squared on the
+		 *  next. The kept ones are picked by a hash of their own, apart from the draws that place them, so a piece
+		 *  far off is one of those close by, in the same place, and the class thins out with distance rather than
+		 *  ending at a ring. */
+		int32 FarLevels;
+		double Keep;
 	};
-	// Boulders on chunks to 150-odd metres (seen to about 600 m), stones to 40 m (150 m), pebbles and grass on the
-	// last level (35 m), trees on chunks to 300 m (a kilometre). Each shows down to a few pixels before the coarser
-	// chunk that lacks it takes over; past the trees the terrain's own colours carry the forest.
+	// Boulders on chunks to 150-odd metres (seen to about 600 m) and half of them to 300 m chunks (1.2 km); stones to
+	// 40 m chunks (150 m) and pebbles on the last level (35 m), where they are a pixel or two across, so no further;
+	// grass on the last level, half on the one before; trees on chunks to 300 m (a kilometre), two in five to 600 m
+	// (2.5 km) and one in six to 1.2 km (5 km). The plants fade out before their last level ends (FadeEdges); past the
+	// trees the terrain's own colours carry the forest. Every instance turns with the planet each frame (a transform
+	// update on the render thread apiece), so a far level is worth its count only where it is seen.
 	constexpr FClass Classes[] = {
-		{ EClass::Boulder, 750.0, 26000.0, 120.0, 420.0, 0x51ed270b2f1c7e3dULL },
-		{ EClass::Stone, 220.0, 6500.0, 26.0, 95.0, 0x2545f4914f6cdd1dULL },
-		{ EClass::Pebble, 60.0, 1700.0, 6.0, 22.0, 0x8c4b5bd7d9a1e5f3ULL },
-		{ EClass::Tree, 600.0, 31000.0, 700.0, 2200.0, 0x3c6ef372fe94f82bULL },
-		{ EClass::Grass, 45.0, 1700.0, 25.0, 60.0, 0xa54ff53a5f1d36f1ULL },
+		{ EClass::Boulder, 750.0, 26000.0, 120.0, 420.0, 0x51ed270b2f1c7e3dULL, 1, 0.5 },
+		{ EClass::Stone, 220.0, 6500.0, 26.0, 95.0, 0x2545f4914f6cdd1dULL, 0, 1.0 },
+		{ EClass::Pebble, 60.0, 1700.0, 6.0, 22.0, 0x8c4b5bd7d9a1e5f3ULL, 0, 1.0 },
+		{ EClass::Tree, 600.0, 31000.0, 700.0, 2200.0, 0x3c6ef372fe94f82bULL, 2, 0.4 },
+		{ EClass::Grass, 45.0, 1700.0, 25.0, 60.0, 0xa54ff53a5f1d36f1ULL, 1, 0.5 },
 	};
-	/** Shrubs stand on the material's scrub dots, on chunks to 76 m (seen to about 250 m; the painted dots beyond). */
+	/** Shrubs stand on the material's scrub dots, on chunks to 76 m (seen to about 250 m; the painted dots beyond),
+	 *  and seven in ten on the next level (500 m). */
 	constexpr double ShrubMaxEdgeCm = 8000.0;
+	constexpr int32 ShrubFarLevels = 1;
+	constexpr double ShrubKeep = 0.7;
+	/** The salt of the hash that picks the pieces kept on the far levels. */
+	constexpr uint64 KeepSalt = 0x7f4a7c159e3779b9ULL;
+
+	/** How many levels a chunk lies above the coarsest that carries all of a class: 0 at or below it. */
+	int32 LevelsAbove(double EdgeCm, double MaxEdgeCm)
+	{
+		return EdgeCm <= MaxEdgeCm * 1.0001 ? 0 : FMath::CeilToInt32(FMath::Log2(EdgeCm / MaxEdgeCm) - 1e-6);
+	}
+
+	/**
+	 * Where a plant fades out, cm from the camera: FadeEdges edges of the coarsest chunk that carries it. A chunk
+	 * splits at SplitFactor of its own edges, so the finer ones carrying a plant arrive with it at least about
+	 * 2 x SplitFactor of their edges away; it fades before that and never pops in. The level a piece is kept to is
+	 * the last whose share its keep draw falls under.
+	 */
+	double FadeFarCm(const SlonkScatter::FChunkGrid& G, double MaxEdgeCm, int32 FarLevels, double Keep, double KeepDraw, double FadeEdges)
+	{
+		int32 Top = 0;
+		for (int32 k = FarLevels; k > 0; --k) { if (KeepDraw < FMath::Pow(Keep, (double)k)) { Top = k; break; } }
+		// The planet's chunk edges halve from the face's: the largest of them no longer than the class's at that level.
+		const double RootEdge = G.EdgeCm * FMath::Pow(2.0, (double)G.Depth);
+		const int32 Depth = FMath::Max(0, FMath::CeilToInt32(FMath::Log2(RootEdge / (MaxEdgeCm * FMath::Pow(2.0, (double)Top))) - 1e-6));
+		return FadeEdges * RootEdge / FMath::Pow(2.0, (double)Depth);
+	}
 
 	/** Height to width of each rock shape, and the second horizontal axis to the first: ranges a rock is drawn from. */
 	struct FProportion { double ZLo, ZHi, YLo, YHi, TiltDeg; };
@@ -212,21 +248,28 @@ namespace
 	struct FKeepOut
 	{
 		TArray<TPair<FVector, double>> Towns;
+		TArray<FTownSite> Sites;
 		FPlanetTerrainParams Params;
 		FCivilization Civ;
 		void Build(const FPlanetTerrainParams& P, const FCivilization& People, const SlonkScatter::FChunkGrid& G)
 		{
 			Params = P;
 			Civ = People.bInhabited ? People : SlonkCivs::Colonists();
-			TArray<FTownSite> Sites;
 			SlonkCities::EnumerateTowns(P, Civ, G.Origin, G.EdgeCm * 0.75 + SlonkCities::CityRadiusCm(1.f) + 5000.0, Sites, 64);
 			// A cliff town runs its radius along the wall and its profile 300 m across it, either way.
 			for (const FTownSite& T : Sites) { Towns.Add({ T.LocalCm, FMath::Square((T.bCliff ? FMath::Sqrt(FMath::Square(T.RadiusCm) + FMath::Square(30000.0)) : T.RadiusCm) + 2500.0) }); }
 		}
-		bool Contains(const FVector& Up, double R) const
+		/** In a town's ground; a plant (bPlant) not where it stands well inside one of the town's parks, which its
+		 *  builder keeps every building out of (SlonkCities::ParkAt). */
+		bool Contains(const FVector& Up, double R, bool bPlant = false) const
 		{
 			const FVector OnSphere = Up * R;
-			for (const TPair<FVector, double>& T : Towns) { if (FVector::DistSquared(OnSphere, T.Key) < T.Value) { return true; } }
+			for (int32 i = 0; i < Towns.Num(); ++i)
+			{
+				if (FVector::DistSquared(OnSphere, Towns[i].Key) >= Towns[i].Value) { continue; }
+				if (bPlant && SlonkCities::ParkAt(Params, Sites[i], Up) >= 0.7f) { continue; }
+				return true;
+			}
 			return false;
 		}
 		/** On a way the terrain paints, or within a couple of metres of one. */
@@ -252,6 +295,24 @@ namespace
 		C.Alpine = FMath::Clamp(FMath::Max(Sp.HeightCm, 0.0) / FMath::Max(Line, 1.0), 0.0, 1.5);
 		C.Cold = FMath::Clamp(1.0 - Line / Q.SnowlineCm + 0.5 * C.Alpine, 0.0, 1.5);
 		return C;
+	}
+
+	/** Stands of forest with clearings between them, at the kilometre scale. */
+	double ForestAt(const FPlanetTerrainParams& P, const FSpot& Sp)
+	{
+		return SmoothStep(-0.15, 0.25, SlonkTerrain::Fbm(Sp.Up * (P.RadiusCm / 120000.0) + P.Seed * 3.7, 3));
+	}
+
+	/** How likely a tree is to stand in its lattice cell at a spot, before the world's life and the density setting:
+	 *  the forest's stands where it is wet and not steep or rocky, a line of trees along a canyon's river whatever
+	 *  the forest does, none above the treeline or through lying snow. The trees placed and the ground's cover
+	 *  (SlonkScatter::TreeCover) both read it. */
+	double TreeDensity(const FSpot& Sp, const FClimate& Clim, double Forest)
+	{
+		const double SnowLying = SmoothStep(0.2, 0.6, Sp.Ice);
+		return (Forest * SmoothStep(0.3, 0.65, Sp.Wet) * (1.0 - SmoothStep(0.35, 0.75, Sp.Slope)) * (1.0 - 0.7 * Sp.Rocky) * 0.8
+			+ Sp.Gorge * Sp.Wet * 0.35)
+			* (1.0 - SmoothStep(0.65, 0.9, Clim.Alpine)) * (1.0 - SnowLying);
 	}
 
 	/** How parched a plant is, 0 lush to 1 dry: the per-instance dryness the foliage material yellows it by. */
@@ -287,8 +348,8 @@ int32 SlonkScatter::FChunkScatter::NumPlants() const
 
 double SlonkScatter::MaxChunkEdgeCm()
 {
-	double M = ShrubMaxEdgeCm;
-	for (const FClass& C : Classes) { M = FMath::Max(M, C.MaxEdgeCm); }
+	double M = ShrubMaxEdgeCm * FMath::Pow(2.0, (double)ShrubFarLevels);
+	for (const FClass& C : Classes) { M = FMath::Max(M, C.MaxEdgeCm * FMath::Pow(2.0, (double)C.FarLevels)); }
 	return M;
 }
 
@@ -320,6 +381,28 @@ bool SlonkScatter::ScrubDotAt(const FVector& NoiseP, FVector& OutCentre, double&
 	return true;
 }
 
+void SlonkScatter::TreeCover(const FPlanetTerrainParams& P, const FChunkGrid& G, TArray<float>& Out)
+{
+	const int32 GW = G.Steps + 1;
+	Out.Init(0.f, GW * GW);
+	if (P.bAirless || !G.Samples || !G.Dirs || !G.Pos || G.Steps <= 0) { return; }
+	const FChunkFrame F(G);
+	// The forest's alone: the settlements' clearings are the material's, cut per pixel from the same settlement points
+	// at any height (SlonkCities::ClearingAt, which thins the trees, mirrors them). Cut here, a town could be looked for
+	// only on the chunks a few of its size across (a coarse chunk's search would span a continent), and its clearing
+	// came and went with height.
+	for (int32 j = 0; j <= G.Steps; ++j)
+	{
+		for (int32 i = 0; i <= G.Steps; ++i)
+		{
+			const double U = F.U0 + F.Wd * (double)i / G.Steps, V = F.V0 + F.Wd * (double)j / G.Steps;
+			FSpot Sp;
+			if (!F.SpotAt(U, V, Sp) || Sp.River > 0.08 || Sp.Cliff > 0.3) { continue; }
+			Out[j * GW + i] = (float)TreeDensity(Sp, ClimateAt(P, Sp), ForestAt(P, Sp));
+		}
+	}
+}
+
 void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSettings& S, const FChunkGrid& G, FChunkScatter& Out)
 {
 	if (!S.bEnabled || S.Density <= 0.f || G.EdgeCm > MaxChunkEdgeCm() || !G.Samples || !G.Dirs || !G.Pos || G.Steps <= 0) { return; }
@@ -329,11 +412,16 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 	const bool bLiving = S.Life > 0.f && !P.bAirless;
 	FKeepOut KeepOut;
 	if (S.bCities) { KeepOut.Build(P, S.People, G); }
+	const FCivilization ClearCiv = S.People.bInhabited ? S.People : SlonkCivs::Colonists();
 
 	int32 Rocks = 0, Plants = 0;
 	for (const FClass& Cl : Classes)
 	{
-		if (G.EdgeCm > Cl.MaxEdgeCm) { continue; }
+		// On the class's own levels all of it; on its far levels the share its keep draw allows.
+		const int32 FarLevels = FMath::Min(Cl.FarLevels, S.MaxFarLevels);
+		const int32 Above = LevelsAbove(G.EdgeCm, Cl.MaxEdgeCm);
+		if (Above > FarLevels) { continue; }
+		const double KeepHere = FMath::Pow(Cl.Keep, (double)Above);
 		const bool bRock = Cl.Kind == EClass::Boulder || Cl.Kind == EClass::Stone || Cl.Kind == EClass::Pebble;
 		if (!bRock && !bLiving) { continue; }
 		// The class's lattice level: cells of 2 / 2^L in face coordinates, nested in the chunks of the quadtree.
@@ -347,6 +435,9 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 		for (int64 GY = GY0; GY <= GY1 && Count < Cap; ++GY)
 		for (int64 GX = GX0; GX <= GX1 && Count < Cap; ++GX)
 		{
+			// Kept on this level? A draw of its own, so the candidate's place and its other draws are the same on every level.
+			const double KeepDraw = FDraw(CellHash(G.Face, L, GX, GY, Cl.Salt ^ KeepSalt)).Next();
+			if (KeepDraw >= KeepHere) { continue; }
 			FDraw D(CellHash(G.Face, L, GX, GY, Cl.Salt));
 			// The candidate: anywhere in its cell. Half-open windows put it in exactly one chunk of each level.
 			const double U = -1.0 + ((double)GX + D.Next()) * Delta, V = -1.0 + ((double)GY + D.Next()) * Delta;
@@ -379,16 +470,11 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 			}
 			else
 			{
-				// Stands of forest with clearings between them, at the kilometre scale, thickest where it is wet.
-				const double Forest = SmoothStep(-0.15, 0.25, SlonkTerrain::Fbm(Sp.Up * (R / 120000.0) + P.Seed * 3.7, 3));
-				// Nothing grows through lying snow.
+				const double Forest = ForestAt(P, Sp);
 				const double SnowLying = SmoothStep(0.2, 0.6, Sp.Ice);
 				if (Cl.Kind == EClass::Tree)
 				{
-					Density = (Forest * SmoothStep(0.3, 0.65, Sp.Wet) * (1.0 - SmoothStep(0.35, 0.75, Sp.Slope)) * (1.0 - 0.7 * Sp.Rocky) * 0.8
-						// A line of trees along the river on a canyon floor, whatever the forest does.
-						+ Sp.Gorge * Sp.Wet * 0.35)
-						* (1.0 - SmoothStep(0.65, 0.9, Clim.Alpine)) * (1.0 - SnowLying);
+					Density = TreeDensity(Sp, Clim, Forest);
 				}
 				else
 				{
@@ -398,8 +484,12 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 				Density *= S.Life;
 			}
 			Density = FMath::Min(Density * S.Density, 0.9);
-			if (D.Next() >= Density) { continue; }
-			if (KeepOut.Towns.Num() > 0 && (KeepOut.Contains(Sp.Up, R) || KeepOut.OnWay(Sp.Up))) { continue; }
+			const double Draw = D.Next();
+			if (Draw >= Density) { continue; }
+			// In a settlement's clearing a tree thins out as the material clears the canopy's colour there, so the two part
+			// at the same edge (the same draw, so a tree outside every clearing stands where it did).
+			if (Cl.Kind == EClass::Tree && S.bCities && Draw >= Density * (1.0 - SlonkCities::ClearingAt(P, ClearCiv, Sp.Up))) { continue; }
+			if (KeepOut.Towns.Num() > 0 && (KeepOut.Contains(Sp.Up, R, !bRock) || KeepOut.OnWay(Sp.Up))) { continue; }
 			const double Seed = D.Next();
 			const double Snow = FMath::Clamp(Sp.Ice * 1.2, 0.0, 1.0) * (1.0 - FMath::Clamp(Sp.Slope * 2.0, 0.0, 1.0));
 
@@ -483,7 +573,8 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 				if (Kind == EPlant::Conifer) { Tint *= FLinearColor(0.62f, 0.72f, 0.7f); }
 				else if (Kind == EPlant::Broadleaf) { Tint *= 0.85f; }
 				else { Tint = FMath::Lerp(S.Palette.Land2, S.Palette.Land, (float)FMath::Clamp(Sp.Wet * 1.2 - Sp.Rocky * 0.3, 0.0, 1.0)) * (float)(0.8 * Vary); }
-				const float C[NumCustomFloats] = { Tint.R, Tint.G, Tint.B, (float)Snow, (float)Seed, (float)(H * Wx / 100.0), (float)(H * Wy / 100.0), (float)(H / 100.0), (float)Dryness, 0.f };
+				const double FadeCm = FadeFarCm(G, Cl.MaxEdgeCm, FarLevels, Cl.Keep, KeepDraw, S.FadeEdges);
+				const float C[NumCustomFloats] = { Tint.R, Tint.G, Tint.B, (float)Snow, (float)Seed, (float)(H * Wx / 100.0), (float)(H * Wy / 100.0), (float)(H / 100.0), (float)Dryness, (float)FadeCm };
 				AddPiece(Out, PlantMesh(Kind), Xf, C, bTree && H >= SolidTreeCm);
 				++Plants;
 			}
@@ -493,8 +584,11 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 	// Shrubs: on the scrub dots the terrain material paints, the same cells, hashed the same way, so the bush close to
 	// stands where the dark dot was from the air. The material adds each dot through the cell its pixel falls in, so
 	// a dot is drawn about its centre only if the ground there is in the dot's own cell; that is where a bush goes.
-	if (bLiving && G.EdgeCm <= ShrubMaxEdgeCm)
+	const int32 ShrubFar = FMath::Min(ShrubFarLevels, S.MaxFarLevels);
+	const int32 ShrubAbove = LevelsAbove(G.EdgeCm, ShrubMaxEdgeCm);
+	if (bLiving && ShrubAbove <= ShrubFar)
 	{
+		const double ShrubKeepHere = FMath::Pow(ShrubKeep, (double)ShrubAbove);
 		const FVector OriginNoise = ToNoiseSpace(G.Origin);
 		auto CellOf = [](const FVector& Pn) { return FIntVector((int32)FMath::FloorToDouble(Pn.X / ScrubCellCm), (int32)FMath::FloorToDouble(Pn.Y / ScrubCellCm), (int32)FMath::FloorToDouble(Pn.Z / ScrubCellCm)); };
 		// Every cell the drawn ground passes through, from each grid cell's box (its two triangles lie inside it):
@@ -531,9 +625,12 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 			// The bush's own draws from the dot's place on the periodic lattice, so it is the same bush whichever side
 			// of a wrap the chunk's origin lies.
 			const FIntVector Key = ScrubCellKey(Cell);
-			FDraw D(Mix64(((uint64)(uint32)Key.X << 42) ^ ((uint64)(uint32)Key.Y << 21) ^ (uint64)(uint32)Key.Z ^ 0x6a09e667f3bcc909ULL));
+			const uint64 KeyHash = ((uint64)(uint32)Key.X << 42) ^ ((uint64)(uint32)Key.Y << 21) ^ (uint64)(uint32)Key.Z;
+			const double KeepDraw = FDraw(Mix64(KeyHash ^ KeepSalt)).Next();
+			if (KeepDraw >= ShrubKeepHere) { continue; }
+			FDraw D(Mix64(KeyHash ^ 0x6a09e667f3bcc909ULL));
 			if (D.Next() >= S.Life * S.Density * SmoothStep(0.25, 0.55, Zone)) { continue; }
-			if (KeepOut.Towns.Num() > 0 && (KeepOut.Contains(Sp.Up, R) || KeepOut.OnWay(Sp.Up))) { continue; }
+			if (KeepOut.Towns.Num() > 0 && (KeepOut.Contains(Sp.Up, R, true) || KeepOut.OnWay(Sp.Up))) { continue; }
 			// As wide as the painted dot, a little over half as tall; the mesh's crown is 110 cm across at unit scale.
 			const double Wide = DotR * 2.0 * FMath::Lerp(0.95, 1.15, D.Next());
 			const double H = Wide * FMath::Lerp(0.55, 0.85, D.Next());
@@ -543,7 +640,8 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 			// The dot's own darkening of the ground, which the bush now stands over.
 			const FLinearColor Tint = FoliageAt(S.Palette, Dryness, 0.8 + 0.3 * D.Next()) * FLinearColor(0.55f, 0.62f, 0.45f) * 1.5f;
 			const double Snow = FMath::Clamp(Sp.Ice * 1.2, 0.0, 1.0);
-			const float C[NumCustomFloats] = { Tint.R, Tint.G, Tint.B, (float)Snow, (float)D.Next(), (float)(Wide / 100.0), (float)(Wide / 100.0), (float)(H / 100.0), (float)Dryness, 0.f };
+			const double FadeCm = FadeFarCm(G, ShrubMaxEdgeCm, ShrubFar, ShrubKeep, KeepDraw, S.FadeEdges);
+			const float C[NumCustomFloats] = { Tint.R, Tint.G, Tint.B, (float)Snow, (float)D.Next(), (float)(Wide / 100.0), (float)(Wide / 100.0), (float)(H / 100.0), (float)Dryness, (float)FadeCm };
 			AddPiece(Out, PlantMesh(EPlant::Shrub), Xf, C, false);
 			++Plants;
 		}
