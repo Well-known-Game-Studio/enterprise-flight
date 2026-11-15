@@ -1666,7 +1666,10 @@ bool APlanetBody::ShouldHoldSpin() const
 	const FVector Centre = GetActorLocation();
 	double Dist = FVector::Dist(ViewLoc, Centre);
 	if (const APawn* Pawn = PC->GetPawn()) { Dist = FMath::Min(Dist, FVector::Dist(Pawn->GetActorLocation(), Centre)); }
-	return Dist - GetRadiusCm() < (double)CVarHoldSpinAltitudeKm.GetValueOnGameThread() * 1.0e5;
+	// Once held, let go a twentieth higher, so a view hovering at the height (a chase camera a ship's length off the
+	// pawn) does not turn the world and hold it on alternate frames.
+	const double LimitCm = (double)CVarHoldSpinAltitudeKm.GetValueOnGameThread() * 1.0e5 * (bSpinHeld ? 1.05 : 1.0);
+	return Dist - GetRadiusCm() < LimitCm;
 }
 
 void APlanetBody::Tick(float DeltaTime)
