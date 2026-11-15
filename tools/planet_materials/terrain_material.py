@@ -512,9 +512,13 @@ settled *= max(keptT, keptC * step(0.35, region));
 // (as EnumerateTowns skips one inside a city's ground; the city points listed for that, lived at or not, at most four).
 // The points of the 27 cells round the pixel's nearest corner, as the search above takes them: all within a cell are
 // among them. SlonkCities::ClearingAt mirrors this: the scatter thins its trees by it, so the ground and the trees part
-// at the same edge, and it is the pixel's own, the same from any height.
+// at the same edge, and it is the pixel's own, the same from any height. Only where the scatter clears its trees for
+// settlements (Clearings, its own flag), and only over any forest: the clearing scales the forest alone.
+// The forest's density at the vertex (UV3.y, the chance of a tree in its lattice cell) by the world's life and the
+// density setting (TreeLife, as the scatter takes them), capped as the scatter caps it.
+float treeD = min(UV3.y * TreeLife, 0.9);
 float clearing = 0.0;
-if (lit > 0.0)
+if (lit > 0.0 && Clearings > 0.5 && treeD > 0.0)
 {
     float3 cityU[4] = { float3(0, 0, 0), float3(0, 0, 0), float3(0, 0, 0), float3(0, 0, 0) };
     float cityR[4] = { 0.0, 0.0, 0.0, 0.0 };
@@ -557,15 +561,15 @@ if (lit > 0.0)
         }
     }
 }
-// Forest: the share of the ground the trees' crowns cover there (UV3.y, from the density that places the trees,
-// SlonkScatter::TreeCover), painted the canopy's colour: the trees' own tint (the wet ground's colour browned toward
+// Forest: the share of the ground the trees' crowns cover there (from treeD, the density that places the trees:
+// a crown covers about 1.7 of its lattice cell, the crowns overlapping at random), painted the canopy's colour: the trees' own tint (the wet ground's colour browned toward
 // the dry's) darkened by the shade inside and between the crowns (CanopyShade, matched to drawn forest against this
 // ground with the trees hidden). A forest too far off for its trees to be drawn is there in colour, and the trees
-// fade in over their own colour, not over bare soil. UV3.y is the cover seen from straight above; looked at from the
+// fade in over their own colour, not over bare soil. That is the cover seen from straight above; looked at from the
 // side the crowns hide more of the ground between them, so the gap left (one minus the cover) goes as a canopy's by
 // the Beer-Lambert law, to the power of the slant (CoverGain for how tall the trees stand for their spacing).
 float vmu = max(dot(Nn, normalize(Cam - WP)), 0.08);
-float cover = 1.0 - pow(saturate(1.0 - UV3.y * (1.0 - clearing)), CoverGain / vmu);
+float cover = 1.0 - pow(saturate(exp(-treeD * 1.7) + (1.0 - exp(-treeD * 1.7)) * clearing), CoverGain / vmu);
 float3 canopy = lerp(LandColor, LandColor2, saturate(1.0 - wet * 1.3) * 0.55) * CanopyShade;
 land = lerp(land, canopy, saturate(cover));
 land *= 0.8 * (0.94 + 0.12 * (fb0 + 0.5));
@@ -781,7 +785,7 @@ WPO_INPUTS = ["Fn", "LP", "Col", "OX", "OY", "OZ", "ORX", "ORY", "ORZ", "Cam", "
 INPUTS = ["Fn", "N", "LP", "UV0", "UV1", "UV2", "UV3", "Col", "ColA", "OX", "OY", "OZ", "Cell", "ORX", "ORY", "ORZ", "Cam", "WP", "PlanetRadiusCm", "WaterNR", "Time", "SwellCm"] + TEX_INPUTS + [
           "OceanColor", "ShallowColor", "LandColor", "LandColor2", "MountainColor", "IceColor", "NightLightColor",
           "OceanRoughness", "LandRoughness", "NightLightIntensity", "LavaEmissive", "SunDirection",
-          "NoisePeriodCm", "ReliefCm", "OceanDepthCm", "TX", "TY", "TZ", "StreetGrid", "SettleWet", "SettleDensity", "WayStyle", "CliffAffinity", "CanopyShade", "CoverGain"]
+          "NoisePeriodCm", "ReliefCm", "OceanDepthCm", "TX", "TY", "TZ", "StreetGrid", "SettleWet", "SettleDensity", "WayStyle", "CliffAffinity", "CanopyShade", "CoverGain", "TreeLife", "Clearings"]
 
 
 def build():
@@ -803,7 +807,7 @@ def build():
         "OceanColor": (0.05, 0.17, 0.35), "ShallowColor": (0.1, 0.35, 0.5), "LandColor": (0.30, 0.36, 0.18), "LandColor2": (0.55, 0.45, 0.28),
         "MountainColor": (0.55, 0.52, 0.50), "IceColor": (0.90, 0.93, 0.97), "NightLightColor": (1.0, 0.8, 0.5), "SunDirection": (1.0, 0.0, 0.0),
     }
-    scal = {"OceanRoughness": 0.22, "LandRoughness": 0.9, "NightLightIntensity": 0.0, "LavaEmissive": 0.0, "NoisePeriodCm": 1048576.0, "ReliefCm": 3.8e6, "OceanDepthCm": 5.0e5, "PlanetRadiusCm": 6.371e8, "SwellCm": 120.0, "StreetGrid": 1.0, "SettleWet": 0.3, "SettleDensity": 1.0, "WayStyle": 0.0, "CliffAffinity": 0.0, "CanopyShade": 0.4, "CoverGain": 2.0}
+    scal = {"OceanRoughness": 0.22, "LandRoughness": 0.9, "NightLightIntensity": 0.0, "LavaEmissive": 0.0, "NoisePeriodCm": 1048576.0, "ReliefCm": 3.8e6, "OceanDepthCm": 5.0e5, "PlanetRadiusCm": 6.371e8, "SwellCm": 120.0, "StreetGrid": 1.0, "SettleWet": 0.3, "SettleDensity": 1.0, "WayStyle": 0.0, "CliffAffinity": 0.0, "CanopyShade": 0.4, "CoverGain": 2.0, "TreeLife": 1.0, "Clearings": 1.0}
     e = g.custom(CODE, INPUTS, "CMOT_Float3", "terrain layers, textures, bump, lights", extra_outputs=(("Nrm", "CMOT_Float3"), ("Rough", "CMOT_Float1"), ("Emis", "CMOT_Float3"), ("AO", "CMOT_Float1")))
     for pin, src in [("Fn", fn), ("N", n), ("LP", vi), ("UV0", uv0), ("UV1", uv1), ("UV2", uv2), ("UV3", uv3), ("Col", col), ("OX", ox), ("OY", oy), ("OZ", oz), ("Cell", cell), ("ORX", orx), ("ORY", ory), ("ORZ", orz), ("Cam", cam), ("WP", wp), ("TX", tx), ("TY", ty), ("TZ", tz)]:
         g.c(src, e, pin)

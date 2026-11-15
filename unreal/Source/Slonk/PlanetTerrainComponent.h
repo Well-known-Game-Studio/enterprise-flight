@@ -208,6 +208,9 @@ private:
 	void UpdateSolidRocks();
 	void ClearSolidRocks();
 	void RebuildScatterChunks();
+	/** The scatter settings the ground's material paints by: the forest's colour (TreeLife) and the settlements'
+	 *  clearings (Clearings). */
+	void ApplyScatterToMaterial();
 	void MakeRoots();
 	void ChunkFrame(int32 Face, int32 Depth, int64 X, int64 Y, FVector& OutCentre, double& OutEdge) const;
 	static FVector CubeDir(int32 Face, double U, double V);

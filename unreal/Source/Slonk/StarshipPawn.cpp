@@ -2251,8 +2251,9 @@ void AStarshipPawn::ProcessDebugCommand()
 			else if (Mode == TEXT("density")) { T->SetScatterOptions(true, Arg(3, 1.f), Was.bCities, Was.Life, Was.People); }
 			else if (Mode == TEXT("far"))
 			{
-				// Through the variable the settings use, so it holds for the next world too.
-				if (IConsoleVariable* V = IConsoleManager::Get().FindConsoleVariable(TEXT("slonk.Scatter.FarLevels"))) { V->Set((int32)Arg(3, 2.f), ECVF_SetByConsole); }
+				// Through the variable the settings use, so it holds for the next world too; at the settings' own priority,
+				// so the settings panel's ground detail still takes after it.
+				if (IConsoleVariable* V = IConsoleManager::Get().FindConsoleVariable(TEXT("slonk.Scatter.FarLevels"))) { V->Set((int32)Arg(3, 2.f), ECVF_SetByGameSetting); }
 				T->SetScatterFarLevels((int32)Arg(3, 2.f));
 			}
 			else if (Mode == TEXT("check"))

@@ -381,15 +381,11 @@ bool SlonkScatter::ScrubDotAt(const FVector& NoiseP, FVector& OutCentre, double&
 	return true;
 }
 
-void SlonkScatter::TreeCover(const FPlanetTerrainParams& P, const FScatterSettings& S, const FChunkGrid& G, TArray<float>& Out)
+void SlonkScatter::TreeCover(const FPlanetTerrainParams& P, const FChunkGrid& G, TArray<float>& Out)
 {
 	const int32 GW = G.Steps + 1;
 	Out.Init(0.f, GW * GW);
-	if (!S.bEnabled || S.Density <= 0.f || S.Life <= 0.f || P.bAirless || !G.Samples || !G.Dirs || !G.Pos || G.Steps <= 0) { return; }
-	// A crown is about as wide as eight tenths of its tree is tall, and a typical tree eleven metres: a crown covers
-	// about one and seven tenths of its lattice cell (six metres a side), so a cell's chance of a tree is that much
-	// cover, the crowns overlapping at random.
-	constexpr double CrownsPerCell = 1.7;
+	if (P.bAirless || !G.Samples || !G.Dirs || !G.Pos || G.Steps <= 0) { return; }
 	const FChunkFrame F(G);
 	// The forest's alone: the settlements' clearings are the material's, cut per pixel from the same settlement points
 	// at any height (SlonkCities::ClearingAt, which thins the trees, mirrors them). Cut here, a town could be looked for
@@ -402,8 +398,7 @@ void SlonkScatter::TreeCover(const FPlanetTerrainParams& P, const FScatterSettin
 			const double U = F.U0 + F.Wd * (double)i / G.Steps, V = F.V0 + F.Wd * (double)j / G.Steps;
 			FSpot Sp;
 			if (!F.SpotAt(U, V, Sp) || Sp.River > 0.08 || Sp.Cliff > 0.3) { continue; }
-			const double D = FMath::Min(TreeDensity(Sp, ClimateAt(P, Sp), ForestAt(P, Sp)) * S.Life * S.Density, 0.9);
-			Out[j * GW + i] = (float)(1.0 - FMath::Exp(-D * CrownsPerCell));
+			Out[j * GW + i] = (float)TreeDensity(Sp, ClimateAt(P, Sp), ForestAt(P, Sp));
 		}
 	}
 }

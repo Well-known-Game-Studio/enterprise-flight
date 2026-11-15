@@ -76,6 +76,7 @@ void UPlanetTerrainComponent::Configure(const FPlanetTerrainParams& InParams, UM
 		MID->SetScalarParameterValue(TEXT("ReliefCm"), (float)Params.ReliefCm);
 		MID->SetScalarParameterValue(TEXT("OceanDepthCm"), (float)Params.OceanDepthCm);
 		MID->SetScalarParameterValue(TEXT("NoisePeriodCm"), (float)NoisePeriodCm);
+		ApplyScatterToMaterial();
 	}
 	for (UDynamicMeshComponent* C : Pool)
 	{
@@ -124,7 +125,18 @@ void UPlanetTerrainComponent::SetScatterOptions(bool bEnabled, float Density, bo
 	Scatter.bCities = bCities;
 	Scatter.Life = Life;
 	Scatter.People = People;
+	ApplyScatterToMaterial();
 	if (bConfigured) { RebuildScatterChunks(); }
+}
+
+void UPlanetTerrainComponent::ApplyScatterToMaterial()
+{
+	if (!MID) { return; }
+	// The ground's forest colour follows the trees with no chunk built again: the vertices carry the forest's density
+	// alone (SlonkScatter::TreeCover), the material scales it by the world's life and the density setting.
+	MID->SetScalarParameterValue(TEXT("TreeLife"), Scatter.bEnabled ? Scatter.Life * Scatter.Density : 0.f);
+	// Its clearings round the settlements where the scatter thins its trees for them, and nowhere else.
+	MID->SetScalarParameterValue(TEXT("Clearings"), Scatter.bCities ? 1.f : 0.f);
 }
 
 void UPlanetTerrainComponent::SetScatterFarLevels(int32 Levels)
@@ -1223,7 +1235,7 @@ void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, const FS
 	// The trees' cover at every vertex, on every chunk however coarse: the material paints the ground the canopy's
 	// colour by it, so a forest is there in colour long before (and after) its trees are drawn.
 	TArray<float> Cover;
-	SlonkScatter::TreeCover(P, Sc, Grid, Cover);
+	SlonkScatter::TreeCover(P, Grid, Cover);
 	// The grid's heights go back with the mesh: ground queries read the drawn surface from them.
 	Out.Steps = Steps;
 	Out.Heights.SetNumUninitialized((Steps + 1) * (Steps + 1));
