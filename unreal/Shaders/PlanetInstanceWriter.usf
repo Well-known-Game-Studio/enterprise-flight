@@ -1,0 +1,63 @@
+// Slonk - writes the planets' GPU-only instances into the GPU scene (FPlanetInstanceWriterCS).
+// The GPU scene keeps each instance's transform with its primitive's already in it, so when a primitive moves (and
+// everything on a world turns with it) every instance must be written again. These instances live on the GPU in their
+// primitive's own frame (FPlanetInstanceStore's Source), and this pass multiplies each by its primitive's transform of
+// the frame, read from the GPU scene itself: one thread an instance, over every planet primitive at once.
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/ComputeShaderUtils.ush"
+#include "/Engine/Private/GPUScene/GPUSceneWriter.ush"
+
+StructuredBuffer<uint4> Primitives;	// persistent primitive id, first GPU scene instance, first Source float4, first instance overall
+StructuredBuffer<float4> Source;	// per instance: three rows of its 3x4 transform (translation in w), then its custom data
+uint NumPrimitives;
+uint TotalInstances;
+uint InstanceFlags;
+uint NumCustomFloats;
+
+[numthreads(THREAD_GROUP_SIZE, 1, 1)]
+void WritePlanetInstancesCS(uint3 GroupId : SV_GroupID, uint GroupIndex : SV_GroupIndex)
+{
+	const uint Global = GetUnWrappedDispatchThreadId(GroupId, GroupIndex, THREAD_GROUP_SIZE);
+	if (Global >= TotalInstances || NumPrimitives == 0)
+	{
+		return;
+	}
+
+	// Whose instance: the last primitive starting at or before it.
+	uint Lo = 0;
+	uint Hi = NumPrimitives - 1;
+	while (Lo < Hi)
+	{
+		const uint Mid = (Lo + Hi + 1) >> 1;
+		if (Primitives[Mid].w <= Global) { Lo = Mid; } else { Hi = Mid - 1; }
+	}
+	const uint4 Prim = Primitives[Lo];
+	const uint Local = Global - Prim.w;
+
+	const uint NumCustomFloat4s = (NumCustomFloats + 3) / 4;
+	const uint Base = Prim.z + Local * (3 + NumCustomFloat4s);
+	const float4 R0 = Source[Base];
+	const float4 R1 = Source[Base + 1];
+	const float4 R2 = Source[Base + 2];
+	float4x4 LocalToPrimitive;
+	LocalToPrimitive[0] = float4(R0.xyz, 0.0f);
+	LocalToPrimitive[1] = float4(R1.xyz, 0.0f);
+	LocalToPrimitive[2] = float4(R2.xyz, 0.0f);
+	LocalToPrimitive[3] = float4(R0.w, R1.w, R2.w, 1.0f);
+
+	// A stable per-instance random, from its place in its primitive (no material of these reads it now).
+	uint Hash = (Prim.x * 73856093u) ^ (Local * 19349663u);
+	Hash = (Hash ^ (Hash >> 13)) * 0x5bd1e995u;
+	Hash ^= Hash >> 15;
+	const float RandomId = float(Hash & 0xffffffu) / 16777215.0f;
+
+	const uint InstanceId = Prim.y + Local;
+	InitializeInstanceSceneDataLS(InstanceId, Prim.x, Local, InstanceFlags, NumCustomFloats, RandomId, LocalToPrimitive);
+
+	FInstancePayloadDataOffsets PayloadOffsets = GetInstancePayloadDataOffsets(Prim.x, InstanceFlags, Local);
+	for (uint i = 0; i < NumCustomFloat4s; ++i)
+	{
+		WriteInstanceCustomData(PayloadOffsets, i, Source[Base + 3 + i]);
+	}
+}

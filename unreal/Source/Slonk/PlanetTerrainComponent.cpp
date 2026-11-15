@@ -5,6 +5,7 @@
 
 #include "Components/DynamicMeshComponent.h"
 #include "ScatterInstancesComponent.h"
+#include "PlanetInstancesComponent.h"
 #include "DynamicMesh/DynamicMesh3.h"
 #include "DynamicMesh/DynamicMeshAttributeSet.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -20,6 +21,11 @@ static TAutoConsoleVariable<float> CVarTerrainSunUpWidth(TEXT("slonk.TerrainSunU
 // drawn, up to this many. Every instance turns with the planet each frame, so each level costs the CPU a few ms.
 static TAutoConsoleVariable<int32> CVarScatterFarLevels(TEXT("slonk.Scatter.FarLevels"), 2,
 	TEXT("How many of each scatter class's thinned far levels to draw (0: each class ends with its own levels; trees reach about 1, 2.5 and 5 km at 0, 1, 2)"));
+// The rocks and plants as GPU-only planet instances (UPlanetInstancesComponent): turning with the world costs a single
+// mesh's move a set, the instances rewritten on the GPU. 0: the engine's instanced meshes, every instance re-sent from
+// the CPU each frame the world turns (for comparison). Sets made after a change take it.
+static TAutoConsoleVariable<int32> CVarScatterGPUInstances(TEXT("slonk.Scatter.GPUInstances"), 1,
+	TEXT("Rocks and plants as GPU-only instances, rewritten on the GPU as the world turns (1, the default), or the engine's instanced meshes (0)"));
 
 using namespace UE::Geometry;
 
@@ -35,10 +41,28 @@ namespace
 		return SlonkScatter::IsPlant(Mesh) ? SlonkPlants::GetMesh((EPlant)(Mesh - SlonkScatter::FirstPlant)) : SlonkGroundRocks::GetMesh((EGroundRock)Mesh);
 	}
 
-	/** Back to the pool: empty, hidden and attached to nothing, so the planet's turn no longer moves it each frame. */
-	void PoolSet(UScatterInstancesComponent* R, TArray<UScatterInstancesComponent*>& Free)
+	/** A scatter set of either kind (UPlanetInstancesComponent, or the engine-instanced UScatterInstancesComponent). */
+	void SetPiecesOn(UStaticMeshComponent* R, const TArray<FTransform>& Transforms, TConstArrayView<float> Custom)
 	{
-		R->ClearPieces();
+		if (UPlanetInstancesComponent* G = Cast<UPlanetInstancesComponent>(R)) { G->SetPieces(Transforms, Custom); }
+		else if (UScatterInstancesComponent* I = Cast<UScatterInstancesComponent>(R)) { I->SetPieces(Transforms, Custom); }
+	}
+	void ClearPiecesOn(UStaticMeshComponent* R)
+	{
+		if (UPlanetInstancesComponent* G = Cast<UPlanetInstancesComponent>(R)) { G->ClearPieces(); }
+		else if (UScatterInstancesComponent* I = Cast<UScatterInstancesComponent>(R)) { I->ClearPieces(); }
+	}
+	int32 PieceCount(const UStaticMeshComponent* R)
+	{
+		if (const UPlanetInstancesComponent* G = Cast<UPlanetInstancesComponent>(R)) { return G->GetInstanceCount(); }
+		if (const UScatterInstancesComponent* I = Cast<UScatterInstancesComponent>(R)) { return I->GetInstanceCount(); }
+		return 0;
+	}
+
+	/** Back to the pool: empty, hidden and attached to nothing, so the planet's turn no longer moves it each frame. */
+	void PoolSet(UStaticMeshComponent* R, TArray<UStaticMeshComponent*>& Free)
+	{
+		ClearPiecesOn(R);
 		R->SetVisibility(false);
 		R->DetachFromComponent(FDetachmentTransformRules::KeepRelativeTransform);
 		Free.Add(R);
@@ -95,6 +119,7 @@ void UPlanetTerrainComponent::Configure(const FPlanetTerrainParams& InParams, UM
 		UMaterialInterface* PlantMat = SlonkMaterials::LoadOrFallback(TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_Foliage.M_Foliage"))), TEXT("Foliage"), true);
 		if (PlantMat) { FoliageMID = UMaterialInstanceDynamic::Create(PlantMat, this); }
 	}
+	if (CVarScatterGPUInstances.GetValueOnGameThread() != 0) { EnsureWriterAnchor(); }
 	MakeRoots();
 	bConfigured = true;
 	UE_LOG(LogTemp, Log, TEXT("PlanetTerrain: configured %s R %.0f km relief %.1f km sea %.2f"), GetOwner() ? *GetOwner()->GetName() : TEXT("?"), Params.RadiusCm / 1e5, Params.ReliefCm / 1e5, Params.SeaLevel);
@@ -366,7 +391,7 @@ void UPlanetTerrainComponent::ShowNode(FNode& N, bool bShow)
 		if (bWant)
 		{
 			++VisibleChunks; VisibleRocks += N.RockCount; VisiblePlants += N.PlantCount; DeepestVisible = FMath::Max(DeepestVisible, N.Depth);
-			for (int32 K = 0; K < SlonkScatter::NumMeshes; ++K) { if (N.Sets[K]) { VisibleByMesh[K] += N.Sets[K]->GetInstanceCount(); ++VisibleSetsByMesh[K]; } }
+			for (int32 K = 0; K < SlonkScatter::NumMeshes; ++K) { if (N.Sets[K]) { VisibleByMesh[K] += PieceCount(N.Sets[K]); ++VisibleSetsByMesh[K]; } }
 		}
 	}
 }
@@ -374,7 +399,7 @@ void UPlanetTerrainComponent::ShowNode(FNode& N, bool bShow)
 void UPlanetTerrainComponent::SetChunkVisible(FNode& N, bool bShow)
 {
 	if (N.Mesh && N.Mesh->IsVisible() != bShow) { N.Mesh->SetVisibility(bShow); }
-	for (UScatterInstancesComponent* R : N.Sets)
+	for (UStaticMeshComponent* R : N.Sets)
 	{
 		if (R && R->IsVisible() != bShow) { R->SetVisibility(bShow); }
 	}
@@ -386,26 +411,57 @@ void UPlanetTerrainComponent::SetTerrainVisible(bool bShow)
 	if (!bShow)
 	{
 		for (UDynamicMeshComponent* C : Pool) { if (C) { C->SetVisibility(false); } }
-		for (UScatterInstancesComponent* R : SetPool) { if (R) { R->SetVisibility(false); } }
+		for (UStaticMeshComponent* R : SetPool) { if (R) { R->SetVisibility(false); } }
 		ClearSolidRocks();
 	}
 }
 
-UScatterInstancesComponent* UPlanetTerrainComponent::AcquireSet(int32 Mesh)
+void UPlanetTerrainComponent::EnsureWriterAnchor()
 {
-	if (FreeSets[Mesh].Num() > 0)
+	// Only where there is a scene to draw in (the tests configure terrains in no world at all).
+	if (WriterAnchor || !GetWorld() || !GetWorld()->Scene) { return; }
+	// The primitive each frame's write of every planet instance goes through: always in the scene while the terrain is,
+	// one instance of its own, scaled to nothing. Made like the scatter's sets, which it writes for.
+	WriterAnchor = NewObject<UPlanetInstancesComponent>(GetOwner() ? (UObject*)GetOwner() : (UObject*)this, NAME_None, RF_Transient);
+	WriterAnchor->SetStaticMesh(ScatterMesh(0));
+	WriterAnchor->SetNumCustomDataFloats(SlonkScatter::NumCustomFloats);
+	WriterAnchor->CastShadow = false;
+	WriterAnchor->SetupAttachment(this);
+	WriterAnchor->RegisterComponent();
+	WriterAnchor->SetPieces({ FTransform(FQuat::Identity, FVector::ZeroVector, FVector::ZeroVector) }, {});
+}
+
+UStaticMeshComponent* UPlanetTerrainComponent::AcquireSet(int32 Mesh)
+{
+	const bool bGPU = CVarScatterGPUInstances.GetValueOnGameThread() != 0;
+	for (int32 i = FreeSets[Mesh].Num() - 1; i >= 0; --i)
 	{
-		return FreeSets[Mesh].Pop(EAllowShrinking::No);
+		// One of the kind wanted now (a change of slonk.Scatter.GPUInstances leaves the other kind pooled).
+		if (FreeSets[Mesh][i]->IsA<UPlanetInstancesComponent>() == bGPU) { UStaticMeshComponent* R = FreeSets[Mesh][i]; FreeSets[Mesh].RemoveAtSwap(i, EAllowShrinking::No); return R; }
 	}
 	// Attached to a chunk's mesh when used (ApplyScatter), to nothing while pooled.
-	UScatterInstancesComponent* R = NewObject<UScatterInstancesComponent>(GetOwner() ? (UObject*)GetOwner() : (UObject*)this, NAME_None, RF_Transient);
+	UObject* Outer = GetOwner() ? (UObject*)GetOwner() : (UObject*)this;
+	UStaticMeshComponent* R = nullptr;
+	if (bGPU)
+	{
+		// Its instances are written through the anchor (switched on since the terrain was configured, it is made now).
+		EnsureWriterAnchor();
+		UPlanetInstancesComponent* G = NewObject<UPlanetInstancesComponent>(Outer, NAME_None, RF_Transient);
+		G->SetNumCustomDataFloats(SlonkScatter::NumCustomFloats);
+		R = G;
+	}
+	else
+	{
+		UScatterInstancesComponent* I = NewObject<UScatterInstancesComponent>(Outer, NAME_None, RF_Transient);
+		I->SetNumCustomDataFloats(SlonkScatter::NumCustomFloats);
+		R = I;
+	}
 	R->SetMobility(EComponentMobility::Movable);
 	R->SetStaticMesh(ScatterMesh(Mesh));
 	R->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	R->SetGenerateOverlapEvents(false);
 	R->SetCanEverAffectNavigation(false);
 	R->bAffectDistanceFieldLighting = false;
-	R->SetNumCustomDataFloats(SlonkScatter::NumCustomFloats);
 	// Shadows by chunk size in ApplyScatter, as for the chunks themselves.
 	R->CastShadow = false;
 	R->bCastDynamicShadow = true;
@@ -434,7 +490,7 @@ void UPlanetTerrainComponent::ApplyScatter(FNode& N, SlonkScatter::FChunkScatter
 		const bool bShadow = K != SlonkScatter::PlantMesh(EPlant::Grass) && N.EdgeCm < ScatterShadowEdgeCm * (bTree ? 2.f : 1.f);
 		N.Solids[K] = MoveTemp(Sc.Solids[K]);
 		const TArray<FTransform>& Xf = Sc.Transforms[K];
-		UScatterInstancesComponent*& R = N.Sets[K];
+		UStaticMeshComponent*& R = N.Sets[K];
 		if (Xf.Num() == 0)
 		{
 			if (R) { PoolSet(R, FreeSets[K]); R = nullptr; }
@@ -444,11 +500,12 @@ void UPlanetTerrainComponent::ApplyScatter(FNode& N, SlonkScatter::FChunkScatter
 		// On the chunk's mesh, so the instances are chunk-relative (floats stay exact) and move with it.
 		if (R->GetAttachParent() != N.Mesh) { R->AttachToComponent(N.Mesh, FAttachmentTransformRules::KeepRelativeTransform); }
 		R->SetRelativeTransform(FTransform::Identity);
-		R->SetPieces(Xf, Sc.Custom[K]);
+		SetPiecesOn(R, Xf, Sc.Custom[K]);
 		if (R->CastShadow != bShadow) { R->SetCastShadow(bShadow); }
 		// In the ray-traced scene only near the view (as close as the trees cast shadows): every instance there turns
 		// with the planet each frame and is rebuilt into it, and Lumen gains nothing from pebbles a kilometre off.
-		const bool bTraced = N.EdgeCm < ScatterShadowEdgeCm * 2.f;
+		// GPU-only instances never: the ray-traced scene would need them on the CPU.
+		const bool bTraced = N.EdgeCm < ScatterShadowEdgeCm * 2.f && !R->IsA<UPlanetInstancesComponent>();
 		if (R->bVisibleInRayTracing != bTraced) { R->SetVisibleInRayTracing(bTraced); }
 		// The wind's reach as it is now, on a set made earlier too.
 		if (SlonkScatter::IsPlant(K) && R->GetWorldPositionOffsetDisableDistance() != (int32)PlantWindDistanceCm) { R->SetWorldPositionOffsetDisableDistance((int32)PlantWindDistanceCm); }
@@ -472,7 +529,7 @@ void UPlanetTerrainComponent::ReleaseScatter(FNode& N)
 {
 	for (int32 K = 0; K < SlonkScatter::NumMeshes; ++K)
 	{
-		if (UScatterInstancesComponent* R = N.Sets[K])
+		if (UStaticMeshComponent* R = N.Sets[K])
 		{
 			PoolSet(R, FreeSets[K]);
 			N.Sets[K] = nullptr;
@@ -783,6 +840,8 @@ void UPlanetTerrainComponent::UpdateView(const FVector& ViewLocationWorld, const
 	// The plants fade by their distance from the camera (their custom data says where): from this parameter rather
 	// than the view's own position, so the shadow passes fade them by the same distance as the view does.
 	if (FoliageMID) { FoliageMID->SetVectorParameterValue(TEXT("ViewPos"), FLinearColor((float)ViewLocationWorld.X, (float)ViewLocationWorld.Y, (float)ViewLocationWorld.Z, 0.f)); }
+	// The rocks and plants turn with the world on the GPU: every one written with its set's transform of this frame.
+	if (WriterAnchor) { WriterAnchor->QueueWriteAll(); }
 	// The chunks refine for the camera (what is seen) and for the pawn (what is stood on, a chase camera's length
 	// behind it): the split distance is the nearer of the two.
 	PawnLocal = GetComponentTransform().InverseTransformPositionNoScale(PawnLocationWorld);

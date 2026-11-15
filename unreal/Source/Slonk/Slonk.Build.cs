@@ -10,6 +10,7 @@ public class Slonk : ModuleRules
 
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "Niagara", "GeometryCore", "GeometryFramework", "GeometryScriptingCore", "RHI", "MeshDescription", "StaticMeshDescription", "MeshConversion", "PhysicsCore", "UMG", "Slate", "SlateCore", "CommonUI", "CommonInput" });
 
-		PrivateDependencyModuleNames.AddRange(new string[] { });
+		// The planets' GPU-only instances (PlanetInstancesComponent): the GPU scene writer and its shader.
+		PrivateDependencyModuleNames.AddRange(new string[] { "RenderCore", "Renderer", "SlonkShaders" });
 	}
 }

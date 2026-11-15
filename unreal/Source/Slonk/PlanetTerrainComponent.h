@@ -15,6 +15,8 @@
 
 class UDynamicMeshComponent;
 class UScatterInstancesComponent;
+class UPlanetInstancesComponent;
+class UStaticMeshComponent;
 class UMaterialInterface;
 class UMaterialInstanceDynamic;
 namespace UE::Geometry { class FDynamicMesh3; }
@@ -175,8 +177,9 @@ private:
 		/** The grid heights of the mesh this node shows (see FBuildResult), for ground queries. */
 		TArray<float> Heights;
 		int32 HeightSteps = 0;
-		/** The chunk's rocks and plants by mesh, attached to its mesh and shown and hidden with it. */
-		UScatterInstancesComponent* Sets[SlonkScatter::NumMeshes] = {};
+		/** The chunk's rocks and plants by mesh, attached to its mesh and shown and hidden with it: GPU-only planet instances,
+		 *  or (slonk.Scatter.GPUInstances 0) the engine's instanced meshes. */
+		UStaticMeshComponent* Sets[SlonkScatter::NumMeshes] = {};
 		int32 RockCount = 0;
 		int32 PlantCount = 0;
 		/** The rocks and trees of them big enough to stand on or walk into, chunk-relative, for the collision round
@@ -203,7 +206,9 @@ private:
 	void ApplyScatter(FNode& N, SlonkScatter::FChunkScatter& Sc);
 	void ReleaseScatter(FNode& N);
 	/** An instanced set for one scatter mesh (SlonkScatter's index: the rock shapes, then the plants). */
-	UScatterInstancesComponent* AcquireSet(int32 Mesh);
+	UStaticMeshComponent* AcquireSet(int32 Mesh);
+	/** Makes WriterAnchor if there is none and a scene to put it in. */
+	void EnsureWriterAnchor();
 	/** Collision for the rocks round the pawn: rebuilt when it has walked a few metres or the chunks there changed. */
 	void UpdateSolidRocks();
 	void ClearSolidRocks();
@@ -228,8 +233,11 @@ private:
 	TArray<UDynamicMeshComponent*> FreeMeshes;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> RockMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> FoliageMID;
-	UPROPERTY() TArray<TObjectPtr<UScatterInstancesComponent>> SetPool;
-	TArray<UScatterInstancesComponent*> FreeSets[SlonkScatter::NumMeshes];
+	UPROPERTY() TArray<TObjectPtr<UStaticMeshComponent>> SetPool;
+	TArray<UStaticMeshComponent*> FreeSets[SlonkScatter::NumMeshes];
+	/** Always in the scene while the terrain is: carries each frame's write of every planet instance into the GPU scene
+	 *  (UPlanetInstancesComponent::QueueWriteAll), one empty instance of its own. */
+	UPROPERTY() TObjectPtr<UPlanetInstancesComponent> WriterAnchor;
 	/** Collision-only copies of the rocks round the pawn, one per kind, planet-local. */
 	UPROPERTY() TArray<TObjectPtr<UScatterInstancesComponent>> SolidSets;
 	uint64 SolidSignature = 0;
