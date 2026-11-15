@@ -39,24 +39,60 @@ namespace
 		EClass Kind;
 		/** Wanted spacing of the lattice, cm; it snaps to the nearest level of the quadtree on each planet. */
 		double SpacingCm;
-		/** Rides on chunks with edges this long or shorter, cm. */
+		/** Rides on chunks with edges this long or shorter, cm, all of it. */
 		double MaxEdgeCm;
 		/** A rock's size across its largest axis, a plant's height, cm. */
 		double MinCm, MaxCm;
 		uint64 Salt;
+		/** And on this many coarser levels besides, thinned: Keep of the candidates on the first, Keep squared on the
+		 *  next. The kept ones are picked by a hash of their own, apart from the draws that place them, so a piece
+		 *  far off is one of those close by, in the same place, and the class thins out with distance rather than
+		 *  ending at a ring. */
+		int32 FarLevels;
+		double Keep;
 	};
-	// Boulders on chunks to 150-odd metres (seen to about 600 m), stones to 40 m (150 m), pebbles and grass on the
-	// last level (35 m), trees on chunks to 300 m (a kilometre). Each shows down to a few pixels before the coarser
-	// chunk that lacks it takes over; past the trees the terrain's own colours carry the forest.
+	// Boulders on chunks to 150-odd metres (seen to about 600 m) and half of them to 300 m chunks (1.2 km); stones to
+	// 40 m chunks (150 m) and pebbles on the last level (35 m), where they are a pixel or two across, so no further;
+	// grass on the last level, half on the one before; trees on chunks to 300 m (a kilometre), two in five to 600 m
+	// (2.5 km) and one in six to 1.2 km (5 km). The plants fade out before their last level ends (FadeEdges); past the
+	// trees the terrain's own colours carry the forest. Every instance turns with the planet each frame (a transform
+	// update on the render thread apiece), so a far level is worth its count only where it is seen.
 	constexpr FClass Classes[] = {
-		{ EClass::Boulder, 750.0, 26000.0, 120.0, 420.0, 0x51ed270b2f1c7e3dULL },
-		{ EClass::Stone, 220.0, 6500.0, 26.0, 95.0, 0x2545f4914f6cdd1dULL },
-		{ EClass::Pebble, 60.0, 1700.0, 6.0, 22.0, 0x8c4b5bd7d9a1e5f3ULL },
-		{ EClass::Tree, 600.0, 31000.0, 700.0, 2200.0, 0x3c6ef372fe94f82bULL },
-		{ EClass::Grass, 45.0, 1700.0, 25.0, 60.0, 0xa54ff53a5f1d36f1ULL },
+		{ EClass::Boulder, 750.0, 26000.0, 120.0, 420.0, 0x51ed270b2f1c7e3dULL, 1, 0.5 },
+		{ EClass::Stone, 220.0, 6500.0, 26.0, 95.0, 0x2545f4914f6cdd1dULL, 0, 1.0 },
+		{ EClass::Pebble, 60.0, 1700.0, 6.0, 22.0, 0x8c4b5bd7d9a1e5f3ULL, 0, 1.0 },
+		{ EClass::Tree, 600.0, 31000.0, 700.0, 2200.0, 0x3c6ef372fe94f82bULL, 2, 0.4 },
+		{ EClass::Grass, 45.0, 1700.0, 25.0, 60.0, 0xa54ff53a5f1d36f1ULL, 1, 0.5 },
 	};
-	/** Shrubs stand on the material's scrub dots, on chunks to 76 m (seen to about 250 m; the painted dots beyond). */
+	/** Shrubs stand on the material's scrub dots, on chunks to 76 m (seen to about 250 m; the painted dots beyond),
+	 *  and seven in ten on the next level (500 m). */
 	constexpr double ShrubMaxEdgeCm = 8000.0;
+	constexpr int32 ShrubFarLevels = 1;
+	constexpr double ShrubKeep = 0.7;
+	/** The salt of the hash that picks the pieces kept on the far levels. */
+	constexpr uint64 KeepSalt = 0x7f4a7c159e3779b9ULL;
+
+	/** How many levels a chunk lies above the coarsest that carries all of a class: 0 at or below it. */
+	int32 LevelsAbove(double EdgeCm, double MaxEdgeCm)
+	{
+		return EdgeCm <= MaxEdgeCm * 1.0001 ? 0 : FMath::CeilToInt32(FMath::Log2(EdgeCm / MaxEdgeCm) - 1e-6);
+	}
+
+	/**
+	 * Where a plant fades out, cm from the camera: FadeEdges edges of the coarsest chunk that carries it. A chunk
+	 * splits at SplitFactor of its own edges, so the finer ones carrying a plant arrive with it at least about
+	 * 2 x SplitFactor of their edges away; it fades before that and never pops in. The level a piece is kept to is
+	 * the last whose share its keep draw falls under.
+	 */
+	double FadeFarCm(const SlonkScatter::FChunkGrid& G, double MaxEdgeCm, int32 FarLevels, double Keep, double KeepDraw, double FadeEdges)
+	{
+		int32 Top = 0;
+		for (int32 k = FarLevels; k > 0; --k) { if (KeepDraw < FMath::Pow(Keep, (double)k)) { Top = k; break; } }
+		// The planet's chunk edges halve from the face's: the largest of them no longer than the class's at that level.
+		const double RootEdge = G.EdgeCm * FMath::Pow(2.0, (double)G.Depth);
+		const int32 Depth = FMath::Max(0, FMath::CeilToInt32(FMath::Log2(RootEdge / (MaxEdgeCm * FMath::Pow(2.0, (double)Top))) - 1e-6));
+		return FadeEdges * RootEdge / FMath::Pow(2.0, (double)Depth);
+	}
 
 	/** Height to width of each rock shape, and the second horizontal axis to the first: ranges a rock is drawn from. */
 	struct FProportion { double ZLo, ZHi, YLo, YHi, TiltDeg; };
@@ -287,8 +323,8 @@ int32 SlonkScatter::FChunkScatter::NumPlants() const
 
 double SlonkScatter::MaxChunkEdgeCm()
 {
-	double M = ShrubMaxEdgeCm;
-	for (const FClass& C : Classes) { M = FMath::Max(M, C.MaxEdgeCm); }
+	double M = ShrubMaxEdgeCm * FMath::Pow(2.0, (double)ShrubFarLevels);
+	for (const FClass& C : Classes) { M = FMath::Max(M, C.MaxEdgeCm * FMath::Pow(2.0, (double)C.FarLevels)); }
 	return M;
 }
 
@@ -333,7 +369,11 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 	int32 Rocks = 0, Plants = 0;
 	for (const FClass& Cl : Classes)
 	{
-		if (G.EdgeCm > Cl.MaxEdgeCm) { continue; }
+		// On the class's own levels all of it; on its far levels the share its keep draw allows.
+		const int32 FarLevels = FMath::Min(Cl.FarLevels, S.MaxFarLevels);
+		const int32 Above = LevelsAbove(G.EdgeCm, Cl.MaxEdgeCm);
+		if (Above > FarLevels) { continue; }
+		const double KeepHere = FMath::Pow(Cl.Keep, (double)Above);
 		const bool bRock = Cl.Kind == EClass::Boulder || Cl.Kind == EClass::Stone || Cl.Kind == EClass::Pebble;
 		if (!bRock && !bLiving) { continue; }
 		// The class's lattice level: cells of 2 / 2^L in face coordinates, nested in the chunks of the quadtree.
@@ -347,6 +387,9 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 		for (int64 GY = GY0; GY <= GY1 && Count < Cap; ++GY)
 		for (int64 GX = GX0; GX <= GX1 && Count < Cap; ++GX)
 		{
+			// Kept on this level? A draw of its own, so the candidate's place and its other draws are the same on every level.
+			const double KeepDraw = FDraw(CellHash(G.Face, L, GX, GY, Cl.Salt ^ KeepSalt)).Next();
+			if (KeepDraw >= KeepHere) { continue; }
 			FDraw D(CellHash(G.Face, L, GX, GY, Cl.Salt));
 			// The candidate: anywhere in its cell. Half-open windows put it in exactly one chunk of each level.
 			const double U = -1.0 + ((double)GX + D.Next()) * Delta, V = -1.0 + ((double)GY + D.Next()) * Delta;
@@ -483,7 +526,8 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 				if (Kind == EPlant::Conifer) { Tint *= FLinearColor(0.62f, 0.72f, 0.7f); }
 				else if (Kind == EPlant::Broadleaf) { Tint *= 0.85f; }
 				else { Tint = FMath::Lerp(S.Palette.Land2, S.Palette.Land, (float)FMath::Clamp(Sp.Wet * 1.2 - Sp.Rocky * 0.3, 0.0, 1.0)) * (float)(0.8 * Vary); }
-				const float C[NumCustomFloats] = { Tint.R, Tint.G, Tint.B, (float)Snow, (float)Seed, (float)(H * Wx / 100.0), (float)(H * Wy / 100.0), (float)(H / 100.0), (float)Dryness, 0.f };
+				const double FadeCm = FadeFarCm(G, Cl.MaxEdgeCm, FarLevels, Cl.Keep, KeepDraw, S.FadeEdges);
+				const float C[NumCustomFloats] = { Tint.R, Tint.G, Tint.B, (float)Snow, (float)Seed, (float)(H * Wx / 100.0), (float)(H * Wy / 100.0), (float)(H / 100.0), (float)Dryness, (float)FadeCm };
 				AddPiece(Out, PlantMesh(Kind), Xf, C, bTree && H >= SolidTreeCm);
 				++Plants;
 			}
@@ -493,8 +537,11 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 	// Shrubs: on the scrub dots the terrain material paints, the same cells, hashed the same way, so the bush close to
 	// stands where the dark dot was from the air. The material adds each dot through the cell its pixel falls in, so
 	// a dot is drawn about its centre only if the ground there is in the dot's own cell; that is where a bush goes.
-	if (bLiving && G.EdgeCm <= ShrubMaxEdgeCm)
+	const int32 ShrubFar = FMath::Min(ShrubFarLevels, S.MaxFarLevels);
+	const int32 ShrubAbove = LevelsAbove(G.EdgeCm, ShrubMaxEdgeCm);
+	if (bLiving && ShrubAbove <= ShrubFar)
 	{
+		const double ShrubKeepHere = FMath::Pow(ShrubKeep, (double)ShrubAbove);
 		const FVector OriginNoise = ToNoiseSpace(G.Origin);
 		auto CellOf = [](const FVector& Pn) { return FIntVector((int32)FMath::FloorToDouble(Pn.X / ScrubCellCm), (int32)FMath::FloorToDouble(Pn.Y / ScrubCellCm), (int32)FMath::FloorToDouble(Pn.Z / ScrubCellCm)); };
 		// Every cell the drawn ground passes through, from each grid cell's box (its two triangles lie inside it):
@@ -531,7 +578,10 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 			// The bush's own draws from the dot's place on the periodic lattice, so it is the same bush whichever side
 			// of a wrap the chunk's origin lies.
 			const FIntVector Key = ScrubCellKey(Cell);
-			FDraw D(Mix64(((uint64)(uint32)Key.X << 42) ^ ((uint64)(uint32)Key.Y << 21) ^ (uint64)(uint32)Key.Z ^ 0x6a09e667f3bcc909ULL));
+			const uint64 KeyHash = ((uint64)(uint32)Key.X << 42) ^ ((uint64)(uint32)Key.Y << 21) ^ (uint64)(uint32)Key.Z;
+			const double KeepDraw = FDraw(Mix64(KeyHash ^ KeepSalt)).Next();
+			if (KeepDraw >= ShrubKeepHere) { continue; }
+			FDraw D(Mix64(KeyHash ^ 0x6a09e667f3bcc909ULL));
 			if (D.Next() >= S.Life * S.Density * SmoothStep(0.25, 0.55, Zone)) { continue; }
 			if (KeepOut.Towns.Num() > 0 && (KeepOut.Contains(Sp.Up, R) || KeepOut.OnWay(Sp.Up))) { continue; }
 			// As wide as the painted dot, a little over half as tall; the mesh's crown is 110 cm across at unit scale.
@@ -543,7 +593,8 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 			// The dot's own darkening of the ground, which the bush now stands over.
 			const FLinearColor Tint = FoliageAt(S.Palette, Dryness, 0.8 + 0.3 * D.Next()) * FLinearColor(0.55f, 0.62f, 0.45f) * 1.5f;
 			const double Snow = FMath::Clamp(Sp.Ice * 1.2, 0.0, 1.0);
-			const float C[NumCustomFloats] = { Tint.R, Tint.G, Tint.B, (float)Snow, (float)D.Next(), (float)(Wide / 100.0), (float)(Wide / 100.0), (float)(H / 100.0), (float)Dryness, 0.f };
+			const double FadeCm = FadeFarCm(G, ShrubMaxEdgeCm, ShrubFar, ShrubKeep, KeepDraw, S.FadeEdges);
+			const float C[NumCustomFloats] = { Tint.R, Tint.G, Tint.B, (float)Snow, (float)D.Next(), (float)(Wide / 100.0), (float)(Wide / 100.0), (float)(H / 100.0), (float)Dryness, (float)FadeCm };
 			AddPiece(Out, PlantMesh(EPlant::Shrub), Xf, C, false);
 			++Plants;
 		}

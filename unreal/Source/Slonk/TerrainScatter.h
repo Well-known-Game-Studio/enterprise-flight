@@ -41,6 +41,11 @@ struct FScatterSettings
 	/** How much grows, 0..1: 1 on a temperate living world, a little scrub on a desert, nothing on the dead ones. */
 	float Life = 0.f;
 	FScatterPalette Palette;
+	/** A plant fades out this many edges of the coarsest chunk carrying it from the camera: under the distance at which
+	 *  finer chunks carrying it arrive (the terrain component sets it from its split factor), so none pops in. */
+	double FadeEdges = 3.0;
+	/** At most this many of each class's far levels are used (0: each class on its own levels alone, as it ends). */
+	int32 MaxFarLevels = 8;
 };
 
 namespace SlonkScatter
@@ -54,7 +59,8 @@ namespace SlonkScatter
 	/** Per-instance custom data. For a rock: tint RGB, snow cover, seed, the size in metres along the mesh's three
 	 *  axes (its texture is laid in centimetres of rock, whatever the scale), and for a rock fallen from a canyon
 	 *  wall the bed it came from (-1 for none) and how much of its colour it wears. For a plant: the foliage tint
-	 *  RGB, snow, seed, the size in metres, how dry it is (0 lush, 1 parched), and 0. */
+	 *  RGB, snow, seed, the size in metres, how dry it is (0 lush, 1 parched), and the distance from the camera it
+	 *  fades out by, cm (M_Foliage dithers it away over the last fifth; 0 never). */
 	constexpr int32 NumCustomFloats = 10;
 	/** Rocks at least this big across (cm), and trees at least this tall, get collision near the crew. */
 	constexpr double SolidMinCm = 45.0;

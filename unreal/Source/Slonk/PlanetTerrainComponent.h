@@ -87,6 +87,10 @@ public:
 	int32 GetVisiblePlantCount() const { return VisiblePlants; }
 	int32 GetSolidRockCount() const { return SolidRocks; }
 	int32 GetScatterSetCount() const { return SetPool.Num(); }
+	/** The instances and instance sets on the chunks showing, by scatter mesh, as of the last view update. */
+	FString DescribeVisibleScatter() const;
+	/** How many of each class's far levels to use (FScatterSettings::MaxFarLevels); a change rebuilds the scatter. */
+	void SetScatterFarLevels(int32 Levels);
 	/** Traces the boots' channel down through the solid rocks nearest the pawn, up to MaxRocks of them: how many
 	 *  were tried, and in OutHits how many the trace found solid. A check that what is drawn is what is stood on. */
 	int32 CheckSolidRocks(int32 MaxRocks, int32& OutHits) const;
@@ -232,6 +236,8 @@ private:
 	FVector SolidPinLocal = FVector::ZeroVector;
 	double SolidPinUntil = -1.0;
 	int32 VisibleRocks = 0;
+	int32 VisibleByMesh[SlonkScatter::NumMeshes] = {};
+	int32 VisibleSetsByMesh[SlonkScatter::NumMeshes] = {};
 	int32 VisiblePlants = 0;
 	int32 SolidRocks = 0;
 	TUniquePtr<FNode> Roots[6];
