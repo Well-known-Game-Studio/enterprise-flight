@@ -2277,6 +2277,17 @@ void AStarshipPawn::ProcessDebugCommand()
 		APlanetBody* Planet = Cast<APlanetBody>(Movement->GroundBody.Get());
 		if (UPlanetTerrainComponent* T = Planet ? Planet->Terrain.Get() : nullptr) { T->SetScalarParameter(FName(*Args[2]), Arg(3, 0.f)); UE_LOG(LogTemp, Log, TEXT("Terrain %s = %.3f"), *Args[2], Arg(3, 0.f)); }
 	}
+	else if (Op == TEXT("planetspin") && Movement)
+	{
+		// planetspin <deg/s>: the spin of the world below (a measurement aid: what its turning costs each frame). Near the
+		// surface the world holds its spin whatever it is (slonk.Planet.HoldSpin 0 lets it turn there).
+		if (APlanetBody* Planet = Cast<APlanetBody>(Movement->GroundBody.Get()))
+		{
+			Planet->SpinDegPerSec = Arg(1, 0.f);
+			UE_LOG(LogTemp, Log, TEXT("%s spins %.4f deg/s%s"), *Planet->GetDisplayName(), Planet->SpinDegPerSec,
+				Planet->IsSpinHeld() ? TEXT(" (held while you are near its surface: slonk.Planet.HoldSpin 0 to let it turn)") : TEXT(""));
+		}
+	}
 	else if (Op == TEXT("terrain") && Movement)
 	{
 		if (const APlanetBody* Planet = Cast<APlanetBody>(Movement->GroundBody.Get()))

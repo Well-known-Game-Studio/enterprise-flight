@@ -28,6 +28,14 @@
 #include "Materials/MaterialInterface.h"
 #include "SlonkMaterials.h"
 #include "UObject/ConstructorHelpers.h"
+#include "HAL/IConsoleManager.h"
+
+// Holding a world's spin near its surface (APlanetBody::bSpinHeld): on by default; 0 lets it turn as before.
+static TAutoConsoleVariable<int32> CVarHoldSpin(TEXT("slonk.Planet.HoldSpin"), 1,
+	TEXT("Hold a world's spin while the player is near its surface, so nothing on it moves each frame (1, the default) or let it turn (0)"));
+// The height under which it holds: the clock's own hold in an atmosphere (AStarshipPawn::TickClock) is 200 km.
+static TAutoConsoleVariable<float> CVarHoldSpinAltitudeKm(TEXT("slonk.Planet.HoldSpinAltitudeKm"), 200.f,
+	TEXT("A world holds its spin while the camera or the player's pawn is this many km or less above its sea level"));
 
 const FName APlanetBody::StarTag(TEXT("Star"));
 
@@ -1645,6 +1653,25 @@ void APlanetBody::BeginPlay()
 	ApplyAppearance();
 }
 
+bool APlanetBody::ShouldHoldSpin() const
+{
+	// Only a world with ground drawn near the view carries anything worth holding still.
+	if (CVarHoldSpin.GetValueOnGameThread() == 0 || !bTerrainActive || bBeyondHorizon) { return false; }
+	const UWorld* World = GetWorld();
+	const APlayerController* PC = World && World->IsGameWorld() ? World->GetFirstPlayerController() : nullptr;
+	if (!PC) { return false; }
+	// The camera or the pawn, whichever is nearer: a chase camera may be a ship's length above it.
+	FVector ViewLoc; FRotator ViewRot;
+	PC->GetPlayerViewPoint(ViewLoc, ViewRot);
+	const FVector Centre = GetActorLocation();
+	double Dist = FVector::Dist(ViewLoc, Centre);
+	if (const APawn* Pawn = PC->GetPawn()) { Dist = FMath::Min(Dist, FVector::Dist(Pawn->GetActorLocation(), Centre)); }
+	// Once held, let go a twentieth higher, so a view hovering at the height (a chase camera a ship's length off the
+	// pawn) does not turn the world and hold it on alternate frames.
+	const double LimitCm = (double)CVarHoldSpinAltitudeKm.GetValueOnGameThread() * 1.0e5 * (bSpinHeld ? 1.05 : 1.0);
+	return Dist - GetRadiusCm() < LimitCm;
+}
+
 void APlanetBody::Tick(float DeltaTime)
 {
 	FSlonkScopeTimer SlonkTimer_(TEXT("Tick PlanetBody"));
@@ -1654,7 +1681,14 @@ void APlanetBody::Tick(float DeltaTime)
 		--SettleTicks;
 		ApplyAppearance();
 	}
-	if (!FMath::IsNearlyZero(SpinDegPerSec))
+	// Near the surface the world holds still (bSpinHeld): turning it would move everything on it.
+	const bool bHold = ShouldHoldSpin();
+	if (bHold != bSpinHeld)
+	{
+		bSpinHeld = bHold;
+		UE_LOG(LogTemp, Log, TEXT("%s: spin %s"), *GetDisplayName(), bHold ? TEXT("held, the player is near the surface") : TEXT("resumed"));
+	}
+	if (!FMath::IsNearlyZero(SpinDegPerSec) && !bSpinHeld)
 	{
 		const float SpinDt = UGameClockSubsystem::Sim(this, DeltaTime);
 		AddActorLocalRotation(FRotator(0.f, SpinDegPerSec * SpinDt, 0.f));
