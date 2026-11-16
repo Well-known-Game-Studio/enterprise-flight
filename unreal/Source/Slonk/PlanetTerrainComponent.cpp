@@ -19,8 +19,8 @@ static TAutoConsoleVariable<float> CVarTerrainSunUp(TEXT("slonk.TerrainSunUp"), 
 static TAutoConsoleVariable<float> CVarTerrainSunUpWidth(TEXT("slonk.TerrainSunUpWidth"), 0.25f, TEXT("Half-width of the preferred band"));
 // How far the ground's rocks and plants reach (the settings' ground detail sets it): each class's thinned far levels
 // drawn, up to this many. With GPU-only instances a level costs the GPU its drawing and the workers its building.
-static TAutoConsoleVariable<int32> CVarScatterFarLevels(TEXT("slonk.Scatter.FarLevels"), 2,
-	TEXT("How many of each scatter class's thinned far levels to draw (0: each class ends with its own levels; trees reach about 1, 2.5, 5 and 10 km at 0, 1, 2, 3)"));
+static TAutoConsoleVariable<int32> CVarScatterFarLevels(TEXT("slonk.Scatter.FarLevels"), 3,
+	TEXT("How many of each scatter class's thinned far levels to draw (0: each class ends with its own levels; trees reach about 1, 2.5, 5, 10 and 20 km at 0 to 4)"));
 // The rocks and plants as GPU-only planet instances (UPlanetInstancesComponent): turning with the world costs a single
 // mesh's move a set, the instances rewritten on the GPU. 0: the engine's instanced meshes, every instance re-sent from
 // the CPU each frame the world turns (for comparison). Sets made after a change take it.

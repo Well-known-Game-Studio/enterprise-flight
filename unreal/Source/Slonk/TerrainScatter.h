@@ -66,9 +66,9 @@ namespace SlonkScatter
 	constexpr double SolidMinCm = 45.0;
 	constexpr double SolidTreeCm = 200.0;
 	/** Most rocks, and most plants, one chunk carries; the finer classes are the ones left out. The trees' farthest
-	 *  level, one in sixteen of a dense forest on a 2.5 km chunk, comes to about 10,000. */
+	 *  level, one in forty of a dense forest on a 5 km chunk, comes to about 16,000. */
 	constexpr int32 MaxPerChunk = 6000;
-	constexpr int32 MaxPlantsPerChunk = 12000;
+	constexpr int32 MaxPlantsPerChunk = 24000;
 	/** Period of the terrain material's planet-local noise, cm: the chunk origins reach the shader modulo this. */
 	constexpr double NoisePeriodCm = 1048576.0;
 	/** The material's scrub dots: one hashed disc per cell, a whole number of cells to the noise period along each

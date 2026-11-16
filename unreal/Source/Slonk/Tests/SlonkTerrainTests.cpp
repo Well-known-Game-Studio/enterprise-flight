@@ -7,6 +7,8 @@
 #include "../PlanetCities.h"
 #include "../TerrainScatter.h"
 #include "../PlanetInstancesComponent.h"
+#include "../PlantMeshes.h"
+#include "Engine/StaticMesh.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -904,6 +906,41 @@ bool FSlonkPlanetInstancesPackingTest::RunTest(const FString& Parameters)
 	C->ClearPieces();
 	TestEqual(TEXT("cleared"), C->GetInstanceCount(), 0);
 	TestEqual(TEXT("nothing left to send"), C->GetPacked().Num(), 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkPlantFarCrownsTest, "Slonk.Terrain.PlantFarCrowns", SLONK_TEST_FLAGS)
+bool FSlonkPlantFarCrownsTest::RunTest(const FString& Parameters)
+{
+	// The forest's far levels are hundreds of thousands of trees a pixel or two across, drawn as each tree's far crown:
+	// a handful of triangles, one solid shape wound outward and shaded as it faces (its faces lit from outside), as big
+	// as the tree's own crown and no bigger. The tree meshes carry it as a fourth LOD; grass and bushes have none.
+	// Every part of every plant shows the side its normals point to: the foliage material is two-sided and lights a
+	// face seen from behind as if its normal pointed the other way, so a part wound inward is lit from inside (darkest
+	// where the sun is), and a tree going to its far crown would change in brightness.
+	for (const EPlant Kind : { EPlant::Broadleaf, EPlant::Conifer, EPlant::Grass, EPlant::Shrub })
+	{
+		int32 Tris = 0; double Volume = 0.0, Facing = 0.0; FBox Box, Near;
+		const bool bHas = SlonkPlants::FarCrownStats(Kind, Tris, Volume, Facing, Box, Near);
+		const bool bTree = Kind == EPlant::Broadleaf || Kind == EPlant::Conifer;
+		const FString Name = Kind == EPlant::Broadleaf ? TEXT("broadleaf") : Kind == EPlant::Conifer ? TEXT("conifer") : Kind == EPlant::Grass ? TEXT("grass") : TEXT("shrub");
+		TestEqual(FString::Printf(TEXT("%s has a far crown only if a tree"), *Name), bHas, bTree);
+		for (int32 Lod = 0; Lod < 3; ++Lod)
+		{
+			double BarkOut = 0.0, LeafOut = 0.0;
+			SlonkPlants::FacingShares(Kind, Lod, BarkOut, LeafOut);
+			AddInfo(FString::Printf(TEXT("%s LOD%d: %.2f of bark faces and %.2f of foliage faces show their normals' side"), *Name, Lod, BarkOut, LeafOut));
+			TestTrue(FString::Printf(TEXT("%s LOD%d's bark and foliage are wound outward"), *Name, Lod), BarkOut >= 0.99 && LeafOut >= 0.9);
+		}
+		if (UStaticMesh* M = SlonkPlants::GetMesh(Kind)) { TestEqual(FString::Printf(TEXT("%s's LODs"), *Name), M->GetNumLODs(), bTree ? 4 : 3); }
+		if (!bHas) { continue; }
+		AddInfo(FString::Printf(TEXT("%s far crown: %d triangles, %.3f unit volume, worst facing %.2f, box %s against the tree's %s"), *Name, Tris, Volume, Facing, *Box.ToString(), *Near.ToString()));
+		TestTrue(FString::Printf(TEXT("%s's far crown is a handful of triangles"), *Name), Tris > 0 && Tris <= 12);
+		TestTrue(FString::Printf(TEXT("%s's far crown is wound outward"), *Name), Volume > 0.02);
+		TestTrue(FString::Printf(TEXT("%s's far crown is shaded as it faces"), *Name), Facing > 0.0);
+		TestTrue(FString::Printf(TEXT("%s's far crown is within the tree"), *Name), Near.ExpandBy(3.0).IsInside(Box));
+		TestTrue(FString::Printf(TEXT("%s's far crown is most of the tree's height and width"), *Name), Box.GetSize().Z > 0.5 * Near.GetSize().Z && Box.GetSize().X > 0.5 * Near.GetSize().X);
+	}
 	return true;
 }
 

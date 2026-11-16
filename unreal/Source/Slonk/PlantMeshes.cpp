@@ -4,6 +4,7 @@
 #include "DynamicMesh/DynamicMeshAttributeSet.h"
 #include "DynamicMeshToMeshDescription.h"
 #include "Engine/StaticMesh.h"
+#include "HAL/IConsoleManager.h"
 #include "MeshDescription.h"
 #include "PhysicsEngine/BodySetup.h"
 #include "StaticMeshAttributes.h"
@@ -18,6 +19,11 @@ namespace
 
 	// Vertex colour alpha: the surface kind the material masks by.
 	constexpr float SolidSurface = 0.f, LeafCard = 0.4f, NeedleCard = 1.f;
+	/** The screen size at which a tree goes to its far crown (the engine's: the bounding sphere's diameter over the
+	 *  screen's); slonk.Plants.FarCrownScreenSize overrides it for meshes made after. */
+	float FarCrownScreenSize = 0.01f;
+	FAutoConsoleVariableRef CVarFarCrownScreenSize(TEXT("slonk.Plants.FarCrownScreenSize"), FarCrownScreenSize,
+		TEXT("Screen size at which a tree's mesh goes to its solid far crown (meshes made after a change)"));
 
 	/** A mesh of unshared vertices, each with its own normal, UV and colour, so a blade or a card is lit as itself.
 	 *  Elements are appended in step with the vertices, so an element's id is its vertex's. */
@@ -75,7 +81,9 @@ namespace
 				}
 				if (Prev.Num() > 0)
 				{
-					for (int32 s = 0; s < Sides; ++s) { Quad(Prev[s], Prev[s + 1], Ring[s + 1], Ring[s]); }
+					// Wound outward (the side the renderer shows is the side the normals point to: the material is two-sided,
+					// and lights a face seen from behind as if its normal pointed the other way).
+					for (int32 s = 0; s < Sides; ++s) { Quad(Prev[s], Ring[s], Ring[s + 1], Prev[s + 1]); }
 				}
 				Prev = MoveTemp(Ring);
 			}
@@ -95,7 +103,8 @@ namespace
 				const FVector Nrm = Bend * 0.65 + Out * 0.35 + (Corner[i] - Centre).GetSafeNormal() * 0.2;
 				V[i] = Vert(Corner[i], Nrm, T[i], FVector4f(1.f, i < 2 ? SwayLo : SwayHi, Rand, Kind));
 			}
-			Quad(V[0], V[1], V[2], V[3]);
+			// Its front toward Out, the side its normals lean to, so the crown is lit from outside.
+			Quad(V[0], V[3], V[2], V[1]);
 		}
 	};
 
@@ -154,9 +163,10 @@ namespace
 				else
 				{
 					const int32 Tip = B.Vert(P, Nrm, FVector2f(0.5f, 1.f), FVector4f(1.f, 1.f, Rand, SolidSurface));
-					B.Tri(L.Last(), Rt.Last(), Tip);
+					B.Tri(L.Last(), Tip, Rt.Last());
 				}
-				if (i > 0 && i < Segs) { B.Quad(L[i - 1], Rt[i - 1], Rt[i], L[i]); }
+				// The blade's front to the sky and outward, as its normal.
+				if (i > 0 && i < Segs) { B.Quad(L[i - 1], L[i], Rt[i], Rt[i - 1]); }
 			}
 		}
 	}
@@ -251,6 +261,37 @@ namespace
 		}
 	}
 
+	/**
+	 * A tree a kilometre and more off, a few pixels tall: its crown alone, one closed solid shape of foliage (no cards
+	 * to mask, no trunk), Sides round from Bottom up to Top through a ring of Radius at Waist (Bottom at the waist makes
+	 * a cone). The far levels of the forest are thousands of these, so a handful of triangles apiece. Wound outward (as
+	 * the mesh reads it, the side the renderer shows), normals out from the crown's middle so it is lit as a mass,
+	 * brighter toward the top as the cards are.
+	 */
+	void FarCrown(FBuild& B, double Bottom, double Waist, double Top, double Radius, int32 Sides, double Twist)
+	{
+		const FVector Mid(0.0, 0.0, (Bottom + Top) * 0.5);
+		const double Half = FMath::Max((Top - Bottom) * 0.5, 1.0);
+		auto Normal = [&](const FVector& P) { const FVector D = P - Mid; return FVector(D.X / (Radius * Radius), D.Y / (Radius * Radius), D.Z / (Half * Half)); };
+		auto Sway = [](double Z) { return (float)FMath::Clamp(0.3 + 0.7 * Z / SlonkPlants::UnitCm, 0.0, 1.0); };
+		const FVector Up(0.0, 0.0, Top), Down(0.0, 0.0, Bottom);
+		const bool bCone = Bottom >= Waist - 1e-3;
+		for (int32 s = 0; s < Sides; ++s)
+		{
+			const double A0 = Twist + UE_DOUBLE_TWO_PI * s / Sides, A1 = Twist + UE_DOUBLE_TWO_PI * (s + 1) / Sides;
+			const FVector E0(Radius * FMath::Cos(A0), Radius * FMath::Sin(A0), Waist), E1(Radius * FMath::Cos(A1), Radius * FMath::Sin(A1), Waist);
+			// A cone's sides lean in to the top: their normals take the slope, not the waist's level.
+			const FVector N0 = bCone ? FVector(E0.X, E0.Y, Radius * Radius / (Top - Waist)) : Normal(E0);
+			const FVector N1 = bCone ? FVector(E1.X, E1.Y, Radius * Radius / (Top - Waist)) : Normal(E1);
+			const FVector4f CW(1.f, Sway(Waist), 0.5f, SolidSurface), CT(1.f, Sway(Top), 0.5f, SolidSurface), CB(1.f, Sway(Bottom), 0.5f, SolidSurface);
+			B.Tri(B.Vert(E1, N1, FVector2f(1.f, 0.f), CW), B.Vert(E0, N0, FVector2f(0.f, 0.f), CW), B.Vert(Up, FVector::ZAxisVector, FVector2f(0.5f, 1.f), CT));
+			if (!bCone) { B.Tri(B.Vert(Down, -FVector::ZAxisVector, FVector2f(0.5f, 0.f), CB), B.Vert(E0, N0, FVector2f(0.f, 0.5f), CW), B.Vert(E1, N1, FVector2f(1.f, 0.5f), CW)); }
+		}
+	}
+
+	/** Each kind's levels of detail: three for all, and the trees a fourth (FarCrown) for their far levels. */
+	int32 NumLods(EPlant Kind) { return Kind == EPlant::Broadleaf || Kind == EPlant::Conifer ? 4 : 3; }
+
 	void BuildLod(EPlant Kind, int32 Lod, FDynamicMesh3& Out)
 	{
 		FBuild B;
@@ -258,11 +299,61 @@ namespace
 		{
 		case EPlant::Grass: BuildGrass(B, Lod); break;
 		case EPlant::Shrub: BuildShrub(B, Lod); break;
-		case EPlant::Broadleaf: BuildBroadleaf(B, Lod); break;
-		default: BuildConifer(B, Lod); break;
+		// The broadleaf's six clusters (tops 14-22 out at 58-82 up, 16-22 across) make a crown about 80 wide from 45 to
+		// 100; the conifer's tiers a cone from its lowest skirt, drooping to about 8, to its leader at 97.
+		case EPlant::Broadleaf: if (Lod >= 3) { FarCrown(B, 42.0, 68.0, 100.0, 37.0, 4, 0.4); } else { BuildBroadleaf(B, Lod); } break;
+		default: if (Lod >= 3) { FarCrown(B, 8.0, 8.0, 99.0, 30.0, 5, 0.0); } else { BuildConifer(B, Lod); } break;
 		}
 		Out = MoveTemp(B.Mesh);
 	}
+}
+
+bool SlonkPlants::FarCrownStats(EPlant Kind, int32& OutTriangles, double& OutVolume, double& OutWorstFacing, FBox& OutBox, FBox& OutNearBox)
+{
+	if (NumLods(Kind) < 4) { return false; }
+	FDynamicMesh3 Far, Near;
+	BuildLod(Kind, 3, Far);
+	BuildLod(Kind, 0, Near);
+	OutBox = FBox(ForceInit);
+	for (int32 V : Far.VertexIndicesItr()) { OutBox += (FVector)Far.GetVertex(V); }
+	OutNearBox = FBox(ForceInit);
+	for (int32 V : Near.VertexIndicesItr()) { OutNearBox += (FVector)Near.GetVertex(V); }
+	OutTriangles = Far.TriangleCount();
+	OutVolume = 0.0;
+	OutWorstFacing = 1.0;
+	const FVector3d Ref(0.0, 0.0, OutBox.Min.Z);
+	const FDynamicMeshNormalOverlay* N = Far.Attributes()->PrimaryNormals();
+	for (int32 T : Far.TriangleIndicesItr())
+	{
+		// The face's normal as the mesh reads its winding (the side the renderer shows), against its corners' normals.
+		FVector3d Fn, Centroid; double Area;
+		Far.GetTriInfo(T, Fn, Area, Centroid);
+		OutVolume += Area * Fn.Dot(Centroid - Ref) / 3.0 / FMath::Pow(UnitCm, 3.0);
+		const FIndex3i E = N->GetTriangle(T);
+		const FVector3d Corner = Normalized(FVector3d(N->GetElement(E.A) + N->GetElement(E.B) + N->GetElement(E.C)));
+		OutWorstFacing = FMath::Min(OutWorstFacing, Fn.Dot(Corner));
+	}
+	return true;
+}
+
+void SlonkPlants::FacingShares(EPlant Kind, int32 Lod, double& OutBark, double& OutFoliage)
+{
+	FDynamicMesh3 M;
+	BuildLod(Kind, Lod, M);
+	const FDynamicMeshNormalOverlay* N = M.Attributes()->PrimaryNormals();
+	const FDynamicMeshColorOverlay* C = M.Attributes()->PrimaryColors();
+	int32 Bark = 0, BarkOut = 0, Leaf = 0, LeafOut = 0;
+	for (int32 T : M.TriangleIndicesItr())
+	{
+		FVector3d Fn, Centroid; double Area;
+		M.GetTriInfo(T, Fn, Area, Centroid);
+		const FIndex3i E = N->GetTriangle(T);
+		const FVector3d Corner = FVector3d(N->GetElement(E.A) + N->GetElement(E.B) + N->GetElement(E.C));
+		const bool bOut = Fn.Dot(Corner) > 0.0;
+		if (C->GetElement(C->GetTriangle(T).A).X < 0.5f) { ++Bark; BarkOut += bOut; } else { ++Leaf; LeafOut += bOut; }
+	}
+	OutBark = Bark ? (double)BarkOut / Bark : 1.0;
+	OutFoliage = Leaf ? (double)LeafOut / Leaf : 1.0;
 }
 
 UStaticMesh* SlonkPlants::GetMesh(EPlant Kind)
@@ -271,14 +362,17 @@ UStaticMesh* SlonkPlants::GetMesh(EPlant Kind)
 	if (GPlants.Num() < NumKinds) { GPlants.SetNumZeroed(NumKinds); }
 	if (GPlants[K] && IsValid(GPlants[K])) { return GPlants[K]; }
 
-	FDynamicMesh3 Lods[3];
-	FMeshDescription MD[3];
+	const int32 Lods = NumLods((EPlant)K);
+	FDynamicMesh3 Built[4];
+	FMeshDescription MD[4];
+	TArray<const FMeshDescription*> Descs;
 	FDynamicMeshToMeshDescription Converter;
-	for (int32 L = 0; L < 3; ++L)
+	for (int32 L = 0; L < Lods; ++L)
 	{
-		BuildLod((EPlant)K, L, Lods[L]);
+		BuildLod((EPlant)K, L, Built[L]);
 		FStaticMeshAttributes(MD[L]).Register();
-		Converter.Convert(&Lods[L], MD[L], false);
+		Converter.Convert(&Built[L], MD[L], false);
+		Descs.Add(&MD[L]);
 	}
 	UStaticMesh* Mesh = NewObject<UStaticMesh>(GetTransientPackage(), *FString::Printf(TEXT("SlonkPlant%d"), K), RF_Transient);
 	Mesh->AddToRoot();
@@ -292,14 +386,16 @@ UStaticMesh* SlonkPlants::GetMesh(EPlant Kind)
 	Params.bMarkPackageDirty = false;
 	Params.bCommitMeshDescription = false;
 	Params.bBuildSimpleCollision = false;
-	Mesh->BuildFromMeshDescriptions({ &MD[0], &MD[1], &MD[2] }, Params);
+	Mesh->BuildFromMeshDescriptions(Descs, Params);
 	if (FStaticMeshRenderData* RD = Mesh->GetRenderData())
 	{
-		// Trees hold their detail further than a tuft of grass does.
+		// Trees hold their detail further than a tuft of grass does, and go to their solid crown (FarCrown) a few pixels
+		// tall: a 15 m tree about 2 km off.
 		const bool bTree = (EPlant)K == EPlant::Broadleaf || (EPlant)K == EPlant::Conifer;
 		RD->ScreenSize[0].Default = 1.f;
 		RD->ScreenSize[1].Default = bTree ? 0.25f : 0.12f;
 		RD->ScreenSize[2].Default = bTree ? 0.07f : 0.035f;
+		if (Lods > 3) { RD->ScreenSize[3].Default = FarCrownScreenSize; }
 	}
 	// The wind (M_Foliage) bends a plant by up to 3% of its height and flutters its leaves a centimetre on top, past the
 	// mesh's own box: the instances are culled by these bounds, so they take the sway in, in the unit mesh's own

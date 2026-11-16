@@ -16,7 +16,7 @@ class SLONK_API USlonkSettingsSaveGame : public USaveGame
 public:
 	UPROPERTY() uint8 Typeface = 0;
 	/** The ground's rocks and plants drawn this many thinned levels beyond their own (slonk.Scatter.FarLevels). */
-	UPROPERTY() uint8 GroundDetail = 2;
+	UPROPERTY() uint8 GroundDetail = 3;
 };
 
 /** Loads the settings at start-up, applies them, and saves on every change. */
@@ -32,13 +32,14 @@ public:
 	void SetTypeface(ELcarsTypeface Face);
 
 	/** How far the ground's rocks and plants reach: 0 near (each class on its own levels), 1 far, 2 farther, 3
-	 *  farthest (trees to about 1, 2.5, 5 and 10 km). Each level costs the GPU its drawing and the workers its building. */
+	 *  farthest, 4 to the horizon (trees to about 1, 2.5, 5, 10 and 20 km). Each level costs the GPU its drawing and the
+	 *  workers its building; the trees past a couple of kilometres are a handful of triangles apiece (SlonkPlants' far crown). */
 	int32 GetGroundDetail() const { return GroundDetail; }
 	void SetGroundDetail(int32 Levels);
 
 private:
 	void Save() const;
 	ELcarsTypeface Typeface = ELcarsTypeface::Standard;
-	int32 GroundDetail = 2;
+	int32 GroundDetail = 3;
 	static const TCHAR* SlotName;
 };
