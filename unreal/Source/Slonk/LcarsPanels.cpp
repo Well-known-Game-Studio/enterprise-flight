@@ -245,12 +245,12 @@ void USettingsPanel::BuildContent()
 		return Pick;
 	});
 	AddLine(Content, TEXT("Standard is the engine's Roboto; Condensed is Antonio, the compressed face in the spirit of the real displays."), 12.f, Lcars::Dim, false, false, 0.f);
-	AddChoiceRow(TEXT("Ground detail"), { TEXT("Near"), TEXT("Far"), TEXT("Farther"), TEXT("Farthest") }, Settings ? Settings->GetGroundDetail() : 2, [Settings](int32 Pick)
+	AddChoiceRow(TEXT("Ground detail"), { TEXT("Near"), TEXT("Far"), TEXT("Farther"), TEXT("Farthest"), TEXT("Horizon") }, Settings ? Settings->GetGroundDetail() : 3, [Settings](int32 Pick)
 	{
 		if (Settings) { Settings->SetGroundDetail(Pick); }
 		return Pick;
 	});
-	AddLine(Content, TEXT("How far the trees, bushes and rocks reach: trees to about 1, 2.5, 5 or 10 km, thinning with distance. Each step draws more of them on the graphics card; Farthest adds about a third to a wide view's GPU time."), 12.f, Lcars::Dim, false, false, 0.f);
+	AddLine(Content, TEXT("How far the trees, bushes and rocks reach, thinning with distance: each step about doubles it, the trees to 8-15 km on Horizon by the world's size. Each step draws more of them on the graphics card."), 12.f, Lcars::Dim, false, false, 0.f);
 
 	AddLine(Content, TEXT("HUD"), 13.f, Lcars::Lilac, true, true, 14.f);
 	AStarshipHUD* H = GetHUD();

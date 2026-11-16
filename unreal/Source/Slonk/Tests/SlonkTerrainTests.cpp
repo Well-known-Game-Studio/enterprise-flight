@@ -7,6 +7,9 @@
 #include "../PlanetCities.h"
 #include "../TerrainScatter.h"
 #include "../PlanetInstancesComponent.h"
+#include "../PlantMeshes.h"
+#include "Engine/StaticMesh.h"
+#include "StaticMeshResources.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -901,9 +904,67 @@ bool FSlonkPlanetInstancesPackingTest::RunTest(const FString& Parameters)
 		for (int32 k = 0; k < 8; ++k) { bHoldsAll &= Box.IsInside(T.TransformPosition(FVector(k & 1 ? 50.0 : -50.0, k & 2 ? 50.0 : -50.0, k & 4 ? 50.0 : -50.0))); }
 	}
 	TestTrue(TEXT("the set's box holds every instance whole"), bHoldsAll);
+	// The radius the renderer narrows the set's LODs by is its largest instance's, scaled, not the unit mesh's: at
+	// least the farthest corner of the biggest instance's box from that instance's middle.
+	double Corner = 0.0;
+	for (const FTransform& T : Xf)
+	{
+		for (int32 k = 0; k < 8; ++k) { Corner = FMath::Max(Corner, FVector::Dist(T.TransformPosition(FVector(k & 1 ? 50.0 : -50.0, k & 2 ? 50.0 : -50.0, k & 4 ? 50.0 : -50.0)), T.GetLocation())); }
+	}
+	AddInfo(FString::Printf(TEXT("largest instance radius %.1f cm, farthest corner %.1f cm"), C->GetMaxInstanceRadius(), Corner));
+	TestTrue(TEXT("the set's LOD radius is its largest instance's, scaled"), C->GetMaxInstanceRadius() >= Corner && C->GetMaxInstanceRadius() < Corner * 2.0);
 	C->ClearPieces();
 	TestEqual(TEXT("cleared"), C->GetInstanceCount(), 0);
 	TestEqual(TEXT("nothing left to send"), C->GetPacked().Num(), 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkPlantFarCrownsTest, "Slonk.Terrain.PlantFarCrowns", SLONK_TEST_FLAGS)
+bool FSlonkPlantFarCrownsTest::RunTest(const FString& Parameters)
+{
+	// The forest's far levels are hundreds of thousands of trees a pixel or two across, drawn as each tree's far crown:
+	// a handful of triangles, one solid shape wound outward and shaded as it faces (its faces lit from outside), as big
+	// as the tree's own crown and no bigger. The tree meshes carry it as a fourth LOD; grass and bushes have none.
+	// The bark and the cards show the side their normals point to (the foliage material is two-sided, so a part wound
+	// the other way still draws, its faces seen from behind), so the near trees and their far crowns are made alike; a
+	// grass blade's front is its side toward the sky (its normal leans up and out across a blade leaning outward, so no
+	// side of it agrees: the side seen from above is the one lit by it).
+	for (const EPlant Kind : { EPlant::Broadleaf, EPlant::Conifer, EPlant::Grass, EPlant::Shrub })
+	{
+		int32 Tris = 0; double Volume = 0.0, Facing = 0.0; FBox Box, Near;
+		const bool bHas = SlonkPlants::FarCrownStats(Kind, Tris, Volume, Facing, Box, Near);
+		const bool bTree = Kind == EPlant::Broadleaf || Kind == EPlant::Conifer;
+		const FString Name = Kind == EPlant::Broadleaf ? TEXT("broadleaf") : Kind == EPlant::Conifer ? TEXT("conifer") : Kind == EPlant::Grass ? TEXT("grass") : TEXT("shrub");
+		TestEqual(FString::Printf(TEXT("%s has a far crown only if a tree"), *Name), bHas, bTree);
+		for (int32 Lod = 0; Lod < 3; ++Lod)
+		{
+			double BarkOut = 0.0, LeafOut = 0.0, LeafUp = 0.0;
+			SlonkPlants::FacingShares(Kind, Lod, BarkOut, LeafOut, LeafUp);
+			AddInfo(FString::Printf(TEXT("%s LOD%d: %.2f of bark faces and %.2f of foliage faces show their normals' side, %.2f of foliage faces look up"), *Name, Lod, BarkOut, LeafOut, LeafUp));
+			TestTrue(FString::Printf(TEXT("%s LOD%d's bark is wound outward"), *Name, Lod), BarkOut >= 0.99);
+			if (Kind == EPlant::Grass) { TestTrue(FString::Printf(TEXT("grass LOD%d's blades face the sky"), Lod), LeafUp >= 0.99); }
+			else { TestTrue(FString::Printf(TEXT("%s LOD%d's cards face where their normals point"), *Name, Lod), LeafOut >= 0.9); }
+		}
+		// The meshes as the game draws them: a tree's fourth LOD is its far crown, from a screen size under its third's.
+		if (UStaticMesh* M = SlonkPlants::GetMesh(Kind))
+		{
+			TestEqual(FString::Printf(TEXT("%s's LODs"), *Name), M->GetNumLODs(), bTree ? 4 : 3);
+			const FStaticMeshRenderData* RD = M->GetRenderData();
+			if (bTree && RD && RD->LODResources.Num() == 4)
+			{
+				TestEqual(FString::Printf(TEXT("%s's LOD3 is its far crown"), *Name), (int32)RD->LODResources[3].GetNumTriangles(), Tris);
+				TestTrue(FString::Printf(TEXT("%s goes to its far crown from a screen size under its LOD2's, and one the engine tells from none"), *Name),
+					RD->ScreenSize[3].Default < RD->ScreenSize[2].Default && RD->ScreenSize[3].Default >= 1.f / 1024.f);
+			}
+		}
+		if (!bHas) { continue; }
+		AddInfo(FString::Printf(TEXT("%s far crown: %d triangles, %.3f unit volume, worst facing %.2f, box %s against the tree's %s"), *Name, Tris, Volume, Facing, *Box.ToString(), *Near.ToString()));
+		TestTrue(FString::Printf(TEXT("%s's far crown is a handful of triangles"), *Name), Tris > 0 && Tris <= 12);
+		TestTrue(FString::Printf(TEXT("%s's far crown is wound outward"), *Name), Volume > 0.02);
+		TestTrue(FString::Printf(TEXT("%s's far crown is shaded as it faces"), *Name), Facing > 0.0);
+		TestTrue(FString::Printf(TEXT("%s's far crown is within the tree"), *Name), Near.ExpandBy(3.0).IsInside(Box));
+		TestTrue(FString::Printf(TEXT("%s's far crown is most of the tree's height and width"), *Name), Box.GetSize().Z > 0.5 * Near.GetSize().Z && Box.GetSize().X > 0.5 * Near.GetSize().X);
+	}
 	return true;
 }
 

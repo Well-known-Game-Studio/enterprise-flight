@@ -65,10 +65,12 @@ namespace SlonkScatter
 	/** Rocks at least this big across (cm), and trees at least this tall, get collision near the crew. */
 	constexpr double SolidMinCm = 45.0;
 	constexpr double SolidTreeCm = 200.0;
-	/** Most rocks, and most plants, one chunk carries; the finer classes are the ones left out. The trees' farthest
-	 *  level, one in sixteen of a dense forest on a 2.5 km chunk, comes to about 10,000. */
+	/** Most rocks, and most plants, one chunk carries; the finer classes are the ones left out, and a class capped stops
+	 *  row by row, so a cap reached would leave a strip bare. The trees' farthest level is one in 39 of the candidates on
+	 *  a chunk to 5 km, whose cells snap to between 4.2 and 6 m: up to about 1.3 million candidates, so 31,000 trees at
+	 *  the densest forest's 0.9. */
 	constexpr int32 MaxPerChunk = 6000;
-	constexpr int32 MaxPlantsPerChunk = 12000;
+	constexpr int32 MaxPlantsPerChunk = 40000;
 	/** Period of the terrain material's planet-local noise, cm: the chunk origins reach the shader modulo this. */
 	constexpr double NoisePeriodCm = 1048576.0;
 	/** The material's scrub dots: one hashed disc per cell, a whole number of cells to the noise period along each
@@ -107,8 +109,8 @@ namespace SlonkScatter
 		int32 NumPlants() const;
 	};
 
-	/** The largest chunk edge any class rides on, cm: coarser chunks carry nothing. */
-	SLONK_API double MaxChunkEdgeCm();
+	/** The largest chunk edge any class rides on with at most MaxFarLevels of its far levels, cm: coarser chunks carry nothing. */
+	SLONK_API double MaxChunkEdgeCm(int32 MaxFarLevels);
 
 	SLONK_API void ScatterChunk(const FPlanetTerrainParams& P, const FScatterSettings& S, const FChunkGrid& G, FChunkScatter& Out);
 

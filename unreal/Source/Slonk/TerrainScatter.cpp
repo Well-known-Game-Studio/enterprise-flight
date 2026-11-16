@@ -53,17 +53,19 @@ namespace
 	};
 	// Boulders on chunks to 150-odd metres (seen to about 600 m) and half of them to 300 m chunks (1.2 km); stones to
 	// 40 m chunks (150 m) and pebbles on the last level (35 m), where they are a pixel or two across, so no further;
-	// grass on the last level, half on the one before; trees on chunks to 300 m (a kilometre), two in five to 600 m
-	// (2.5 km), one in six to 1.2 km (5 km) and one in sixteen to 2.5 km (10 km). The plants fade out before their last
-	// level ends (FadeEdges); past the trees the terrain's own colours carry the forest. Turning with the planet costs
-	// an instance nothing on the CPU (UPlanetInstancesComponent), but each is still drawn, in the velocity pass too as
-	// it moves: the trees' last level adds about a third to the GPU time of a view along a canyon, so the settings keep
-	// it for their farthest ground detail.
+	// grass on the last level, half on the one before; trees on chunks to 300 m, two in five on the next level, one in
+	// six on the next, one in sixteen and one in forty on the two after (chunks to 5 km). The plants fade out at three
+	// edges of the coarsest chunk carrying them (FadeEdges), and a world's chunk edges halve from its face's, so a level
+	// lands on edges between half and all of its limit: the trees reach about 0.5-0.9, 0.9-1.9, 1.8-3.7, 3.7-7.4 and
+	// 7.4-15 km as the far levels are added, by the world's size. Past the trees the terrain's own colours carry the
+	// forest. Turning with the planet costs an instance nothing on the CPU (UPlanetInstancesComponent), but each is still
+	// drawn, in the velocity pass too as it moves: a tree past a couple of kilometres is its far crown, a handful of
+	// triangles (SlonkPlants), so its far levels cost the GPU a fraction of what its cards would.
 	constexpr FClass Classes[] = {
 		{ EClass::Boulder, 750.0, 26000.0, 120.0, 420.0, 0x51ed270b2f1c7e3dULL, 1, 0.5 },
 		{ EClass::Stone, 220.0, 6500.0, 26.0, 95.0, 0x2545f4914f6cdd1dULL, 0, 1.0 },
 		{ EClass::Pebble, 60.0, 1700.0, 6.0, 22.0, 0x8c4b5bd7d9a1e5f3ULL, 0, 1.0 },
-		{ EClass::Tree, 600.0, 31000.0, 700.0, 2200.0, 0x3c6ef372fe94f82bULL, 3, 0.4 },
+		{ EClass::Tree, 600.0, 31000.0, 700.0, 2200.0, 0x3c6ef372fe94f82bULL, 4, 0.4 },
 		{ EClass::Grass, 45.0, 1700.0, 25.0, 60.0, 0xa54ff53a5f1d36f1ULL, 1, 0.5 },
 	};
 	/** Shrubs stand on the material's scrub dots, on chunks to 76 m (seen to about 250 m; the painted dots beyond),
@@ -348,10 +350,11 @@ int32 SlonkScatter::FChunkScatter::NumPlants() const
 	return N;
 }
 
-double SlonkScatter::MaxChunkEdgeCm()
+double SlonkScatter::MaxChunkEdgeCm(int32 MaxFarLevels)
 {
-	double M = ShrubMaxEdgeCm * FMath::Pow(2.0, (double)ShrubFarLevels);
-	for (const FClass& C : Classes) { M = FMath::Max(M, C.MaxEdgeCm * FMath::Pow(2.0, (double)C.FarLevels)); }
+	const int32 Far = FMath::Max(MaxFarLevels, 0);
+	double M = ShrubMaxEdgeCm * FMath::Pow(2.0, (double)FMath::Min(ShrubFarLevels, Far));
+	for (const FClass& C : Classes) { M = FMath::Max(M, C.MaxEdgeCm * FMath::Pow(2.0, (double)FMath::Min(C.FarLevels, Far))); }
 	return M;
 }
 
@@ -407,7 +410,7 @@ void SlonkScatter::TreeCover(const FPlanetTerrainParams& P, const FChunkGrid& G,
 
 void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSettings& S, const FChunkGrid& G, FChunkScatter& Out)
 {
-	if (!S.bEnabled || S.Density <= 0.f || G.EdgeCm > MaxChunkEdgeCm() || !G.Samples || !G.Dirs || !G.Pos || G.Steps <= 0) { return; }
+	if (!S.bEnabled || S.Density <= 0.f || G.EdgeCm > MaxChunkEdgeCm(S.MaxFarLevels) || !G.Samples || !G.Dirs || !G.Pos || G.Steps <= 0) { return; }
 	const double R = P.RadiusCm;
 	const double FaceArcCm = R * UE_DOUBLE_HALF_PI;
 	const FChunkFrame F(G);

@@ -212,7 +212,9 @@ private:
 	/** Collision for the rocks round the pawn: rebuilt when it has walked a few metres or the chunks there changed. */
 	void UpdateSolidRocks();
 	void ClearSolidRocks();
-	void RebuildScatterChunks();
+	/** Builds again the chunks fine enough to carry scatter, at the far levels used before the change (FarLevelsBefore)
+	 *  or after it, whichever reach further, so a chunk losing its scatter lets it go too. */
+	void RebuildScatterChunks(int32 FarLevelsBefore);
 	/** The scatter settings the ground's material paints by: the forest's colour (TreeLife) and the settlements'
 	 *  clearings (Clearings). */
 	void ApplyScatterToMaterial();

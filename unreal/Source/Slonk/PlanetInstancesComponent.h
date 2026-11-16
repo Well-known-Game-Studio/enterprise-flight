@@ -34,6 +34,8 @@ public:
 	int32 GetInstanceCount() const { return NumInstances; }
 	/** The instances as the store gets them (see Packed), for the tests. */
 	TConstArrayView<FVector4f> GetPacked() const { return Packed; }
+	/** The largest instance's radius as the GPU picks its LOD by, cm in this component's frame (for the tests). */
+	double GetMaxInstanceRadius() const { return MaxInstanceRadius; }
 	void SetNumCustomDataFloats(int32 InNumCustomDataFloats);
 	int32 GetNumCustomDataFloats() const { return NumCustomFloats; }
 
@@ -71,4 +73,7 @@ private:
 	int32 NumInstances = 0;
 	int32 NumCustomFloats = 0;
 	FBox LocalBox = FBox(ForceInit);
+	/** The largest instance's bounding radius (its box's, turned and scaled), which the renderer narrows the set's range
+	 *  of LODs by (TPlanetInstancesProxy::GetGpuLodInstanceRadius). */
+	double MaxInstanceRadius = 0.0;
 };

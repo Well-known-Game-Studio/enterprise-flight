@@ -228,9 +228,17 @@ namespace
 	{
 	public:
 		template <typename... TArgs>
-		TPlanetInstancesProxy(TArray<FVector4f>&& InPacked, int32 InNumInstances, int32 InNumCustomFloats, TArgs&&... Args)
-			: TBase(Forward<TArgs>(Args)...), Packed(MoveTemp(InPacked)), NumInstances(InNumInstances), NumCustomFloats(InNumCustomFloats)
+		TPlanetInstancesProxy(TArray<FVector4f>&& InPacked, int32 InNumInstances, int32 InNumCustomFloats, float InInstanceRadius, TArgs&&... Args)
+			: TBase(Forward<TArgs>(Args)...), Packed(MoveTemp(InPacked)), NumInstances(InNumInstances), NumCustomFloats(InNumCustomFloats), InstanceRadius(InInstanceRadius)
 		{
+		}
+		/** The radius the renderer narrows the set's range of LODs by before the GPU picks each instance's: the engine's
+		 *  is the unit mesh's, unscaled, so a set of trees ten and twenty times that size more than a hundred metres off
+		 *  would get its coarsest LOD alone. The set's largest instance, as the GPU bounds it. */
+		virtual float GetGpuLodInstanceRadius() const override
+		{
+			const float Base = TBase::GetGpuLodInstanceRadius();
+			return Base > 0.f ? FMath::Max(Base, InstanceRadius) : Base;
 		}
 		virtual ~TPlanetInstancesProxy() override
 		{
@@ -251,6 +259,7 @@ namespace
 		TArray<FVector4f> Packed;
 		int32 NumInstances = 0;
 		int32 NumCustomFloats = 0;
+		float InstanceRadius = 0.f;
 	};
 }
 
@@ -289,10 +298,15 @@ void UPlanetInstancesComponent::SetPieces(const TArray<FTransform>& Transforms, 
 	// The set's box from its instances' (as padded as the GPU culls them by), so the set is never culled whole where one
 	// of them is seen.
 	const FBox Mesh = InstanceBox();
+	// And its largest instance's radius as the GPU picks LODs by (the sphere round the instance's box), so the renderer
+	// leaves the GPU every LOD it may want.
+	const double MeshRadius = Mesh.GetExtent().Length();
+	MaxInstanceRadius = 0.0;
 	for (int32 i = 0; i < NumInstances; ++i)
 	{
 		const FTransform& T = Transforms[i];
 		LocalBox += Mesh.TransformBy(T);
+		MaxInstanceRadius = FMath::Max(MaxInstanceRadius, MeshRadius * T.GetMaximumAxisScale());
 		const FMatrix44f M(T.ToMatrixWithScale());
 		FVector4f* Out = &Packed[i * Stride];
 		Out[0] = FVector4f(M.M[0][0], M.M[0][1], M.M[0][2], M.M[3][0]);
@@ -319,6 +333,7 @@ void UPlanetInstancesComponent::ClearPieces()
 	NumInstances = 0;
 	Packed.Reset();
 	LocalBox.Init();
+	MaxInstanceRadius = 0.0;
 	MarkRenderStateDirty();
 	UpdateBounds();
 }
@@ -373,11 +388,12 @@ FPrimitiveSceneProxy* UPlanetInstancesComponent::CreateStaticMeshSceneProxy(Nani
 	Desc.bUseGpuLodSelection = true;
 
 	TArray<FVector4f> Copy = Packed;
+	const float Radius = (float)(MaxInstanceRadius * GetComponentTransform().GetMaximumAxisScale());
 	if (bCreateNanite)
 	{
-		return ::new TPlanetInstancesProxy<Nanite::FSceneProxy>(MoveTemp(Copy), NumInstances, NumCustomFloats, NaniteMaterials, Desc);
+		return ::new TPlanetInstancesProxy<Nanite::FSceneProxy>(MoveTemp(Copy), NumInstances, NumCustomFloats, Radius, NaniteMaterials, Desc);
 	}
-	return ::new TPlanetInstancesProxy<FInstancedStaticMeshSceneProxy>(MoveTemp(Copy), NumInstances, NumCustomFloats, Desc, World->GetFeatureLevel());
+	return ::new TPlanetInstancesProxy<FInstancedStaticMeshSceneProxy>(MoveTemp(Copy), NumInstances, NumCustomFloats, Radius, Desc, World->GetFeatureLevel());
 }
 
 void UPlanetInstancesComponent::PrecachePSOs()
