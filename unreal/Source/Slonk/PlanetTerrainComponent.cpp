@@ -18,9 +18,9 @@
 static TAutoConsoleVariable<float> CVarTerrainSunUp(TEXT("slonk.TerrainSunUp"), 0.45f, TEXT("Preferred sine of sun elevation for terrain goto canyon/rim/river/mesa/badlands"));
 static TAutoConsoleVariable<float> CVarTerrainSunUpWidth(TEXT("slonk.TerrainSunUpWidth"), 0.25f, TEXT("Half-width of the preferred band"));
 // How far the ground's rocks and plants reach (the settings' ground detail sets it): each class's thinned far levels
-// drawn, up to this many. Every instance turns with the planet each frame, so each level costs the CPU a few ms.
+// drawn, up to this many. With GPU-only instances a level costs the GPU its drawing and the workers its building.
 static TAutoConsoleVariable<int32> CVarScatterFarLevels(TEXT("slonk.Scatter.FarLevels"), 2,
-	TEXT("How many of each scatter class's thinned far levels to draw (0: each class ends with its own levels; trees reach about 1, 2.5 and 5 km at 0, 1, 2)"));
+	TEXT("How many of each scatter class's thinned far levels to draw (0: each class ends with its own levels; trees reach about 1, 2.5, 5 and 10 km at 0, 1, 2, 3)"));
 // The rocks and plants as GPU-only planet instances (UPlanetInstancesComponent): turning with the world costs a single
 // mesh's move a set, the instances rewritten on the GPU. 0: the engine's instanced meshes, every instance re-sent from
 // the CPU each frame the world turns (for comparison). Sets made after a change take it.
@@ -422,13 +422,19 @@ void UPlanetTerrainComponent::EnsureWriterAnchor()
 	if (WriterAnchor || !GetWorld() || !GetWorld()->Scene) { return; }
 	// The primitive each frame's write of every planet instance goes through: always in the scene while the terrain is,
 	// one instance of its own, scaled to nothing. Made like the scatter's sets, which it writes for.
+	// Drawn in no pass (so it waits on no pipeline states), its one instance set before it is registered so its primitive
+	// is in the scene from now (with none it makes none), a millimetre across rather than nothing (a zero scale divides
+	// to infinities in the instance data the culling reads).
 	WriterAnchor = NewObject<UPlanetInstancesComponent>(GetOwner() ? (UObject*)GetOwner() : (UObject*)this, NAME_None, RF_Transient);
+	WriterAnchor->bCarriesWrites = true;
 	WriterAnchor->SetStaticMesh(ScatterMesh(0));
 	WriterAnchor->SetNumCustomDataFloats(SlonkScatter::NumCustomFloats);
 	WriterAnchor->CastShadow = false;
+	WriterAnchor->bRenderInMainPass = false;
+	WriterAnchor->bRenderInDepthPass = false;
+	WriterAnchor->SetPieces({ FTransform(FQuat::Identity, FVector::ZeroVector, FVector(1e-3)) }, {});
 	WriterAnchor->SetupAttachment(this);
 	WriterAnchor->RegisterComponent();
-	WriterAnchor->SetPieces({ FTransform(FQuat::Identity, FVector::ZeroVector, FVector::ZeroVector) }, {});
 }
 
 UStaticMeshComponent* UPlanetTerrainComponent::AcquireSet(int32 Mesh)
@@ -840,7 +846,10 @@ void UPlanetTerrainComponent::UpdateView(const FVector& ViewLocationWorld, const
 	// The plants fade by their distance from the camera (their custom data says where): from this parameter rather
 	// than the view's own position, so the shadow passes fade them by the same distance as the view does.
 	if (FoliageMID) { FoliageMID->SetVectorParameterValue(TEXT("ViewPos"), FLinearColor((float)ViewLocationWorld.X, (float)ViewLocationWorld.Y, (float)ViewLocationWorld.Z, 0.f)); }
-	// The rocks and plants turn with the world on the GPU: every one written with its set's transform of this frame.
+	// The rocks and plants turn with the world on the GPU: every one written with its set's transform of this frame. The
+	// anchor made first if GPU instances were switched on since the terrain was configured, so the sets made this frame
+	// are written this frame too.
+	if (CVarScatterGPUInstances.GetValueOnGameThread() != 0) { EnsureWriterAnchor(); }
 	if (WriterAnchor) { WriterAnchor->QueueWriteAll(); }
 	// The chunks refine for the camera (what is seen) and for the pawn (what is stood on, a chase camera's length
 	// behind it): the split distance is the nearer of the two.

@@ -12,6 +12,7 @@ StructuredBuffer<uint4> Primitives;	// persistent primitive id, first GPU scene 
 StructuredBuffer<float4> Source;	// per instance: three rows of its 3x4 transform (translation in w), then its custom data
 uint NumPrimitives;
 uint TotalInstances;
+// The same for every primitive here (the store leaves out any made otherwise): the stride below and the payload layout follow.
 uint InstanceFlags;
 uint NumCustomFloats;
 
@@ -46,8 +47,9 @@ void WritePlanetInstancesCS(uint3 GroupId : SV_GroupID, uint GroupIndex : SV_Gro
 	LocalToPrimitive[2] = float4(R2.xyz, 0.0f);
 	LocalToPrimitive[3] = float4(R0.w, R1.w, R2.w, 1.0f);
 
-	// A stable per-instance random, from its place in its primitive (no material of these reads it now).
-	uint Hash = (Prim.x * 73856093u) ^ (Local * 19349663u);
+	// A per-instance random from where it stands in its primitive, so it holds when the primitive is made again (its id
+	// and place in the GPU scene change then). No material of these reads it now.
+	uint Hash = (asuint(R0.w) * 73856093u) ^ (asuint(R1.w) * 19349663u) ^ (asuint(R2.w) * 83492791u);
 	Hash = (Hash ^ (Hash >> 13)) * 0x5bd1e995u;
 	Hash ^= Hash >> 15;
 	const float RandomId = float(Hash & 0xffffffu) / 16777215.0f;

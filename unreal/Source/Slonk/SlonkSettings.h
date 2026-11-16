@@ -31,8 +31,8 @@ public:
 	ELcarsTypeface GetTypeface() const { return Typeface; }
 	void SetTypeface(ELcarsTypeface Face);
 
-	/** How far the ground's rocks and plants reach: 0 near (each class on its own levels), 1 far, 2 farthest. Each
-	 *  level costs the CPU, since every instance turns with the planet each frame. */
+	/** How far the ground's rocks and plants reach: 0 near (each class on its own levels), 1 far, 2 farther, 3
+	 *  farthest (trees to about 1, 2.5, 5 and 10 km). Each level costs the GPU its drawing and the workers its building. */
 	int32 GetGroundDetail() const { return GroundDetail; }
 	void SetGroundDetail(int32 Levels);
 

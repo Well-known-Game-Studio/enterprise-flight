@@ -23,8 +23,8 @@ namespace
 	/**
 	 * The planet instances on the GPU (render thread only): every registered primitive's instances in its own frame, in
 	 * one buffer, written into the GPU scene once a frame for every primitive of a scene in one dispatch. A primitive's
-	 * instances come in when it enters the scene and go when it leaves; a CPU copy is kept so a range can be put back
-	 * where it belongs when the buffer grows.
+	 * instances come in when it enters the scene and go when it leaves. They are kept on the GPU alone: a primitive's
+	 * data waits here only until the next write uploads it, and a buffer outgrown is copied into its successor there.
 	 */
 	class FPlanetInstanceStore
 	{
@@ -35,16 +35,15 @@ namespace
 			return Store;
 		}
 
-		void Register(const FPrimitiveSceneProxy* Proxy, TArray<FVector4f>&& Data, int32 NumInstances)
+		void Register(const FPrimitiveSceneProxy* Proxy, TArray<FVector4f>&& Data, int32 NumInstances, int32 NumCustomFloats)
 		{
 			check(IsInRenderingThread());
 			Unregister(Proxy);
 			if (NumInstances <= 0 || Data.Num() == 0) { return; }
 			const uint32 Size = (uint32)Data.Num();
 			const uint32 Offset = Allocate(Size);
-			FMemory::Memcpy(&Mirror[Offset], Data.GetData(), Size * sizeof(FVector4f));
-			Dirty.Add({ Offset, Size });
-			Index.Add(Proxy, Entries.Add({ Proxy, Offset, Size, (uint32)NumInstances }));
+			Pending.Add({ Offset, MoveTemp(Data) });
+			Index.Add(Proxy, Entries.Add({ Proxy, Offset, Size, (uint32)NumInstances, (uint32)FMath::Max(NumCustomFloats, 0) }));
 		}
 
 		void Unregister(const FPrimitiveSceneProxy* Proxy)
@@ -53,7 +52,10 @@ namespace
 			const int32* Found = Index.Find(Proxy);
 			if (!Found) { return; }
 			const int32 At = *Found;
-			Release(Entries[At].Offset, Entries[At].Size);
+			const uint32 Offset = Entries[At].Offset;
+			// Its data not uploaded yet goes with it, so every upload waiting is a live primitive's (and none overlap).
+			Pending.RemoveAll([Offset](const FUpload& U) { return U.Offset == Offset; });
+			Release(Offset, Entries[At].Size);
 			Index.Remove(Proxy);
 			Entries.RemoveAtSwap(At, EAllowShrinking::No);
 			if (Entries.IsValidIndex(At)) { Index.Add(Entries[At].Proxy, At); }
@@ -61,11 +63,12 @@ namespace
 			if (Entries.Num() == 0)
 			{
 				Index.Reset();
-				Mirror.Empty();
+				Pending.Empty();
 				Free.Empty();
-				Dirty.Empty();
+				End = 0;
 				Buffer.SafeRelease();
 				Capacity = 0;
+				LastFrame.Reset();
 			}
 		}
 
@@ -74,18 +77,22 @@ namespace
 		{
 			check(IsInRenderingThread());
 			uint64& Last = LastFrame.FindOrAdd(Scene, MAX_uint64);
-			if (Last == GFrameCounterRenderThread || Mirror.Num() == 0) { return; }
+			if (Last == GFrameCounterRenderThread || End == 0) { return; }
 			Last = GFrameCounterRenderThread;
 
 			FRDGBufferRef Source = UploadSource(GraphBuilder);
 
-			// The primitives of this scene that are in the GPU scene, with their instances numbered over all of them.
+			// The primitives of this scene that are in the GPU scene, with their instances numbered over all of them. The
+			// pass takes its layout from the primitive carrying it, so one made with another count of custom floats (whose
+			// stride and payload differ) is left out.
 			TArray<FUintVector4> Prims;
 			Prims.Reserve(Entries.Num());
 			uint32 Total = 0;
+			bool bUnlike = false;
 			for (const FEntry& E : Entries)
 			{
 				if (&E.Proxy->GetScene() != Scene) { continue; }
+				if (E.NumCustomFloats != (uint32)Params.NumCustomDataFloats) { bUnlike = true; continue; }
 				const FPrimitiveSceneInfo* Info = E.Proxy->GetPrimitiveSceneInfo();
 				if (!Info || Info->GetInstanceSceneDataOffset() == INDEX_NONE) { continue; }
 				const uint32 N = FMath::Min<uint32>(E.NumInstances, (uint32)FMath::Max(Info->GetNumInstanceSceneDataEntries(), 0));
@@ -93,6 +100,7 @@ namespace
 				Prims.Add(FUintVector4((uint32)Info->GetPersistentIndex().Index, (uint32)Info->GetInstanceSceneDataOffset(), E.Offset, Total));
 				Total += N;
 			}
+			ensureMsgf(!bUnlike, TEXT("Planet instances with a count of custom floats other than the writer's (%d) are not written"), Params.NumCustomDataFloats);
 			if (Prims.Num() == 0) { return; }
 
 			FRDGBufferRef PrimBuffer = CreateStructuredBuffer(GraphBuilder, TEXT("Slonk.PlanetInstancePrimitives"), sizeof(FUintVector4), Prims.Num(), Prims.GetData(), Prims.Num() * sizeof(FUintVector4), ERDGInitialDataFlags::None);
@@ -121,11 +129,18 @@ namespace
 			uint32 Offset = 0;
 			uint32 Size = 0;
 			uint32 NumInstances = 0;
+			uint32 NumCustomFloats = 0;
 		};
 		struct FRange
 		{
 			uint32 Offset = 0;
 			uint32 Size = 0;
+		};
+		/** A primitive's data on its way to its range of the buffer. */
+		struct FUpload
+		{
+			uint32 Offset = 0;
+			TArray<FVector4f> Data;
 		};
 
 		/** The first free range big enough, else more at the end. */
@@ -140,12 +155,12 @@ namespace
 				if (Free[i].Size == 0) { Free.RemoveAt(i); }
 				return Offset;
 			}
-			const uint32 Offset = (uint32)Mirror.Num();
-			Mirror.AddUninitialized(Size);
+			const uint32 Offset = End;
+			End += Size;
 			return Offset;
 		}
 
-		/** Back to the free ranges (kept in order, neighbours merged). */
+		/** Back to the free ranges (kept in order, neighbours merged); a free range at the end gives the end back. */
 		void Release(uint32 Offset, uint32 Size)
 		{
 			int32 At = 0;
@@ -153,46 +168,55 @@ namespace
 			Free.Insert({ Offset, Size }, At);
 			if (At + 1 < Free.Num() && Free[At].Offset + Free[At].Size == Free[At + 1].Offset) { Free[At].Size += Free[At + 1].Size; Free.RemoveAt(At + 1); }
 			if (At > 0 && Free[At - 1].Offset + Free[At - 1].Size == Free[At].Offset) { Free[At - 1].Size += Free[At].Size; Free.RemoveAt(At); }
+			if (Free.Last().Offset + Free.Last().Size == End) { End = Free.Last().Offset; Free.Pop(EAllowShrinking::No); }
 		}
 
-		/** The source buffer, grown to fit (and filled again whole) or with the ranges changed since last frame copied in. */
+		/** The source buffer: grown to fit if outgrown (what it held copied over on the GPU), and the primitives come in
+		 *  since the last write uploaded into their ranges. */
 		FRDGBufferRef UploadSource(FRDGBuilder& GraphBuilder)
 		{
-			const uint32 Needed = (uint32)Mirror.Num();
-			if (!Buffer.IsValid() || Capacity < Needed)
+			FRDGBufferRef Source = nullptr;
+			if (!Buffer.IsValid() || Capacity < End)
 			{
-				Capacity = FMath::Max3(Needed, Capacity * 2, 1u << 16);
-				FRDGBufferRef Source = GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateStructuredDesc(sizeof(FVector4f), Capacity), TEXT("Slonk.PlanetInstanceSource"));
-				GraphBuilder.QueueBufferUpload(Source, Mirror.GetData(), (uint64)Needed * sizeof(FVector4f), ERDGInitialDataFlags::None);
+				// What the old one held that is still in use (a range freed past the end since is not).
+				const uint32 Held = Buffer.IsValid() ? FMath::Min(Capacity, End) : 0;
+				Capacity = FMath::Max3(End, Capacity * 2, 1u << 16);
+				Source = GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateStructuredDesc(sizeof(FVector4f), Capacity), TEXT("Slonk.PlanetInstanceSource"));
+				if (Held > 0)
+				{
+					AddCopyBufferPass(GraphBuilder, Source, 0, GraphBuilder.RegisterExternalBuffer(Buffer), 0, (uint64)Held * sizeof(FVector4f));
+				}
 				Buffer = GraphBuilder.ConvertToExternalBuffer(Source);
-				Dirty.Reset();
-				return Source;
 			}
-			FRDGBufferRef Source = GraphBuilder.RegisterExternalBuffer(Buffer);
-			if (Dirty.Num() > 0)
+			else
+			{
+				Source = GraphBuilder.RegisterExternalBuffer(Buffer);
+			}
+			if (Pending.Num() > 0)
 			{
 				uint32 Staged = 0;
-				for (const FRange& R : Dirty) { Staged += R.Size; }
+				for (const FUpload& U : Pending) { Staged += (uint32)U.Data.Num(); }
 				TArray<FVector4f> Data;
 				Data.Reserve(Staged);
-				for (const FRange& R : Dirty) { Data.Append(&Mirror[R.Offset], R.Size); }
+				for (const FUpload& U : Pending) { Data.Append(U.Data); }
 				FRDGBufferRef Upload = CreateStructuredBuffer(GraphBuilder, TEXT("Slonk.PlanetInstanceUpload"), sizeof(FVector4f), Data.Num(), Data.GetData(), (uint64)Data.Num() * sizeof(FVector4f), ERDGInitialDataFlags::None);
 				uint64 From = 0;
-				for (const FRange& R : Dirty)
+				for (const FUpload& U : Pending)
 				{
-					AddCopyBufferPass(GraphBuilder, Source, (uint64)R.Offset * sizeof(FVector4f), Upload, From * sizeof(FVector4f), (uint64)R.Size * sizeof(FVector4f));
-					From += R.Size;
+					AddCopyBufferPass(GraphBuilder, Source, (uint64)U.Offset * sizeof(FVector4f), Upload, From * sizeof(FVector4f), (uint64)U.Data.Num() * sizeof(FVector4f));
+					From += U.Data.Num();
 				}
-				Dirty.Reset();
+				Pending.Reset();
 			}
 			return Source;
 		}
 
 		TArray<FEntry> Entries;
 		TMap<const FPrimitiveSceneProxy*, int32> Index;
-		TArray<FVector4f> Mirror;
+		TArray<FUpload> Pending;
 		TArray<FRange> Free;
-		TArray<FRange> Dirty;
+		/** Where the ranges in use end: every free range lies before it. */
+		uint32 End = 0;
 		TRefCountPtr<FRDGPooledBuffer> Buffer;
 		uint32 Capacity = 0;
 		TMap<const FSceneInterface*, uint64> LastFrame;
@@ -204,8 +228,8 @@ namespace
 	{
 	public:
 		template <typename... TArgs>
-		TPlanetInstancesProxy(TArray<FVector4f>&& InPacked, int32 InNumInstances, TArgs&&... Args)
-			: TBase(Forward<TArgs>(Args)...), Packed(MoveTemp(InPacked)), NumInstances(InNumInstances)
+		TPlanetInstancesProxy(TArray<FVector4f>&& InPacked, int32 InNumInstances, int32 InNumCustomFloats, TArgs&&... Args)
+			: TBase(Forward<TArgs>(Args)...), Packed(MoveTemp(InPacked)), NumInstances(InNumInstances), NumCustomFloats(InNumCustomFloats)
 		{
 		}
 		virtual ~TPlanetInstancesProxy() override
@@ -215,7 +239,7 @@ namespace
 		virtual void CreateRenderThreadResources(FRHICommandListBase& RHICmdList) override
 		{
 			TBase::CreateRenderThreadResources(RHICmdList);
-			FPlanetInstanceStore::Get().Register(this, MoveTemp(Packed), NumInstances);
+			FPlanetInstanceStore::Get().Register(this, MoveTemp(Packed), NumInstances, NumCustomFloats);
 		}
 		virtual void DestroyRenderThreadResources() override
 		{
@@ -226,6 +250,7 @@ namespace
 	private:
 		TArray<FVector4f> Packed;
 		int32 NumInstances = 0;
+		int32 NumCustomFloats = 0;
 	};
 }
 
@@ -261,7 +286,9 @@ void UPlanetInstancesComponent::SetPieces(const TArray<FTransform>& Transforms, 
 	NumInstances = Transforms.Num();
 	Packed.SetNumUninitialized(NumInstances * Stride);
 	LocalBox.Init();
-	const FBox Mesh = GetStaticMesh() ? GetStaticMesh()->GetBounds().GetBox() : FBox(FVector(-50.0), FVector(50.0));
+	// The set's box from its instances' (as padded as the GPU culls them by), so the set is never culled whole where one
+	// of them is seen.
+	const FBox Mesh = InstanceBox();
 	for (int32 i = 0; i < NumInstances; ++i)
 	{
 		const FTransform& T = Transforms[i];
@@ -333,9 +360,8 @@ FPrimitiveSceneProxy* UPlanetInstancesComponent::CreateStaticMeshSceneProxy(Nani
 		View.NumInstancesGPUOnly = NumInstances;
 		View.NumCustomDataFloats = NumCustomFloats;
 		// One box for all, the mesh's, padded for the wind the plants sway in.
-		const FBox MeshBox = GetStaticMesh()->GetBounds().GetBox();
 		View.InstanceLocalBounds.SetNum(1);
-		View.InstanceLocalBounds[0] = FRenderBounds(MeshBox.ExpandBy(MeshBox.GetExtent() * 0.15 + FVector(20.0)));
+		View.InstanceLocalBounds[0] = FRenderBounds(InstanceBox());
 		View.Flags.bHasPerInstanceCustomData = NumCustomFloats > 0;
 		Buffers.EndWriteAccess(AccessTag);
 		Buffers.ValidateData();
@@ -349,9 +375,23 @@ FPrimitiveSceneProxy* UPlanetInstancesComponent::CreateStaticMeshSceneProxy(Nani
 	TArray<FVector4f> Copy = Packed;
 	if (bCreateNanite)
 	{
-		return ::new TPlanetInstancesProxy<Nanite::FSceneProxy>(MoveTemp(Copy), NumInstances, NaniteMaterials, Desc);
+		return ::new TPlanetInstancesProxy<Nanite::FSceneProxy>(MoveTemp(Copy), NumInstances, NumCustomFloats, NaniteMaterials, Desc);
 	}
-	return ::new TPlanetInstancesProxy<FInstancedStaticMeshSceneProxy>(MoveTemp(Copy), NumInstances, Desc, World->GetFeatureLevel());
+	return ::new TPlanetInstancesProxy<FInstancedStaticMeshSceneProxy>(MoveTemp(Copy), NumInstances, NumCustomFloats, Desc, World->GetFeatureLevel());
+}
+
+void UPlanetInstancesComponent::PrecachePSOs()
+{
+	// The one carrying the writes is never drawn, so it needs no pipeline states: precaching none, its primitive is made
+	// at once rather than waiting on them (every set's instances wait on it).
+	if (bCarriesWrites) { return; }
+	Super::PrecachePSOs();
+}
+
+FBox UPlanetInstancesComponent::InstanceBox() const
+{
+	const FBox Mesh = GetStaticMesh() ? GetStaticMesh()->GetBounds().GetBox() : FBox(FVector(-50.0), FVector(50.0));
+	return Mesh.ExpandBy(Mesh.GetExtent() * 0.15 + FVector(20.0));
 }
 
 FMatrix UPlanetInstancesComponent::GetRenderMatrix() const

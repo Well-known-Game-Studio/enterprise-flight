@@ -43,6 +43,10 @@ public:
 	 * a frame; a second call in the same frame does nothing more.
 	 */
 	void QueueWriteAll();
+	/** Set on the one QueueWriteAll is called on, before it is registered (and keep it out of every pass): it precaches no
+	 *  pipeline states, so its primitive is made at once rather than when they are ready, as every set's instances in the
+	 *  scene wait on it. */
+	bool bCarriesWrites = false;
 
 	//~ UActorComponent / UPrimitiveComponent
 	virtual bool ShouldCreatePhysicsState() const override { return false; }
@@ -55,8 +59,12 @@ public:
 	//~ UStaticMeshComponent
 	virtual FPrimitiveSceneProxy* CreateStaticMeshSceneProxy(Nanite::FMaterialAudit& NaniteMaterials, bool bCreateNanite) override;
 	virtual bool GetMaterialStreamingData(int32 MaterialIndex, FPrimitiveMaterialInfo& MaterialData) const override;
+	virtual void PrecachePSOs() override;
 
 private:
+	/** An instance's box in its own frame: the mesh's (50 cm each way with none), padded for the wind the plants sway in. */
+	FBox InstanceBox() const;
+
 	/** Per instance: three float4 rows of its 3x4 transform in this component's frame (translation in w), then its custom
 	 *  data a float4 at a time; the store's Source layout. */
 	TArray<FVector4f> Packed;

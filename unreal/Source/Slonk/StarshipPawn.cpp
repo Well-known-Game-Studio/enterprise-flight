@@ -2279,8 +2279,8 @@ void AStarshipPawn::ProcessDebugCommand()
 	}
 	else if (Op == TEXT("planetspin") && Movement)
 	{
-		// planetspin <deg/s>: the spin of the world below (a measurement aid: what its turning costs each frame). Near the
-		// surface the world holds its spin whatever it is (slonk.Planet.HoldSpin 0 lets it turn there).
+		// planetspin <deg/s>: the spin of the world below (a measurement aid: what its turning costs each frame). With
+		// slonk.Planet.HoldSpin 1 the world holds it while you are near its surface.
 		if (APlanetBody* Planet = Cast<APlanetBody>(Movement->GroundBody.Get()))
 		{
 			Planet->SpinDegPerSec = Arg(1, 0.f);

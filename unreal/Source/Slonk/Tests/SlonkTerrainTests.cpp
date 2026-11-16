@@ -893,8 +893,14 @@ bool FSlonkPlanetInstancesPackingTest::RunTest(const FString& Parameters)
 	AddInfo(FString::Printf(TEXT("worst point off its transform's place: %.4f cm"), Worst));
 	TestTrue(TEXT("the rows put every point where its transform does"), Worst < 0.05);
 	TestTrue(TEXT("the custom data in order, the last float4 padded with zeros"), bCustomInOrder);
-	const FBoxSphereBounds B = C->CalcBounds(FTransform::Identity);
-	TestTrue(TEXT("the set's box holds every instance"), B.GetBox().IsInside(Xf[0].GetLocation()) && B.GetBox().IsInside(Xf[1].GetLocation()));
+	// Every corner of every instance's mesh box (with no mesh, 50 cm each way), turned and scaled as the instance is.
+	const FBox Box = C->CalcBounds(FTransform::Identity).GetBox().ExpandBy(0.01);
+	bool bHoldsAll = true;
+	for (const FTransform& T : Xf)
+	{
+		for (int32 k = 0; k < 8; ++k) { bHoldsAll &= Box.IsInside(T.TransformPosition(FVector(k & 1 ? 50.0 : -50.0, k & 2 ? 50.0 : -50.0, k & 4 ? 50.0 : -50.0))); }
+	}
+	TestTrue(TEXT("the set's box holds every instance whole"), bHoldsAll);
 	C->ClearPieces();
 	TestEqual(TEXT("cleared"), C->GetInstanceCount(), 0);
 	TestEqual(TEXT("nothing left to send"), C->GetPacked().Num(), 0);
