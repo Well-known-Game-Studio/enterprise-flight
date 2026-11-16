@@ -6,6 +6,7 @@
 #include "../PlanetTerrainComponent.h"
 #include "../PlanetCities.h"
 #include "../TerrainScatter.h"
+#include "../PlanetInstancesComponent.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -849,6 +850,60 @@ bool FSlonkTerrainFindLandformsTest::RunTest(const FString& Parameters)
 	Airless.bAirless = true;
 	T->Configure(Airless, nullptr);
 	TestFalse(TEXT("a world without air has no badlands to find"), Find(TEXT("badlands"), Dir));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkPlanetInstancesPackingTest, "Slonk.Terrain.PlanetInstancesPacking", SLONK_TEST_FLAGS)
+bool FSlonkPlanetInstancesPackingTest::RunTest(const FString& Parameters)
+{
+	// The GPU-only rocks and plants reach the writer shader (PlanetInstanceWriter.usf) as three float4 rows of a 3x4 and
+	// their custom data: the rows must put every point where its transform does, and the custom data go in order.
+	UPlanetInstancesComponent* C = NewObject<UPlanetInstancesComponent>();
+	C->SetNumCustomDataFloats(SlonkScatter::NumCustomFloats);
+	const TArray<FTransform> Xf = {
+		FTransform(FRotator(12.0, 47.0, -31.0), FVector(1234.5, -678.0, 90.25), FVector(2.0, 0.5, 3.25)),
+		FTransform(FRotator(-80.0, 170.0, 5.0), FVector(-50000.0, 25000.0, 12.0), FVector(11.0)) };
+	TArray<float> Custom;
+	for (int32 i = 0; i < Xf.Num() * SlonkScatter::NumCustomFloats; ++i) { Custom.Add((float)i * 0.5f + 1.f); }
+	C->SetPieces(Xf, Custom);
+	const int32 Custom4 = (SlonkScatter::NumCustomFloats + 3) / 4;
+	const int32 Stride = 3 + Custom4;
+	const TConstArrayView<FVector4f> P = C->GetPacked();
+	TestEqual(TEXT("instances"), C->GetInstanceCount(), Xf.Num());
+	TestEqual(TEXT("float4s, three rows and the custom data a piece"), P.Num(), Xf.Num() * Stride);
+	if (P.Num() != Xf.Num() * Stride) { return true; }
+	const FVector Points[] = { FVector::ZeroVector, FVector(100.0, 0.0, 0.0), FVector(-37.0, 250.0, 19.0) };
+	double Worst = 0.0;
+	bool bCustomInOrder = true;
+	for (int32 i = 0; i < Xf.Num(); ++i)
+	{
+		const FVector4f R0 = P[i * Stride], R1 = P[i * Stride + 1], R2 = P[i * Stride + 2];
+		for (const FVector& Q : Points)
+		{
+			// As the shader multiplies: the point as a row vector, the rows the basis, the w's the translation.
+			const FVector Got(Q.X * R0.X + Q.Y * R1.X + Q.Z * R2.X + R0.W, Q.X * R0.Y + Q.Y * R1.Y + Q.Z * R2.Y + R1.W, Q.X * R0.Z + Q.Y * R1.Z + Q.Z * R2.Z + R2.W);
+			Worst = FMath::Max(Worst, FVector::Dist(Got, Xf[i].TransformPosition(Q)));
+		}
+		for (int32 f = 0; f < Custom4 * 4; ++f)
+		{
+			const float Want = f < SlonkScatter::NumCustomFloats ? Custom[i * SlonkScatter::NumCustomFloats + f] : 0.f;
+			bCustomInOrder &= P[i * Stride + 3 + f / 4][f % 4] == Want;
+		}
+	}
+	AddInfo(FString::Printf(TEXT("worst point off its transform's place: %.4f cm"), Worst));
+	TestTrue(TEXT("the rows put every point where its transform does"), Worst < 0.05);
+	TestTrue(TEXT("the custom data in order, the last float4 padded with zeros"), bCustomInOrder);
+	// Every corner of every instance's mesh box (with no mesh, 50 cm each way), turned and scaled as the instance is.
+	const FBox Box = C->CalcBounds(FTransform::Identity).GetBox().ExpandBy(0.01);
+	bool bHoldsAll = true;
+	for (const FTransform& T : Xf)
+	{
+		for (int32 k = 0; k < 8; ++k) { bHoldsAll &= Box.IsInside(T.TransformPosition(FVector(k & 1 ? 50.0 : -50.0, k & 2 ? 50.0 : -50.0, k & 4 ? 50.0 : -50.0))); }
+	}
+	TestTrue(TEXT("the set's box holds every instance whole"), bHoldsAll);
+	C->ClearPieces();
+	TestEqual(TEXT("cleared"), C->GetInstanceCount(), 0);
+	TestEqual(TEXT("nothing left to send"), C->GetPacked().Num(), 0);
 	return true;
 }
 

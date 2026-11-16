@@ -484,11 +484,12 @@ private:
 	UPROPERTY() TArray<TObjectPtr<UHierarchicalInstancedStaticMeshComponent>> RingRocks;
 	float SpinAccumDeg = 0.f;
 	/**
-	 * The spin is held while the player is near the surface (slonk.Planet.HoldSpin, within
+	 * The spin is held while the player is near the surface, if asked (slonk.Planet.HoldSpin 1, within
 	 * slonk.Planet.HoldSpinAltitudeKm of sea level): everything on a world turns with it, and every terrain chunk,
-	 * building, rock and plant that moves has each of its instances sent to the renderer again, every frame. Held,
-	 * none moves. The clock is held at x1 there anyway, where the sun moves a third of a degree a minute; the time of
-	 * day the world lost is not made up afterwards (the sky would jump), so its day runs that much behind the clock.
+	 * building, rock and plant on it moves each frame (the rocks and plants rewritten on the GPU, a few milliseconds a
+	 * frame in all). Held, none moves. The clock is held at x1 there anyway, where the sun moves a third of a degree a
+	 * minute; the time of day the world lost is not made up afterwards (the sky would jump), so its day runs that much
+	 * behind the clock.
 	 */
 	bool bSpinHeld = false;
 	bool ShouldHoldSpin() const;

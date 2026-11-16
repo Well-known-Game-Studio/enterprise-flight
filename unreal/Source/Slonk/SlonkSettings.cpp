@@ -23,7 +23,7 @@ void USlonkSettingsSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		if (const USlonkSettingsSaveGame* S = Cast<USlonkSettingsSaveGame>(UGameplayStatics::LoadGameFromSlot(SlotName, 0)))
 		{
 			Typeface = S->Typeface == 1 ? ELcarsTypeface::Condensed : ELcarsTypeface::Standard;
-			GroundDetail = FMath::Clamp((int32)S->GroundDetail, 0, 2);
+			GroundDetail = FMath::Clamp((int32)S->GroundDetail, 0, 3);
 		}
 	}
 	Lcars::SetTypeface(Typeface);
@@ -40,7 +40,7 @@ void USlonkSettingsSubsystem::SetTypeface(ELcarsTypeface Face)
 
 void USlonkSettingsSubsystem::SetGroundDetail(int32 Levels)
 {
-	GroundDetail = FMath::Clamp(Levels, 0, 2);
+	GroundDetail = FMath::Clamp(Levels, 0, 3);
 	ApplyGroundDetail(GroundDetail);
 	Save();
 }

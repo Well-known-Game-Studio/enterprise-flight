@@ -30,9 +30,10 @@
 #include "UObject/ConstructorHelpers.h"
 #include "HAL/IConsoleManager.h"
 
-// Holding a world's spin near its surface (APlanetBody::bSpinHeld): on by default; 0 lets it turn as before.
-static TAutoConsoleVariable<int32> CVarHoldSpin(TEXT("slonk.Planet.HoldSpin"), 1,
-	TEXT("Hold a world's spin while the player is near its surface, so nothing on it moves each frame (1, the default) or let it turn (0)"));
+// Holding a world's spin near its surface (APlanetBody::bSpinHeld): off by default since the rocks and plants turn with
+// it on the GPU (UPlanetInstancesComponent), at a few milliseconds a frame for everything on it; 1 holds it still there.
+static TAutoConsoleVariable<int32> CVarHoldSpin(TEXT("slonk.Planet.HoldSpin"), 0,
+	TEXT("Hold a world's spin while the player is near its surface, so nothing on it moves each frame (1), or let it turn (0, the default)"));
 // The height under which it holds: the clock's own hold in an atmosphere (AStarshipPawn::TickClock) is 200 km.
 static TAutoConsoleVariable<float> CVarHoldSpinAltitudeKm(TEXT("slonk.Planet.HoldSpinAltitudeKm"), 200.f,
 	TEXT("A world holds its spin while the camera or the player's pawn is this many km or less above its sea level"));
