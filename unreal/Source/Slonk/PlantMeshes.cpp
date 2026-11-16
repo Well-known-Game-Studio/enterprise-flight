@@ -81,8 +81,8 @@ namespace
 				}
 				if (Prev.Num() > 0)
 				{
-					// Wound outward (the side the renderer shows is the side the normals point to: the material is two-sided,
-					// and lights a face seen from behind as if its normal pointed the other way).
+					// Wound outward, its front the side its normals point to, as every part of a plant is (the material is
+					// two-sided, so the other winding draws too, its faces seen from behind).
 					for (int32 s = 0; s < Sides; ++s) { Quad(Prev[s], Ring[s], Ring[s + 1], Prev[s + 1]); }
 				}
 				Prev = MoveTemp(Ring);

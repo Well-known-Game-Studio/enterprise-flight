@@ -915,9 +915,8 @@ bool FSlonkPlantFarCrownsTest::RunTest(const FString& Parameters)
 	// The forest's far levels are hundreds of thousands of trees a pixel or two across, drawn as each tree's far crown:
 	// a handful of triangles, one solid shape wound outward and shaded as it faces (its faces lit from outside), as big
 	// as the tree's own crown and no bigger. The tree meshes carry it as a fourth LOD; grass and bushes have none.
-	// Every part of every plant shows the side its normals point to: the foliage material is two-sided and lights a
-	// face seen from behind as if its normal pointed the other way, so a part wound inward is lit from inside (darkest
-	// where the sun is), and a tree going to its far crown would change in brightness.
+	// Every part of every plant shows the side its normals point to (the foliage material is two-sided, so a part wound
+	// the other way still draws, its faces seen from behind), so the near trees and their far crowns are made alike.
 	for (const EPlant Kind : { EPlant::Broadleaf, EPlant::Conifer, EPlant::Grass, EPlant::Shrub })
 	{
 		int32 Tris = 0; double Volume = 0.0, Facing = 0.0; FBox Box, Near;
