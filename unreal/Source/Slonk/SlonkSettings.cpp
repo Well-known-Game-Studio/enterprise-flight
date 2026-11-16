@@ -23,7 +23,10 @@ void USlonkSettingsSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		if (const USlonkSettingsSaveGame* S = Cast<USlonkSettingsSaveGame>(UGameplayStatics::LoadGameFromSlot(SlotName, 0)))
 		{
 			Typeface = S->Typeface == 1 ? ELcarsTypeface::Condensed : ELcarsTypeface::Standard;
-			GroundDetail = FMath::Clamp((int32)S->GroundDetail, 0, 4);
+			// A save from before GroundReach: its 2 (unsaved, so its default, or its farthest) is today's default; less was
+			// a choice to keep.
+			const int32 Legacy = S->GroundDetail == 2 ? DefaultGroundDetail : (int32)S->GroundDetail;
+			GroundDetail = FMath::Clamp(S->GroundReach > 0 ? (int32)S->GroundReach - 1 : Legacy, 0, 4);
 		}
 	}
 	Lcars::SetTypeface(Typeface);
@@ -50,6 +53,7 @@ void USlonkSettingsSubsystem::Save() const
 	USlonkSettingsSaveGame* S = Cast<USlonkSettingsSaveGame>(UGameplayStatics::CreateSaveGameObject(USlonkSettingsSaveGame::StaticClass()));
 	if (!S) { return; }
 	S->Typeface = Typeface == ELcarsTypeface::Condensed ? 1 : 0;
-	S->GroundDetail = (uint8)GroundDetail;
+	S->GroundDetail = (uint8)FMath::Min(GroundDetail, 2);
+	S->GroundReach = (uint8)(GroundDetail + 1);
 	UGameplayStatics::SaveGameToSlot(S, SlotName, 0);
 }

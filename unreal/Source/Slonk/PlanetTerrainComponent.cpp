@@ -20,7 +20,7 @@ static TAutoConsoleVariable<float> CVarTerrainSunUpWidth(TEXT("slonk.TerrainSunU
 // How far the ground's rocks and plants reach (the settings' ground detail sets it): each class's thinned far levels
 // drawn, up to this many. With GPU-only instances a level costs the GPU its drawing and the workers its building.
 static TAutoConsoleVariable<int32> CVarScatterFarLevels(TEXT("slonk.Scatter.FarLevels"), 3,
-	TEXT("How many of each scatter class's thinned far levels to draw (0: each class ends with its own levels; trees reach about 1, 2.5, 5, 10 and 20 km at 0 to 4)"));
+	TEXT("How many of each scatter class's thinned far levels to draw (0: each class ends with its own levels; each level about doubles the trees' reach, to 8-15 km at 4 by the world's size)"));
 // The rocks and plants as GPU-only planet instances (UPlanetInstancesComponent): turning with the world costs a single
 // mesh's move a set, the instances rewritten on the GPU. 0: the engine's instanced meshes, every instance re-sent from
 // the CPU each frame the world turns (for comparison). Sets made after a change take it.
@@ -151,7 +151,7 @@ void UPlanetTerrainComponent::SetScatterOptions(bool bEnabled, float Density, bo
 	Scatter.Life = Life;
 	Scatter.People = People;
 	ApplyScatterToMaterial();
-	if (bConfigured) { RebuildScatterChunks(); }
+	if (bConfigured) { RebuildScatterChunks(Scatter.MaxFarLevels); }
 }
 
 void UPlanetTerrainComponent::ApplyScatterToMaterial()
@@ -168,11 +168,12 @@ void UPlanetTerrainComponent::SetScatterFarLevels(int32 Levels)
 {
 	Levels = FMath::Clamp(Levels, 0, 8);
 	if (Scatter.MaxFarLevels == Levels) { return; }
+	const int32 Was = Scatter.MaxFarLevels;
 	Scatter.MaxFarLevels = Levels;
-	if (bConfigured) { RebuildScatterChunks(); }
+	if (bConfigured) { RebuildScatterChunks(Was); }
 }
 
-void UPlanetTerrainComponent::RebuildScatterChunks()
+void UPlanetTerrainComponent::RebuildScatterChunks(int32 FarLevelsBefore)
 {
 	// The scatter is built with the chunks, so the chunks fine enough to carry any go round again. The builds in
 	// flight land first; then those chunks let their meshes go, and the coarser chunk above each shows until its
@@ -181,7 +182,8 @@ void UPlanetTerrainComponent::RebuildScatterChunks()
 	for (FNode* N : InFlight) { if (N) { ApplyResult(*N); } }
 	InFlight.Reset();
 	Requests.Reset();
-	const double MaxEdge = SlonkScatter::MaxChunkEdgeCm();
+	// Only the chunks that carried scatter or will: at no more than the far levels in use, the coarser ones carry none.
+	const double MaxEdge = SlonkScatter::MaxChunkEdgeCm(FMath::Max(FarLevelsBefore, Scatter.MaxFarLevels));
 	TFunction<void(FNode&)> Walk = [&](FNode& N)
 	{
 		if (N.EdgeCm <= MaxEdge && N.Mesh) { ReleaseMesh(N); }
@@ -1296,7 +1298,7 @@ void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, const FS
 	Grid.Samples = Smp.GetData(); Grid.Dirs = Dirs.GetData(); Grid.Pos = Pos.GetData();
 	Grid.Origin = Origin;
 	// The rocks on this chunk, on these vertices' triangles.
-	if (Sc.bEnabled && N_EdgeCm <= SlonkScatter::MaxChunkEdgeCm())
+	if (Sc.bEnabled && N_EdgeCm <= SlonkScatter::MaxChunkEdgeCm(Sc.MaxFarLevels))
 	{
 		SlonkScatter::ScatterChunk(P, Sc, Grid, Out.Scatter);
 	}

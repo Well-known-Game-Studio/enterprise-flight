@@ -41,6 +41,6 @@ namespace SlonkPlants
 	 *  the worst agreement of a face's normal with its corners', and its box against the nearest LOD's. */
 	SLONK_API bool FarCrownStats(EPlant Kind, int32& OutTriangles, double& OutVolume, double& OutWorstFacing, FBox& OutBox, FBox& OutNearBox);
 	/** For the tests: of a kind's LOD, the share of its bark faces (stems, trunks) and of its foliage faces whose winding
-	 *  shows the side its normals point to. */
-	SLONK_API void FacingShares(EPlant Kind, int32 Lod, double& OutBark, double& OutFoliage);
+	 *  shows the side its normals point to, and the share of its foliage faces whose front looks up. */
+	SLONK_API void FacingShares(EPlant Kind, int32 Lod, double& OutBark, double& OutFoliage, double& OutSkyward);
 }

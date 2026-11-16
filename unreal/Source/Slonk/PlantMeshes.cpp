@@ -19,11 +19,14 @@ namespace
 
 	// Vertex colour alpha: the surface kind the material masks by.
 	constexpr float SolidSurface = 0.f, LeafCard = 0.4f, NeedleCard = 1.f;
-	/** The screen size at which a tree goes to its far crown (the engine's: the bounding sphere's diameter over the
-	 *  screen's); slonk.Plants.FarCrownScreenSize overrides it for meshes made after. */
-	float FarCrownScreenSize = 0.01f;
+	/** The screen size at which a tree goes to its far crown: the engine's, the diameter over the screen's of the sphere
+	 *  round the box the GPU bounds an instance by (UPlanetInstancesComponent's, padded for the wind: about 1.27 of the
+	 *  tree's height across), so a 15 m tree about 2 km off, 6-7 pixels tall. slonk.Plants.FarCrownScreenSize overrides
+	 *  it if set before the first world (the meshes are made once a process); it is kept between the screen sizes the
+	 *  engine can tell apart from none (1/1024) and the LOD before's. */
+	float FarCrownScreenSize = 0.016f;
 	FAutoConsoleVariableRef CVarFarCrownScreenSize(TEXT("slonk.Plants.FarCrownScreenSize"), FarCrownScreenSize,
-		TEXT("Screen size at which a tree's mesh goes to its solid far crown (meshes made after a change)"));
+		TEXT("Screen size at which a tree's mesh goes to its solid far crown (0.002-0.06; read when the plant meshes are made, once a process)"));
 
 	/** A mesh of unshared vertices, each with its own normal, UV and colour, so a blade or a card is lit as itself.
 	 *  Elements are appended in step with the vertices, so an element's id is its vertex's. */
@@ -163,10 +166,11 @@ namespace
 				else
 				{
 					const int32 Tip = B.Vert(P, Nrm, FVector2f(0.5f, 1.f), FVector4f(1.f, 1.f, Rand, SolidSurface));
-					B.Tri(L.Last(), Tip, Rt.Last());
+					B.Tri(L.Last(), Rt.Last(), Tip);
 				}
-				// The blade's front to the sky and outward, as its normal.
-				if (i > 0 && i < Segs) { B.Quad(L[i - 1], L[i], Rt[i], Rt[i - 1]); }
+				// The blade's front is its side toward the sky (it leans outward, so that side faces up and in): seen from
+				// above, as it mostly is, its face is lit by its sky-leaning normal rather than the reverse of it.
+				if (i > 0 && i < Segs) { B.Quad(L[i - 1], Rt[i - 1], Rt[i], L[i]); }
 			}
 		}
 	}
@@ -280,9 +284,11 @@ namespace
 		{
 			const double A0 = Twist + UE_DOUBLE_TWO_PI * s / Sides, A1 = Twist + UE_DOUBLE_TWO_PI * (s + 1) / Sides;
 			const FVector E0(Radius * FMath::Cos(A0), Radius * FMath::Sin(A0), Waist), E1(Radius * FMath::Cos(A1), Radius * FMath::Sin(A1), Waist);
-			// A cone's sides lean in to the top: their normals take the slope, not the waist's level.
-			const FVector N0 = bCone ? FVector(E0.X, E0.Y, Radius * Radius / (Top - Waist)) : Normal(E0);
-			const FVector N1 = bCone ? FVector(E1.X, E1.Y, Radius * Radius / (Top - Waist)) : Normal(E1);
+			// A cone's sides lean in to the top, and the conifer's needle cards it stands for are lit as facing 54 degrees
+			// above the horizon (their normals, up 0.7 and out 0.5), steeper than the slope: its normals take theirs, so
+			// it is as bright, and holds snow as well, where a tree goes to it.
+			const FVector N0 = bCone ? FVector(FMath::Cos(A0), FMath::Sin(A0), 1.4) : Normal(E0);
+			const FVector N1 = bCone ? FVector(FMath::Cos(A1), FMath::Sin(A1), 1.4) : Normal(E1);
 			const FVector4f CW(1.f, Sway(Waist), 0.5f, SolidSurface), CT(1.f, Sway(Top), 0.5f, SolidSurface), CB(1.f, Sway(Bottom), 0.5f, SolidSurface);
 			B.Tri(B.Vert(E1, N1, FVector2f(1.f, 0.f), CW), B.Vert(E0, N0, FVector2f(0.f, 0.f), CW), B.Vert(Up, FVector::ZAxisVector, FVector2f(0.5f, 1.f), CT));
 			if (!bCone) { B.Tri(B.Vert(Down, -FVector::ZAxisVector, FVector2f(0.5f, 0.f), CB), B.Vert(E0, N0, FVector2f(0.f, 0.5f), CW), B.Vert(E1, N1, FVector2f(1.f, 0.5f), CW)); }
@@ -336,13 +342,13 @@ bool SlonkPlants::FarCrownStats(EPlant Kind, int32& OutTriangles, double& OutVol
 	return true;
 }
 
-void SlonkPlants::FacingShares(EPlant Kind, int32 Lod, double& OutBark, double& OutFoliage)
+void SlonkPlants::FacingShares(EPlant Kind, int32 Lod, double& OutBark, double& OutFoliage, double& OutSkyward)
 {
 	FDynamicMesh3 M;
 	BuildLod(Kind, Lod, M);
 	const FDynamicMeshNormalOverlay* N = M.Attributes()->PrimaryNormals();
 	const FDynamicMeshColorOverlay* C = M.Attributes()->PrimaryColors();
-	int32 Bark = 0, BarkOut = 0, Leaf = 0, LeafOut = 0;
+	int32 Bark = 0, BarkOut = 0, Leaf = 0, LeafOut = 0, LeafUp = 0;
 	for (int32 T : M.TriangleIndicesItr())
 	{
 		FVector3d Fn, Centroid; double Area;
@@ -350,10 +356,11 @@ void SlonkPlants::FacingShares(EPlant Kind, int32 Lod, double& OutBark, double& 
 		const FIndex3i E = N->GetTriangle(T);
 		const FVector3d Corner = FVector3d(N->GetElement(E.A) + N->GetElement(E.B) + N->GetElement(E.C));
 		const bool bOut = Fn.Dot(Corner) > 0.0;
-		if (C->GetElement(C->GetTriangle(T).A).X < 0.5f) { ++Bark; BarkOut += bOut; } else { ++Leaf; LeafOut += bOut; }
+		if (C->GetElement(C->GetTriangle(T).A).X < 0.5f) { ++Bark; BarkOut += bOut; } else { ++Leaf; LeafOut += bOut; LeafUp += Fn.Z > 0.0; }
 	}
 	OutBark = Bark ? (double)BarkOut / Bark : 1.0;
 	OutFoliage = Leaf ? (double)LeafOut / Leaf : 1.0;
+	OutSkyward = Leaf ? (double)LeafUp / Leaf : 1.0;
 }
 
 UStaticMesh* SlonkPlants::GetMesh(EPlant Kind)
@@ -395,7 +402,7 @@ UStaticMesh* SlonkPlants::GetMesh(EPlant Kind)
 		RD->ScreenSize[0].Default = 1.f;
 		RD->ScreenSize[1].Default = bTree ? 0.25f : 0.12f;
 		RD->ScreenSize[2].Default = bTree ? 0.07f : 0.035f;
-		if (Lods > 3) { RD->ScreenSize[3].Default = FarCrownScreenSize; }
+		if (Lods > 3) { RD->ScreenSize[3].Default = FMath::Clamp(FarCrownScreenSize, 0.002f, 0.06f); }
 	}
 	// The wind (M_Foliage) bends a plant by up to 3% of its height and flutters its leaves a centimetre on top, past the
 	// mesh's own box: the instances are culled by these bounds, so they take the sway in, in the unit mesh's own

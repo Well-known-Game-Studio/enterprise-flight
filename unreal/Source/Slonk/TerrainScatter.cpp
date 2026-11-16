@@ -53,9 +53,11 @@ namespace
 	};
 	// Boulders on chunks to 150-odd metres (seen to about 600 m) and half of them to 300 m chunks (1.2 km); stones to
 	// 40 m chunks (150 m) and pebbles on the last level (35 m), where they are a pixel or two across, so no further;
-	// grass on the last level, half on the one before; trees on chunks to 300 m (a kilometre), two in five to 600 m
-	// (2.5 km), one in six to 1.2 km (5 km), one in sixteen to 2.5 km (10 km) and one in forty to 5 km (20 km). The
-	// plants fade out before their last level ends (FadeEdges); past the trees the terrain's own colours carry the
+	// grass on the last level, half on the one before; trees on chunks to 300 m, two in five on the next level, one in
+	// six on the next, one in sixteen and one in forty on the two after (chunks to 5 km). The plants fade out at three
+	// edges of the coarsest chunk carrying them (FadeEdges), and a world's chunk edges halve from its face's, so a level
+	// lands on edges between half and all of its limit: the trees reach about 0.5-0.9, 0.9-1.9, 1.8-3.7, 3.7-7.4 and
+	// 7.4-15 km as the far levels are added, by the world's size. Past the trees the terrain's own colours carry the
 	// forest. Turning with the planet costs an instance nothing on the CPU (UPlanetInstancesComponent), but each is still
 	// drawn, in the velocity pass too as it moves: a tree past a couple of kilometres is its far crown, a handful of
 	// triangles (SlonkPlants), so its far levels cost the GPU a fraction of what its cards would.
@@ -348,10 +350,11 @@ int32 SlonkScatter::FChunkScatter::NumPlants() const
 	return N;
 }
 
-double SlonkScatter::MaxChunkEdgeCm()
+double SlonkScatter::MaxChunkEdgeCm(int32 MaxFarLevels)
 {
-	double M = ShrubMaxEdgeCm * FMath::Pow(2.0, (double)ShrubFarLevels);
-	for (const FClass& C : Classes) { M = FMath::Max(M, C.MaxEdgeCm * FMath::Pow(2.0, (double)C.FarLevels)); }
+	const int32 Far = FMath::Max(MaxFarLevels, 0);
+	double M = ShrubMaxEdgeCm * FMath::Pow(2.0, (double)FMath::Min(ShrubFarLevels, Far));
+	for (const FClass& C : Classes) { M = FMath::Max(M, C.MaxEdgeCm * FMath::Pow(2.0, (double)FMath::Min(C.FarLevels, Far))); }
 	return M;
 }
 
@@ -407,7 +410,7 @@ void SlonkScatter::TreeCover(const FPlanetTerrainParams& P, const FChunkGrid& G,
 
 void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSettings& S, const FChunkGrid& G, FChunkScatter& Out)
 {
-	if (!S.bEnabled || S.Density <= 0.f || G.EdgeCm > MaxChunkEdgeCm() || !G.Samples || !G.Dirs || !G.Pos || G.Steps <= 0) { return; }
+	if (!S.bEnabled || S.Density <= 0.f || G.EdgeCm > MaxChunkEdgeCm(S.MaxFarLevels) || !G.Samples || !G.Dirs || !G.Pos || G.Steps <= 0) { return; }
 	const double R = P.RadiusCm;
 	const double FaceArcCm = R * UE_DOUBLE_HALF_PI;
 	const FChunkFrame F(G);
