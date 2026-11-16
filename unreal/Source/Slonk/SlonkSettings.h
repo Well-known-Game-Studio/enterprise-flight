@@ -37,9 +37,10 @@ public:
 	void SetTypeface(ELcarsTypeface Face);
 
 	/** How far the ground's rocks and plants reach: 0 near (each class on its own levels), 1 far, 2 farther, 3
-	 *  farthest, 4 to the horizon. Each step about doubles the trees' reach, to 8-15 km on Horizon (the levels snap to
-	 *  the world's chunk sizes, so it varies with its size). Each costs the GPU its drawing and the workers its building;
-	 *  the trees past a couple of kilometres are a handful of triangles apiece (SlonkPlants' far crown). */
+	 *  farthest, 4 to the horizon. Each step about doubles the trees' reach; Horizon takes as many more of their levels
+	 *  as the world needs (they snap to its chunk sizes) for the trees to reach 20 km and more
+	 *  (SlonkScatter::HorizonTreeReachCm). Each costs the GPU its drawing and the workers its building; the trees past a
+	 *  couple of kilometres are a handful of triangles apiece (SlonkPlants' far crown). */
 	int32 GetGroundDetail() const { return GroundDetail; }
 	void SetGroundDetail(int32 Levels);
 	/** What a player who has not chosen gets. */

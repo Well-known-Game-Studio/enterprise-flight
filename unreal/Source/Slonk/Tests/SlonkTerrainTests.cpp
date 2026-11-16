@@ -968,4 +968,37 @@ bool FSlonkPlantFarCrownsTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkHorizonReachTest, "Slonk.Terrain.HorizonReach", SLONK_TEST_FLAGS)
+bool FSlonkHorizonReachTest::RunTest(const FString& Parameters)
+{
+	// Each ground detail step reaches further than the one before, and Horizon carries the trees past
+	// SlonkScatter::HorizonTreeReachCm on worlds of every size (their chunk edges halve from the face's, so a far level
+	// lands between half and all of its limit), but not more than twice past it: the levels it takes are the ones the
+	// world needs. The chunks that build scatter reach as far as the trees on them.
+	FScatterSettings S;
+	S.FadeEdges = 3.0;
+	for (const double RadiusKm : { 1000.0, 2500.0, 3700.0, 5707.0, 6371.0, 6746.0, 7804.0, 9500.0 })
+	{
+		const double RootEdgeCm = RadiusKm * 1e5 * UE_DOUBLE_HALF_PI;
+		double Was = 0.0;
+		for (int32 Step = 0; Step <= SlonkScatter::HorizonStep; ++Step)
+		{
+			S.MaxFarLevels = Step;
+			const double Reach = SlonkScatter::TreeReachCm(S, RootEdgeCm);
+			const int32 Levels = SlonkScatter::TreeFarLevels(S, RootEdgeCm);
+			TestTrue(FString::Printf(TEXT("R %.0f km: step %d reaches further than the one before"), RadiusKm, Step), Reach > Was);
+			TestTrue(FString::Printf(TEXT("R %.0f km: step %d's chunks carry its trees"), RadiusKm, Step), SlonkScatter::MaxChunkEdgeCm(S, RootEdgeCm) * S.FadeEdges >= Reach * 0.999);
+			if (Step == SlonkScatter::HorizonStep)
+			{
+				AddInfo(FString::Printf(TEXT("R %.0f km: Horizon's trees reach %.1f km on %d far levels (Farthest's %.1f km)"), RadiusKm, Reach / 1e5, Levels, Was / 1e5));
+				TestTrue(FString::Printf(TEXT("R %.0f km: Horizon's trees reach past %.0f km, and not twice past it"), RadiusKm, SlonkScatter::HorizonTreeReachCm / 1e5),
+					Reach >= SlonkScatter::HorizonTreeReachCm && Reach < SlonkScatter::HorizonTreeReachCm * 2.0);
+			}
+			else { TestEqual(FString::Printf(TEXT("R %.0f km: step %d takes that many far levels"), RadiusKm, Step), Levels, Step); }
+			Was = Reach;
+		}
+	}
+	return true;
+}
+
 #endif

@@ -2266,6 +2266,9 @@ void AStarshipPawn::ProcessDebugCommand()
 			const FString Line = FString::Printf(TEXT("Rocks and plants on %s: %s, density %.2f, life %.2f%s; %d rocks and %d plants on the chunks showing, %d solid round you, %d instance sets"), *Planet->GetDisplayName(),
 				Now.bEnabled ? TEXT("on") : TEXT("off"), Now.Density, Now.Life, Now.bCities ? TEXT(", clear of the towns") : TEXT(""), T->GetVisibleRockCount(), T->GetVisiblePlantCount(), T->GetSolidRockCount(), T->GetScatterSetCount());
 			UE_LOG(LogTemp, Log, TEXT("%s"), *Line);
+			int32 TreeLevels = 0;
+			const double TreeReach = T->GetTreeReachCm(&TreeLevels);
+			UE_LOG(LogTemp, Log, TEXT("Trees reach %.1f km (%d far levels, ground detail %d, world radius %.0f km)"), TreeReach / 1e5, TreeLevels, Now.MaxFarLevels, Planet->GetRadiusCm() / 1e5);
 			UE_LOG(LogTemp, Log, TEXT("Scatter by mesh (instances in sets): %s"), *T->DescribeVisibleScatter());
 			ScreenMessage(Line, FColor::Cyan);
 		}

@@ -54,10 +54,11 @@ namespace
 	// Boulders on chunks to 150-odd metres (seen to about 600 m) and half of them to 300 m chunks (1.2 km); stones to
 	// 40 m chunks (150 m) and pebbles on the last level (35 m), where they are a pixel or two across, so no further;
 	// grass on the last level, half on the one before; trees on chunks to 300 m, two in five on the next level, one in
-	// six on the next, one in sixteen and one in forty on the two after (chunks to 5 km). The plants fade out at three
-	// edges of the coarsest chunk carrying them (FadeEdges), and a world's chunk edges halve from its face's, so a level
-	// lands on edges between half and all of its limit: the trees reach about 0.5-0.9, 0.9-1.9, 1.8-3.7, 3.7-7.4 and
-	// 7.4-15 km as the far levels are added, by the world's size. Past the trees the terrain's own colours carry the
+	// six on the next, one in sixteen and one in forty on the two after (chunks to 5 km), and on Horizon one in a hundred
+	// and one in 250 on the two after that (chunks to 10 km), as many of those as the world needs (FarLevelsUsed). The
+	// plants fade out at three edges of the coarsest chunk carrying them (FadeEdges), and a world's chunk edges halve
+	// from its face's, so a level lands on edges between half and all of its limit: the trees reach about 0.5-0.9,
+	// 0.9-1.9, 1.8-3.7, 3.7-7.4 and, on Horizon, 20-30 km by the world's size. Past the trees the terrain's own colours carry the
 	// forest. Turning with the planet costs an instance nothing on the CPU (UPlanetInstancesComponent), but each is still
 	// drawn, in the velocity pass too as it moves: a tree past a couple of kilometres is its far crown, a handful of
 	// triangles (SlonkPlants), so its far levels cost the GPU a fraction of what its cards would.
@@ -65,7 +66,7 @@ namespace
 		{ EClass::Boulder, 750.0, 26000.0, 120.0, 420.0, 0x51ed270b2f1c7e3dULL, 1, 0.5 },
 		{ EClass::Stone, 220.0, 6500.0, 26.0, 95.0, 0x2545f4914f6cdd1dULL, 0, 1.0 },
 		{ EClass::Pebble, 60.0, 1700.0, 6.0, 22.0, 0x8c4b5bd7d9a1e5f3ULL, 0, 1.0 },
-		{ EClass::Tree, 600.0, 31000.0, 700.0, 2200.0, 0x3c6ef372fe94f82bULL, 4, 0.4 },
+		{ EClass::Tree, 600.0, 31000.0, 700.0, 2200.0, 0x3c6ef372fe94f82bULL, 6, 0.4 },
 		{ EClass::Grass, 45.0, 1700.0, 25.0, 60.0, 0xa54ff53a5f1d36f1ULL, 1, 0.5 },
 	};
 	/** Shrubs stand on the material's scrub dots, on chunks to 76 m (seen to about 250 m; the painted dots beyond),
@@ -88,14 +89,35 @@ namespace
 	 * 2 x SplitFactor of their edges away; it fades before that and never pops in. The level a piece is kept to is
 	 * the last whose share its keep draw falls under.
 	 */
+	/** The largest of a world's chunk edges no longer than LimitCm, cm: they halve from its face's, RootEdgeCm. */
+	double ChunkEdgeUnder(double RootEdgeCm, double LimitCm)
+	{
+		const int32 Depth = FMath::Max(0, FMath::CeilToInt32(FMath::Log2(RootEdgeCm / LimitCm) - 1e-6));
+		return RootEdgeCm / FMath::Pow(2.0, (double)Depth);
+	}
+
 	double FadeFarCm(const SlonkScatter::FChunkGrid& G, double MaxEdgeCm, int32 FarLevels, double Keep, double KeepDraw, double FadeEdges)
 	{
 		int32 Top = 0;
 		for (int32 k = FarLevels; k > 0; --k) { if (KeepDraw < FMath::Pow(Keep, (double)k)) { Top = k; break; } }
-		// The planet's chunk edges halve from the face's: the largest of them no longer than the class's at that level.
-		const double RootEdge = G.EdgeCm * FMath::Pow(2.0, (double)G.Depth);
-		const int32 Depth = FMath::Max(0, FMath::CeilToInt32(FMath::Log2(RootEdge / (MaxEdgeCm * FMath::Pow(2.0, (double)Top))) - 1e-6));
-		return FadeEdges * RootEdge / FMath::Pow(2.0, (double)Depth);
+		// The coarsest chunk carrying it: the largest of the world's edges no longer than the class's at that level.
+		return FadeEdges * ChunkEdgeUnder(G.EdgeCm * FMath::Pow(2.0, (double)G.Depth), MaxEdgeCm * FMath::Pow(2.0, (double)Top));
+	}
+
+	/**
+	 * How many of its far levels a class uses on a world whose faces' chunk edge is RootEdgeCm: as many as the settings
+	 * allow; and on their last step (Horizon) the trees as many more as they need to reach HorizonTreeReachCm. A level
+	 * lands on the world's chunk edges between half and all of its limit, so how far a number of levels reaches varies
+	 * by twice with the world's size: Horizon takes the levels this world needs, one or two more than the step before's.
+	 */
+	int32 FarLevelsUsed(const FClass& Cl, const FScatterSettings& S, double RootEdgeCm)
+	{
+		int32 Far = FMath::Min(Cl.FarLevels, S.MaxFarLevels);
+		if (Cl.Kind == EClass::Tree && S.MaxFarLevels >= SlonkScatter::HorizonStep && RootEdgeCm > 0.0)
+		{
+			while (Far < Cl.FarLevels && S.FadeEdges * ChunkEdgeUnder(RootEdgeCm, Cl.MaxEdgeCm * FMath::Pow(2.0, (double)Far)) < SlonkScatter::HorizonTreeReachCm) { ++Far; }
+		}
+		return Far;
 	}
 
 	/** Height to width of each rock shape, and the second horizontal axis to the first: ranges a rock is drawn from. */
@@ -350,12 +372,26 @@ int32 SlonkScatter::FChunkScatter::NumPlants() const
 	return N;
 }
 
-double SlonkScatter::MaxChunkEdgeCm(int32 MaxFarLevels)
+double SlonkScatter::MaxChunkEdgeCm(const FScatterSettings& S, double RootEdgeCm)
 {
-	const int32 Far = FMath::Max(MaxFarLevels, 0);
-	double M = ShrubMaxEdgeCm * FMath::Pow(2.0, (double)FMath::Min(ShrubFarLevels, Far));
-	for (const FClass& C : Classes) { M = FMath::Max(M, C.MaxEdgeCm * FMath::Pow(2.0, (double)FMath::Min(C.FarLevels, Far))); }
+	double M = ShrubMaxEdgeCm * FMath::Pow(2.0, (double)FMath::Min(ShrubFarLevels, FMath::Max(S.MaxFarLevels, 0)));
+	for (const FClass& C : Classes) { M = FMath::Max(M, C.MaxEdgeCm * FMath::Pow(2.0, (double)FarLevelsUsed(C, S, RootEdgeCm))); }
 	return M;
+}
+
+int32 SlonkScatter::TreeFarLevels(const FScatterSettings& S, double RootEdgeCm)
+{
+	for (const FClass& C : Classes) { if (C.Kind == EClass::Tree) { return FarLevelsUsed(C, S, RootEdgeCm); } }
+	return 0;
+}
+
+double SlonkScatter::TreeReachCm(const FScatterSettings& S, double RootEdgeCm)
+{
+	for (const FClass& C : Classes)
+	{
+		if (C.Kind == EClass::Tree) { return S.FadeEdges * ChunkEdgeUnder(RootEdgeCm, C.MaxEdgeCm * FMath::Pow(2.0, (double)FarLevelsUsed(C, S, RootEdgeCm))); }
+	}
+	return 0.0;
 }
 
 FVector SlonkScatter::ToNoiseSpace(const FVector& PlanetLocalCm)
@@ -410,7 +446,8 @@ void SlonkScatter::TreeCover(const FPlanetTerrainParams& P, const FChunkGrid& G,
 
 void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSettings& S, const FChunkGrid& G, FChunkScatter& Out)
 {
-	if (!S.bEnabled || S.Density <= 0.f || G.EdgeCm > MaxChunkEdgeCm(S.MaxFarLevels) || !G.Samples || !G.Dirs || !G.Pos || G.Steps <= 0) { return; }
+	const double RootEdgeCm = G.EdgeCm * FMath::Pow(2.0, (double)G.Depth);
+	if (!S.bEnabled || S.Density <= 0.f || G.EdgeCm > MaxChunkEdgeCm(S, RootEdgeCm) || !G.Samples || !G.Dirs || !G.Pos || G.Steps <= 0) { return; }
 	const double R = P.RadiusCm;
 	const double FaceArcCm = R * UE_DOUBLE_HALF_PI;
 	const FChunkFrame F(G);
@@ -423,7 +460,7 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 	for (const FClass& Cl : Classes)
 	{
 		// On the class's own levels all of it; on its far levels the share its keep draw allows.
-		const int32 FarLevels = FMath::Min(Cl.FarLevels, S.MaxFarLevels);
+		const int32 FarLevels = FarLevelsUsed(Cl, S, RootEdgeCm);
 		const int32 Above = LevelsAbove(G.EdgeCm, Cl.MaxEdgeCm);
 		if (Above > FarLevels) { continue; }
 		const double KeepHere = FMath::Pow(Cl.Keep, (double)Above);
@@ -550,7 +587,7 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 				const double Layer = bBed ? (double)FMath::Min(FMath::FloorToInt32(Sp.Stratum * 8.0) + FMath::FloorToInt32(D.Next() * 2.99), 7) : -1.0;
 				const double OnWall = bBed ? FMath::Clamp(Sp.Wall * 1.5, 0.0, 1.0) : 0.0;
 				const float C[NumCustomFloats] = { Tint.R, Tint.G, Tint.B, (float)Snow, (float)Seed, (float)(Sx / 100.0), (float)(Sy / 100.0), (float)(Sz / 100.0), (float)Layer, (float)OnWall };
-				AddPiece(Out, Kind, Xf, C, Across >= SolidMinCm);
+				AddPiece(Out, Kind, Xf, C, Across >= SolidMinCm && Above == 0);
 				++Rocks;
 			}
 			else
@@ -580,7 +617,7 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 				else { Tint = FMath::Lerp(S.Palette.Land2, S.Palette.Land, (float)FMath::Clamp(Sp.Wet * 1.2 - Sp.Rocky * 0.3, 0.0, 1.0)) * (float)(0.8 * Vary); }
 				const double FadeCm = FadeFarCm(G, Cl.MaxEdgeCm, FarLevels, Cl.Keep, KeepDraw, S.FadeEdges);
 				const float C[NumCustomFloats] = { Tint.R, Tint.G, Tint.B, (float)Snow, (float)Seed, (float)(H * Wx / 100.0), (float)(H * Wy / 100.0), (float)(H / 100.0), (float)Dryness, (float)FadeCm };
-				AddPiece(Out, PlantMesh(Kind), Xf, C, bTree && H >= SolidTreeCm);
+				AddPiece(Out, PlantMesh(Kind), Xf, C, bTree && H >= SolidTreeCm && Above == 0);
 				++Plants;
 			}
 		}

@@ -93,6 +93,10 @@ public:
 	FString DescribeVisibleScatter() const;
 	/** How many of each class's far levels to use (FScatterSettings::MaxFarLevels); a change rebuilds the scatter. */
 	void SetScatterFarLevels(int32 Levels);
+	/** How far from the camera the trees reach on this world under the settings now, cm, and how many far levels that is. */
+	double GetTreeReachCm(int32* OutFarLevels = nullptr) const;
+	/** The scatter settings the chunk builds take: the settings, with the fade set from the split factor. */
+	FScatterSettings BuildScatterSettings() const;
 	/** Traces the boots' channel down through the solid rocks nearest the pawn, up to MaxRocks of them: how many
 	 *  were tried, and in OutHits how many the trace found solid. A check that what is drawn is what is stood on. */
 	int32 CheckSolidRocks(int32 MaxRocks, int32& OutHits) const;

@@ -250,7 +250,7 @@ void USettingsPanel::BuildContent()
 		if (Settings) { Settings->SetGroundDetail(Pick); }
 		return Pick;
 	});
-	AddLine(Content, TEXT("How far the trees, bushes and rocks reach, thinning with distance: each step about doubles it, the trees to 8-15 km on Horizon by the world's size. Each step draws more of them on the graphics card."), 12.f, Lcars::Dim, false, false, 0.f);
+	AddLine(Content, TEXT("How far the trees, bushes and rocks reach, thinning with distance: each step about doubles it, and Horizon carries the trees past 20 km. Each step draws more of them on the graphics card."), 12.f, Lcars::Dim, false, false, 0.f);
 
 	AddLine(Content, TEXT("HUD"), 13.f, Lcars::Lilac, true, true, 14.f);
 	AStarshipHUD* H = GetHUD();
