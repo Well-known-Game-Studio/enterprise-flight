@@ -175,10 +175,10 @@ FScatterSettings UPlanetTerrainComponent::BuildScatterSettings() const
 
 double UPlanetTerrainComponent::GetTreeReachCm(int32* OutFarLevels) const
 {
-	const double RootEdge = Roots[0] ? Roots[0]->EdgeCm : Params.RadiusCm * UE_DOUBLE_HALF_PI;
+	const double FaceEdge = SlonkScatter::FaceEdgeCm(Params.RadiusCm);
 	const FScatterSettings Sc = BuildScatterSettings();
-	if (OutFarLevels) { *OutFarLevels = SlonkScatter::TreeFarLevels(Sc, RootEdge); }
-	return SlonkScatter::TreeReachCm(Sc, RootEdge);
+	if (OutFarLevels) { *OutFarLevels = SlonkScatter::TreeFarLevels(Sc, FaceEdge); }
+	return SlonkScatter::TreeReachCm(Sc, FaceEdge);
 }
 
 void UPlanetTerrainComponent::SetScatterFarLevels(int32 Levels)
@@ -199,12 +199,14 @@ void UPlanetTerrainComponent::RebuildScatterChunks(int32 FarLevelsBefore)
 	for (FNode* N : InFlight) { if (N) { ApplyResult(*N); } }
 	InFlight.Reset();
 	Requests.Reset();
-	// Only the chunks that carried scatter or will: at no more than the far levels in use, the coarser ones carry none.
+	// Only the chunks that carried scatter or will: at no more than the far levels in use before or after (the largest
+	// edge carrying any only grows with them), the coarser ones carry none. Measured as their build measured them.
 	FScatterSettings Wider = BuildScatterSettings();
 	Wider.MaxFarLevels = FMath::Max(FarLevelsBefore, Scatter.MaxFarLevels);
+	const double MaxEdge = SlonkScatter::MaxChunkEdgeCm(Wider, SlonkScatter::FaceEdgeCm(Params.RadiusCm));
 	TFunction<void(FNode&)> Walk = [&](FNode& N)
 	{
-		if (N.Mesh && N.EdgeCm <= SlonkScatter::MaxChunkEdgeCm(Wider, N.EdgeCm * FMath::Pow(2.0, (double)N.Depth))) { ReleaseMesh(N); }
+		if (N.Mesh && N.BuiltEdgeCm <= MaxEdge) { ReleaseMesh(N); }
 		for (const TUniquePtr<FNode>& C : N.Children) { if (C) { Walk(*C); } }
 	};
 	for (const TUniquePtr<FNode>& Root : Roots) { if (Root) { Walk(*Root); } }
@@ -843,6 +845,7 @@ void UPlanetTerrainComponent::ApplyResult(FNode& N)
 	if (MID && C->GetMaterial(0) != MID) { C->SetMaterial(0, MID); }
 	N.Heights = MoveTemp(N.Result->Heights);
 	N.HeightSteps = N.Result->Steps;
+	N.BuiltEdgeCm = N.Result->EdgeCm;
 	ApplyScatter(N, N.Result->Scatter);
 	N.Result.Reset();
 	N.bReady = true;
@@ -1313,7 +1316,8 @@ void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, const FS
 	Grid.Samples = Smp.GetData(); Grid.Dirs = Dirs.GetData(); Grid.Pos = Pos.GetData();
 	Grid.Origin = Origin;
 	// The rocks on this chunk, on these vertices' triangles.
-	if (Sc.bEnabled && N_EdgeCm <= SlonkScatter::MaxChunkEdgeCm(Sc, N_EdgeCm * FMath::Pow(2.0, (double)Depth)))
+	Out.EdgeCm = N_EdgeCm;
+	if (Sc.bEnabled && N_EdgeCm <= SlonkScatter::MaxChunkEdgeCm(Sc, SlonkScatter::FaceEdgeCm(P.RadiusCm)))
 	{
 		SlonkScatter::ScatterChunk(P, Sc, Grid, Out.Scatter);
 	}

@@ -973,21 +973,22 @@ bool FSlonkHorizonReachTest::RunTest(const FString& Parameters)
 {
 	// Each ground detail step reaches further than the one before, and Horizon carries the trees past
 	// SlonkScatter::HorizonTreeReachCm on worlds of every size (their chunk edges halve from the face's, so a far level
-	// lands between half and all of its limit), but not more than twice past it: the levels it takes are the ones the
-	// world needs. The chunks that build scatter reach as far as the trees on them.
+	// lands between half and all of its limit), but not twice past it: the levels it takes are the ones the world needs.
+	// The largest chunk carrying anything only grows with the steps, so a rebuild at the wider of two covers both.
 	FScatterSettings S;
 	S.FadeEdges = 3.0;
 	for (const double RadiusKm : { 1000.0, 2500.0, 3700.0, 5707.0, 6371.0, 6746.0, 7804.0, 9500.0 })
 	{
-		const double RootEdgeCm = RadiusKm * 1e5 * UE_DOUBLE_HALF_PI;
-		double Was = 0.0;
+		const double FaceEdge = SlonkScatter::FaceEdgeCm(RadiusKm * 1e5);
+		double Was = 0.0, WasEdge = 0.0;
 		for (int32 Step = 0; Step <= SlonkScatter::HorizonStep; ++Step)
 		{
 			S.MaxFarLevels = Step;
-			const double Reach = SlonkScatter::TreeReachCm(S, RootEdgeCm);
-			const int32 Levels = SlonkScatter::TreeFarLevels(S, RootEdgeCm);
+			const double Reach = SlonkScatter::TreeReachCm(S, FaceEdge);
+			const int32 Levels = SlonkScatter::TreeFarLevels(S, FaceEdge);
+			const double MaxEdge = SlonkScatter::MaxChunkEdgeCm(S, FaceEdge);
 			TestTrue(FString::Printf(TEXT("R %.0f km: step %d reaches further than the one before"), RadiusKm, Step), Reach > Was);
-			TestTrue(FString::Printf(TEXT("R %.0f km: step %d's chunks carry its trees"), RadiusKm, Step), SlonkScatter::MaxChunkEdgeCm(S, RootEdgeCm) * S.FadeEdges >= Reach * 0.999);
+			TestTrue(FString::Printf(TEXT("R %.0f km: step %d's scatter rides chunks no smaller than the step before's"), RadiusKm, Step), MaxEdge >= WasEdge);
 			if (Step == SlonkScatter::HorizonStep)
 			{
 				AddInfo(FString::Printf(TEXT("R %.0f km: Horizon's trees reach %.1f km on %d far levels (Farthest's %.1f km)"), RadiusKm, Reach / 1e5, Levels, Was / 1e5));
@@ -996,8 +997,45 @@ bool FSlonkHorizonReachTest::RunTest(const FString& Parameters)
 			}
 			else { TestEqual(FString::Printf(TEXT("R %.0f km: step %d takes that many far levels"), RadiusKm, Step), Levels, Step); }
 			Was = Reach;
+			WasEdge = MaxEdge;
 		}
 	}
+
+	// Every chunk of a world takes the same far levels. On a 9,500 km world Horizon's trees take five, so the chunks
+	// six levels above the trees' own (the depth whose chunks run 10-15 km) carry none, even towards a face's edges,
+	// where a chunk's own edge runs to 0.7 of its depth's share of the face's and would on its own have asked for a
+	// sixth; their children, five levels above, carry the forest.
+	FPlanetTerrainParams P = RockWorld();
+	P.RadiusCm = 9.5e8;
+	FScatterSettings H = Living();
+	H.FadeEdges = 3.0;
+	H.MaxFarLevels = SlonkScatter::HorizonStep;
+	TestEqual(TEXT("a 9,500 km world's trees take five far levels on Horizon"), SlonkScatter::TreeFarLevels(H, SlonkScatter::FaceEdgeCm(P.RadiusCm)), 5);
+	const int32 D = DepthFor(P, 31000.0 * 32.0) - 1;
+	const double Cells = (double)((int64)1 << D);
+	int32 Tried = 0, OnCoarse = 0, OnKids = 0;
+	TSet<FIntVector> Seen;
+	for (const FVector& Dir : GreenSpots(P, 400))
+	{
+		int32 Face; int64 X, Y;
+		if (!UPlanetTerrainComponent::ChunkAt(Dir, D, Face, X, Y)) { continue; }
+		// Towards the face's edge across the chunk's rows, where its edge runs short.
+		if (FMath::Abs(-1.0 + 2.0 * (Y + 0.5) / Cells) < 0.7 || Seen.Contains(FIntVector(Face, (int32)X, (int32)Y))) { continue; }
+		Seen.Add(FIntVector(Face, (int32)X, (int32)Y));
+		int32 Kf; int64 Kx, Ky;
+		if (!UPlanetTerrainComponent::ChunkAt(Dir, D + 1, Kf, Kx, Ky)) { continue; }
+		const FRocks Kid = Build(P, H, Kf, D + 1, Kx, Ky);
+		const int32 KidTrees = Kid.Xf[TreeMeshes[0]].Num() + Kid.Xf[TreeMeshes[1]].Num();
+		if (KidTrees == 0) { continue; }
+		const FRocks Coarse = Build(P, H, Face, D, X, Y);
+		++Tried;
+		OnKids += KidTrees;
+		OnCoarse += Coarse.Xf[TreeMeshes[0]].Num() + Coarse.Xf[TreeMeshes[1]].Num();
+		if (Tried >= 4) { break; }
+	}
+	AddInfo(FString::Printf(TEXT("9,500 km world, Horizon: %d wooded chunks near a face's edge at depth %d; their children carry %d trees, the chunks themselves %d"), Tried, D, OnKids, OnCoarse));
+	TestTrue(TEXT("found wooded chunks near a face's edge"), Tried >= 2);
+	TestEqual(TEXT("a chunk six levels above the trees' own carries none on a world whose trees take five"), OnCoarse, 0);
 	return true;
 }
 

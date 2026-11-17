@@ -157,6 +157,8 @@ private:
 		/** Height above sea level (water surface over water) at each grid vertex, row-major (Steps + 1)^2. */
 		TArray<float> Heights;
 		int32 Steps = 0;
+		/** The chunk's edge as the build measures it, cm: the one its scatter is placed by (SlonkScatter::FChunkGrid). */
+		double EdgeCm = 0.0;
 		SlonkScatter::FChunkScatter Scatter;
 	};
 	struct FNode
@@ -181,6 +183,9 @@ private:
 		/** The grid heights of the mesh this node shows (see FBuildResult), for ground queries. */
 		TArray<float> Heights;
 		int32 HeightSteps = 0;
+		/** The edge its mesh's build measured, cm (FBuildResult::EdgeCm), which says whether that mesh carries scatter:
+		 *  across a face it runs from 0.7 to 1 of EdgeCm, the one the quadtree splits by. */
+		double BuiltEdgeCm = 0.0;
 		/** The chunk's rocks and plants by mesh, attached to its mesh and shown and hidden with it: GPU-only planet instances,
 		 *  or (slonk.Scatter.GPUInstances 0) the engine's instanced meshes. */
 		UStaticMeshComponent* Sets[SlonkScatter::NumMeshes] = {};
