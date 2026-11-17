@@ -65,12 +65,23 @@ namespace SlonkScatter
 	/** Rocks at least this big across (cm), and trees at least this tall, get collision near the crew. */
 	constexpr double SolidMinCm = 45.0;
 	constexpr double SolidTreeCm = 200.0;
+	/** Chunks up to this edge keep their solid copies, cm: round someone on the ground, and under a ship hovering up to
+	 *  about 6 km, whose transporter's arrival trace needs them (every level of every class at the default ground
+	 *  detail). The coarser chunks further off keep none: on Horizon, most of the trees. */
+	constexpr double SolidMaxEdgeCm = 2.5e5;
 	/** Most rocks, and most plants, one chunk carries; the finer classes are the ones left out, and a class capped stops
-	 *  row by row, so a cap reached would leave a strip bare. The trees' farthest level is one in 39 of the candidates on
-	 *  a chunk to 5 km, whose cells snap to between 4.2 and 6 m: up to about 1.3 million candidates, so 31,000 trees at
-	 *  the densest forest's 0.9. */
+	 *  row by row, so a cap reached would leave a strip bare. The trees' farthest level is one in 244 of the candidates
+	 *  on a chunk to 20 km, whose cells snap to between 4.2 and 8.5 m, so 4^12 (16.8 million) candidates at most:
+	 *  62,000 trees at the densest forest's 0.9, the most any chunk can be given. */
 	constexpr int32 MaxPerChunk = 6000;
-	constexpr int32 MaxPlantsPerChunk = 40000;
+	constexpr int32 MaxPlantsPerChunk = 64000;
+	/** The settings' last step (Horizon): the trees take as many more far levels as they need to reach this far, cm. */
+	constexpr int32 HorizonStep = 4;
+	constexpr double HorizonTreeReachCm = 2.0e6;
+	/** A world's faces' chunk edge, cm: the arc across a cube face's middle. How many far levels a class uses is worked
+	 *  out from it, so every chunk of a world uses the same (a chunk's own edge runs from 0.7 to 1 of its depth's share
+	 *  of it across a face). */
+	inline double FaceEdgeCm(double RadiusCm) { return RadiusCm * UE_DOUBLE_HALF_PI; }
 	/** Period of the terrain material's planet-local noise, cm: the chunk origins reach the shader modulo this. */
 	constexpr double NoisePeriodCm = 1048576.0;
 	/** The material's scrub dots: one hashed disc per cell, a whole number of cells to the noise period along each
@@ -103,14 +114,21 @@ namespace SlonkScatter
 		TArray<FTransform> Transforms[NumMeshes];
 		/** NumCustomFloats per instance, in the order of Transforms. */
 		TArray<float> Custom[NumMeshes];
-		/** The rocks and trees big enough to stand on or walk into, chunk-relative, by mesh. */
+		/** The rocks and trees big enough to stand on or walk into, chunk-relative, by mesh: on chunks up to SolidMaxEdgeCm
+		 *  only (the far levels' pieces are the same ones, on the coarser chunks further off). */
 		TArray<FTransform> Solids[NumMeshes];
 		int32 Num() const;
 		int32 NumPlants() const;
 	};
 
-	/** The largest chunk edge any class rides on with at most MaxFarLevels of its far levels, cm: coarser chunks carry nothing. */
-	SLONK_API double MaxChunkEdgeCm(int32 MaxFarLevels);
+	/** The largest chunk edge any class rides on under the settings, on a world whose faces' chunk edge is FaceEdge
+	 *  (FaceEdgeCm), cm: coarser chunks carry nothing. It only grows with the settings' MaxFarLevels. */
+	SLONK_API double MaxChunkEdgeCm(const FScatterSettings& S, double FaceEdge);
+	/** How many far levels the trees use under the settings on such a world, and how far from the camera they reach, cm,
+	 *  where its chunks are their depth's share of FaceEdge (towards a face's edges they run smaller, and so a little
+	 *  nearer). */
+	SLONK_API int32 TreeFarLevels(const FScatterSettings& S, double FaceEdge);
+	SLONK_API double TreeReachCm(const FScatterSettings& S, double FaceEdge);
 
 	SLONK_API void ScatterChunk(const FPlanetTerrainParams& P, const FScatterSettings& S, const FChunkGrid& G, FChunkScatter& Out);
 

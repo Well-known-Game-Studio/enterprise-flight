@@ -93,6 +93,10 @@ public:
 	FString DescribeVisibleScatter() const;
 	/** How many of each class's far levels to use (FScatterSettings::MaxFarLevels); a change rebuilds the scatter. */
 	void SetScatterFarLevels(int32 Levels);
+	/** How far from the camera the trees reach on this world under the settings now, cm, and how many far levels that is. */
+	double GetTreeReachCm(int32* OutFarLevels = nullptr) const;
+	/** The scatter settings the chunk builds take: the settings, with the fade set from the split factor. */
+	FScatterSettings BuildScatterSettings() const;
 	/** Traces the boots' channel down through the solid rocks nearest the pawn, up to MaxRocks of them: how many
 	 *  were tried, and in OutHits how many the trace found solid. A check that what is drawn is what is stood on. */
 	int32 CheckSolidRocks(int32 MaxRocks, int32& OutHits) const;
@@ -153,6 +157,8 @@ private:
 		/** Height above sea level (water surface over water) at each grid vertex, row-major (Steps + 1)^2. */
 		TArray<float> Heights;
 		int32 Steps = 0;
+		/** The chunk's edge as the build measures it, cm: the one its scatter is placed by (SlonkScatter::FChunkGrid). */
+		double EdgeCm = 0.0;
 		SlonkScatter::FChunkScatter Scatter;
 	};
 	struct FNode
@@ -177,6 +183,9 @@ private:
 		/** The grid heights of the mesh this node shows (see FBuildResult), for ground queries. */
 		TArray<float> Heights;
 		int32 HeightSteps = 0;
+		/** The edge its mesh's build measured, cm (FBuildResult::EdgeCm), which says whether that mesh carries scatter:
+		 *  across a face it runs from 0.7 to 1 of EdgeCm, the one the quadtree splits by. */
+		double BuiltEdgeCm = 0.0;
 		/** The chunk's rocks and plants by mesh, attached to its mesh and shown and hidden with it: GPU-only planet instances,
 		 *  or (slonk.Scatter.GPUInstances 0) the engine's instanced meshes. */
 		UStaticMeshComponent* Sets[SlonkScatter::NumMeshes] = {};

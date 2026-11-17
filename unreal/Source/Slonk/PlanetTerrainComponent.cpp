@@ -20,7 +20,7 @@ static TAutoConsoleVariable<float> CVarTerrainSunUpWidth(TEXT("slonk.TerrainSunU
 // How far the ground's rocks and plants reach (the settings' ground detail sets it): each class's thinned far levels
 // drawn, up to this many. With GPU-only instances a level costs the GPU its drawing and the workers its building.
 static TAutoConsoleVariable<int32> CVarScatterFarLevels(TEXT("slonk.Scatter.FarLevels"), 3,
-	TEXT("How many of each scatter class's thinned far levels to draw (0: each class ends with its own levels; each level about doubles the trees' reach, to 8-15 km at 4 by the world's size)"));
+	TEXT("How many of each scatter class's thinned far levels to draw (0: each class ends with its own levels; each level about doubles the trees' reach, and at 4, Horizon, they take as many more as they need to reach 20 km)"));
 // The rocks and plants as GPU-only planet instances (UPlanetInstancesComponent): turning with the world costs a single
 // mesh's move a set, the instances rewritten on the GPU. 0: the engine's instanced meshes, every instance re-sent from
 // the CPU each frame the world turns (for comparison). Sets made after a change take it.
@@ -164,6 +164,23 @@ void UPlanetTerrainComponent::ApplyScatterToMaterial()
 	MID->SetScalarParameterValue(TEXT("Clearings"), Scatter.bCities ? 1.f : 0.f);
 }
 
+FScatterSettings UPlanetTerrainComponent::BuildScatterSettings() const
+{
+	FScatterSettings Sc = Scatter;
+	// A chunk of edge E splits with the view SplitFactor x E beyond its near side, so the finer chunks that carry a
+	// plant arrive with it at least about 2 x SplitFactor x E away: it is faded out a little before that.
+	Sc.FadeEdges = FMath::Max(2.0 * SplitFactor - 0.2, 1.0);
+	return Sc;
+}
+
+double UPlanetTerrainComponent::GetTreeReachCm(int32* OutFarLevels) const
+{
+	const double FaceEdge = SlonkScatter::FaceEdgeCm(Params.RadiusCm);
+	const FScatterSettings Sc = BuildScatterSettings();
+	if (OutFarLevels) { *OutFarLevels = SlonkScatter::TreeFarLevels(Sc, FaceEdge); }
+	return SlonkScatter::TreeReachCm(Sc, FaceEdge);
+}
+
 void UPlanetTerrainComponent::SetScatterFarLevels(int32 Levels)
 {
 	Levels = FMath::Clamp(Levels, 0, 8);
@@ -182,11 +199,14 @@ void UPlanetTerrainComponent::RebuildScatterChunks(int32 FarLevelsBefore)
 	for (FNode* N : InFlight) { if (N) { ApplyResult(*N); } }
 	InFlight.Reset();
 	Requests.Reset();
-	// Only the chunks that carried scatter or will: at no more than the far levels in use, the coarser ones carry none.
-	const double MaxEdge = SlonkScatter::MaxChunkEdgeCm(FMath::Max(FarLevelsBefore, Scatter.MaxFarLevels));
+	// Only the chunks that carried scatter or will: at no more than the far levels in use before or after (the largest
+	// edge carrying any only grows with them), the coarser ones carry none. Measured as their build measured them.
+	FScatterSettings Wider = BuildScatterSettings();
+	Wider.MaxFarLevels = FMath::Max(FarLevelsBefore, Scatter.MaxFarLevels);
+	const double MaxEdge = SlonkScatter::MaxChunkEdgeCm(Wider, SlonkScatter::FaceEdgeCm(Params.RadiusCm));
 	TFunction<void(FNode&)> Walk = [&](FNode& N)
 	{
-		if (N.EdgeCm <= MaxEdge && N.Mesh) { ReleaseMesh(N); }
+		if (N.Mesh && N.BuiltEdgeCm <= MaxEdge) { ReleaseMesh(N); }
 		for (const TUniquePtr<FNode>& C : N.Children) { if (C) { Walk(*C); } }
 	};
 	for (const TUniquePtr<FNode>& Root : Roots) { if (Root) { Walk(*Root); } }
@@ -746,10 +766,7 @@ void UPlanetTerrainComponent::LaunchBuilds()
 		N.Result = MakeShared<FBuildResult, ESPMode::ThreadSafe>();
 		TSharedPtr<FBuildResult, ESPMode::ThreadSafe> Out = N.Result;
 		const FPlanetTerrainParams P = Params;
-		FScatterSettings Sc = Scatter;
-		// A chunk of edge E splits with the view SplitFactor x E beyond its near side, so the finer chunks that carry a
-		// plant arrive with it at least about 2 x SplitFactor x E away: it is faded out a little before that.
-		Sc.FadeEdges = FMath::Max(2.0 * SplitFactor - 0.2, 1.0);
+		const FScatterSettings Sc = BuildScatterSettings();
 		const int32 Face = N.Face, Depth = N.Depth, Steps = FMath::Clamp(GridSteps, 8, 128);
 		const int64 X = N.X, Y = N.Y;
 		N.Task = UE::Tasks::Launch(TEXT("SlonkTerrainChunk"), [P, Sc, Face, Depth, X, Y, Steps, Out]()
@@ -828,6 +845,7 @@ void UPlanetTerrainComponent::ApplyResult(FNode& N)
 	if (MID && C->GetMaterial(0) != MID) { C->SetMaterial(0, MID); }
 	N.Heights = MoveTemp(N.Result->Heights);
 	N.HeightSteps = N.Result->Steps;
+	N.BuiltEdgeCm = N.Result->EdgeCm;
 	ApplyScatter(N, N.Result->Scatter);
 	N.Result.Reset();
 	N.bReady = true;
@@ -1298,7 +1316,8 @@ void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, const FS
 	Grid.Samples = Smp.GetData(); Grid.Dirs = Dirs.GetData(); Grid.Pos = Pos.GetData();
 	Grid.Origin = Origin;
 	// The rocks on this chunk, on these vertices' triangles.
-	if (Sc.bEnabled && N_EdgeCm <= SlonkScatter::MaxChunkEdgeCm(Sc.MaxFarLevels))
+	Out.EdgeCm = N_EdgeCm;
+	if (Sc.bEnabled && N_EdgeCm <= SlonkScatter::MaxChunkEdgeCm(Sc, SlonkScatter::FaceEdgeCm(P.RadiusCm)))
 	{
 		SlonkScatter::ScatterChunk(P, Sc, Grid, Out.Scatter);
 	}
