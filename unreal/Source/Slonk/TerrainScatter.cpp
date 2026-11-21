@@ -314,10 +314,11 @@ namespace
 		/** How cold it is for what grows, 0 in a warm lowland: the snowline's drop toward the poles, and the height. */
 		double Cold = 0.0;
 		/** On a tidally locked world (FPlanetTerrainParams::Climate Locked): the air's temperature there as a share of the
-		 *  solvent's liquid range (SlonkTerrain::TemperatureN), which bakes the forest and the grass out past three
-		 *  quarters of it and leaves a tundra under the trees' cold limit. A spinning world's warmth only moves its
-		 *  snowline, so its trees follow the snowline as on a world with no climate of its own, and a faintly strange
-		 *  world grows what its strangeness-0 twin does. */
+		 *  solvent's liquid range (SlonkTerrain::TemperatureN), which bakes the forest out past three quarters of it
+		 *  and the grass past 0.95, and leaves a tundra under the trees' cold limit. A spinning world's plants read no
+		 *  temperature of their own: they follow its snowline, which its warmth moves, and the ground's wet and ice,
+		 *  which its heat dries and its cold freezes in the field (a warm desert's equator dries further), so a faintly
+		 *  strange world grows nearly what its strangeness-0 twin does. */
 		bool bClimate = false;
 		double Heat = 0.0;
 	};

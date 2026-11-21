@@ -100,19 +100,10 @@ void UPlanetTerrainComponent::Configure(const FPlanetTerrainParams& InParams, UM
 		MID->SetScalarParameterValue(TEXT("ReliefCm"), (float)Params.ReliefCm);
 		MID->SetScalarParameterValue(TEXT("OceanDepthCm"), (float)Params.OceanDepthCm);
 		MID->SetScalarParameterValue(TEXT("NoisePeriodCm"), (float)NoisePeriodCm);
-		// The climate, for the material to bake, bleach and freeze the ground by the same temperature the field uses
-		// (SlonkTerrain::TemperatureN, from each vertex's direction and height). Classic (0) leaves it as it always was.
-		MID->SetScalarParameterValue(TEXT("ClimateMode"), (float)(uint8)Params.Climate);
-		MID->SetVectorParameterValue(TEXT("ClimateAxis"), FLinearColor((float)Params.ClimateAxis.X, (float)Params.ClimateAxis.Y, (float)Params.ClimateAxis.Z, 0.f));
-		MID->SetScalarParameterValue(TEXT("SnowlineCm"), (float)Params.SnowlineCm);
-		MID->SetScalarParameterValue(TEXT("WarmthN"), Params.WarmthN);
-		MID->SetScalarParameterValue(TEXT("DayN"), Params.DayN);
-		MID->SetScalarParameterValue(TEXT("TermN"), Params.TermN);
-		MID->SetScalarParameterValue(TEXT("NightN"), Params.NightN);
-		MID->SetScalarParameterValue(TEXT("NightWidth"), Params.NightWidth);
-		MID->SetScalarParameterValue(TEXT("LapseNPerCm"), (float)SlonkTerrain::LapseNPerCm);
-		// Sea ice on a locked world, whose far side's seas freeze; a spinning world's polar seas stay open as its
-		// strangeness-0 twin's do, so a faintly strange world looks as that twin does.
+		// The material reads no temperature: the climate reaches the ground through each vertex's ice, wet and forest
+		// cover, which the field sets from it. The material only paints the ice over a locked world's frozen seas (its
+		// far side's, and the ring's cold edge); a spinning world's seas stay open as its strangeness-0 twin's do, so a
+		// faintly strange world looks as that twin does.
 		MID->SetScalarParameterValue(TEXT("SeaIce"), Params.Climate == EClimateModel::Locked ? 1.f : 0.f);
 		ApplyScatterToMaterial();
 	}

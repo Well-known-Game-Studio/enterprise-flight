@@ -12,7 +12,11 @@ enum class EClimateModel : uint8
 	/** The home worlds' climate, as it always was: the snowline falls with the latitude to the sea at the poles. */
 	Classic,
 	/** A spinning world's, warmed or cooled as a whole by its genome (FPlanetTerrainParams::WarmthN): the snowline still
-	 *  falls with the latitude, and the seas freeze where the air at their surface does. */
+	 *  falls with the latitude, moved up or down by the warmth. The field reads its temperature as a locked world's
+	 *  does: the heat dries the ground where the air runs past half the liquid range (a warm desert's equator), and
+	 *  the snow is measured from the sea's surface, so the field's ice runs over the seas wherever even their surface
+	 *  lies below freezing. The material still draws those seas open, as its strangeness-0 twin's polar seas are
+	 *  drawn: only a locked world's seas are painted frozen (the terrain material's SeaIce). */
 	Spin,
 	/** A world held to its star by the tides: hot under the star, cold on the far side for ever, with a temperate ring
 	 *  between, about ClimateAxis instead of the spin's. */
@@ -70,8 +74,8 @@ struct FPlanetTerrainParams
 	EClimateModel Climate = EClimateModel::Classic;
 	/** The climate's axis, planet-local and unit: on a locked world it points at the star. */
 	FVector ClimateAxis = FVector::ZAxisVector;
-	/** A spinning world's warmth over an Earth's, as a share of its solvent's liquid range (SlonkTerrain::LapseNPerCm):
-	 *  it raises or lowers the snowline everywhere by WarmthN / LapseNPerCm. */
+	/** A spinning world's warmth over its strangeness-0 twin's, as a share of its solvent's liquid range
+	 *  (SlonkTerrain::LapseNPerCm): it raises or lowers the snowline everywhere by WarmthN / LapseNPerCm. */
 	float WarmthN = 0.f;
 	/** A locked world's temperature at sea level, as a share of its solvent's liquid range above freezing: under the star
 	 *  (DayN), on the terminator (TermN) and over the far side's cap (NightN, below 0). The night falls from TermN to NightN

@@ -386,6 +386,18 @@ void UScienceScannerComponent::BuildRecord(FScanRecord& R) const
 	}
 }
 
+void UScienceScannerComponent::ClimateSurfaceFacts(const FPlanetTerrainParams& TP, TArray<FString>& OutSurface)
+{
+	// A locked world's climate is its own: the far side's ice, the side under the star dried as its heat runs from
+	// half the liquid range to 0.85 of it (baked once the ground keeps under 0.3 of its wet, past 0.72), and the ring
+	// between where its seas stay liquid.
+	if (TP.Climate != EClimateModel::Locked) { return; }
+	if (TP.NightN < 0.f) { OutSurface.Add(TEXT("an ice cap over the night side")); }
+	if (TP.DayN > 0.72f) { OutSurface.Add(TEXT("a baked day side")); }
+	else if (TP.DayN > 0.5f) { OutSurface.Add(TEXT("a hot day side")); }
+	if (TP.TermN > 0.f) { OutSurface.Add(TEXT("a temperate ring along the terminator")); }
+}
+
 void UScienceScannerComponent::FactsForWorld(const APlanetBody* P, FScanRecord& R) const
 {
 	const FPlanetStyle& S = P->Style;
@@ -459,18 +471,9 @@ void UScienceScannerComponent::FactsForWorld(const APlanetBody* P, FScanRecord& 
 		if (S.SeaLevel > 0.95f) { Surface.Add(TEXT("global ocean")); }
 		else if (S.SeaLevel > 0.05f) { Surface.Add(FString::Printf(TEXT("oceans over ~%d%%"), FMath::RoundToInt(S.SeaLevel * 100.f))); }
 		if (S.IceCapStart < 1.5f) { Surface.Add(TEXT("polar ice caps")); }
-		// A locked world's climate is its own: the far side's ice, the side under the star dried as its heat runs from
-		// half the liquid range to 0.85 of it (baked once the ground keeps under 0.3 of its wet, past 0.72), and the ring
-		// between where its seas stay liquid.
 		const FPlanetTerrainParams TP = P->MakeTerrainParams();
 		const bool bLocked = TP.Climate == EClimateModel::Locked;
-		if (bLocked)
-		{
-			if (TP.NightN < 0.f) { Surface.Add(TEXT("an ice cap over the night side")); }
-			if (TP.DayN > 0.72f) { Surface.Add(TEXT("a baked day side")); }
-			else if (TP.DayN > 0.5f) { Surface.Add(TEXT("a hot day side")); }
-			if (TP.TermN > 0.f) { Surface.Add(TEXT("a temperate ring along the terminator")); }
-		}
+		ClimateSurfaceFacts(TP, Surface);
 		if (S.LavaEmissive > 0.01f) { Surface.Add(TEXT("active volcanism")); }
 		if (S.CraterStrength > 0.3f) { Surface.Add(TEXT("heavily cratered")); }
 		if (S.MariaStrength > 0.3f) { Surface.Add(TEXT("basaltic maria")); }

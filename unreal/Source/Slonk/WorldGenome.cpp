@@ -103,7 +103,11 @@ FWorldGenome SlonkGenome::Roll(EPlanetArchetype Type, float Strangeness, uint32 
 	// The climate, on a world with one to move. The tides lock a world more often the closer it lies to its star, and
 	// some worlds far out were locked by what they formed from. A locked world's heats are rolled as a spinning one's
 	// warmth is, so a lock settled later (SettleLock) finds them there: under the star 2.25 to 2.8 times the Earth-like
-	// equator's heat (past 0.72 of the liquid range on an Earth: baked, the ground kept under 0.3 of its wet), on the terminator 0.35 to 0.9 of it, the far side 0.2 to 0.6 of the liquid range below freezing.
+	// version's equatorial sea temperature, on the terminator 0.35 to 0.9 of it, the far side 0.2 to 0.6 of the liquid
+	// range below freezing. That scale is the archetype's own (ApplyClimate), not an Earth's: under the star a temperate
+	// world (a 5 km snowline) runs 0.73 to 0.91 of the liquid range, baked, its ground kept under 0.3 of its wet; an
+	// ocean world (4.6 km) 0.67 to 0.84, hot to baked; a desert (6.5 km) 0.95 to 1.18, past boiling; an ice world
+	// (1 km) only 0.15 to 0.18, never hot.
 	if (HasClimate(Type))
 	{
 		G.bTidallyLocked = LockDraw < S * (0.15f + 0.7f * FMath::Clamp(TidalPull, 0.f, 1.f));
@@ -126,7 +130,8 @@ void SlonkGenome::ApplyClimate(const FWorldGenome& G, EPlanetArchetype Type, con
 	if (G.Strangeness <= 0.f || !HasClimate(Type) || P.SnowlineCm <= 0.0) { return; }
 	if (G.bTidallyLocked && !StarBearing.IsNearlyZero())
 	{
-		// The Earth-like version's equatorial sea temperature is the scale: the snowline it would have, cooled to sea level.
+		// The Earth-like version's equatorial sea temperature is the scale: the archetype's own snowline, cooled to sea
+		// level, so a locked desert's day side runs far hotter than a locked ice world's.
 		const double T0 = SlonkTerrain::LapseNPerCm * P.SnowlineCm;
 		P.Climate = EClimateModel::Locked;
 		P.ClimateAxis = StarBearing.GetSafeNormal();

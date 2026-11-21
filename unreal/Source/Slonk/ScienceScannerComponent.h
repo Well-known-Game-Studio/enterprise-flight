@@ -8,6 +8,7 @@
 #include "ScienceScannerComponent.generated.h"
 
 class APlanetBody;
+struct FPlanetTerrainParams;
 
 UENUM(BlueprintType)
 enum class EScanState : uint8
@@ -59,6 +60,10 @@ public:
 	static FString SystemNameAt(const UWorld* World, const FVector& Location);
 	/** Keys of everything that counts toward a system's survey: its star(s) and planets. */
 	static void SurveyKeys(const UWorld* World, const FVector& Location, FString& OutSystem, TArray<FString>& OutKeys);
+	/** What a world scan says of its surface from its terrain's climate: on a tidally locked world the night side's
+	 *  ice, a hot (past half the liquid range) or baked (past 0.72) day side, and the temperate ring; nothing on a world
+	 *  that turns. */
+	static void ClimateSurfaceFacts(const FPlanetTerrainParams& TP, TArray<FString>& OutSurface);
 	/** Range test used both to start and to keep a scan: the distance left to the surface and the range allowed. */
 	bool InRange(const AActor* Actor, EScanKind Kind, double& OutDistCm, double& OutRangeCm) const;
 

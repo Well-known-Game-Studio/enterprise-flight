@@ -253,9 +253,9 @@ bool FSlonkGenomeRollsTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("a forced lock holds a strange world with a bearing"), Forced.bTidallyLocked);
 	}
 
-	// The climate laid on an Earth's terrain: a locked one about the star's bearing, under the star 0.59 to 0.91 of the
-	// liquid range, on the terminator 0.11 to 0.29, the far side 0.2 to 0.6 below freezing; a spinning one warmer or
-	// colder by at most 0.12 of it at strangeness 1, about its poles still.
+	// The climate laid on a temperate world's terrain (an Earth's 5 km snowline): a locked one about the star's bearing,
+	// under the star 0.73 to 0.91 of the liquid range, on the terminator 0.11 to 0.29, the far side 0.2 to 0.6 below
+	// freezing; a spinning one warmer or colder by at most 0.12 of it at strangeness 1, about its poles still.
 	{
 		int32 LockedBad = 0, SpinBad = 0, Locks = 0, Spins = 0;
 		for (uint32 i = 1; i <= 400; ++i)
@@ -268,8 +268,8 @@ bool FSlonkGenomeRollsTest::RunTest(const FString& Parameters)
 			if (K.bTidallyLocked)
 			{
 				++Locks;
-				LockedBad += (P.Climate != EClimateModel::Locked || !P.ClimateAxis.Equals(Bearing.GetSafeNormal(), 1e-12) || P.DayN < 0.72f || P.DayN > 0.92f
-					|| P.TermN < 0.11f || P.TermN > 0.3f || P.NightN > -0.19f || P.NightN < -0.61f || P.WarmthN != 0.f) ? 1 : 0;
+				LockedBad += (P.Climate != EClimateModel::Locked || !P.ClimateAxis.Equals(Bearing.GetSafeNormal(), 1e-12) || P.DayN < 0.73f || P.DayN > 0.911f
+					|| P.TermN < 0.113f || P.TermN > 0.293f || P.NightN > -0.19f || P.NightN < -0.61f || P.WarmthN != 0.f) ? 1 : 0;
 			}
 			else
 			{
@@ -279,7 +279,7 @@ bool FSlonkGenomeRollsTest::RunTest(const FString& Parameters)
 		}
 		AddInfo(FString::Printf(TEXT("400 temperate worlds at strangeness 1 close in: %d locked, %d spinning; %d and %d with a climate out of its ranges"), Locks, Spins, LockedBad, SpinBad));
 		TestTrue(TEXT("close in, most strange worlds lock and some spin"), Locks > 300 && Spins > 20);
-		TestEqual(TEXT("a locked world's climate is laid about its star at an Earth's numbers"), LockedBad, 0);
+		TestEqual(TEXT("a locked temperate world's climate is laid about its star at an Earth's numbers"), LockedBad, 0);
 		TestEqual(TEXT("a spinning one's is its warmth"), SpinBad, 0);
 	}
 

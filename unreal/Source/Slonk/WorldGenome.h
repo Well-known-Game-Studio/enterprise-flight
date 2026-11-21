@@ -60,7 +60,8 @@ struct FWorldGenome
 	 *  strangeness 1, about 1.8 km of snowline): unused while it is locked. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Genome") float WarmthN = 0.f;
 	/** A locked world's heat under the star and on its terminator, as multiples of the Earth-like version's equatorial
-	 *  sea temperature, and how far below freezing its far side lies, as a share of the liquid range. */
+	 *  sea temperature (the archetype's own snowline cooled to the sea, not an Earth's), and how far below freezing its
+	 *  far side lies, as a share of the liquid range. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Genome") float DayHeat = 0.f;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Genome") float TermHeat = 0.f;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Genome") float NightCold = 0.f;
