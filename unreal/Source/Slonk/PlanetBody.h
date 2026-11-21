@@ -314,6 +314,8 @@ public:
 	/** How much grows on the ground, 0..1 (TerrainScatter.h): grass, bushes and forest on an Earth-like or ocean
 	 *  world, a little scrub on a desert, nothing on the dead ones. */
 	float GroundLife() const;
+	/** The same for a world of a kind, with air or without: nothing grows without it. */
+	static float GroundLifeOf(EPlanetArchetype Kind, bool bAtmosphere);
 	/** The night-side lights set from outside (a colony founded, a world struck): the style is kept from here on. A
 	 *  native people whose lights are put out is gone. */
 	void SetNightLights(float Intensity);
@@ -550,6 +552,13 @@ private:
 	float LayerReachKm = 1.0e9f;
 	bool bTerrainActive = false;
 	float SkyBehind = 0.f;
+	/** Whether the seas carry life (SlonkFauna::SeaLifeOf, set with the terrain material's parameters): a ship hovering
+	 *  low stirs only a living sea's plankton. */
+	bool bLivingSea = false;
+	/** The ship's stir last given the terrain material (ShipStir), so it is sent only as it changes, and when a craft
+	 *  last gave it: a wake nobody keeps up (the craft gone, or another world under it) is cleared. */
+	float ShipStirApplied = 0.f;
+	double ShipWakeAt = -1.0;
 	FPlanetTerrainParams TerrainParams;
 	bool bDetailActive = false;
 	bool bBeyondHorizon = false;
@@ -569,6 +578,16 @@ private:
 	FVector CityNearCentre = FVector(1.0e30, 0.0, 0.0);
 	void UpdateNearCollision(const FVector& ViewLocal, bool bForce);
 public:
+	/** A craft hovering within ShipStirAltitudeCm above a living sea's level stirs it (ShipStirOf): the terrain material
+	 *  spreads a wake round the point on the sea under it (ShipGroundPos), the stronger the lower it hovers, on the
+	 *  water alone. The player's craft calls it every frame once it has moved (its own tick, after the worlds'); null
+	 *  clears the wake. */
+	void UpdateShipWake(const APawn* Pawn);
+	/** How hard a craft stirs the sea under it, 0 to 1, from its place relative to the world's centre (cm): 1 at the
+	 *  sea-level sphere of SeaRadiusCm, falling to 0 at ShipStirAltitudeCm above it. Measured over the sea, not over
+	 *  the ground under the craft, so a craft over a cliff top or high ground stirs no sea far below it; and a craft
+	 *  set down (bLanded) has no downwash and stirs nothing. */
+	static float ShipStirOf(const FVector& FromCentreCm, double SeaRadiusCm, bool bLanded);
 	/** Give the buildings and the rocks around a world position their collision now (they normally carry it only
 	 *  near the view, or round someone on the ground): for a trace at a transporter's destination far below the ship. */
 	void PrepareGroundCollisionAt(const FVector& WorldPos, float Seconds = 10.f);

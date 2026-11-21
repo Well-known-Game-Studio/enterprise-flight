@@ -154,6 +154,8 @@ public:
 	// ---- On foot ----
 	/** The crew member out of the craft (null while everyone is aboard). */
 	UPROPERTY(BlueprintReadOnly, Category = "Person") TWeakObjectPtr<APersonPawn> ActivePerson;
+	/** The world whose sea this craft last stirred (APlanetBody::UpdateShipWake), cleared when it flies off it. */
+	TWeakObjectPtr<class APlanetBody> WakeBody;
 	/** Stepped into the car: the deck buttons come up once the rider is clear of the doors' sensor. */
 	bool bLiftPanelPending = false;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Person") TSubclassOf<APersonPawn> PersonClass;

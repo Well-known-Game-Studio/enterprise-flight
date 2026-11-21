@@ -148,4 +148,18 @@ namespace SlonkScatter
 	/** The material's scrub dot in the cell holding a point of noise space, exactly as the shader hashes it: false if
 	 *  the cell has none; else the dot's centre (noise space) and radius, cm. */
 	SLONK_API bool ScrubDotAt(const FVector& NoiseP, FVector& OutCentre, double& OutRadiusCm);
+
+	/** What a spot offers whatever lives there, read from the field rather than from a chunk's drawn mesh (finer than
+	 *  ten metres left out, near enough for a habitat): how wet it is, the regimes a chunk reads from the slope (level
+	 *  ground, a cliff, the foot of a wall), how likely a tree is to stand there (TreeDensity, before the world's life),
+	 *  the height over the snowline (0 at the sea, 1 at the snowline) and the ice; and over water, how deep it is. */
+	struct FHabitat
+	{
+		double Wet = 0.0, Flat = 0.0, Cliff = 0.0, WallFoot = 0.0, Forest = 0.0, Alpine = 0.0, Ice = 0.0;
+		bool bWater = false;
+		/** The water's depth over the ground (0 on land) and the height above the sea-level sphere, cm. */
+		double DepthCm = 0.0, HeightCm = 0.0;
+	};
+	/** The habitat at a unit direction, planet-local. A pure function of the planet, safe off the game thread. */
+	SLONK_API FHabitat HabitatAt(const FPlanetTerrainParams& P, const FVector& Dir);
 }

@@ -2,14 +2,10 @@
 
 #include "DynamicMesh/DynamicMesh3.h"
 #include "DynamicMesh/DynamicMeshAttributeSet.h"
-#include "DynamicMeshToMeshDescription.h"
 #include "Engine/StaticMesh.h"
 #include "HAL/IConsoleManager.h"
-#include "MeshDescription.h"
 #include "PhysicsEngine/BodySetup.h"
-#include "StaticMeshAttributes.h"
-#include "StaticMeshResources.h"
-#include "UObject/Package.h"
+#include "ProcMeshBuild.h"
 
 using namespace UE::Geometry;
 
@@ -17,8 +13,10 @@ namespace
 {
 	TArray<UStaticMesh*> GPlants;
 
+	using SlonkProcMesh::FBuild;
 	// Vertex colour alpha: the surface kind the material masks by.
-	constexpr float SolidSurface = 0.f, LeafCard = 0.4f, NeedleCard = 1.f;
+	using SlonkProcMesh::SolidSurface;
+	constexpr float LeafCard = 0.4f, NeedleCard = 1.f;
 	/** The screen size at which a tree goes to its far crown: the engine's, the diameter over the screen's of the sphere
 	 *  round the box the GPU bounds an instance by (UPlanetInstancesComponent's, padded for the wind: about 1.27 of the
 	 *  tree's height across), so a 15 m tree about 2 km off, 6-7 pixels tall. slonk.Plants.FarCrownScreenSize overrides
@@ -27,89 +25,6 @@ namespace
 	float FarCrownScreenSize = 0.016f;
 	FAutoConsoleVariableRef CVarFarCrownScreenSize(TEXT("slonk.Plants.FarCrownScreenSize"), FarCrownScreenSize,
 		TEXT("Screen size at which a tree's mesh goes to its solid far crown (0.002-0.06; read when the plant meshes are made, once a process)"));
-
-	/** A mesh of unshared vertices, each with its own normal, UV and colour, so a blade or a card is lit as itself.
-	 *  Elements are appended in step with the vertices, so an element's id is its vertex's. */
-	struct FBuild
-	{
-		FDynamicMesh3 Mesh;
-		FDynamicMeshNormalOverlay* N = nullptr;
-		FDynamicMeshUVOverlay* UV = nullptr;
-		FDynamicMeshColorOverlay* C = nullptr;
-		FBuild()
-		{
-			Mesh.EnableAttributes();
-			Mesh.Attributes()->EnablePrimaryColors();
-			N = Mesh.Attributes()->PrimaryNormals();
-			UV = Mesh.Attributes()->PrimaryUV();
-			C = Mesh.Attributes()->PrimaryColors();
-		}
-		int32 Vert(const FVector& P, const FVector& Nrm, const FVector2f& T, const FVector4f& Col)
-		{
-			const int32 V = Mesh.AppendVertex(P);
-			N->AppendElement(FVector3f(Nrm.GetSafeNormal()));
-			UV->AppendElement(T);
-			C->AppendElement(Col);
-			return V;
-		}
-		void Tri(int32 A, int32 B, int32 D)
-		{
-			const FIndex3i T(A, B, D);
-			const int32 Tid = Mesh.AppendTriangle(T);
-			if (Tid >= 0) { N->SetTriangle(Tid, T); UV->SetTriangle(Tid, T); C->SetTriangle(Tid, T); }
-		}
-		void Quad(int32 A, int32 B, int32 D, int32 E) { Tri(A, B, D); Tri(A, D, E); }
-
-		/** A tapering tube along a path (a trunk, a branch, a stem): rings of Sides, normals out from the axis. */
-		void Tube(const TArray<FVector>& Path, const TArray<double>& Radii, int32 Sides, double Sway0, double Sway1, float Rand)
-		{
-			if (Path.Num() < 2 || Sides < 3) { return; }
-			FVector Ax = FVector::ZeroVector;
-			TArray<int32> Prev;
-			for (int32 r = 0; r < Path.Num(); ++r)
-			{
-				const FVector T = (Path[FMath::Min(r + 1, Path.Num() - 1)] - Path[FMath::Max(r - 1, 0)]).GetSafeNormal();
-				// The ring's frame is carried along the path, so the tube does not twist.
-				if (Ax.IsZero()) { Ax = FVector::CrossProduct(T, FMath::Abs(T.Z) < 0.9 ? FVector::ZAxisVector : FVector::XAxisVector).GetSafeNormal(); }
-				Ax = (Ax - T * FVector::DotProduct(Ax, T)).GetSafeNormal();
-				const FVector Ay = FVector::CrossProduct(T, Ax);
-				const double F = (double)r / (Path.Num() - 1);
-				const float Sw = (float)FMath::Lerp(Sway0, Sway1, F);
-				TArray<int32> Ring;
-				for (int32 s = 0; s <= Sides; ++s)
-				{
-					const double A = UE_DOUBLE_TWO_PI * s / Sides;
-					const FVector D = Ax * FMath::Cos(A) + Ay * FMath::Sin(A);
-					Ring.Add(Vert(Path[r] + D * Radii[r], D, FVector2f((float)s / Sides, (float)F), FVector4f(0.f, Sw, Rand, SolidSurface)));
-				}
-				if (Prev.Num() > 0)
-				{
-					// Wound outward, its front the side its normals point to, as every part of a plant is (the material is
-					// two-sided, so the other winding draws too, its faces seen from behind).
-					for (int32 s = 0; s < Sides; ++s) { Quad(Prev[s], Ring[s], Ring[s + 1], Prev[s + 1]); }
-				}
-				Prev = MoveTemp(Ring);
-			}
-		}
-
-		/** A leaf card: a quad facing Out, its normals bent toward Bend (out from the crown) so a crown is lit as a
-		 *  mass rather than as a hundred flat planes. */
-		void Card(const FVector& Centre, const FVector& Out, const FVector& Right, double W, double H, const FVector& Bend, float SwayLo, float SwayHi, float Rand, float Kind)
-		{
-			const FVector Up = FVector::CrossProduct(Out, Right).GetSafeNormal();
-			const FVector R = Right * (W * 0.5), U = Up * (H * 0.5);
-			const FVector Corner[4] = { Centre - R - U, Centre + R - U, Centre + R + U, Centre - R + U };
-			const FVector2f T[4] = { FVector2f(0.f, 0.f), FVector2f(1.f, 0.f), FVector2f(1.f, 1.f), FVector2f(0.f, 1.f) };
-			int32 V[4];
-			for (int32 i = 0; i < 4; ++i)
-			{
-				const FVector Nrm = Bend * 0.65 + Out * 0.35 + (Corner[i] - Centre).GetSafeNormal() * 0.2;
-				V[i] = Vert(Corner[i], Nrm, T[i], FVector4f(1.f, i < 2 ? SwayLo : SwayHi, Rand, Kind));
-			}
-			// Its front toward Out, the side its normals lean to, so the crown is lit from outside.
-			Quad(V[0], V[3], V[2], V[1]);
-		}
-	};
 
 	/** A random direction with a lean toward the sky: crowns are lit and seen from above. */
 	FVector Upward(FRandomStream& Rng, double Lean)
@@ -371,48 +286,16 @@ UStaticMesh* SlonkPlants::GetMesh(EPlant Kind)
 
 	const int32 Lods = NumLods((EPlant)K);
 	FDynamicMesh3 Built[4];
-	FMeshDescription MD[4];
-	TArray<const FMeshDescription*> Descs;
-	FDynamicMeshToMeshDescription Converter;
-	for (int32 L = 0; L < Lods; ++L)
-	{
-		BuildLod((EPlant)K, L, Built[L]);
-		FStaticMeshAttributes(MD[L]).Register();
-		Converter.Convert(&Built[L], MD[L], false);
-		Descs.Add(&MD[L]);
-	}
-	UStaticMesh* Mesh = NewObject<UStaticMesh>(GetTransientPackage(), *FString::Printf(TEXT("SlonkPlant%d"), K), RF_Transient);
-	Mesh->AddToRoot();
-	FStaticMaterial PlantMaterial(nullptr, TEXT("Plant"));
-#if WITH_EDITORONLY_DATA
-	PlantMaterial.ImportedMaterialSlotName = TEXT("Plant");
-#endif
-	Mesh->GetStaticMaterials().Add(PlantMaterial);
-	UStaticMesh::FBuildMeshDescriptionsParams Params;
-	Params.bFastBuild = true;
-	Params.bMarkPackageDirty = false;
-	Params.bCommitMeshDescription = false;
-	Params.bBuildSimpleCollision = false;
-	Mesh->BuildFromMeshDescriptions(Descs, Params);
-	if (FStaticMeshRenderData* RD = Mesh->GetRenderData())
-	{
-		// Trees hold their detail further than a tuft of grass does, and go to their solid crown (FarCrown) a few pixels
-		// tall: a 15 m tree about 2 km off.
-		const bool bTree = (EPlant)K == EPlant::Broadleaf || (EPlant)K == EPlant::Conifer;
-		RD->ScreenSize[0].Default = 1.f;
-		RD->ScreenSize[1].Default = bTree ? 0.25f : 0.12f;
-		RD->ScreenSize[2].Default = bTree ? 0.07f : 0.035f;
-		if (Lods > 3) { RD->ScreenSize[3].Default = FMath::Clamp(FarCrownScreenSize, 0.002f, 0.06f); }
-	}
+	for (int32 L = 0; L < Lods; ++L) { BuildLod((EPlant)K, L, Built[L]); }
+	// Trees hold their detail further than a tuft of grass does, and go to their solid crown (FarCrown) a few pixels
+	// tall: a 15 m tree about 2 km off.
+	const bool bTree = (EPlant)K == EPlant::Broadleaf || (EPlant)K == EPlant::Conifer;
+	const float ScreenSizes[4] = { 1.f, bTree ? 0.25f : 0.12f, bTree ? 0.07f : 0.035f, FMath::Clamp(FarCrownScreenSize, 0.002f, 0.06f) };
 	// The wind (M_Foliage) bends a plant by up to 3% of its height and flutters its leaves a centimetre on top, past the
 	// mesh's own box: the instances are culled by these bounds, so they take the sway in, in the unit mesh's own
 	// terms (a percent of the height is a unit; a centimetre is several on a tuft of grass a quarter of a metre tall).
-	{
-		const FVector Sway = (EPlant)K == EPlant::Grass ? FVector(6.0) : FVector(4.0, 4.0, 2.0);
-		Mesh->SetPositiveBoundsExtension(Sway);
-		Mesh->SetNegativeBoundsExtension(Sway);
-		Mesh->CalculateExtendedBounds();
-	}
+	const FVector Sway = (EPlant)K == EPlant::Grass ? FVector(6.0) : FVector(4.0, 4.0, 2.0);
+	UStaticMesh* Mesh = SlonkProcMesh::MakeStaticMesh(*FString::Printf(TEXT("SlonkPlant%d"), K), TEXT("Plant"), TArrayView<const FDynamicMesh3>(Built, Lods), ScreenSizes, Sway);
 	// A capsule round a tree's trunk, so the crew walk round it; grass and bushes are walked through.
 	if ((EPlant)K == EPlant::Broadleaf || (EPlant)K == EPlant::Conifer)
 	{
