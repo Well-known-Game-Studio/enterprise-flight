@@ -313,6 +313,13 @@ namespace
 		double Alpine = 0.0;
 		/** How cold it is for what grows, 0 in a warm lowland: the snowline's drop toward the poles, and the height. */
 		double Cold = 0.0;
+		/** On a tidally locked world (FPlanetTerrainParams::Climate Locked): the air's temperature there as a share of the
+		 *  solvent's liquid range (SlonkTerrain::TemperatureN), which bakes the forest and the grass out past three
+		 *  quarters of it and leaves a tundra under the trees' cold limit. A spinning world's warmth only moves its
+		 *  snowline, so its trees follow the snowline as on a world with no climate of its own, and a faintly strange
+		 *  world grows what its strangeness-0 twin does. */
+		bool bClimate = false;
+		double Heat = 0.0;
 	};
 	FClimate ClimateAt(const FPlanetTerrainParams& P, const FSpot& Sp)
 	{
@@ -323,6 +330,11 @@ namespace
 		const double Line = SlonkTerrain::SnowlineCm(Q, Sp.Up);
 		C.Alpine = FMath::Clamp(FMath::Max(Sp.HeightCm, 0.0) / FMath::Max(Line, 1.0), 0.0, 1.5);
 		C.Cold = FMath::Clamp(1.0 - Line / Q.SnowlineCm + 0.5 * C.Alpine, 0.0, 1.5);
+		if (P.Climate == EClimateModel::Locked)
+		{
+			C.bClimate = true;
+			C.Heat = SlonkTerrain::TemperatureN(P, Sp.Up, Sp.HeightCm);
+		}
 		return C;
 	}
 
@@ -339,9 +351,12 @@ namespace
 	double TreeDensity(const FSpot& Sp, const FClimate& Clim, double Forest)
 	{
 		const double SnowLying = SmoothStep(0.2, 0.6, Sp.Ice);
-		return (Forest * SmoothStep(0.3, 0.65, Sp.Wet) * (1.0 - SmoothStep(0.35, 0.75, Sp.Slope)) * (1.0 - 0.7 * Sp.Rocky) * 0.8
+		const double D = (Forest * SmoothStep(0.3, 0.65, Sp.Wet) * (1.0 - SmoothStep(0.35, 0.75, Sp.Slope)) * (1.0 - 0.7 * Sp.Rocky) * 0.8
 			+ Sp.Gorge * Sp.Wet * 0.35)
 			* (1.0 - SmoothStep(0.65, 0.9, Clim.Alpine)) * (1.0 - SnowLying);
+		// A climate of its own: no tree where the air runs past three quarters of the liquid range, and none in the tundra
+		// just above freezing, where only the grass holds on.
+		return Clim.bClimate ? D * (1.0 - SmoothStep(0.45, 0.75, Clim.Heat)) * SmoothStep(0.0, 0.06, Clim.Heat) : D;
 	}
 
 	/** How parched a plant is, 0 lush to 1 dry: the per-instance dryness the foliage material yellows it by. */
@@ -524,6 +539,8 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 				{
 					Density = SmoothStep(0.15, 0.45, Sp.Wet) * (1.0 - SmoothStep(0.3, 0.7, Sp.Slope)) * (1.0 - Sp.Rocky) * (1.0 - SnowLying)
 						* (1.0 - SmoothStep(0.75, 1.0, Clim.Alpine)) * (1.0 - 0.5 * Forest * Sp.Wet) * 0.9;
+					// The grass holds on into more heat than the trees: it thins out past seven tenths of the liquid range.
+					if (Clim.bClimate) { Density *= 1.0 - SmoothStep(0.7, 0.95, Clim.Heat); }
 				}
 				Density *= S.Life;
 			}

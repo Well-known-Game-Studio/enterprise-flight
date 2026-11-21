@@ -1995,15 +1995,19 @@ void AStarshipPawn::ProcessDebugCommand()
 	}
 	else if (Op == TEXT("spawnplanet"))
 	{
-		// spawnplanet <archetype> [radius km] [hazy] [strange <0..1>] [seed <n>]: a planet of that archetype four radii
-		// ahead, for looking at worlds the system did not roll. "hazy" re-rolls a moon's seed until it comes out with
-		// the orange haze; "strange" gives it a genome that far from Earth's (FWorldGenome), "seed" another roll of it.
+		// spawnplanet <archetype> [radius km] [hazy] [strange <0..1>] [seed <n>] [locked]: a planet of that archetype four
+		// radii ahead, for looking at worlds the system did not roll. "hazy" re-rolls a moon's seed until it comes out with
+		// the orange haze; "strange" gives it a genome that far from Earth's (FWorldGenome), "seed" another roll of it;
+		// "locked" holds it to the nearest star by the tides (at least half strange, so it has a genome to lock), its
+		// climate laid about that star's bearing.
 		const FString Kind = ArgStr(1);
 		float Strange = 0.f; int32 SeedPick = 0;
+		bool bLocked = false;
 		for (int32 i = 2; i < 10; ++i)
 		{
 			if (ArgStr(i) == TEXT("strange")) { Strange = FMath::Clamp(Arg(i + 1, 0.f), 0.f, 1.f); }
 			if (ArgStr(i) == TEXT("seed")) { SeedPick = (int32)Arg(i + 1, 0.f); }
+			if (ArgStr(i) == TEXT("locked")) { bLocked = true; }
 		}
 		static const TMap<FString, TPair<EPlanetArchetype, float>> Kinds = {
 			{ TEXT("terrestrial"), { EPlanetArchetype::Terrestrial, 6371.f } }, { TEXT("ocean"), { EPlanetArchetype::Ocean, 6800.f } },
@@ -2013,6 +2017,12 @@ void AStarshipPawn::ProcessDebugCommand()
 			{ TEXT("mars"), { EPlanetArchetype::Mars, 3390.f } }, { TEXT("icegiant"), { EPlanetArchetype::IceGiant, 25000.f } } };
 		if (const TPair<EPlanetArchetype, float>* K = Kinds.Find(Kind))
 		{
+			if (bLocked && !SlonkGenome::HasClimate(K->Key))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("spawnplanet: a %s world has no climate to lock (temperate, ocean, desert and ice worlds do); it spins"), *Kind);
+				bLocked = false;
+			}
+			if (bLocked) { Strange = FMath::Max(Strange, 0.5f); }
 			const float RadiusKm = Arg(2, 0.f) > 0.f ? Arg(2, 0.f) : K->Value;
 			const bool bHazy = ArgStr(3) == TEXT("hazy");
 			// Four radii ahead, stepped sideways until it is clear of every other body by three radii (three
@@ -2028,12 +2038,27 @@ void AStarshipPawn::ProcessDebugCommand()
 				if (bClear) { break; }
 				Loc += GetActorRightVector() * (RadiusKm * 1.0e5 * 8.0);
 			}
+			// The bearing of the nearest star, as the world will find it for its light (APlanetBody::UpdateStarDirection):
+			// the climate of a locked world is laid about it. None, or nothing asked for, leaves it zero.
+			FVector Bearing = FVector::ZeroVector;
+			if (bLocked)
+			{
+				double BestD = TNumericLimits<double>::Max();
+				for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+				{
+					if (!It->ActorHasTag(APlanetBody::StarTag)) { continue; }
+					const double D = FVector::DistSquared(It->GetActorLocation(), Loc);
+					if (D < BestD) { BestD = D; Bearing = (It->GetActorLocation() - Loc).GetSafeNormal(); }
+				}
+				if (Bearing.IsNearlyZero()) { UE_LOG(LogTemp, Warning, TEXT("spawnplanet: no star to lock the world to; it spins")); }
+			}
 			for (int32 Attempt = 0; Attempt < 40; ++Attempt)
 			{
 				FActorSpawnParameters SP; SP.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 				APlanetBody* P = GetWorld()->SpawnActorDeferred<APlanetBody>(APlanetBody::StaticClass(), FTransform(Loc), nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
 				if (!P) { break; }
 				P->Archetype = K->Key; P->RadiusKm = RadiusKm; P->Strangeness = Strange;
+				P->StarBearing = Bearing; P->bForceTidalLock = bLocked;
 				P->SeedLocation = Loc + FVector((Attempt + SeedPick) * 1.0e9, 0.0, 0.0); P->bSeedLocationSet = true;
 				P->FinishSpawning(FTransform(Loc));
 				if (!bHazy || P->bHazyMoon)
@@ -2093,7 +2118,8 @@ void AStarshipPawn::ProcessDebugCommand()
 	else if (Op == TEXT("terrain") && Movement && (ArgStr(1) == TEXT("goto") || ArgStr(1) == TEXT("glide")))
 	{
 		// terrain goto <canyon|mesa|badlands|mountain|coast|land> <altitude m> [heading: across|sun|away]: park over that feature of
-		// the nearest planet, level, nose along the horizon. "across" flies with the sun on the beam.
+		// the nearest planet, level, nose along the horizon. "across" flies with the sun on the beam. On a world the tides
+		// hold, also <substellar|ring|nightcap>: under the star, the temperate ring's sunlit edge, the far side's ice.
 		// terrain glide <the same> <seconds>: fly there over that long instead (UStarshipMovementComponent::StartGlide).
 		const bool bGlide = ArgStr(1) == TEXT("glide");
 		APlanetBody* Planet = Cast<APlanetBody>(Movement->GroundBody.Get());
@@ -2296,6 +2322,12 @@ void AStarshipPawn::ProcessDebugCommand()
 			Planet->SpinDegPerSec = Arg(1, 0.f);
 			UE_LOG(LogTemp, Log, TEXT("%s spins %.4f deg/s%s"), *Planet->GetDisplayName(), Planet->SpinDegPerSec,
 				Planet->IsSpinHeld() ? TEXT(" (held while you are near its surface: slonk.Planet.HoldSpin 0 to let it turn)") : TEXT(""));
+			// Its climate stays laid about the star's bearing, so turned it carries the baked side and the night's ice away
+			// from where the star stands.
+			if (Planet->IsTidallyLocked() && !FMath::IsNearlyZero(Planet->SpinDegPerSec))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("%s is tidally locked: turning it moves its climate off the star (the day side's heat and the night's ice turn with the ground)"), *Planet->GetDisplayName());
+			}
 		}
 	}
 	else if (Op == TEXT("terrain") && Movement)
@@ -2629,8 +2661,8 @@ void AStarshipPawn::ProcessDebugCommand()
 			TEXT("ship impact [status|raise [<world>]|deflect|shatter|hit]  (a rock on a course for an inhabited world; the dev ops for testing)"),
 			TEXT("ship camera [chase|bridge|cinematic|front|port|starboard|top|bottom] | zoom <x> | look <yaw> <pitch> [s]"),
 			TEXT("ship warpvis [classic|real] | cscale <0..1> | systems | shipwarp [km] [far]"),
-			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mesa|badlands|cliffs|city|mountain|coast|river|linea|green|land> <alt m> [across|sun|away|along|uphill|giant] [night] | terrain rocks [on|off|density <x>|check]"),
-			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km] | people [none|stone|iron|industrial|modern|starfaring] [organic] [cliff]"),
+			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mesa|badlands|cliffs|city|mountain|coast|river|linea|green|land|substellar|ring|nightcap> <alt m> [across|sun|away|along|uphill|giant] [night] | terrain rocks [on|off|density <x>|check]"),
+			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km] [hazy] [strange <0..1>] [seed <n>] [locked] | people [none|stone|iron|industrial|modern|starfaring] [organic] [cliff]"),
 			TEXT("ship shuttle  (launch the shuttlecraft; aboard it, dock when the bay is within 500 m) | ship takeoff"),
 			TEXT("ship scan [stop]  (sensors on the locked / nav target; landed: survey the ground) | ship science [reset]"),
 			TEXT("ship ui menu | chart | science | engineering | tactical | medical | crew | msd | controls | settings | close | click <button>   (the LCARS panels)"),

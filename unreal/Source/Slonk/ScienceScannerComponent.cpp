@@ -393,7 +393,11 @@ void UScienceScannerComponent::FactsForWorld(const APlanetBody* P, FScanRecord& 
 	R.Facts.Add(WorldClass(P));
 	const double Gravity = GravityG(P);
 	R.Facts.Add(FString::Printf(TEXT("Diameter %s, surface gravity %.2f g (est.)"), *Km(2.0 * P->GetRadiusCm()), Gravity));
-	if (P->SpinDegPerSec > 1.0e-6f)
+	if (P->IsTidallyLocked())
+	{
+		R.Facts.Add(TEXT("Tidally locked: one face always turned to the star"));
+	}
+	else if (P->SpinDegPerSec > 1.0e-6f)
 	{
 		const double Hours = 360.0 / P->SpinDegPerSec / 3600.0;
 		R.Facts.Add(Hours < 48.0 ? FString::Printf(TEXT("Rotation period %.1f h"), Hours) : FString::Printf(TEXT("Rotation period %.1f days"), Hours / 24.0));
@@ -455,11 +459,29 @@ void UScienceScannerComponent::FactsForWorld(const APlanetBody* P, FScanRecord& 
 		if (S.SeaLevel > 0.95f) { Surface.Add(TEXT("global ocean")); }
 		else if (S.SeaLevel > 0.05f) { Surface.Add(FString::Printf(TEXT("oceans over ~%d%%"), FMath::RoundToInt(S.SeaLevel * 100.f))); }
 		if (S.IceCapStart < 1.5f) { Surface.Add(TEXT("polar ice caps")); }
+		// A locked world's climate is its own: the far side's ice, the side under the star dried as its heat runs from
+		// half the liquid range to 0.85 of it (baked once the ground keeps under 0.3 of its wet, past 0.72), and the ring
+		// between where its seas stay liquid.
+		const FPlanetTerrainParams TP = P->MakeTerrainParams();
+		const bool bLocked = TP.Climate == EClimateModel::Locked;
+		if (bLocked)
+		{
+			if (TP.NightN < 0.f) { Surface.Add(TEXT("an ice cap over the night side")); }
+			if (TP.DayN > 0.72f) { Surface.Add(TEXT("a baked day side")); }
+			else if (TP.DayN > 0.5f) { Surface.Add(TEXT("a hot day side")); }
+			if (TP.TermN > 0.f) { Surface.Add(TEXT("a temperate ring along the terminator")); }
+		}
 		if (S.LavaEmissive > 0.01f) { Surface.Add(TEXT("active volcanism")); }
 		if (S.CraterStrength > 0.3f) { Surface.Add(TEXT("heavily cratered")); }
 		if (S.MariaStrength > 0.3f) { Surface.Add(TEXT("basaltic maria")); }
 		if (S.Lineae > 0.05f) { Surface.Add(TEXT("surface lineae")); }
 		if (Surface.Num() > 0) { R.Facts.Add(TEXT("Surface: ") + FString::Join(Surface, TEXT(", "))); }
+		if (bLocked)
+		{
+			// The sea-level temperatures, in kelvin of the world's own seas' freezing point and liquid range.
+			const float F = SlonkGenome::FreezeK(P->Genome.Solvent), Rk = SlonkGenome::RangeK(P->Genome.Solvent);
+			R.Facts.Add(FString::Printf(TEXT("Surface temperature %.0f K under the star, %.0f K on the terminator, %.0f K on the far side"), F + Rk * TP.DayN, F + Rk * TP.TermN, F + Rk * TP.NightN));
+		}
 	}
 	if (S.bRings) { R.Facts.Add(FString::Printf(TEXT("Ring system from %.1f to %.1f radii"), S.RingInner, S.RingOuter)); }
 	// Who lives here, and how they build; the lights alone for the Federation's own colonists.
