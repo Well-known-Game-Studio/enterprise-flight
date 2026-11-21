@@ -1520,6 +1520,19 @@ void AStarshipPawn::Tick(float DeltaTime)
 	}
 	FSlonkScopeTimer SlonkTimer_(TEXT("Tick StarshipPawn"));
 	Super::Tick(DeltaTime);
+	// The wake under the player's craft, given to the world below once the craft has moved this frame (the worlds tick
+	// before it, so theirs would trail it): the craft flown, or the one the crew stepped out of, still hovering.
+	{
+		const APawn* Player = UGameplayStatics::GetPlayerPawn(this, 0);
+		const APersonPawn* Person = Cast<APersonPawn>(Player);
+		if (Player == this || (Person && Person->Craft.Get() == this))
+		{
+			APlanetBody* Ground = Movement ? Cast<APlanetBody>(Movement->GroundBody.Get()) : nullptr;
+			if (WakeBody.IsValid() && WakeBody.Get() != Ground) { WakeBody->UpdateShipWake(nullptr); }
+			if (Ground) { Ground->UpdateShipWake(this); }
+			WakeBody = Ground;
+		}
+	}
 	TickScript();
 	ProcessDebugCommand();
 	TickClock(DeltaTime);

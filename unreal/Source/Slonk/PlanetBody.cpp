@@ -1,5 +1,7 @@
 #include "PlanetBody.h"
 #include "PlanetTerrainComponent.h"
+#include "FaunaProfile.h"
+#include "StarshipMovementComponent.h"
 #include "GameClock.h"
 #include "PlanetWeather.h"
 #include "PlanetCities.h"
@@ -1086,9 +1088,14 @@ bool APlanetBody::HasCities() const
 
 float APlanetBody::GroundLife() const
 {
+	return GroundLifeOf(ResolvedArchetype, Style.bAtmosphere);
+}
+
+float APlanetBody::GroundLifeOf(EPlanetArchetype Kind, bool bAtmosphere)
+{
 	// Nothing grows without air, whatever the kind: a hand-tuned style can take a world's atmosphere away.
-	if (!Style.bAtmosphere) { return 0.f; }
-	switch (ResolvedArchetype)
+	if (!bAtmosphere) { return 0.f; }
+	switch (Kind)
 	{
 	case EPlanetArchetype::Terrestrial:
 	case EPlanetArchetype::Ocean: return 1.f;
@@ -1508,6 +1515,43 @@ void APlanetBody::ApplyTerrainMaterialParams()
 	Terrain->SetScalarParameter(TEXT("CloudScale"), S.CloudScale);
 	Terrain->SetScalarParameter(TEXT("Coverage"), S.bClouds ? S.CloudCoverage : 0.f);
 	Terrain->SetVectorParameter(TEXT("SunDirection"), FLinearColor(CachedStarDirection.X, CachedStarDirection.Y, CachedStarDirection.Z, 0.f));
+	// What the seas carry: plankton that glow where the sea is stirred at night, shoals under it by day, on a living
+	// world whose seas are liquid. A dead, airless or molten world's seas get none, which leaves them as they were.
+	const SlonkFauna::FSeaLife Sea = SlonkFauna::SeaLifeOf(S.LavaEmissive > 0.f ? 0.f : GroundLife(), Genome);
+	bLivingSea = Sea.PlanktonGlow > 0.f;
+	Terrain->SetScalarParameter(TEXT("PlanktonGlow"), Sea.PlanktonGlow);
+	Terrain->SetScalarParameter(TEXT("ShoalDensity"), Sea.ShoalDensity);
+	Terrain->SetVectorParameter(TEXT("PlanktonColor"), Sea.PlanktonColor);
+	// The ship's stir as last given, to a material made anew; none over a sea with nothing in it to stir.
+	if (!bLivingSea) { ShipStirApplied = 0.f; }
+	Terrain->SetScalarParameter(TEXT("ShipStir"), ShipStirApplied);
+}
+
+void APlanetBody::UpdateShipWake(const APawn* Pawn)
+{
+	if (!Terrain) { return; }
+	// Within a couple of hundred metres of the water: the downwash of a ship that low reaches it.
+	constexpr double ShipStirAltitudeCm = 20000.0;
+	float Stir = 0.f;
+	FVector Ground = FVector::ZeroVector;
+	if (Pawn && GetWorld()) { ShipWakeAt = GetWorld()->GetTimeSeconds(); }
+	if (bLivingSea && Pawn)
+	{
+		const UStarshipMovementComponent* M = Pawn->FindComponentByClass<UStarshipMovementComponent>();
+		if (M && M->GroundBody == this && M->AltitudeAGLCm >= 0.0 && M->AltitudeAGLCm < ShipStirAltitudeCm)
+		{
+			// The point under the ship on the ground or the sea, in the world, which the material measures the wake from.
+			const FVector Here = Pawn->GetActorLocation();
+			Ground = Here - (Here - GetActorLocation()).GetSafeNormal() * M->AltitudeAGLCm;
+			Stir = (float)FMath::Square(1.0 - M->AltitudeAGLCm / ShipStirAltitudeCm);
+		}
+	}
+	if (Stir > 0.f) { Terrain->SetVectorParameter(TEXT("ShipGroundPos"), FLinearColor((float)Ground.X, (float)Ground.Y, (float)Ground.Z, 0.f)); }
+	if (Stir != ShipStirApplied)
+	{
+		ShipStirApplied = Stir;
+		Terrain->SetScalarParameter(TEXT("ShipStir"), Stir);
+	}
 }
 
 double APlanetBody::GetSurfaceRadiusCm(const FVector& WorldPos) const
@@ -1796,6 +1840,8 @@ void APlanetBody::Tick(float DeltaTime)
 			PC->GetPlayerViewPoint(ViewLoc, ViewRot);
 			const APawn* Pawn = PC->GetPawn();
 			Terrain->UpdateView(ViewLoc, Pawn ? Pawn->GetActorLocation() : ViewLoc);
+			// The player's craft keeps its wake up from its own tick (UpdateShipWake); one it stopped keeping is cleared.
+			if (ShipStirApplied > 0.f && World->GetTimeSeconds() - ShipWakeAt > 0.5) { UpdateShipWake(nullptr); }
 			UpdateCities(ViewLoc, DeltaTime);
 		}
 	}

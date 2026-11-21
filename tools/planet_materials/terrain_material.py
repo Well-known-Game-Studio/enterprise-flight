@@ -586,12 +586,16 @@ float3 sea = lerp(ShallowColor, OceanColor, depth);
 // Rivers (water above sea level): darker, greener, silt in the shallows along the banks.
 float river = water * saturate(hN * ReliefCm / 500.0);
 sea = lerp(sea, float3(0.06, 0.16, 0.17) * (0.9 + 0.3 * (fb0 + 0.5)), river);
+// Night on the ground: the side turned from the sun, with a little of the twilight.
+float night = saturate(-dot(Nn, normalize(SunDirection)) * 6.0 + 0.1);
 // ---- The sea surface. Wind waves from a baked normal (T_Water_NR: normal xy, foam in A) at two scales that
 // scroll with time, laid down by a cube-face projection on the radial (one seam band per cube edge, lost in
 // the chop). They fade out by twenty kilometres so the sun glint from orbit falls on the smooth macro
 // surface, where any fine normal scattered it to nothing. The sand shows through the first metres of water,
-// foam lines the shore and rides the crests, and rivers get smaller ripples.
-float3 waterN = 0; float foam = 0;
+// foam lines the shore and rides the crests, and rivers get smaller ripples. On a living world (PlanktonGlow,
+// ShoalDensity) shoals swim under the surface and the plankton glow where the sea is stirred at night; a ship
+// hovering low over it (ShipStir) stirs it. All three are 0 on every other world, which skips them.
+float3 waterN = 0; float foam = 0; float plankton = 0.0;
 if (water > 0.001)
 {
     float3 aU = abs(U);
@@ -622,9 +626,109 @@ if (water > 0.001)
     float shore = (1.0 - smoothstep(0.0, 400.0, depthCm)) * (1.0 - river);
     foam = saturate(shore * (0.55 + 0.6 * w1.a + 0.3 * w2.a) + 0.35 * w1.a * w2.a * waveFade
         + 0.6 * smoothstep(0.55, 0.85, gd.z / max(SwellCm * 1.2, 1.0)) * w1.a * swellFade);
+    // A ship's wake (ShipStir, 1 hovering at the water and 0 from 200 m up; the game gives it only over a living sea):
+    // rings of foam spreading from the point under it (ShipGroundPos, world space), one every two seconds out to sixty
+    // metres, and the churn of its downwash below it. Measured across the sea's surface, so the swell does not move it.
+    float wake = 0.0;
+    if (ShipStir > 0.0)
+    {
+        float3 toShip = WP - ShipGroundPos.xyz;
+        float shipR = length(toShip - Nn * dot(toShip, Nn));
+        [unroll] for (int kr = 0; kr < 2; kr++)
+        {
+            float age = frac(Time * 0.25 + 0.5 * (float)kr);
+            float ringR = 600.0 + 5400.0 * age;
+            wake += (1.0 - smoothstep(0.0, 120.0 + 380.0 * age, abs(shipR - ringR))) * (1.0 - age) * smoothstep(0.0, 0.08, age);
+        }
+        wake = (wake + 1.0 - smoothstep(300.0, 1500.0, shipR)) * ShipStir * (1.0 - river);
+        foam = saturate(foam + wake * (0.35 + 0.65 * w1.a));
+    }
     float3 sand = LandColor2 * 0.85;
     sea = lerp(lerp(sand, sea, smoothstep(0.0, 600.0, depthCm)), sea, river);
+    // Shoals (ShoalDensity, the share of cells holding one): fish swimming 3 to 40 m down, dark shapes on the sea that
+    // fade the deeper they swim, the sun glinting off a flank here and there by day, gone by three kilometres. One in a
+    // cell of a lattice on the projection above (52 cells to the noise period, about 200 m), each swimming a loop round
+    // a point near the middle of its cell, so it never leaves it and only its own cell is looked at. SlonkFauna::ShoalAt
+    // (FaunaHabitat.cpp) mirrors this for the game: a change to the cells, the hash, the gate or the loop goes there too.
+    // Nothing of them shows in the dark of the night side, where they are left out.
+    float shoalFade = (1.0 - smoothstep(150000.0, 300000.0, dist)) * (1.0 - river) * (1.0 - SeaIce * smoothstep(0.4, 0.7, ice));
+    if (ShoalDensity > 0.0 && shoalFade > 0.0 && night < 1.0)
+    {
+        float scs = NoisePeriodCm / 52.0;
+        float2 sq = pu / scs; float2 sfl = floor(sq); float2 sfr = sq - sfl;
+        int2 sc = ((int2)sfl % 52 + 52) % 52;
+        uint sax = (aU.x >= aU.y && aU.x >= aU.z) ? 0u : (aU.y >= aU.z ? 1u : 2u);
+        uint sh = ((uint)sc.x * 73856093u) ^ ((uint)sc.y * 19349663u) ^ ((41u + sax) * 2654435761u);
+        sh = (sh ^ (sh >> 13)) * 0x5bd1e995u; sh ^= sh >> 15;
+        if ((float)(sh & 0xffu) / 255.0 < ShoalDensity)
+        {
+            uint sh2 = (sh ^ 0x9e3779b9u) * 0x85ebca6bu; sh2 ^= sh2 >> 13; sh2 *= 0xc2b2ae35u; sh2 ^= sh2 >> 16;
+            float2 sctr = 0.4 + 0.2 * float2((float)((sh >> 8) & 0xffu), (float)((sh >> 16) & 0xffu)) / 255.0;
+            float loopR = 0.08 + 0.07 * (float)((sh >> 24) & 0xffu) / 255.0;
+            float sdepth = 300.0 + 3700.0 * (float)(sh2 & 0xffu) / 255.0;
+            float sphase = 6.2831853 * (float)((sh2 >> 8) & 0xffu) / 255.0;
+            float sspeed = 60.0 + 90.0 * (float)((sh2 >> 16) & 0xffu) / 255.0;
+            float shalf = 0.06 + 0.09 * (float)((sh2 >> 24) & 0x7fu) / 127.0;
+            float sturn = (sh2 >> 31) != 0u ? -1.0 : 1.0;
+            float ssn, scn; sincos(sphase + sturn * sspeed / (loopR * scs) * Time, ssn, scn);
+            float2 sdir = sturn * float2(-ssn, scn);
+            float2 sd = sfr - (sctr + loopR * float2(scn, ssn));
+            float along = dot(sd, sdir), across = sd.y * sdir.x - sd.x * sdir.y;
+            float se = length(float2(along, across / 0.45)) / shalf;
+            if (se < 1.3)
+            {
+                // A school's edge wavers as its fish shift about.
+                se += 0.1 * sin(3.0 * atan2(across, along + 1e-6) + sphase + 0.7 * Time);
+                float scov = (1.0 - smoothstep(0.55, 1.0, se)) * shoalFade * (1.0 - 0.7 * smoothstep(300.0, 4000.0, sdepth))
+                    * smoothstep(sdepth + 50.0, sdepth + 300.0, depthCm);
+                sea *= 1.0 - 0.7 * scov;
+                // The glints: a speck in one in fourteen of the 120 cm cells of the school's own frame, each lit a quarter
+                // of a second at a time, by day, while a speck is still about a pixel across.
+                float2 gq = float2(along, across) * (scs / 120.0);
+                float2 gfl = floor(gq);
+                uint gh = ((uint)(int)gfl.x * 73856093u) ^ ((uint)(int)gfl.y * 19349663u) ^ ((uint)(int)floor(Time * 4.0) * 83492791u) ^ sh2;
+                gh = (gh ^ (gh >> 13)) * 0x5bd1e995u; gh ^= gh >> 15;
+                float glint = (gh & 0xffu) < 18u ? 1.0 - smoothstep(0.12, 0.35, length(gq - gfl - 0.5)) : 0.0;
+                sea = lerp(sea, float3(0.9, 0.93, 0.95), glint * scov * (1.0 - night) * saturate(120.0 / (dist * 0.0045) - 0.35));
+            }
+        }
+    }
     sea = lerp(sea, float3(0.88, 0.9, 0.92), foam);
+    // Plankton (PlanktonGlow): where a bloom drifts on the current (value noise of 26 cells to the noise period, about
+    // 400 m, moving through the sea with Time) the sea glows where it is stirred: in the foam (the swell's breaking
+    // crests, broken up by the water's own texture, so the glow never lines up with the swell's regular crests), all
+    // along the surf, and in a ship's wake. Given off at night only (Emis, at the end), in PlanktonColor, so
+    // left out by day, and where nothing stirs the sea (the open sea past the waves' twenty kilometres).
+    bool bGlowNight = PlanktonGlow > 0.0 && night > 0.0;
+    float stir = bGlowNight ? foam + shore * (0.3 + 0.7 * w1.a) + 4.0 * wake : 0.0;
+    // The bloom's 400 m cells even out to their mean once they are under a pixel, as the noise octaves do, so a night
+    // coast seen from high up glows steadily instead of in a crawling speckle.
+    float bloomFade = saturate((NoisePeriodCm / 26.0) / (dist * 0.0045) - 0.35);
+    float bloomV = 0.0;
+    if (bGlowNight && bloomFade > 0.0)
+    {
+        float3 pq = (p + Time * float3(23.0, -17.0, 11.0)) / (NoisePeriodCm / 26.0);
+        float3 pfl = floor(pq); float3 pfr = pq - pfl; pfr = pfr * pfr * (3.0 - 2.0 * pfr);
+        int3 pc0 = (int3)pfl;
+        float bh[8];
+        [unroll] for (int ib = 0; ib < 8; ib++)
+        {
+            int3 pc = ((pc0 + int3(ib & 1, (ib >> 1) & 1, (ib >> 2) & 1)) % 26 + 26) % 26;
+            uint hb = ((uint)pc.x * 73856093u) ^ ((uint)pc.y * 19349663u) ^ ((uint)pc.z * 83492791u) ^ (47u * 2654435761u);
+            hb = (hb ^ (hb >> 13)) * 0x5bd1e995u; hb ^= hb >> 15;
+            bh[ib] = (float)(hb & 0xffffu) / 65535.0;
+        }
+        bloomV = lerp(lerp(lerp(bh[0], bh[1], pfr.x), lerp(bh[2], bh[3], pfr.x), pfr.y), lerp(lerp(bh[4], bh[5], pfr.x), lerp(bh[6], bh[7], pfr.x), pfr.y), pfr.z);
+    }
+    if (bGlowNight)
+    {
+        // 0.35 and 0.1: about the means of the bloom's two smoothsteps over this value noise. Where a bloom is thickest
+        // the sea glows faintly of itself as well, unstirred (a milky sea), in drifting patches within twenty
+        // kilometres, gone before the night side is seen from orbit.
+        float stirred = lerp(0.35, smoothstep(0.35, 0.8, bloomV), bloomFade) * stir;
+        float milky = 0.35 * lerp(0.1, smoothstep(0.65, 0.95, bloomV), bloomFade) * (1.0 - smoothstep(2000000.0, 6000000.0, dist));
+        plankton = PlanktonGlow * (stirred + milky) * water * (1.0 - river) * (1.0 - SeaIce * smoothstep(0.4, 0.7, ice));
+    }
 }
 // Texture sets (see FUNCS): cliff on the steep ground, talus on rocky slopes, scrub where it is wet and flat,
 // soil elsewhere; the two or so layers present are blended by their heights. Each set modulates the colour
@@ -672,7 +776,6 @@ Rough = lerp(Rough, 0.8, linea * 0.5);
 Rough = lerp(Rough, 0.35, seaIce);
 AO = lerp(1.0, texOrm.r, nearFade * (1.0 - water));
 
-float night = saturate(-dot(Nn, normalize(SunDirection)) * 6.0 + 0.1);
 float lowland = 1.0 - saturate(hN * ReliefCm / 250000.0);
 // The settlement points were found above the forest, which their clearings thin.
 // SettleWet is the driest ground the world's people settle (Civilization.h: 0.3, or none at all for a desert people), as
@@ -781,6 +884,8 @@ if (water < 0.5 && lit > 0.0)
     base = lerp(base, wayCol, wayCover * (WayStyle > 1.5 && WayStyle < 2.5 ? 0.75 : 0.9));
 }
 Emis = NightLightColor * (NightLightIntensity * city * night + 0.35 * paving * night + 1.5 * wayGlow * night) + float3(1.0, 0.28, 0.05) * (LavaEmissive * water * (0.6 + 0.8 * (fb0 + 0.5)));
+// The plankton's glow, stirred in the sea above, by night.
+if (plankton > 0.0) { Emis += PlanktonColor.rgb * (plankton * night); }
 return base;
 """
 
@@ -793,7 +898,8 @@ WPO_INPUTS = ["Fn", "LP", "Col", "OX", "OY", "OZ", "ORX", "ORY", "ORZ", "Cam", "
 INPUTS = ["Fn", "N", "LP", "UV0", "UV1", "UV2", "UV3", "Col", "ColA", "OX", "OY", "OZ", "Cell", "ORX", "ORY", "ORZ", "Cam", "WP", "PlanetRadiusCm", "WaterNR", "Time", "SwellCm"] + TEX_INPUTS + [
           "OceanColor", "ShallowColor", "LandColor", "LandColor2", "MountainColor", "IceColor", "NightLightColor",
           "OceanRoughness", "LandRoughness", "NightLightIntensity", "LavaEmissive", "SunDirection",
-          "NoisePeriodCm", "ReliefCm", "OceanDepthCm", "TX", "TY", "TZ", "StreetGrid", "SettleWet", "SettleDensity", "WayStyle", "CliffAffinity", "CanopyShade", "CoverGain", "TreeLife", "Clearings", "SeaIce"]
+          "NoisePeriodCm", "ReliefCm", "OceanDepthCm", "TX", "TY", "TZ", "StreetGrid", "SettleWet", "SettleDensity", "WayStyle", "CliffAffinity", "CanopyShade", "CoverGain", "TreeLife", "Clearings", "SeaIce",
+          "PlanktonGlow", "PlanktonColor", "ShoalDensity", "ShipGroundPos", "ShipStir"]
 
 
 def build():
@@ -814,8 +920,13 @@ def build():
     vecs = {
         "OceanColor": (0.05, 0.17, 0.35), "ShallowColor": (0.1, 0.35, 0.5), "LandColor": (0.30, 0.36, 0.18), "LandColor2": (0.55, 0.45, 0.28),
         "MountainColor": (0.55, 0.52, 0.50), "IceColor": (0.90, 0.93, 0.97), "NightLightColor": (1.0, 0.8, 0.5), "SunDirection": (1.0, 0.0, 0.0),
+        # The sea's life (SlonkFauna::SeaLifeOf): the plankton's glow, blue-green as on an Earth; the point under a ship
+        # stirring the sea, world space (APlanetBody::UpdateShipWake).
+        "PlanktonColor": (0.08, 0.7, 0.85), "ShipGroundPos": (0.0, 0.0, 0.0),
     }
-    scal = {"OceanRoughness": 0.22, "LandRoughness": 0.9, "NightLightIntensity": 0.0, "LavaEmissive": 0.0, "NoisePeriodCm": 1048576.0, "ReliefCm": 3.8e6, "OceanDepthCm": 5.0e5, "PlanetRadiusCm": 6.371e8, "SwellCm": 120.0, "StreetGrid": 1.0, "SettleWet": 0.3, "SettleDensity": 1.0, "WayStyle": 0.0, "CliffAffinity": 0.0, "CanopyShade": 0.4, "CoverGain": 2.0, "TreeLife": 1.0, "Clearings": 1.0, "SeaIce": 0.0}
+    scal = {"OceanRoughness": 0.22, "LandRoughness": 0.9, "NightLightIntensity": 0.0, "LavaEmissive": 0.0, "NoisePeriodCm": 1048576.0, "ReliefCm": 3.8e6, "OceanDepthCm": 5.0e5, "PlanetRadiusCm": 6.371e8, "SwellCm": 120.0, "StreetGrid": 1.0, "SettleWet": 0.3, "SettleDensity": 1.0, "WayStyle": 0.0, "CliffAffinity": 0.0, "CanopyShade": 0.4, "CoverGain": 2.0, "TreeLife": 1.0, "Clearings": 1.0, "SeaIce": 0.0,
+            # 0: a sea with no plankton, no shoals and no ship stirring it, left exactly as it was.
+            "PlanktonGlow": 0.0, "ShoalDensity": 0.0, "ShipStir": 0.0}
     e = g.custom(CODE, INPUTS, "CMOT_Float3", "terrain layers, textures, bump, lights", extra_outputs=(("Nrm", "CMOT_Float3"), ("Rough", "CMOT_Float1"), ("Emis", "CMOT_Float3"), ("AO", "CMOT_Float1")))
     for pin, src in [("Fn", fn), ("N", n), ("LP", vi), ("UV0", uv0), ("UV1", uv1), ("UV2", uv2), ("UV3", uv3), ("Col", col), ("OX", ox), ("OY", oy), ("OZ", oz), ("Cell", cell), ("ORX", orx), ("ORY", ory), ("ORZ", orz), ("Cam", cam), ("WP", wp), ("TX", tx), ("TY", ty), ("TZ", tz)]:
         g.c(src, e, pin)
