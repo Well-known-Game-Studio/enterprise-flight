@@ -744,6 +744,12 @@ void APlanetBody::ResolveStyleFromArchetype()
 	// oceans and ice worlds have their own. Their age sets the ground's glow and its colour.
 	Civ = SlonkCivs::Natives(Type, Hash, Style.NightLightIntensity > 0.f);
 	if (Civ.bInhabited) { Style.NightLightIntensity = Civ.GroundLights; Style.NightLightColor = Civ.LightColor; }
+
+	// The alien layer, last and from a stream of its own: at strangeness 0 (home, the charted neighbours) it leaves
+	// the style exactly as the archetype made it.
+	Genome = SlonkGenome::Roll(Type, SlonkGenome::AppliesTo(Type, Style.bAtmosphere) ? Strangeness : 0.f, Hash);
+	SlonkGenome::Apply(Genome, Type, Style);
+	if (Genome.Strangeness > 0.f) { UE_LOG(LogTemp, Log, TEXT("%s: %s"), *GetDisplayName(), *SlonkGenome::Describe(Genome)); }
 }
 
 TArray<UMaterialInstanceDynamic*> APlanetBody::SurfaceMIDs() const
@@ -902,7 +908,10 @@ void APlanetBody::ApplyMaterials()
 	}
 	if (AtmosphereMID)
 	{
-		AtmosphereMID->SetVectorParameterValue(TEXT("AtmosphereColor"), S.AtmosphereColor);
+		// The shell has no haze colour of its own: a tinted haze is blended into its sky colour, as the near sky's
+		// haze tints it, and a turned sky glows from afar as brightly as the near sky scatters, so the limb from
+		// orbit and the sky inside agree.
+		AtmosphereMID->SetVectorParameterValue(TEXT("AtmosphereColor"), SlonkGenome::ShellSkyColor(S));
 		AtmosphereMID->SetVectorParameterValue(TEXT("SunsetColor"), S.SunsetColor);
 		AtmosphereMID->SetScalarParameterValue(TEXT("AtmosphereDepth"), S.AtmosphereDepth);
 		AtmosphereMID->SetScalarParameterValue(TEXT("Falloff"), S.Falloff);
@@ -1467,6 +1476,7 @@ void APlanetBody::ApplyTerrainMaterialParams()
 	Terrain->SetScalarParameter(TEXT("WayStyle"), GetPeople().bInhabited ? (float)GetPeople().Ways() : 0.f);
 	Terrain->SetScalarParameter(TEXT("CliffAffinity"), GetPeople().bInhabited ? GetPeople().CliffAffinity : 0.f);
 	Terrain->SetScalarParameter(TEXT("LavaEmissive"), S.LavaEmissive);
+	Terrain->SetScalarParameter(TEXT("SwellCm"), S.SwellCm);
 	Terrain->SetScalarParameter(TEXT("CloudScale"), S.CloudScale);
 	Terrain->SetScalarParameter(TEXT("Coverage"), S.bClouds ? S.CloudCoverage : 0.f);
 	Terrain->SetVectorParameter(TEXT("SunDirection"), FLinearColor(CachedStarDirection.X, CachedStarDirection.Y, CachedStarDirection.Z, 0.f));

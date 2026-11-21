@@ -471,21 +471,50 @@ void ASlonkGameMode::UpdateSkyAtmosphere()
 	SkyAtmosphere->SetAtmosphereHeight(HeightKm);
 	// Scale heights proportional to the atmosphere thickness (Earth: 60 km / 8 km / 1.2 km).
 	SkyAtmosphere->SetRayleighExponentialDistribution(ScaleKm);
-	SkyAtmosphere->SetMieExponentialDistribution(ScaleKm * 0.25f);
+	// The haze a quarter of the air's depth, or (the genome's lowland haze) its own, lower: there it keeps the same
+	// column over the sea with a denser foot, so it lies in the valleys and thins out over the heights. The sky's
+	// ground is 0.05% of the radius under the sea (above), and the haze's density is measured from it: the column
+	// kept is the one over the sea, or a low haze's foot would lie under the ground.
+	const float AirHazeKm = ScaleKm * 0.25f;
+	const float HazeKm = S.HazeScaleHeightKm > 0.f ? FMath::Clamp(S.HazeScaleHeightKm, 0.2f, AirHazeKm * 0.8f) : AirHazeKm;
+	const float UnderSeaKm = RadiusKm * 0.0005f;
+	const float HazeFoot = S.HazeScaleHeightKm > 0.f ? (AirHazeKm / HazeKm) * FMath::Exp(UnderSeaKm / HazeKm - UnderSeaKm / AirHazeKm) : 1.f;
+	SkyAtmosphere->SetMieExponentialDistribution(HazeKm);
 	// Artistic Rayleigh: the planet's atmosphere colour decides which wavelengths scatter most.
 	// Raised to the 1.6 so the style's sky-blue (0.35, 0.6, 1) becomes the real Rayleigh ratio (0.18, 0.41, 1);
 	// taken straight it scatters too much red and the sky goes grey.
-	const FLinearColor Col0 = S.AtmosphereColor / FMath::Max(S.AtmosphereColor.GetMax(), KINDA_SMALL_NUMBER);
-	const FLinearColor Col(FMath::Pow(Col0.R, 1.6f), FMath::Pow(Col0.G, 1.6f), FMath::Pow(Col0.B, 1.6f));
-	SkyAtmosphere->SetRayleighScattering(FLinearColor(FMath::Max(Col.R, 0.08f), FMath::Max(Col.G, 0.08f), FMath::Max(Col.B, 0.08f)));
+	SkyAtmosphere->SetRayleighScattering(SlonkGenome::RayleighOf(S.AtmosphereColor));
 	// Thinner atmospheres need stronger coefficients to show at all; Earth is 0.0331 at 60 km.
 	// Earth is 0.0331 / 0.004 at 60 km; keep that density regardless of planet size, scaled by the style's intensity.
 	// A deeper layer gets a proportionally weaker coefficient (optical depth grows only as the 0.4 power of the
 	// scale height), so thickening the atmosphere widens the limb instead of whiting it out.
 	const float DepthScale = FMath::Pow(16.f / FMath::Max(ScaleKm, 1.f), 0.6f);
-	SkyAtmosphere->SetRayleighScatteringScale(0.0331f * (S.Intensity / 2.2f) * 0.7f * DepthScale);
-	SkyAtmosphere->SetMieScatteringScale(0.003996f * (0.5f + S.Haze * 8.f) * DepthScale);
+	SkyAtmosphere->SetRayleighScatteringScale(0.0331f * (S.Intensity / 2.2f) * 0.7f * DepthScale * S.SkyScatterScale);
+	const float MieScale = 0.003996f * (0.5f + S.Haze * 8.f) * DepthScale * HazeFoot;
+	SkyAtmosphere->SetMieScatteringScale(MieScale);
 	SkyAtmosphere->SetMieAnisotropy(0.8f);
+	// A tinted haze scatters its own colour and takes up the rest, so it dims every colour alike and the sun through it
+	// stays white; an untinted one is the component's own, as placed.
+	if (!bMieDefaultsKept)
+	{
+		MieScatteringDefault = SkyAtmosphere->MieScattering;
+		MieAbsorptionDefault = SkyAtmosphere->MieAbsorption;
+		MieAbsorptionScaleDefault = SkyAtmosphere->MieAbsorptionScale;
+		bMieDefaultsKept = true;
+	}
+	if (!S.HazeColor.Equals(FLinearColor::White, 1.0e-3f))
+	{
+		const FLinearColor Tint = S.HazeColor / FMath::Max(S.HazeColor.GetMax(), KINDA_SMALL_NUMBER);
+		SkyAtmosphere->SetMieScattering(FLinearColor(Tint.R, Tint.G, Tint.B));
+		SkyAtmosphere->SetMieAbsorption(FLinearColor(1.f - Tint.R, 1.f - Tint.G, 1.f - Tint.B));
+		SkyAtmosphere->SetMieAbsorptionScale(MieScale);
+	}
+	else
+	{
+		SkyAtmosphere->SetMieScattering(MieScatteringDefault);
+		SkyAtmosphere->SetMieAbsorption(MieAbsorptionDefault);
+		SkyAtmosphere->SetMieAbsorptionScale(MieAbsorptionScaleDefault);
+	}
 	// Keep distant terrain readable from orbit.
 	SkyAtmosphere->SetAerialPespectiveViewDistanceScale(0.35f);
 	SkyAtmosphere->SetGroundAlbedo(S.OceanColor.ToFColor(true));

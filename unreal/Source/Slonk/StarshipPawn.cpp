@@ -1995,9 +1995,16 @@ void AStarshipPawn::ProcessDebugCommand()
 	}
 	else if (Op == TEXT("spawnplanet"))
 	{
-		// spawnplanet <archetype> [radius km] [hazy]: a planet of that archetype four radii ahead, for looking at
-		// worlds the system did not roll. "hazy" re-rolls a moon's seed until it comes out with the orange haze.
+		// spawnplanet <archetype> [radius km] [hazy] [strange <0..1>] [seed <n>]: a planet of that archetype four radii
+		// ahead, for looking at worlds the system did not roll. "hazy" re-rolls a moon's seed until it comes out with
+		// the orange haze; "strange" gives it a genome that far from Earth's (FWorldGenome), "seed" another roll of it.
 		const FString Kind = ArgStr(1);
+		float Strange = 0.f; int32 SeedPick = 0;
+		for (int32 i = 2; i < 10; ++i)
+		{
+			if (ArgStr(i) == TEXT("strange")) { Strange = FMath::Clamp(Arg(i + 1, 0.f), 0.f, 1.f); }
+			if (ArgStr(i) == TEXT("seed")) { SeedPick = (int32)Arg(i + 1, 0.f); }
+		}
 		static const TMap<FString, TPair<EPlanetArchetype, float>> Kinds = {
 			{ TEXT("terrestrial"), { EPlanetArchetype::Terrestrial, 6371.f } }, { TEXT("ocean"), { EPlanetArchetype::Ocean, 6800.f } },
 			{ TEXT("desert"), { EPlanetArchetype::Desert, 5900.f } }, { TEXT("ice"), { EPlanetArchetype::Ice, 5000.f } },
@@ -2026,12 +2033,12 @@ void AStarshipPawn::ProcessDebugCommand()
 				FActorSpawnParameters SP; SP.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 				APlanetBody* P = GetWorld()->SpawnActorDeferred<APlanetBody>(APlanetBody::StaticClass(), FTransform(Loc), nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
 				if (!P) { break; }
-				P->Archetype = K->Key; P->RadiusKm = RadiusKm;
-				P->SeedLocation = Loc + FVector(Attempt * 1.0e9, 0.0, 0.0); P->bSeedLocationSet = true;
+				P->Archetype = K->Key; P->RadiusKm = RadiusKm; P->Strangeness = Strange;
+				P->SeedLocation = Loc + FVector((Attempt + SeedPick) * 1.0e9, 0.0, 0.0); P->bSeedLocationSet = true;
 				P->FinishSpawning(FTransform(Loc));
 				if (!bHazy || P->bHazyMoon)
 				{
-					UE_LOG(LogTemp, Log, TEXT("spawnplanet: %s %.0f km at %s (hazy %d, attempt %d)"), *Kind, RadiusKm, *Loc.ToString(), P->bHazyMoon ? 1 : 0, Attempt);
+					UE_LOG(LogTemp, Log, TEXT("spawnplanet: %s %.0f km at %s (hazy %d, attempt %d; %s)"), *Kind, RadiusKm, *Loc.ToString(), P->bHazyMoon ? 1 : 0, Attempt, *SlonkGenome::Describe(P->Genome));
 					break;
 				}
 				P->Destroy();
