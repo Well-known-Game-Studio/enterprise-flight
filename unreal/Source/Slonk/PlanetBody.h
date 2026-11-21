@@ -9,6 +9,7 @@
 #include "PlanetTerrain.h"
 #include "Civilization.h"
 #include "BuildingMeshes.h"
+#include "WorldGenome.h"
 #include "Async/Future.h"
 #include "PlanetBody.generated.h"
 
@@ -68,6 +69,8 @@ struct FPlanetStyle
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float OceanRoughness = 0.22f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float LandRoughness = 0.9f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") FLinearColor ShallowColor = FLinearColor(0.1f, 0.35f, 0.5f);
+	/** Height of the sea's swell near the camera, cm (the terrain material's own default; a methane sea lies nearly still). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float SwellCm = 120.f;
 	/** Strength of the procedural normal detail. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface") float NormalStrength = 0.25f;
 	/** Impact craters (0 none .. 1 lunar). */
@@ -142,6 +145,15 @@ struct FPlanetStyle
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Atmosphere") float AtmosphereScaleHeightKm = 0.f;
 	/** Volumetric layer top in km. 0 = a few scale heights. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Atmosphere") float AtmosphereHeightKm = 0.f;
+	/** The haze's (Mie) scale height in km. 0 = a quarter of the Rayleigh scale height, the air's ordinary haze; the
+	 *  genome sets a low one for a haze lying in the lowlands, denser at the ground for the same column. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Atmosphere") float HazeScaleHeightKm = 0.f;
+	/** The haze's colour: white scatters every colour alike, as the air's ordinary haze does; a tint scatters its own
+	 *  colour and takes up the others. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Atmosphere") FLinearColor HazeColor = FLinearColor::White;
+	/** Scales the sky's Rayleigh scattering: 1 as the colour gives it; the genome sets it so a sky turned from blue is
+	 *  no brighter than the archetype's. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Atmosphere") float SkyScatterScale = 1.f;
 };
 
 UCLASS()
@@ -235,6 +247,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet") float PaletteFamily = -1.f;
 	/** Give this world the showcase moons even without rings. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet") bool bShowcaseMoons = false;
+	/** How far the world departs from the Earth-like version of its archetype (FWorldGenome), 0 to 1: 0 for the home
+	 *  system and the charted neighbours, which look as they always have; the uncharted stars' worlds get theirs
+	 *  from SlonkGenome::WorldStrangeness. Set before the appearance is resolved. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (ClampMin = "0", ClampMax = "1")) float Strangeness = 0.f;
 
 	/** When true, Style is (re)filled from the archetype on construction; set false to hand-tune Style. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
@@ -257,6 +273,10 @@ public:
 	/** The archetype actually in use (after Auto resolution). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Planet")
 	EPlanetArchetype ResolvedArchetype = EPlanetArchetype::Terrestrial;
+
+	/** The alien layer over the archetype, rolled with the style from the location hash and Strangeness. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Planet")
+	FWorldGenome Genome;
 
 	/** For Moon archetypes: which kind of moon the location hash produced. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Planet")

@@ -199,6 +199,11 @@ private:
 
 	UPROPERTY() TObjectPtr<AActor> AtmosphereHolder;
 	UPROPERTY() TObjectPtr<class USkyAtmosphereComponent> SkyAtmosphere;
+	/** The sky atmosphere's own haze colour and absorption, as placed, for worlds whose haze is untinted. */
+	FLinearColor MieScatteringDefault = FLinearColor::White;
+	FLinearColor MieAbsorptionDefault = FLinearColor::White;
+	float MieAbsorptionScaleDefault = 0.000444f;
+	bool bMieDefaultsKept = false;
 	UPROPERTY() TObjectPtr<class UVolumetricCloudComponent> VolumetricCloud;
 	UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> CloudMID;
 	TWeakObjectPtr<class APlanetBody> CloudStyledPlanet;
