@@ -14,6 +14,7 @@
 #include "Materials/MaterialInterface.h"
 #include "Misc/PackageName.h"
 #include "NiagaraComponent.h"
+#include "NiagaraSettings.h"
 #include "NiagaraSystem.h"
 #include "PersonPawn.h"
 #include "PlanetBody.h"
@@ -287,6 +288,7 @@ void UPlanetFaunaComponent::SpawnSet(const SlonkFauna::FFaunaField::FGroupRef& G
 	Entry.Pose = Pose;
 	Entry.PoseAt = Now;
 	Entry.Herd = Herd;
+	if (bHerd) { Entry.Water = MakeShared<SlonkFauna::FHerdWater>(Params); }
 	Sets.Add(G->Id, MoveTemp(Entry));
 }
 
@@ -513,21 +515,22 @@ void UPlanetFaunaComponent::UpdateHerd(uint64 Id, FGroupSet& S, const TArray<Slo
 	const double StepDt = S.Frames == 0 ? 0.0 : Dt;
 	++S.Frames;
 	// Startled where it stands: by a craft passing low over it, by someone run in close to its nearest member. On the
-	// move at a walk or a trot it stops and turns to flee where it stands before it goes (SlonkFauna::StartleHerd).
+	// move at a walk or a trot it stops and turns to flee where it stands before it goes, a way that keeps it dry
+	// (SlonkFauna::StartleHerd).
 	SlonkFauna::FPanic Panic = Panics.FindRef(Id);
 	TArray<FVector> Crew;
 	for (const SlonkFauna::FFaunaThreat& T : Threats)
 	{
 		if (!T.bCraft) { Crew.Add(T.PosCm); }
-		if (SlonkFauna::StartleHerd(Panic, H, G, D, Params.RadiusCm, T, Now))
+		if (SlonkFauna::StartleHerd(Panic, H, G, D, Params.RadiusCm, T, Now, false, S.Water.Get()))
 		{
 			Panics.Add(Id, Panic);
 			++Startles;
 		}
 	}
-	// Out of the way of anyone walking toward it.
+	// Out of the way of anyone walking toward it, never into the water.
 	const bool bShaken = Panic.IsLive(Now);
-	const bool bMoving = SlonkFauna::KeepFromCrew(H, G, D, Crew, StepDt);
+	const bool bMoving = SlonkFauna::KeepFromCrew(H, G, D, Crew, StepDt, S.Water.Get());
 	// The ground under it read again each frame for a herd near the camera or fleeing, every sixth frame further off
 	// (each herd on frames of its own); its frame set on the ground at its place each frame, turned toward the way its
 	// fright and the crew are taking it (where they will have it a second on: a fright's flight, a walk away from the
@@ -621,11 +624,15 @@ void UPlanetFaunaComponent::UpdateDust(uint64 Id, FGroupSet& S, const FVector& C
 		SlonkFauna::FHerdDustInput In;
 		In.SpeedMS = S.DustGate.SpeedMS;
 		In.VelWorldCmS = GetComponentTransform().TransformVectorNoScale(H.VelCmS);
-		// The ground's own way through the world as the planet turns, which every puff is born with and comes to rest in.
+		// The ground's own way through the world as the planet turns, which every puff is born with and comes to rest in: as
+		// far over this frame's tick of the dust's emitter as the ground turned in it.
 		if (const APlanetBody* Planet = Cast<APlanetBody>(GetOwner()))
 		{
+			const UNiagaraSettings* NS = GetDefault<UNiagaraSettings>();
+			const UWorld* World = GetWorld();
 			In.CarryWorldCmS = SlonkFauna::GroundCarryCmS(Planet->GetActorUpVector(), Planet->GetActorLocation(), Planet->SpinDegPerSec, UGameClockSubsystem::ScaleOf(this),
-				Planet->IsSpinHeld(), GetComponentTransform().TransformPositionNoScale(H.FramePos));
+				Planet->IsSpinHeld(), GetComponentTransform().TransformPositionNoScale(H.FramePos), World ? World->GetDeltaSeconds() : 0.0,
+				NS && NS->bLimitDeltaTime ? NS->MaxDeltaTimePerTick : 0.0);
 		}
 		In.Wet = S.DustWet;
 		In.Life = Life;
@@ -706,7 +713,7 @@ int32 UPlanetFaunaComponent::StartleAll(const AActor* Craft)
 		// However lately it was startled, as any startle leaves it: what is left of its last flight carried, its members'
 		// scatter kept if still open, its wingbeat going on from where it stands; a herd stopping and turning to flee where
 		// it stands, unless it is galloping.
-		if (Pair.Value.Herd.IsValid()) { SlonkFauna::StartleHerd(Panic, *Pair.Value.Herd, G, D, Params.RadiusCm, T, Now, true); }
+		if (Pair.Value.Herd.IsValid()) { SlonkFauna::StartleHerd(Panic, *Pair.Value.Herd, G, D, Params.RadiusCm, T, Now, true, Pair.Value.Water.Get()); }
 		else { SlonkFauna::StartleNow(Panic, D, Pos, T, Now); }
 		Panics.Add(Pair.Key, Panic);
 		++N;

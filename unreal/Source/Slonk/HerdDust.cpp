@@ -1,5 +1,6 @@
 #include "HerdDust.h"
 
+#include "GameClock.h"
 #include "HAL/IConsoleManager.h"
 #include "TerrainScatter.h"
 
@@ -38,13 +39,23 @@ FLinearColor SlonkFauna::HerdDustColor(const FScatterPalette& Pal, double Wet, d
 	return C;
 }
 
-FVector SlonkFauna::GroundCarryCmS(const FVector& PlanetUp, const FVector& PlanetCentre, double SpinDegPerSec, double ClockScale, bool bSpinHeld, const FVector& AtWorld)
+FVector SlonkFauna::GroundCarryCmS(const FVector& PlanetUp, const FVector& PlanetCentre, double SpinDegPerSec, double ClockScale, bool bSpinHeld, const FVector& AtWorld,
+	double FrameSec, double PuffStepCapSec)
 {
 	if (bSpinHeld || FMath::IsNearlyZero(SpinDegPerSec) || ClockScale <= 0.0) { return FVector::ZeroVector; }
 	// The planet turns about its up by SpinDegPerSec of the game clock's seconds (a positive yaw turning its x toward its
-	// y): the ground at a place goes round with it at omega cross r.
+	// y): the ground at a place goes round with it at omega cross r. Over a long frame it turns for no more than the clock's
+	// longest frame, the puffs moving for no more than their emitter's longest tick: their velocity as far over the one as
+	// the ground went over the other.
 	const FVector Omega = PlanetUp.GetSafeNormal() * FMath::DegreesToRadians(SpinDegPerSec) * ClockScale;
-	return FVector::CrossProduct(Omega, AtWorld - PlanetCentre);
+	double Share = 1.0;
+	if (FrameSec > 0.0)
+	{
+		const double Turned = FMath::Min(FrameSec, (double)UGameClockSubsystem::MaxFrameSeconds);
+		const double Puffed = PuffStepCapSec > 0.0 ? FMath::Min(FrameSec, PuffStepCapSec) : FrameSec;
+		Share = Turned / Puffed;
+	}
+	return FVector::CrossProduct(Omega, AtWorld - PlanetCentre) * Share;
 }
 
 bool SlonkFauna::StepDustGate(FDustGate& Gate, double SpeedMS, double Dt, double Now)
@@ -52,9 +63,10 @@ bool SlonkFauna::StepDustGate(FDustGate& Gate, double SpeedMS, double Dt, double
 	// The speed smoothed over DustSmoothSec (the first frame taken as it is).
 	if (!Gate.bPrimed) { Gate.SpeedMS = SpeedMS; Gate.bPrimed = true; }
 	else if (Dt > 0.0) { Gate.SpeedMS += (SpeedMS - Gate.SpeedMS) * (1.0 - FMath::Exp(-Dt / DustSmoothSec)); }
-	// On once it passes a brisk walk by a margin, off once it falls back to it (and not before it has been on a while).
+	// On once it passes a brisk walk by a margin, off once it falls back to a little above the fastest walk (and not before
+	// it has been on a while).
 	if (!Gate.bOn && Gate.SpeedMS > DustWalkMS + DustOnMS) { Gate.bOn = true; Gate.OnAt = Now; }
-	else if (Gate.bOn && Gate.SpeedMS <= DustWalkMS && Now - Gate.OnAt >= DustMinOnSec) { Gate.bOn = false; }
+	else if (Gate.bOn && Gate.SpeedMS <= DustOffMS && Now - Gate.OnAt >= DustMinOnSec) { Gate.bOn = false; }
 	return Gate.bOn;
 }
 

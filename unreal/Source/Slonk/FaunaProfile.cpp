@@ -31,17 +31,21 @@ namespace
 	 * all about a camera on an Earth's land out to their fades, 5,000 in the densest country, about 75,000 triangles
 	 * there; the debug line's count, every cloud on the chunks showing, runs higher, a chunk carrying its clouds on past
 	 * where they fade).
-	 * The herds: a 2 km cell holds at most one, grazing round a loop of about 2 km a lap an hour on open, level grass;
-	 * herds are spawned within 3 km of the camera's ground point and kept to 3.75 km (their loops reach about 560 m from
-	 * their middles, so one comes and goes past the 2.2 km their members fade by), at most 16 of them and 960 walkers (16
-	 * herds of the largest, 60), none while the camera is more than 2.5 km over the ground (so one comes and goes, as the
-	 * camera climbs and comes down, past its members' fade too). A craft in the air (not set down) lower than 150 m over
-	 * the ground and within 150 m of a herd's middle startles it: its walkers turn to flee where they stand (half a second;
-	 * on the move it stops first, and turns back and round where it stands), then it gallops off 250 m (across the way its
-	 * path goes if that walks during its fright), at its fastest (about 11 m/s) 8 s in, loops round (25 m to its side) and
-	 * from 40 s comes back at a steady pace no faster than about 2.1 m/s (its slowest trot is 2.4), on its path again 200 s
-	 * after; galloping, a second fright turns it on the run, or from ahead sends it on. Someone on foot it keeps 50 m from
-	 * its nearest member, and one who runs in to 20 m of it startles it. Their shadows within 600 m, where a walker is at
+	 * The herds: a 2 km cell holds at most one, grazing round a loop of about 2 km a lap an hour on open, level grass (on
+	 * an Earth-like world one for every four or five cells whose middle is that grass, seven with towns; its loop may
+	 * cross a short stretch of scrub, a strip of trees or a gentle rise, keeps 90 m from water and 500 m past its edge
+	 * from a town's ground); herds are spawned within 3 km of the camera's ground point and kept to 3.75 km (their loops
+	 * reach about 560 m from their middles, so one comes and goes past the 2.2 km their members fade by), at most 16 of
+	 * them and 960 walkers (16 herds of the largest, 60), none while the camera is more than 2.5 km over the ground (so
+	 * one comes and goes, as the camera climbs and comes down, past its members' fade too). A craft in the air (not set
+	 * down) lower than 150 m over the ground and within 150 m of a herd's middle startles it: its walkers turn to flee
+	 * where they stand (half a second; on the move it stops first, and turns back and round where it stands), then it
+	 * gallops off 250 m (across the way its path goes if that walks during its fright; turned up to a quarter of a turn
+	 * either way, or along its loop, to keep out of the water), at its fastest (about 11 m/s) 8 s in, loops round (25 m to
+	 * its side) and from 40 s comes back at a steady pace no faster than about 2.1 m/s (its slowest trot is 2.4), on its
+	 * path again 200 s after (frightened again, later by as much as it has further to come back); galloping, a second
+	 * fright turns it on the run, or from ahead sends it on. Someone on foot it keeps 50 m from its nearest member (never
+	 * walking into the water for them), and one who runs in to 20 m of it startles it. Their shadows within 600 m, where a walker is at
 	 * least 3 pixels long and its shadow reads from the air at a low sun. The material moves a walker's vertices up to
 	 * about 3.7 unit-mesh metres past its box (its round of its grazing circle, up to 1.93 of its lengths from its
 	 * instance; the speck floor's growth to four times its size; its legs' stride; the ground under it, up to 1.5 m off its

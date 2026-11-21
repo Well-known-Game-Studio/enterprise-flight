@@ -2506,10 +2506,15 @@ void AStarshipPawn::ProcessDebugCommand()
 				SlonkFauna::FFaunaWorld W = F->MakeFaunaWorld();
 				// The kind asked for is looked for whether or not it can be drawn yet (the line says so).
 				W.KindMask |= SlonkFauna::KindBit(Kind);
-				// Close by first (20 km, every cell), then further and coarser (400 km).
+				// Every cell ring by ring outward, nearest first (every one within 20 km, and on out to 400 km), until none
+				// further out could hold a nearer group than one found: at most 120,000 of the herds' 2 km cells (out to about
+				// 390 km), 20,000 of the fliers' (about 95 km: their habitat takes longer to read, and they are common).
 				SlonkFauna::FFaunaGroup G;
-				const bool bFound = SlonkFauna::FindGroupNear(W, Kind, From, 2.0e6, 1200, G) || SlonkFauna::FindGroupNear(W, Kind, From, 4.0e7, 4000, G);
-				if (!bFound) { UE_LOG(LogTemp, Log, TEXT("Fauna goto: no %s group found on %s"), SlonkFauna::KindName(Kind), *Planet->GetDisplayName()); }
+				SlonkFauna::FGroupSearch Search;
+				const bool bFound = SlonkFauna::FindGroupNear(W, Kind, From, 4.0e7, Kind == EFaunaKind::Herd ? 120000 : 20000, G, &Search);
+				UE_LOG(LogTemp, Log, TEXT("Fauna goto %s: looked at %d cells, every one within %.1f km of the search's start, on %s"), SlonkFauna::KindName(Kind), Search.Cells,
+					Search.ReachCm / 1e5, *Planet->GetDisplayName());
+				if (!bFound) { UE_LOG(LogTemp, Log, TEXT("Fauna goto: no %s group found within %.1f km on %s"), SlonkFauna::KindName(Kind), Search.ReachCm / 1e5, *Planet->GetDisplayName()); }
 				else if (Kind == EFaunaKind::Herd)
 				{
 					const double R = W.P.RadiusCm;

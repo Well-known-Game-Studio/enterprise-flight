@@ -19,7 +19,8 @@
 //                               gives each puff all of it at its birth, and its drag is measured against it (a puff's
 //                               velocity less Carry is what drag slows), so a puff slows to rest on the ground the herd
 //                               raised it from, not in the empty space the world has turned away from. Zero while the
-//                               spin is held or the world does not turn; at the game clock's rate.
+//                               spin is held or the world does not turn; at the game clock's rate; on a frame longer
+//                               than the clock's longest (0.1 s), as far over the emitter's tick as the ground turned.
 // Without the asset there is no dust and one line in the log says so; nothing else changes.
 
 #pragma once
@@ -40,10 +41,12 @@ namespace SlonkFauna
 	constexpr double DustReachCm = 1.5e5;
 	constexpr double DustWalkMS = 1.2;
 	/** How a herd's speed is read for its dust: smoothed over DustSmoothSec (a single fast frame, a hitch or its ground
-	 *  shifting under it, is no trot), its dust raised once that passes DustWalkMS by DustOnMS and kept at least
-	 *  DustMinOnSec, let go once it falls back to DustWalkMS. */
+	 *  shifting under it, is no trot), its dust raised once that passes DustWalkMS by DustOnMS (1.8 m/s) and kept at least
+	 *  DustMinOnSec, let go once it falls back to DustOffMS, above the fastest walk (1.4 m/s), so a herd walking again
+	 *  after a trot lets its dust go however briskly it walks. */
 	constexpr double DustSmoothSec = 0.5;
-	constexpr double DustOnMS = 0.3;
+	constexpr double DustOnMS = 0.6;
+	constexpr double DustOffMS = 1.6;
 	constexpr double DustMinOnSec = 3.0;
 	/** Puffs a second for each walker for each m/s it goes faster than that, over dry ground in full life by day; and the
 	 *  most a herd raises. */
@@ -86,8 +89,13 @@ namespace SlonkFauna
 	SLONK_API FLinearColor HerdDustColor(const FScatterPalette& Pal, double Wet, double Night);
 	/** The ground's own velocity through the world at a place on a turning world, world cm/s (User.Carry): the planet's
 	 *  spin (SpinDegPerSec about its actor's up, as APlanetBody::Tick turns it, at the game clock's ClockScale) crossed
-	 *  with the place less the planet's middle; zero while the spin is held, or for a world that does not turn. */
-	SLONK_API FVector GroundCarryCmS(const FVector& PlanetUp, const FVector& PlanetCentre, double SpinDegPerSec, double ClockScale, bool bSpinHeld, const FVector& AtWorld);
+	 *  with the place less the planet's middle; zero while the spin is held, or for a world that does not turn. Over a
+	 *  frame of FrameSec (the world's; 0 for the spin's own rate), the velocity that takes a puff as far over the step its
+	 *  emitter takes in that frame (held to PuffStepCapSec, Niagara's longest tick; none if 0) as the ground actually
+	 *  turned in it (the planet's turn holds a frame to UGameClockSubsystem::MaxFrameSeconds): on a frame longer than that
+	 *  the puffs go no further than the ground. */
+	SLONK_API FVector GroundCarryCmS(const FVector& PlanetUp, const FVector& PlanetCentre, double SpinDegPerSec, double ClockScale, bool bSpinHeld, const FVector& AtWorld,
+		double FrameSec = 0.0, double PuffStepCapSec = 0.0);
 
 	/** Whether a herd goes fast enough to raise dust, from its frame's speed frame by frame: the speed smoothed, whether
 	 *  it is on and since when (the world's seconds). */

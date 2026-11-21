@@ -5,10 +5,12 @@
 // round it offers a wood, a wet meadow, a shore or a cliff; each flock flies a closed, lobed loop round its cell whose
 // period divides the material's hour, so where a flock is follows from the time alone, and only a startle (a craft
 // passing low, someone walking under it) moves it off its loop for a couple of minutes. The herds live in cells of their
-// own where a loop of about 2 km round the cell's point lies all on open, level grass, away from the water, the woods
-// and the towns; each grazes most of the time and walks and trots now and then, on a schedule of the clock whose
-// distance walked is known in closed form, and stands on the ground that is drawn (SlonkFauna::StepHerd). FFaunaField
-// keeps the groups about a camera, by its distance from them alone.
+// own where a loop of about 2 km round the cell's point lies on open, level grass (crossing a short stretch of scrub, a
+// strip of trees or a gentle rise here and there, never water, a cliff or a dense wood), keeping clear of the water and
+// off the towns and their roads; each grazes most of the time and walks and trots now and then, on a schedule of the
+// clock whose distance walked is known in closed form, and stands on the ground that is drawn (SlonkFauna::StepHerd);
+// frightened, it flees a way that keeps it dry. FFaunaField keeps the groups about a camera, by its distance from them
+// alone.
 
 #pragma once
 
@@ -157,6 +159,10 @@ namespace SlonkFauna
 		double StartCm = 0.0;
 		TArray<float> ArcCm;
 		double FormationCm = 0.0, HerdRadiusCm = 0.0, GroundHalfCm = 0.0;
+		/** How far its loop is from the nearest water, cm, read out to HerdDryReadCm (that much if none is nearer; unread, as
+		 *  far as can be): the crew walk it off its path no further than this leaves its edge HerdCrewDryCm short of the
+		 *  water. */
+		double DryCm = 1.0e30;
 		/** The farthest any point of its loop lies from its middle, cm. */
 		double ExtentCm() const { return RadiusCm * (1.0 + Lobe) + MeanderCm; }
 		bool operator==(const FFaunaGroup& O) const;
@@ -168,25 +174,52 @@ namespace SlonkFauna
 	constexpr double HerdLeadSec = 2.5;
 
 	/** What a herd's cell offers along a loop: open, level grass (the ground read at points along it, each as a chunk
-	 *  would read it there), none of it under water or ice, nor in a wood; no water within its flight of it; no town
-	 *  near it. */
+	 *  would read it there), a little of it rougher ground the herd crosses (HerdCrossMax of its points at most, no more
+	 *  than HerdCrossRun of them in a row: a short stretch of scrub, a strip of trees, a gentle rise), none of it water,
+	 *  ice, a cliff or a dense wood; no water within HerdWaterMarginCm of the loop, either side of it (read every
+	 *  HerdWaterMarginCm / 2 across it at each point), and how far the nearest is out to HerdDryReadCm; off any town's
+	 *  ground and its roads by its radius and HerdTownMarginCm (a road HerdRoadMarginCm). */
 	struct FHerdHabitatRead
 	{
 		bool bSuits = false;
-		/** Points read along the loop (with its middle), those off the grass the herd lives on at all and those not
-		 *  quite as it likes (a little steep, wet, dry or wooded: at most six of them), and the water within its flight. */
-		int32 Points = 0, Off = 0, Rough = 0, WaterNear = 0;
+		/** Points read along the loop (with its middle): those it never sets foot on, those off its grass it crosses and
+		 *  the longest stretch of them in a row, those not quite as it likes (rougher than it likes best, crossed ground
+		 *  among them: at most HerdRoughMax); the points of water read within HerdWaterMarginCm of the loop. */
+		int32 Points = 0, Off = 0, Crossed = 0, LongestCrossed = 0, Rough = 0, WaterNear = 0;
 		double MinFlat = 1.0, MaxForest = 0.0, MinWet = 1.0, MaxWet = 0.0, MeanWet = 0.0;
-		bool bTown = false;
+		/** How far the loop is from the nearest water read, cm (HerdDryReadCm if none is). */
+		double DryCm = 0.0;
+		bool bTown = false, bRoad = false;
 	};
+	/** Of a herd's 97 points along its loop, how many may be ground it crosses rather than its grass, and how many of them
+	 *  in a row; how many may be rougher than it likes best (its crossed ground among them). */
+	constexpr int32 HerdCrossMax = 12, HerdCrossRun = 6, HerdRoughMax = 48;
+	/** How far its loop keeps from water, cm (its walkers spread up to about 45 m either side of it), and how far out the
+	 *  water is read for how much room the crew may walk it into (300 m, the most they walk it off its path, past its
+	 *  radius), and how far short of the water they leave its edge. How far its loop keeps from a town's ground past its
+	 *  own radius, and from a road. */
+	constexpr double HerdWaterMarginCm = 9.0e3, HerdDryReadCm = 3.7e4, HerdCrewDryCm = 2.0e3;
+	constexpr double HerdTownMarginCm = 5.0e4, HerdRoadMarginCm = 5.0e3;
 	/** Whether a spot is the open grass a herd lives on: bStrict as it likes it best (level, Flat over 0.85; wet from 0.2
 	 *  to 0.6; no more than 0.3 of a wood), else as it will cross (a little rougher). Never water, ice, near the snowline. */
 	SLONK_API bool HerdGrass(const SlonkScatter::FHabitat& H, bool bStrict);
+	/** Whether a herd will set foot on a spot at all: its grass, or rougher ground off it that it crosses on its way
+	 *  (scrub too dry or too wet for it, a strip of trees, a gentle rise); never water, ice, near the snowline, a cliff
+	 *  (Cliff over 0.3), ground steeper than a gentle rise (Flat 0.45 or less, about 15 degrees) nor a dense wood (Forest
+	 *  0.6 or more). */
+	SLONK_API bool HerdCrosses(const SlonkScatter::FHabitat& H);
 	/** The group a cell holds, if it holds one (false if not, or if its kind does not live here). */
 	SLONK_API bool GroupInCell(const FFaunaWorld& W, const FFaunaCell& C, FFaunaGroup& Out);
+	/** How far a search for a group looked: how many cells it read and out to how far, cm (every cell within that). */
+	struct FGroupSearch
+	{
+		int32 Cells = 0;
+		double ReachCm = 0.0;
+	};
 	/** The nearest group of a kind to a direction, searched out to MaxCm over at most MaxCells cells: a debug search,
-	 *  synchronous and coarse (the cells under a spiral of points, nearest first). */
-	SLONK_API bool FindGroupNear(const FFaunaWorld& W, EFaunaKind K, const FVector& Dir, double MaxCm, int32 MaxCells, FFaunaGroup& Out);
+	 *  synchronous, reading every cell ring by ring outward (each ring a cell wide, its cells nearest first) until no cell
+	 *  further out could hold a nearer group than one found, MaxCm is reached or MaxCells are read. */
+	SLONK_API bool FindGroupNear(const FFaunaWorld& W, EFaunaKind K, const FVector& Dir, double MaxCm, int32 MaxCells, FFaunaGroup& Out, FGroupSearch* OutSearch = nullptr);
 	/** What a herd's loop offers (its cell's group, or one being made), read along it. */
 	SLONK_API FHerdHabitatRead HerdHabitatAt(const FFaunaWorld& W, const FFaunaGroup& G);
 
@@ -273,9 +306,11 @@ namespace SlonkFauna
 		double AvoidPace = 0.0;
 		FVector FramePos = FVector::ZeroVector;
 		FQuat FrameRot = FQuat::Identity;
-		/** Its frame's velocity along its plane over the last step, planet-local cm/s, and its offset off its path then. */
+		/** Its frame's velocity along its plane over the last step, planet-local cm/s, and its offset off its path then; when
+		 *  that step was (the paths' clock), the time since which its speeds are read over. */
 		FVector VelCmS = FVector::ZeroVector;
 		FVector LastOffset = FVector::ZeroVector;
+		double LastStepSec = -1.0e30;
 		/** The way it was steering for at the last step (its frame's way on the move), which WalkKap follows as it turns. */
 		double TargetWas = 0.0;
 		bool bTargetWas = false;
@@ -296,16 +331,54 @@ namespace SlonkFauna
 	SLONK_API void StartHerd(FHerdState& S, const FFaunaGroup& G, double Seconds);
 	/** How far someone on foot is from a herd's nearest member (its frame at FramePos), cm, along the ground. */
 	SLONK_API double CrewGapCm(const FFaunaGroup& G, const FVector& FramePos, const FVector& CrewPosCm);
+
+	/**
+	 * The water about a herd as it flees or walks out of the crew's way: whether the field is water (as SlonkTerrain's
+	 * structure has it, the water the loop's own read finds) at the point of a lattice HerdWaterStepCm apart on its loop's
+	 * tangent plane nearest a place, each point read once and kept, so what is found never hangs on the order or the
+	 * frame it is asked in. Made for a world (or, for the tests, from any reading of the water at a planet-local unit
+	 * direction).
+	 */
+	class SLONK_API FHerdWater
+	{
+	public:
+		FHerdWater() = default;
+		explicit FHerdWater(const FPlanetTerrainParams& P);
+		explicit FHerdWater(TFunction<bool(const FVector&)> InIsWater, double InRadiusCm) : IsWater(MoveTemp(InIsWater)), RadiusCm(InRadiusCm) {}
+		/** Whether there is water at the lattice point nearest a planet-local place near a herd (none read without a world). */
+		bool WetAt(const FFaunaGroup& G, const FVector& PosCm);
+		/** Whether a herd standing at a place, going a way (planet-local, level; none if it stands) keeps dry: no water at
+		 *  its middle, nor its radius and MarginCm out to either side of the way it goes (all round it, standing). */
+		bool DryAround(const FFaunaGroup& G, const FVector& PosCm, const FVector& Way, double MarginCm);
+		/** How many of its lattice's points have been read. */
+		int32 Reads() const { return Wet.Num(); }
+	private:
+		TFunction<bool(const FVector&)> IsWater;
+		double RadiusCm = 0.0;
+		TMap<uint64, bool> Wet;
+	};
+	/** How far apart FHerdWater's lattice points are, cm. */
+	constexpr double HerdWaterStepCm = 1000.0;
+	/** How far apart a herd's flight is read for water as it is chosen, cm along it, and how far past its radius either
+	 *  side (half the crew's HerdCrewDryCm, so a herd the crew have walked to the shore may still flee along it); how long
+	 *  a gallop carries it on once frightened again (FPanic's carry coasting, s). */
+	constexpr double HerdFlightReadCm = 4000.0, HerdFlightDryCm = 1000.0, HerdCoastSec = 3.0;
+
 	/**
 	 * Moves a herd off its path out of the way of the crew on foot (planet-local positions): away from anyone nearer its
 	 * nearest member than the kind's KeepFromCrewCm, at a walk (a trot for one close in), and back to its path at a stroll
 	 * once nobody is near, never back toward anyone. It turns to go before it goes: it moves only once all of it is on the
 	 * move (Travel 1, not turning about) and the way it wants to go (AvoidWay) is within TurnAroundRad of the way it faces,
 	 * coming up to its pace over a second; when it may not, it eases off over half a second on along the way it was
-	 * walking (AvoidGoing), so it comes to a stop going forward and only then turns about. True while it wants to move
-	 * for them.
+	 * walking (AvoidGoing), so it comes to a stop going forward and only then turns about. Never toward water: off its
+	 * path no further than its loop's dry ground allows (FFaunaGroup::DryCm), slowing as it comes to that, and (Water
+	 * given) it may not walk off a way whose ground its edge would walk onto (ahead and to either side) is water. True
+	 * while it wants to move for them.
 	 */
-	SLONK_API bool KeepFromCrew(FHerdState& S, const FFaunaGroup& G, const FFaunaKindDesc& D, const TArray<FVector>& CrewPosCm, double Dt);
+	SLONK_API bool KeepFromCrew(FHerdState& S, const FFaunaGroup& G, const FFaunaKindDesc& D, const TArray<FVector>& CrewPosCm, double Dt, FHerdWater* Water = nullptr);
+	/** How far off its path the crew may walk a herd, cm: 300 m, or less where its loop's dry ground is narrower (its edge
+	 *  kept HerdCrewDryCm short of the water). */
+	SLONK_API double CrewRoomCm(const FFaunaGroup& G);
 	/**
 	 * A herd's frame for this frame, and what the material reads of it (HerdData::Num floats; the night and the fright's
 	 * slots left as they are): its place on its path at Now plus OffsetCm (its fright's and the crew's), set on the ground
@@ -319,7 +392,10 @@ namespace SlonkFauna
 	 * metre and a few radians a second, changing by no more than Walker::MaxKapRate a second) and held while its walkers
 	 * turn; a herd on the move asked to go more than TurnAroundRad off its way stops, turns and sets off again. Its legs
 	 * walk by its frame's way along its plane from where it stood, laid level first, so the drawn ground rising or falling
-	 * under it (its chunks splitting) walks no legs on. ClockOffsetSec is the paths' clock's offset from the material's
+	 * under it (its chunks splitting) walks no legs on. The step spans Dt, or the time since its last step where the
+	 * caller holds a long frame's Dt shorter (up to a second: its path has run on the whole of it, so its speeds are read
+	 * over that). Come about on the move along its path alone it faces its path's way; taken off it by its fright or the
+	 * crew as it comes, the way it goes. ClockOffsetSec is the paths' clock's offset from the material's
 	 * (UPlanetFaunaComponent::SetTimeOffset).
 	 */
 	SLONK_API void StepHerd(FHerdState& S, const FFaunaGroup& G, double RadiusCm, double Now, double Dt, const FVector& OffsetCm, bool bShaken, bool bMoving, bool bRefreshGround,
@@ -352,6 +428,9 @@ namespace SlonkFauna
 		 *  HerdFrightOffset). */
 		double FleeT0 = -1.0e30;
 		bool bHold = false;
+		/** A herd fleeing along its own loop rather than off it (no dry way off it): its flight FleeCm along the loop, the
+		 *  loop's own way (1) or against it (-1); 0 for a flight straight off along Dir. */
+		int32 LoopWay = 0;
 		FVector Dir = FVector::ZeroVector;
 		/** The side a galloping kind loops round to come back to its path (planet-local unit, level). */
 		FVector Side = FVector::ZeroVector;
@@ -371,9 +450,11 @@ namespace SlonkFauna
 	};
 	/** How far a group's frame is off its path for its fright at a time, planet-local cm: away fast, held a while, back
 	 *  by its LiveSec (exactly zero from then). A galloping kind's gallop comes on at its FleeT0, and it comes back from
-	 *  its kind's FleeBackSec at a steady pace eased in and out. */
+	 *  its kind's FleeBackSec at a steady pace eased in and out, what a fright before left it carrying (FPanic::Carry,
+	 *  and the gallop it coasts on) coming back with it at the same pace. */
 	SLONK_API FVector PanicOffset(const FPanic& P, const FFaunaKindDesc& D, double Now);
-	/** A herd's offset off its path for its fright at a time, planet-local cm: its flight (PanicOffset) and, while a
+	/** A herd's offset off its path for its fright at a time, planet-local cm: its flight (PanicOffset; or, fleeing along
+	 *  its loop, FPanic::LoopWay, the way along it the flight has taken it from where its path has it) and, while a
 	 *  startle holds it where it stood (FPanic::bHold), its path's own walk since the startle held back, let go as its
 	 *  gallop comes on and as it comes back (exactly zero by its LiveSec). */
 	SLONK_API FVector HerdFrightOffset(const FFaunaGroup& G, const FFaunaKindDesc& D, const FPanic& P, double RadiusCm, double Now);
@@ -404,9 +485,19 @@ namespace SlonkFauna
 	 * round to the way it flees (S.bTurnAround, if any of it was on the move), its path held where it was (FPanic::bHold)
 	 * and its gallop coming on only once they have turned (FPanic::FleeT0), so its frame never moves while its walkers
 	 * turn. One galloping turns away on the run, carrying its speed; asked to flee more than TurnAroundRad off the way it
-	 * faces (the fright ahead of it), it flees on the way it is going.
+	 * faces (the fright ahead of it), it flees on the way it is going. Its fright lasts the longer the further it has to
+	 * come back (what an earlier one left it carrying besides its own flight), so it comes back no faster than after one.
+	 * Water given, its flight keeps dry: of that way and the ways turned from it by a twelfth, a sixth and a quarter of a
+	 * turn either side (the nearer first), the first whose whole flight and walk back (its frame read every
+	 * HerdFlightReadCm along them, its radius and HerdFlightDryCm either side, and as far on as its gallop would coast
+	 * frightened again there) finds no water; with none, it flees along its own loop (whose ground keeps clear of water
+	 * by more than the crew may walk it off it).
 	 */
-	SLONK_API bool StartleHerd(FPanic& P, FHerdState& S, const FFaunaGroup& G, const FFaunaKindDesc& D, double RadiusCm, const FFaunaThreat& T, double Now, bool bForce = false);
+	SLONK_API bool StartleHerd(FPanic& P, FHerdState& S, const FFaunaGroup& G, const FFaunaKindDesc& D, double RadiusCm, const FFaunaThreat& T, double Now, bool bForce = false,
+		FHerdWater* Water = nullptr);
+	/** Whether a herd's fright (P, from Now to its end, the crew's offset Avoid besides) keeps it dry, as StartleHerd reads
+	 *  a flight. */
+	SLONK_API bool HerdFlightDry(const FFaunaGroup& G, const FFaunaKindDesc& D, const FPanic& P, double RadiusCm, double Now, const FVector& Avoid, FHerdWater& Water);
 	/** Startles a group at its place now, however lately it was: it flees away from the threat (or off its track, the
 	 *  threat overhead), what is left of its last flight carried; its panic runs from now; its members' scatter, if still
 	 *  open, is kept, and its wingbeat's urge comes in from where it stands (FPanic::OnsetT0). */

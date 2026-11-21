@@ -128,8 +128,10 @@ private:
 		/** Its frame as last drawn, and when (the paths' clock): a shaken group wheels round from it. */
 		SlonkFauna::FFaunaPose Pose;
 		double PoseAt = 0.0;
-		/** A herd's clocks, ground and place (SlonkFauna::StepHerd), and how many frames it has been about. */
+		/** A herd's clocks, ground and place (SlonkFauna::StepHerd), and how many frames it has been about; the water about
+		 *  it as its startles and the crew have read it (kept while it is about). */
 		TSharedPtr<SlonkFauna::FHerdState> Herd;
+		TSharedPtr<SlonkFauna::FHerdWater> Water;
 		uint32 Frames = 0;
 		/** How wet the ground under a herd raising dust was when last read, and when (the world's seconds); whether it
 		 *  goes fast enough to raise any, its speed smoothed (SlonkFauna::StepDustGate). */
