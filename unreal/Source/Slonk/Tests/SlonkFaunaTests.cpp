@@ -1282,7 +1282,7 @@ namespace
 	/** The mote branch's CRC when Slonk.Fauna.MoteCloud's copy of its turn to the camera was last brought in line with it. */
 	constexpr uint32 MaterialMoteBlockCrc = 0xa89449edu;
 	/** The walker branch's CRC when SlonkFauna::WalkerMotion was last brought in line with it. */
-	constexpr uint32 MaterialWalkerBlockCrc = 0x2e26a11cu;
+	constexpr uint32 MaterialWalkerBlockCrc = 0x42806976u;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaMeshesTest, "Slonk.Fauna.Meshes", SLONK_TEST_FLAGS)
@@ -2219,10 +2219,11 @@ namespace
 		int32 GrazeSlips = 0;
 		double WorstTurnSlip = 0.0, SumTurnSlip = 0.0;
 		int32 TurnSlips = 0;
-		double WorstSlip = 0.0, SumSlip = 0.0;
+		double WorstSlip = 0.0, SumSlip = 0.0, WorstSlipAt = 0.0;
 		int32 Slips = 0, Slides = 0;
-		/** The most any walker's yaw turned between two steps, radians, and the least and most of the herd on the move. */
-		double WorstYawStep = 0.0, MinTravel = 1.0, MaxTravel = 0.0;
+		/** The most any walker's yaw turned between two steps, radians, and the least and most of the herd on the move; how
+		 *  sharply its way turned at most as it walked (radians a metre) and the most that changed between two steps. */
+		double WorstYawStep = 0.0, MinTravel = 1.0, MaxTravel = 0.0, MaxKap = 0.0, MaxKapStep = 0.0;
 		double MeanPlantedCm() const { return Planted > 0 ? SumPlantedCm / Planted : 0.0; }
 		double MeanTravelSlip() const { return TravelSlips > 0 ? SumTravelSlip / TravelSlips : 0.0; }
 		double MeanGrazeSlip() const { return GrazeSlips > 0 ? SumGrazeSlip / GrazeSlips : 0.0; }
@@ -2264,6 +2265,7 @@ namespace
 		WasPlanted.Init(0, Xf.Num() * 4);
 		LastYaw.Init(0.f, Xf.Num());
 		float Frozen = -1.f;
+		double LastKap = 0.0;
 		const int32 N = FMath::CeilToInt32(Seconds * Hz);
 		for (int32 k = 0; k <= N; ++k)
 		{
@@ -2286,6 +2288,9 @@ namespace
 			Out.MaxSpeedMS = FMath::Max(Out.MaxSpeedMS, S.SpeedMS);
 			Out.MinTravel = FMath::Min(Out.MinTravel, S.Travel);
 			Out.MaxTravel = FMath::Max(Out.MaxTravel, S.Travel);
+			Out.MaxKap = FMath::Max(Out.MaxKap, FMath::Abs(S.WalkKap));
+			if (k > 0) { Out.MaxKapStep = FMath::Max(Out.MaxKapStep, FMath::Abs(S.WalkKap - LastKap)); }
+			LastKap = S.WalkKap;
 			for (int32 m = 0; m < Xf.Num(); ++m)
 			{
 				const float* C = Cu.GetData() + m * SlonkFauna::Custom::Num;
@@ -2318,7 +2323,7 @@ namespace
 						const double Slip = D.Size() * Hz;
 						++Out.Slips;
 						Out.SumSlip += Slip;
-						Out.WorstSlip = FMath::Max(Out.WorstSlip, Slip);
+						if (Slip > Out.WorstSlip) { Out.WorstSlip = Slip; Out.WorstSlipAt = Now - Start; }
 						Out.Slides += Slip > 10.0 ? 1 : 0;
 						if (bMoving)
 						{
@@ -2624,10 +2629,15 @@ bool FSlonkFaunaHerdNoSlideTest::RunTest(const FString& Parameters)
 	// distance not run on (the material's walking left at what it first was), the hooves would slide as fast as it walks.
 	// And through every turn its walkers make where they stand: setting off (from their grazing to the herd's way) and
 	// stopping (back to their grazing), someone walking at it from ahead as it grazes and away again (it turns and walks
-	// off, then turns about and walks back), a craft passing low ahead of it (it turns, gallops off the way it came, loops
-	// round and walks back): a planted hoof slides less than a centimetre a second on average, hardly one in ten thousand
-	// more than 10 cm/s and none more than 25 cm/s; walking and trotting up and across a slope, as little as on the level;
-	// and no walker's yaw turns between two frames more than it can turn in one.
+	// off, then turns about and walks back), someone gone as it walks away from them and someone come back ahead of it as
+	// it walks back (it eases off on the way it was walking, then turns about), a craft passing low ahead of it as it
+	// grazes (it turns, gallops off the way it came, loops round and walks back), a craft from its side and from ahead as
+	// it walks (it stops and turns where it stands before it gallops), a second craft from ahead as it gallops (it flees
+	// on): a planted hoof slides less than a centimetre a second on average, hardly one in ten thousand more than 10 cm/s
+	// and none more than 25 cm/s. Round a sharp bend, and round one sharper than its way can turn, how sharply it turns
+	// comes up to the bend's (or its most) and back down smoothly (by no more than Walker::MaxKapRate a second), its hooves
+	// sliding as little on average and none more than 25 cm/s; walking and trotting up and across a slope, as little as on
+	// the level; and no walker's yaw turns between two frames more than it can turn in one.
 	const SlonkFauna::FFaunaWorld W = EarthHerds();
 	SlonkFauna::FFaunaGroup G;
 	if (!TestHerd(W, G)) { AddError(TEXT("no herd found on the Earth-like world")); return false; }
@@ -2657,70 +2667,180 @@ bool FSlonkFaunaHerdNoSlideTest::RunTest(const FString& Parameters)
 	// Someone walking at it as it grazes from ahead (the way it last walked, which it still faces), from 100 m off its
 	// edge at 1.4 m/s for 45 s, then away again: it turns and walks off, keeps away, then stops, turns about and walks
 	// back to its path.
-	FVector Crew = FVector::ZeroVector, Toward = FVector::ZeroVector;
 	auto Facing = [](const SlonkFauna::FHerdState& S) { return S.FrameRot.GetAxisX() * FMath::Cos(S.Heading) + S.FrameRot.GetAxisY() * FMath::Sin(S.Heading); };
+	// The crew as the game moves a herd for them: startled if they run in close, kept clear of, and its offset off its path.
+	auto CrewDrive = [&](SlonkFauna::FHerdState& S, SlonkFauna::FPanic& P, const TArray<FVector>& Crew, double Now, double Dt, int32& Startled)
+	{
+		FHerdDrive Dr;
+		for (const FVector& C : Crew)
+		{
+			SlonkFauna::FFaunaThreat Foot;
+			Foot.bCraft = false;
+			Foot.PosCm = C;
+			Startled += SlonkFauna::StartleHerd(P, S, G, D, R, Foot, Now) ? 1 : 0;
+		}
+		Dr.bMoving = SlonkFauna::KeepFromCrew(S, G, D, Crew, Dt);
+		Dr.bShaken = P.IsLive(Now);
+		Dr.Offset = SlonkFauna::HerdFrightOffset(G, D, P, R, Now) + S.Avoid;
+		Dr.Ahead = SlonkFauna::HerdFrightOffset(G, D, P, R, Now + 1.0) + S.Avoid + (Dr.bMoving ? S.AvoidWay : FVector::ZeroVector);
+		return Dr;
+	};
+	FVector Crew = FVector::ZeroVector, Toward = FVector::ZeroVector;
 	int32 CrewStartles = 0;
 	SlonkFauna::FPanic CrewPanic;
 	const double CrewStart = GrazeStart + 10.0;
 	const FHerdRun CrewRun = RunHerdWith(G, R, CrewStart, 150.0, 30.0, 1, FineAt, [&](SlonkFauna::FHerdState& S, double Now, double Dt)
 	{
-		FHerdDrive Dr;
-		if (!S.bStarted) { return Dr; }
+		if (!S.bStarted) { return FHerdDrive(); }
 		if (Toward.IsZero()) { Crew = S.FramePos + Facing(S) * (G.HerdRadiusCm + 1.0e4); Toward = -Facing(S); }
 		Crew += Toward * ((Now - CrewStart < 45.0 ? 140.0 : -140.0) * Dt);
-		SlonkFauna::FFaunaThreat Foot;
-		Foot.bCraft = false;
-		Foot.PosCm = Crew;
-		CrewStartles += SlonkFauna::StartleGroup(CrewPanic, D, S.FramePos, Foot, Now, G.HerdRadiusCm) ? 1 : 0;
-		Dr.bMoving = SlonkFauna::KeepFromCrew(S, G, D, TArray<FVector>{ Crew }, Dt);
-		Dr.bShaken = CrewPanic.IsLive(Now);
-		Dr.Offset = SlonkFauna::PanicOffset(CrewPanic, D, Now) + S.Avoid;
-		Dr.Ahead = SlonkFauna::PanicOffset(CrewPanic, D, Now + 1.0) + S.Avoid + (Dr.bMoving ? S.AvoidWay : FVector::ZeroVector);
-		return Dr;
+		return CrewDrive(S, CrewPanic, TArray<FVector>{ Crew }, Now, Dt, CrewStartles);
 	}, 1);
-	// A craft passing 30 m up 50 m ahead of it as it grazes, coming at it: it turns and gallops off the way it came,
-	// loops round and walks back to its path.
-	SlonkFauna::FPanic Panic;
-	int32 Startles = 0;
-	const FHerdRun Fright = RunHerdWith(G, R, GrazeStart + 10.0, 130.0, 30.0, 1, FineAt, [&](SlonkFauna::FHerdState& S, double Now, double Dt)
+	// Someone walking at it from ahead as before, gone (beamed up) 3 s after it has come up to its pace walking away: it
+	// eases off on the way it was walking, stops, turns about and walks back to its path. And again, but back once it has
+	// walked back toward its path for 3 s, 40 m ahead of it: it eases off on the way back, stops, turns about and walks
+	// off again.
+	auto CrewComesAndGoes = [&](bool bComesBack, int32& Startled)
 	{
-		FHerdDrive Dr;
-		if (S.bStarted && Startles == 0)
+		FVector At = FVector::ZeroVector, Way = FVector::ZeroVector;
+		int32 Phase = 0;
+		double Since = -1.0;
+		SlonkFauna::FPanic P;
+		return RunHerdWith(G, R, CrewStart, 110.0, 30.0, 1, FineAt, [&](SlonkFauna::FHerdState& S, double Now, double Dt)
 		{
-			SlonkFauna::FFaunaThreat Craft;
-			Craft.PosCm = S.FramePos + Facing(S) * 5000.0 + S.FramePos.GetSafeNormal() * 3000.0;
-			Craft.VelCmS = -Facing(S) * 8000.0;
-			Craft.AltitudeCm = 3000.0;
-			Startles += SlonkFauna::StartleGroup(Panic, D, S.FramePos, Craft, Now) ? 1 : 0;
-		}
-		Dr.bShaken = Panic.IsLive(Now);
-		Dr.Offset = SlonkFauna::PanicOffset(Panic, D, Now);
-		Dr.Ahead = SlonkFauna::PanicOffset(Panic, D, Now + 1.0);
-		return Dr;
-	}, 1);
+			if (!S.bStarted) { return FHerdDrive(); }
+			if (Way.IsZero()) { At = S.FramePos + Facing(S) * (G.HerdRadiusCm + 1.0e4); Way = -Facing(S); }
+			// Walking away from them at its pace, or (once they have gone) back to its path at its pace: how long it has.
+			const bool bPaced = S.Travel >= 1.0 && S.AvoidPace >= 1.0 && (Phase == 0 ? FVector::DotProduct(S.AvoidWay, S.Avoid) > 0.0 : FVector::DotProduct(S.AvoidWay, S.Avoid) < 0.0);
+			Since = bPaced ? (Since < 0.0 ? Now : Since) : -1.0;
+			if (Phase == 0 && Since >= 0.0 && Now - Since > 3.0) { Phase = 1; Since = -1.0; }
+			else if (Phase == 1 && bComesBack && Since >= 0.0 && Now - Since > 3.0) { Phase = 2; At = S.FramePos + Facing(S) * (G.HerdRadiusCm + 4000.0); }
+			if (Phase == 0) { At += Way * (140.0 * Dt); }
+			return CrewDrive(S, P, Phase == 1 ? TArray<FVector>() : TArray<FVector>{ At }, Now, Dt, Startled);
+		}, 1);
+	};
+	int32 GoneStartles = 0, BackStartles = 0;
+	const FHerdRun CrewGone = CrewComesAndGoes(false, GoneStartles);
+	const FHerdRun CrewAhead = CrewComesAndGoes(true, BackStartles);
+	// A craft passing 30 m up 50 m off it, coming at it, from a way relative to the way it faces (0 ahead).
+	auto CraftBy = [&](const SlonkFauna::FHerdState& S, double Bearing)
+	{
+		const FVector Up = S.FramePos.GetSafeNormal();
+		const FVector F = Facing(S);
+		const FVector Way = F * FMath::Cos(Bearing) + FVector::CrossProduct(Up, F) * FMath::Sin(Bearing);
+		SlonkFauna::FFaunaThreat Craft;
+		Craft.PosCm = S.FramePos + Way * 5000.0 + Up * 3000.0;
+		Craft.VelCmS = -Way * 8000.0;
+		Craft.AltitudeCm = 3000.0;
+		return Craft;
+	};
+	// A herd startled by craft so many seconds after Start, each from its way (CraftBy), stepped for Seconds.
+	auto Frightened = [&](double Start, double Seconds, const TArray<TPair<double, double>>& Frights, int32& Startled)
+	{
+		SlonkFauna::FPanic P;
+		int32 Next = 0;
+		return RunHerdWith(G, R, Start, Seconds, 30.0, 1, FineAt, [&](SlonkFauna::FHerdState& S, double Now, double Dt)
+		{
+			FHerdDrive Dr;
+			if (S.bStarted && Next < Frights.Num() && Now - Start >= Frights[Next].Key)
+			{
+				Startled += SlonkFauna::StartleHerd(P, S, G, D, R, CraftBy(S, Frights[Next].Value), Now) ? 1 : 0;
+				++Next;
+			}
+			Dr.bShaken = P.IsLive(Now);
+			Dr.Offset = SlonkFauna::HerdFrightOffset(G, D, P, R, Now);
+			Dr.Ahead = SlonkFauna::HerdFrightOffset(G, D, P, R, Now + 1.0);
+			return Dr;
+		}, 1);
+	};
+	// A craft passing low ahead of it as it grazes, coming at it: it turns, gallops off (across the way its path goes,
+	// its path setting off again during its fright), loops round and walks back to its path, its whole fright.
+	int32 Startles = 0, SideStartles = 0, AheadStartles = 0, TwiceStartles = 0;
+	const FHerdRun Fright = Frightened(GrazeStart + 10.0, D.FrightSec + 5.0, { { 0.0, 0.0 } }, Startles);
+	// Walking its loop (or trotting it), a craft from its side and one from ahead: it stops, its walkers turn back and
+	// round to the way it flees where they stand, and only then it gallops off. Galloping, a second craft from ahead: it
+	// flees on the way it is going rather than turning about on the run.
+	const double OnTheMove = C0 + G.WalkA + 12.0;
+	const FHerdRun WalkSide = Frightened(OnTheMove, 40.0, { { 3.0, 0.5 * UE_DOUBLE_PI } }, SideStartles);
+	const FHerdRun WalkAhead = Frightened(OnTheMove, 40.0, { { 3.0, 0.0 } }, AheadStartles);
+	const FHerdRun GallopAhead = Frightened(GrazeStart + 10.0, 40.0, { { 0.0, UE_DOUBLE_PI }, { 10.0, 0.0 } }, TwiceStartles);
+	// Walking along a line for the crew, then round a bend, then on: at 0.4 m/s round one of 0.4 radians a metre for a
+	// sixth of a turn (sharp, but no sharper than its way can turn), and at 0.2 m/s round one sharper than that (0.55
+	// radians a metre for an eighth of a turn): it turns as sharply as the bend (or as it can), coming up to that and back
+	// down smoothly.
+	auto RoundBend = [&](double SpeedCmS, double KapPerM, double Turn)
+	{
+		FVector Line = FVector::ZeroVector, Bend = FVector::ZeroVector;
+		double OnAt = -1.0;
+		return RunHerdWith(G, R, GrazeStart + 10.0, 40.0, 30.0, 1, FineAt, [&](SlonkFauna::FHerdState& S, double Now, double Dt)
+		{
+			FHerdDrive Dr;
+			if (!S.bStarted) { return Dr; }
+			const FVector Up = S.FramePos.GetSafeNormal();
+			if (Line.IsZero()) { Line = Facing(S); Bend = FVector::CrossProduct(Up, Line); }
+			Dr.bMoving = true;
+			// Where the bend's walk has it, Tau seconds after it came up to its pace (come up to over two seconds): a metre
+			// and a half on, round the bend, and on.
+			auto At = [&](double Tau)
+			{
+				const double Kap = KapPerM / 100.0, Straight = 150.0;
+				const double Along = Tau <= 0.0 ? 0.0 : SpeedCmS * (Tau < 2.0 ? Tau * Tau * Tau / 4.0 - Tau * Tau * Tau * Tau / 16.0 : Tau - 1.0);
+				if (Along <= Straight) { return Line * Along; }
+				const double Arc = FMath::Min(Along - Straight, Turn / Kap);
+				const FVector Round = Line * Straight + Bend / Kap;
+				FVector P = Round + (-Bend * FMath::Cos(Kap * Arc) + Line * FMath::Sin(Kap * Arc)) / Kap;
+				if (Along - Straight > Turn / Kap) { P += (Line * FMath::Cos(Turn) + Bend * FMath::Sin(Turn)) * (Along - Straight - Turn / Kap); }
+				return P;
+			};
+			if (OnAt < 0.0 && S.Travel >= 1.0) { OnAt = Now; }
+			const double Tau = OnAt < 0.0 ? 0.0 : Now - OnAt;
+			Dr.Offset = At(Tau);
+			Dr.Ahead = OnAt < 0.0 ? Line * 200.0 : At(Tau + 1.0);
+			return Dr;
+		}, 1);
+	};
+	const FHerdRun Bent = RoundBend(40.0, 0.4, UE_DOUBLE_PI / 3.0);
+	const FHerdRun Capped = RoundBend(20.0, 0.55, UE_DOUBLE_PI / 4.0);
 	// Walking into its trot over ground tilted 10.7 degrees (as steep as its grass is) along its east, every way across.
 	const FVector Mid = G.Centre * R;
 	const double Rise = FMath::Tan(FMath::DegreesToRadians(10.7));
 	const FHerdRun Slope = RunHerd(G, R, WalkStart, 60.0, 30.0, 1, [&](const FVector& Dir) { return 5000.0 + Rise * FVector::DotProduct(Dir * R - Mid, G.East); }, 2);
-	auto Line = [](const TCHAR* What, const FHerdRun& Run)
+	auto Report = [](const TCHAR* What, const FHerdRun& Run)
 	{
-		return FString::Printf(TEXT("%s %.2f cm/s on average, %.1f at worst (%.1f while its walkers turned; %d of %d over 10 cm/s), a walker's yaw %.3f rad a frame at most"), What, Run.MeanSlip(),
-			Run.WorstSlip, Run.WorstTurnSlip, Run.Slides, Run.Slips, Run.WorstYawStep);
+		return FString::Printf(TEXT("%s %.2f cm/s on average, %.1f at worst (%.0f s in; %.1f while its walkers turned; %d of %d over 10 cm/s), a walker's yaw %.3f rad a frame at most"), What, Run.MeanSlip(),
+			Run.WorstSlip, Run.WorstSlipAt, Run.WorstTurnSlip, Run.Slides, Run.Slips, Run.WorstYawStep);
 	};
-	AddInfo(FString::Printf(TEXT("planted hooves through its turns: %s; %s; %s (startled %d times); %s; %s"), *Line(TEXT("setting off"), SetOff), *Line(TEXT("stopping"), Stop),
-		*Line(TEXT("someone walking at it from ahead and away"), CrewRun), CrewStartles, *Line(TEXT("a craft low ahead of it (its whole flight)"), Fright), *Line(TEXT("on a 10.7 degree slope"), Slope)));
+	AddInfo(FString::Printf(TEXT("planted hooves through its turns: %s; %s; %s (startled %d times); %s; %s"), *Report(TEXT("setting off"), SetOff), *Report(TEXT("stopping"), Stop),
+		*Report(TEXT("someone walking at it from ahead and away"), CrewRun), CrewStartles, *Report(TEXT("a craft low ahead of it (its whole fright)"), Fright), *Report(TEXT("on a 10.7 degree slope"), Slope)));
+	AddInfo(FString::Printf(TEXT("startled on the move: %s; %s; %s (startled %d, %d and %d times)"), *Report(TEXT("walking, a craft from its side"), WalkSide), *Report(TEXT("walking, a craft from ahead"), WalkAhead),
+		*Report(TEXT("galloping, a second craft from ahead"), GallopAhead), SideStartles, AheadStartles, TwiceStartles));
+	AddInfo(FString::Printf(TEXT("the crew on the move: %s; %s (startled %d and %d times)"), *Report(TEXT("gone as it walks away from them"), CrewGone), *Report(TEXT("back ahead of it as it walks back"), CrewAhead),
+		GoneStartles, BackStartles));
+	AddInfo(FString::Printf(TEXT("round a bend: %s, how sharply it turns up to %.2f rad/m, changing by %.4f rad/m a frame at most; %s, up to %.2f rad/m, changing by %.4f at most (%.4f allowed)"),
+		*Report(TEXT("at 0.4 m/s round 0.4 rad/m"), Bent), Bent.MaxKap, Bent.MaxKapStep, *Report(TEXT("at 0.2 m/s round 0.55 rad/m, sharper than its way can turn"), Capped), Capped.MaxKap,
+		Capped.MaxKapStep, SlonkFauna::Walker::MaxKapRate / 30.0));
 	AddInfo(FString::Printf(TEXT("on the move and grazing, a walker's yaw turns %.3f and %.3f rad a frame at most"), Walk.WorstYawStep, Graze.WorstYawStep));
 	TestTrue(TEXT("it set off, stopped, walked off from someone and fled a craft, each a whole turn"), SetOff.MinTravel < 0.01 && SetOff.MaxTravel > 0.99 && Stop.MinTravel < 0.01 && Stop.MaxTravel > 0.99
 		&& CrewRun.MinTravel < 0.01 && CrewRun.MaxTravel > 0.99 && Fright.MinTravel < 0.01 && Fright.MaxTravel > 0.99 && Startles == 1 && CrewStartles == 0);
-	for (const FHerdRun* Run : { &SetOff, &Stop, &CrewRun, &Fright })
+	TestTrue(TEXT("startled on the move, it stood and turned where it stood before it fled"), SideStartles == 1 && AheadStartles == 1 && WalkSide.MinTravel < 0.01 && WalkAhead.MinTravel < 0.01
+		&& WalkSide.MaxSpeedMS > 6.0 && WalkAhead.MaxSpeedMS > 6.0);
+	TestTrue(TEXT("startled again galloping, it fled on"), TwiceStartles == 2 && GallopAhead.MaxSpeedMS > 6.0);
+	TestTrue(TEXT("the crew went and came back unstartling"), GoneStartles == 0 && BackStartles == 0 && CrewGone.MinTravel < 0.01 && CrewAhead.MinTravel < 0.01);
+	TestTrue(TEXT("round the bends, it turned as sharply as the bend, or as it can"), Bent.MaxKap > 0.35 && Capped.MaxKap > 0.45 && Bent.MaxTravel > 0.99 && Capped.MaxTravel > 0.99);
+	TestTrue(TEXT("how sharply it turns changing smoothly, never at a jump"), FMath::Max(Bent.MaxKapStep, Capped.MaxKapStep) <= SlonkFauna::Walker::MaxKapRate / 30.0 + 1e-9);
+	for (const FHerdRun* Run : { &SetOff, &Stop, &CrewRun, &Fright, &WalkSide, &WalkAhead, &GallopAhead, &CrewGone, &CrewAhead, &Bent, &Capped })
 	{
-		TestTrue(TEXT("through its turns, a planted hoof slides less than a centimetre a second on average"), Run->MeanSlip() < 1.0 && Run->TurnSlips > 100);
-		TestTrue(TEXT("hardly one in ten thousand more than 10 cm/s, and none more than 25 cm/s"), Run->Slides * 10000 <= Run->Slips && Run->WorstSlip < 25.0);
+		TestTrue(TEXT("through its turns, a planted hoof slides less than a centimetre a second on average"), Run->MeanSlip() < 1.0 && Run->Slips > 1000);
+		TestTrue(TEXT("none more than 25 cm/s"), Run->WorstSlip < 25.0);
+	}
+	for (const FHerdRun* Run : { &SetOff, &Stop, &CrewRun, &Fright, &WalkSide, &WalkAhead, &GallopAhead, &CrewGone, &CrewAhead })
+	{
+		TestTrue(TEXT("hardly one in ten thousand more than 10 cm/s"), Run->Slides * 10000 <= Run->Slips);
 	}
 	TestTrue(TEXT("up and across a slope, a planted hoof slides less than a centimetre a second"), Slope.MeanTravelSlip() < 1.0 && Slope.WorstTravelSlip < 6.0);
 	// A walker's yaw turns at most about 7.9 rad/s (a frightened herd's walkers turning right round in 0.4 s), a quarter of
 	// a radian at 30 Hz: a turn the wrong way round its wrap would be a jump of up to a whole turn.
-	for (const FHerdRun* Run : { &Walk, &Graze, &SetOff, &Stop, &CrewRun, &Fright, &Slope })
+	for (const FHerdRun* Run : { &Walk, &Graze, &SetOff, &Stop, &CrewRun, &Fright, &WalkSide, &WalkAhead, &GallopAhead, &CrewGone, &CrewAhead, &Bent, &Capped, &Slope })
 	{
 		TestTrue(TEXT("no walker's yaw jumps between two frames"), Run->WorstYawStep < 0.3);
 	}
@@ -2731,10 +2851,10 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaHerdStartleTest, "Slonk.Fauna.HerdSt
 bool FSlonkFaunaHerdStartleTest::RunTest(const FString& Parameters)
 {
 	// A craft passing 30 m over a herd startles it: it gallops off (at a grazer's gallop, from a stand), heads up, and
-	// walks back onto its path two minutes after its fright; one passing 300 m up does not. Someone run in close to it
-	// startles it; someone walking up to it sees it walk off, keeping about 50 m from them, and come back once they leave.
-	// Startled again while it flees, it turns away from the new fright carrying on its gallop: nothing snaps (its place,
-	// its speed, its walkers' heads).
+	// comes back onto its path by the end of its fright, at a steady pace no faster than its own trot; one passing 300 m
+	// up does not. Someone run in close to it startles it; someone walking up to it sees it walk off, keeping about 50 m
+	// from them, and come back once they leave. Startled again while it flees, it turns away from the new fright carrying
+	// on its gallop: nothing snaps (its place, its speed, its walkers' heads).
 	const SlonkFauna::FFaunaWorld W = EarthHerds();
 	SlonkFauna::FFaunaGroup G;
 	if (!TestHerd(W, G)) { AddError(TEXT("no herd found on the Earth-like world")); return false; }
@@ -2744,8 +2864,8 @@ bool FSlonkFaunaHerdStartleTest::RunTest(const FString& Parameters)
 	const double T0 = G.CycleSec * 2.0 + G.WalkB + 2.0;
 	auto Step = [&](SlonkFauna::FHerdState& S, const SlonkFauna::FPanic& P, double Now, double Dt, int32 k)
 	{
-		const FVector Ahead = SlonkFauna::PanicOffset(P, D, Now + 1.0) + S.Avoid;
-		SlonkFauna::StepHerd(S, G, R, Now, Dt, SlonkFauna::PanicOffset(P, D, Now) + S.Avoid, P.IsLive(Now), false, k % 4 == 0, Height, 0.0, nullptr, &Ahead);
+		const FVector Ahead = SlonkFauna::HerdFrightOffset(G, D, P, R, Now + 1.0) + S.Avoid;
+		SlonkFauna::StepHerd(S, G, R, Now, Dt, SlonkFauna::HerdFrightOffset(G, D, P, R, Now) + S.Avoid, P.IsLive(Now), false, k % 4 == 0, Height, 0.0, nullptr, &Ahead);
 	};
 	// A pass straight across it at 80 m/s, from 600 m before it to 600 m after, the herd stepped at 20 Hz.
 	auto Pass = [&](double AltitudeCm, SlonkFauna::FPanic& Panic, SlonkFauna::FHerdState& S)
@@ -2763,7 +2883,7 @@ bool FSlonkFaunaHerdStartleTest::RunTest(const FString& Parameters)
 			Craft.PosCm = Mid + Across * (8000.0 * (k / 20.0 - 7.5));
 			Craft.VelCmS = Across * 8000.0;
 			Craft.AltitudeCm = AltitudeCm;
-			Startles += SlonkFauna::StartleGroup(Panic, D, S.FramePos, Craft, Now) ? 1 : 0;
+			Startles += SlonkFauna::StartleHerd(Panic, S, G, D, R, Craft, Now) ? 1 : 0;
 			Step(S, Panic, Now, 1.0 / 20.0, k);
 		}
 		return Startles;
@@ -2772,31 +2892,35 @@ bool FSlonkFaunaHerdStartleTest::RunTest(const FString& Parameters)
 	SlonkFauna::FHerdState SLow, SHigh;
 	const int32 LowStartles = Pass(3000.0, Low, SLow);
 	const int32 HighStartles = Pass(30000.0, High, SHigh);
-	// Its flight after the pass: how far off its path 30 s on, how fast at its fastest, and back on its path after.
-	double Fastest = 0.0, FastestAt = 0.0;
-	for (int32 k = 301; k <= 20 * 130; ++k)
+	// Its flight after the pass: how far off its path 30 s on, how fast at its fastest, how fast it comes back, and back
+	// on its path after.
+	double Fastest = 0.0, FastestAt = 0.0, BackFastest = 0.0;
+	const int32 Last = FMath::CeilToInt32(20.0 * (Low.T0 - T0 + D.FrightSec + 10.0));
+	for (int32 k = 301; k <= Last; ++k)
 	{
 		const double Now = T0 + k / 20.0;
 		Step(SLow, Low, Now, 1.0 / 20.0, k);
 		if (SLow.SpeedMS > Fastest) { Fastest = SLow.SpeedMS; FastestAt = Now - Low.T0; }
+		if (Now - Low.T0 > D.FleeBackSec) { BackFastest = FMath::Max(BackFastest, (SlonkFauna::HerdFrightOffset(G, D, Low, R, Now) - SlonkFauna::HerdFrightOffset(G, D, Low, R, Now - 0.05)).Size() / 5.0); }
 	}
-	const double Fled = SlonkFauna::PanicOffset(Low, D, Low.T0 + 30.0).Size();
-	const double Back = SlonkFauna::PanicOffset(Low, D, Low.T0 + SlonkFauna::PanicSec + 0.01).Size();
+	const double Fled = SlonkFauna::HerdFrightOffset(G, D, Low, R, Low.T0 + 30.0).Size();
+	const double Back = SlonkFauna::HerdFrightOffset(G, D, Low, R, Low.T0 + D.FrightSec + 0.01).Size();
 	// On its path again: where a herd never startled stands then.
 	SlonkFauna::FHerdState Calm;
 	SlonkFauna::FPanic NoPanic;
-	SlonkFauna::StartHerd(Calm, G, Low.T0 + 125.0);
-	Step(Calm, NoPanic, Low.T0 + 125.0, 0.0, 0);
+	SlonkFauna::StartHerd(Calm, G, Low.T0 + D.FrightSec + 5.0);
+	Step(Calm, NoPanic, Low.T0 + D.FrightSec + 5.0, 0.0, 0);
 	SlonkFauna::FHerdState Again = SLow;
-	Step(Again, Low, Low.T0 + 125.0, 0.0, 0);
+	Step(Again, Low, Low.T0 + D.FrightSec + 5.0, 0.0, 0);
 	const double OffPath = FVector::Dist(Again.FramePos, Calm.FramePos);
-	AddInfo(FString::Printf(TEXT("a herd of %d: a pass 30 m up startles it %d times; it gallops off at up to %.1f m/s (%.0f s in), %.0f m off its path 30 s on, %.2f m off it two minutes after (%.2f cm from a herd never startled); a pass 300 m up startles it %d times"),
-		G.Members, LowStartles, Fastest, FastestAt, Fled / 100.0, Back / 100.0, OffPath, HighStartles));
+	AddInfo(FString::Printf(TEXT("a herd of %d: a pass 30 m up startles it %d times; it gallops off at up to %.1f m/s (%.0f s in), %.0f m off its path 30 s on, comes back from %.0f s at up to %.2f m/s (its trot %.1f m/s), %.2f m off it %.0f s after (%.2f cm from a herd never startled); a pass 300 m up startles it %d times"),
+		G.Members, LowStartles, Fastest, FastestAt, Fled / 100.0, D.FleeBackSec, BackFastest, G.TrotCmS / 100.0, Back / 100.0, D.FrightSec, OffPath, HighStartles));
 	TestTrue(TEXT("a craft passing low startles the herd"), LowStartles >= 1 && Fled > 1.5e4);
 	TestEqual(TEXT("one passing high does not"), HighStartles, 0);
-	TestEqual(TEXT("back on its path two minutes after"), Back, 0.0);
+	TestEqual(TEXT("back on its path by the end of its fright"), Back, 0.0);
 	TestTrue(TEXT("exactly where it would have been"), OffPath < 0.01);
 	TestTrue(TEXT("at a grazer's gallop, from a stand"), Fastest > 6.0 && Fastest < 16.0 && FastestAt > 2.0);
+	TestTrue(TEXT("coming back no faster than its own trot"), BackFastest > 0.5 && BackFastest * 100.0 < G.TrotCmS);
 
 	// Someone on foot: run in to 15 m of its nearest member, it bolts; 80 m off, it does not.
 	SlonkFauna::FHerdState Here;
@@ -2807,9 +2931,10 @@ bool FSlonkFaunaHerdStartleTest::RunTest(const FString& Parameters)
 	Walker.bCraft = false;
 	Walker.PosCm = Here.FramePos + Side * (G.HerdRadiusCm + 1500.0);
 	SlonkFauna::FPanic Near, Far;
-	TestTrue(TEXT("someone run in close startles it"), SlonkFauna::StartleGroup(Near, D, Here.FramePos, Walker, T0, G.HerdRadiusCm));
+	SlonkFauna::FHerdState HereNear = Here, HereFar = Here;
+	TestTrue(TEXT("someone run in close startles it"), SlonkFauna::StartleHerd(Near, HereNear, G, D, R, Walker, T0));
 	Walker.PosCm = Here.FramePos + Side * (G.HerdRadiusCm + 8000.0);
-	TestFalse(TEXT("someone 80 m off does not"), SlonkFauna::StartleGroup(Far, D, Here.FramePos, Walker, T0, G.HerdRadiusCm));
+	TestFalse(TEXT("someone 80 m off does not"), SlonkFauna::StartleHerd(Far, HereFar, G, D, R, Walker, T0));
 	// Someone walking straight at it from 120 m off its edge at 1.4 m/s for a minute and a half, then away for five and a
 	// half: it keeps clear of them unstartled, and comes back to its path once they have gone.
 	SlonkFauna::FHerdState Kept = Here;
@@ -2826,10 +2951,10 @@ bool FSlonkFaunaHerdStartleTest::RunTest(const FString& Parameters)
 		SlonkFauna::FFaunaThreat Foot;
 		Foot.bCraft = false;
 		Foot.PosCm = Crew;
-		CrewStartles += SlonkFauna::StartleGroup(KeptPanic, D, Kept.FramePos, Foot, Now, G.HerdRadiusCm) ? 1 : 0;
+		CrewStartles += SlonkFauna::StartleHerd(KeptPanic, Kept, G, D, R, Foot, Now) ? 1 : 0;
 		const bool bMoving = SlonkFauna::KeepFromCrew(Kept, G, D, TArray<FVector>{ Crew }, 1.0 / 20.0);
-		const FVector Ahead = SlonkFauna::PanicOffset(KeptPanic, D, Now + 1.0) + Kept.Avoid + (bMoving ? Kept.AvoidWay : FVector::ZeroVector);
-		SlonkFauna::StepHerd(Kept, G, R, Now, 1.0 / 20.0, SlonkFauna::PanicOffset(KeptPanic, D, Now) + Kept.Avoid, KeptPanic.IsLive(Now), bMoving, k % 4 == 0, Height, 0.0, nullptr, &Ahead);
+		const FVector Ahead = SlonkFauna::HerdFrightOffset(G, D, KeptPanic, R, Now + 1.0) + Kept.Avoid + (bMoving ? Kept.AvoidWay : FVector::ZeroVector);
+		SlonkFauna::StepHerd(Kept, G, R, Now, 1.0 / 20.0, SlonkFauna::HerdFrightOffset(G, D, KeptPanic, R, Now) + Kept.Avoid, KeptPanic.IsLive(Now), bMoving, k % 4 == 0, Height, 0.0, nullptr, &Ahead);
 		if (bComing && k > 20 * 30) { MinGap = FMath::Min(MinGap, SlonkFauna::CrewGapCm(G, Kept.FramePos, Crew)); }
 		MaxAvoid = FMath::Max(MaxAvoid, Kept.Avoid.Size());
 	}
@@ -2848,19 +2973,20 @@ bool FSlonkFaunaHerdStartleTest::RunTest(const FString& Parameters)
 	SlonkFauna::FFaunaThreat First;
 	First.PosCm = STwice.FramePos + STwice.FrameRot.GetAxisX() * 5000.0 + STwice.FramePos.GetSafeNormal() * 3000.0;
 	First.AltitudeCm = 3000.0;
-	TestTrue(TEXT("startled by a craft 50 m off"), SlonkFauna::StartleGroup(Twice, D, STwice.FramePos, First, T0));
+	TestTrue(TEXT("startled by a craft 50 m off"), SlonkFauna::StartleHerd(Twice, STwice, G, D, R, First, T0));
 	const double Ts = T0 + 12.0;
-	const FVector Before = SlonkFauna::PanicOffset(Twice, D, Ts), BeforeV = (Before - SlonkFauna::PanicOffset(Twice, D, Ts - 0.05)) / 0.05;
+	for (int32 k = 1; k < 240; ++k) { Step(STwice, Twice, T0 + k / 20.0, 1.0 / 20.0, k); }
+	const FVector Before = SlonkFauna::HerdFrightOffset(G, D, Twice, R, Ts), BeforeV = (Before - SlonkFauna::HerdFrightOffset(G, D, Twice, R, Ts - 0.05)) / 0.05;
 	float GdBefore[SlonkFauna::HerdData::Num] = {};
 	SlonkFauna::FHerdState SAt = STwice;
-	SlonkFauna::StepHerd(SAt, G, R, Ts, 0.0, Before, true, false, true, Height, 0.0, GdBefore);
+	SlonkFauna::StepHerd(SAt, G, R, Ts, 1.0 / 20.0, Before + SAt.Avoid, true, false, true, Height, 0.0, GdBefore);
 	SlonkFauna::HerdFrightData(Twice, Ts, 0.0, GdBefore);
 	SlonkFauna::FFaunaThreat Second;
 	Second.PosCm = SAt.FramePos + SAt.FrameRot.GetAxisY() * 5000.0 + SAt.FramePos.GetSafeNormal() * 3000.0;
 	Second.AltitudeCm = 3000.0;
 	const FVector FirstDir = Twice.Dir;
-	TestTrue(TEXT("startled again 12 s on"), SlonkFauna::StartleGroup(Twice, D, SAt.FramePos, Second, Ts));
-	const FVector After = SlonkFauna::PanicOffset(Twice, D, Ts), AfterV = (SlonkFauna::PanicOffset(Twice, D, Ts + 0.05) - After) / 0.05;
+	TestTrue(TEXT("startled again 12 s on"), SlonkFauna::StartleHerd(Twice, SAt, G, D, R, Second, Ts));
+	const FVector After = SlonkFauna::HerdFrightOffset(G, D, Twice, R, Ts), AfterV = (SlonkFauna::HerdFrightOffset(G, D, Twice, R, Ts + 0.05) - After) / 0.05;
 	float GdAfter[SlonkFauna::HerdData::Num] = {};
 	FMemory::Memcpy(GdAfter, GdBefore, sizeof(GdAfter));
 	SlonkFauna::HerdFrightData(Twice, Ts, 0.0, GdAfter);
@@ -3101,6 +3227,57 @@ bool FSlonkFaunaWalkerTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("fauna_material.py's walker branch found"), WalkerBlock.Len() > 2000 && WalkerBlock.Contains(TEXT("float wyaw = wyc + wtr * wdy;")));
 	TestEqual(TEXT("WalkerMotion copies the material's walker branch as it is now"), WalkerBlockCrc, MaterialWalkerBlockCrc);
 
+	// A walker turning to walk where it stands, its grazing way a hair short of opposite the herd's way, and the herd's
+	// way as slot 4 packs it a hair past the half turn (so the body's turn and its feet's lie either side of it): its body
+	// turns the same way round as its planted hooves are carried, so none of them slides.
+	{
+		float Cu[SlonkFauna::Custom::Num] = {};
+		float Gd[SlonkFauna::HerdData::Num] = {};
+		const float Size = 2.f;
+		Cu[SlonkFauna::Custom::SizeM] = Size;
+		Cu[SlonkFauna::Custom::Seed] = 0.37f;
+		Cu[SlonkFauna::Custom::RateHz] = 1.24f;
+		Cu[SlonkFauna::Custom::PerKind] = 1.2f;
+		const float T0 = 1500.f;
+		const double TurnStep = 2.0 * UE_DOUBLE_PI / SlonkFauna::HerdData::TurnSteps;
+		const double Hd = 1234.0 * TurnStep - 0.0007;
+		Gd[SlonkFauna::HerdData::Heading] = (float)Hd;
+		Gd[SlonkFauna::HerdData::TurnHeading] = SlonkFauna::HerdData::PackTurns(0.3, Hd);
+		Gd[SlonkFauna::HerdData::DistM] = 100.f;
+		Gd[SlonkFauna::HerdData::GrazeSec] = 1000.f;
+		Gd[SlonkFauna::HerdData::GrazeRef] = 700.f;
+		Gd[SlonkFauna::HerdData::ClockT0] = T0;
+		// Its grazing way at that clock, turned by its phase to a hair (0.4 mrad) short of opposite the herd's way.
+		const float YawC0 = SlonkFauna::WalkerYaw(T0, Cu, Gd);
+		Cu[SlonkFauna::Custom::Phase] = (float)((Hd - UE_DOUBLE_PI + 0.0004 - YawC0) / (2.0 * UE_DOUBLE_PI));
+		const float YawC = SlonkFauna::WalkerYaw(T0, Cu, Gd);
+		// Half way through its turn to walk, its legs stepping it round (a whole turn is PivotM of their walk).
+		Gd[SlonkFauna::HerdData::Travel] = 0.5f;
+		Gd[SlonkFauna::HerdData::SpeedMS] = 2.f;
+		Gd[SlonkFauna::HerdData::PivotRef] = 100.f - (float)(0.5 * SlonkFauna::Walker::PivotM);
+		double WorstCmS = 0.0;
+		int32 Planted = 0;
+		const float Dt = 1.f / 60.f;
+		for (int32 f = 0; f < 4; ++f)
+		{
+			const FLinearColor VC(SlonkFauna::Vc::SurfaceBeak, 1.f, WalkerHoofPhase[f], SlonkFauna::Vc::JointLeg);
+			const FVector3f LP = WalkerHooves[f];
+			for (int32 k = 0; k < 12; ++k)
+			{
+				const float Ta = T0 + k * Dt, Tb = Ta + Dt;
+				const bool bDown = FMath::Frac(SlonkFauna::WalkerStrides(Ta, Cu, Gd) - VC.B) < SlonkFauna::Walker::Duty - 0.02f && FMath::Frac(SlonkFauna::WalkerStrides(Tb, Cu, Gd) - VC.B) < SlonkFauna::Walker::Duty - 0.02f;
+				if (!bDown) { continue; }
+				++Planted;
+				const FVector3f A = (LP + SlonkFauna::WalkerMotion(LP, LP * Size, VC, Ta, Cu, Gd, 2000.f, 960.f)) * Size;
+				const FVector3f B = (LP + SlonkFauna::WalkerMotion(LP, LP * Size, VC, Tb, Cu, Gd, 2000.f, 960.f)) * Size;
+				WorstCmS = FMath::Max(WorstCmS, (double)FVector3f::Dist2D(A, B) / Dt);
+			}
+		}
+		AddInfo(FString::Printf(TEXT("a walker turning to walk from a hair short of opposite the herd's way (%.4f rad off the half turn, its way packed %.4f rad past it): %d planted hoof-steps, the worst sliding %.2f cm/s"),
+			UE_DOUBLE_PI - FMath::Abs(FMath::UnwindRadians(Hd - YawC)), FMath::UnwindRadians(1234.0 * TurnStep - Hd), Planted, WorstCmS));
+		TestTrue(TEXT("its body and its planted hooves turn the same way round through the half turn"), Planted > 4 && WorstCmS < 5.0);
+	}
+
 	// The static mesh: made once and kept, three LODs at the kind's screen sizes; where its LODs come in for a walker 2 m
 	// long through a 90-degree view at 16:9 (the engine's screen size: the projection's scale times the radius over the
 	// distance; the GPU's radius, its padded box's), and how long it is there in pixels (960 a radian).
@@ -3195,12 +3372,12 @@ bool FSlonkFaunaHerdBudgetTest::RunTest(const FString& Parameters)
 			Craft.AltitudeCm = 1.0e5;
 			Walker.bCraft = false;
 			Walker.PosCm = S.FramePos + S.FrameRot.GetAxisX() * 3.0e4;
-			SlonkFauna::StartleGroup(Panics[h], D, S.FramePos, Craft, Now);
-			SlonkFauna::StartleGroup(Panics[h], D, S.FramePos, Walker, Now, G.HerdRadiusCm);
+			SlonkFauna::StartleHerd(Panics[h], S, G, D, R, Craft, Now);
+			SlonkFauna::StartleHerd(Panics[h], S, G, D, R, Walker, Now);
 			const bool bMoving = SlonkFauna::KeepFromCrew(S, G, D, TArray<FVector>{ Walker.PosCm }, 1.0 / 60.0);
-			const FVector Ahead = SlonkFauna::PanicOffset(Panics[h], D, Now + 1.0) + S.Avoid + (bMoving ? S.AvoidWay : FVector::ZeroVector);
+			const FVector Ahead = SlonkFauna::HerdFrightOffset(G, D, Panics[h], R, Now + 1.0) + S.Avoid + (bMoving ? S.AvoidWay : FVector::ZeroVector);
 			float Gd[SlonkFauna::HerdData::Num] = {};
-			SlonkFauna::StepHerd(S, G, R, Now, f == 0 ? 0.0 : 1.0 / 60.0, SlonkFauna::PanicOffset(Panics[h], D, Now) + S.Avoid, Panics[h].IsLive(Now), bMoving,
+			SlonkFauna::StepHerd(S, G, R, Now, f == 0 ? 0.0 : 1.0 / 60.0, SlonkFauna::HerdFrightOffset(G, D, Panics[h], R, Now) + S.Avoid, Panics[h].IsLive(Now), bMoving,
 				h < 2 || (f + h) % 6 == 0, At, 0.0, Gd, &Ahead);
 			SlonkFauna::HerdFrightData(Panics[h], Now, 0.0, Gd);
 			Sink += Gd[SlonkFauna::HerdData::DistM] + S.FramePos.X;
@@ -3230,7 +3407,9 @@ bool FSlonkFaunaHerdSpacingTest::RunTest(const FString& Parameters)
 	// No two walkers of a herd ever meet: grazing round their circles a stride a step through a whole hour of grazing
 	// (and so walking with the herd too, their circles held where they stood when it set off), the middles of any two of
 	// them stay at least the longer one's length apart. The tightest herds of an Earth-like world (the most walkers to
-	// their spacing), every second of the hour.
+	// their spacing), every second of the hour. And of every herd found, every walker's circle keeps to its half of the
+	// room its nearest neighbour leaves it past the longest walker's length (so any two leave that length between them),
+	// even its smallest circle of three strides: no middle is ever thrown closer than that allows.
 	const SlonkFauna::FFaunaWorld W = EarthHerds();
 	TArray<SlonkFauna::FFaunaGroup> Herds;
 	HerdsOverGlobe(W, 20000, Herds);
@@ -3276,10 +3455,30 @@ bool FSlonkFaunaHerdSpacingTest::RunTest(const FString& Parameters)
 			}
 		}
 	}
+	int32 AllWalkers = 0, Cramped = 0;
+	double Room = TNumericLimits<double>::Max();
+	for (const SlonkFauna::FFaunaGroup& G : Herds)
+	{
+		TArray<FTransform> Xf;
+		TArray<float> Cu;
+		SlonkFauna::MembersOf(G, Xf, Cu);
+		const double BodyM = 1.1 * 1.15 * G.SpanM;
+		for (int32 i = 0; i < Xf.Num(); ++i)
+		{
+			double GapM = 1.0e9;
+			for (int32 j = 0; j < Xf.Num(); ++j) { if (j != i) { GapM = FMath::Min(GapM, FVector::Dist2D(Xf[i].GetTranslation(), Xf[j].GetTranslation()) / 100.0); } }
+			const double Left = 0.5 * (GapM - BodyM) - FMath::Abs(Cu[i * SlonkFauna::Custom::Num + SlonkFauna::Custom::PerKind]);
+			Room = FMath::Min(Room, Left);
+			Cramped += Left < -1e-4 ? 1 : 0;
+			++AllWalkers;
+		}
+	}
 	AddInfo(FString::Printf(TEXT("the %d tightest herds (%d walkers, %d of them on circles of three strides) grazing through an hour: two walkers' middles at least %.2f of the longer one's length apart; %d times a pair closer than that"),
 		Tried, Walkers, SmallCircles, Closest, Close));
+	AddInfo(FString::Printf(TEXT("all %d herds (%d walkers): every circle within its room by %.3f m at the least, %d not"), Herds.Num(), AllWalkers, Room, Cramped));
 	TestTrue(TEXT("herds to try"), Tried >= 4);
 	TestEqual(TEXT("no two walkers ever closer than the longer one's length"), Close, 0);
+	TestEqual(TEXT("every walker's circle within its room"), Cramped, 0);
 	return true;
 }
 
@@ -3288,9 +3487,13 @@ bool FSlonkFaunaHerdDustTest::RunTest(const FString& Parameters)
 {
 	// A herd raises dust off dry ground going faster than a walk, by day, near the camera, on a living world: none as it
 	// grazes, stands or walks, more the faster it goes, none on soaked ground, by night, far off or on a dead world; its
-	// puffs the size its walkers are, drifting as it goes, paler than the ground's own colour. The components it is drawn
-	// with are lent out of a pool and come back to it, one given back resting as long as its last puffs live before it is
-	// lent again. No Niagara asset is needed for any of it.
+	// puffs the size its walkers are, drifting as it goes, paler than the ground's own colour. Its speed is smoothed and
+	// switched with slack: a single fast frame (a hitch, its ground shifting under it) raises none, a trot does within half
+	// a second, and once raised it is kept through a moment's slowing and let go once it walks again. Its puffs are born
+	// moving with the ground as the world turns (User.Carry): none while the spin is held, and on a turning world the
+	// ground's own velocity, omega cross r, as the planet's turn moves a point on it. The components it is drawn with are
+	// lent out of a pool and come back to it, one given back resting as long as its last puffs live before it is lent
+	// again. No Niagara asset is needed for any of it.
 	FScatterPalette Pal;
 	SlonkFauna::FHerdDustInput In;
 	In.Members = 40;
@@ -3335,6 +3538,53 @@ bool FSlonkFaunaHerdDustTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("fewer at dusk, more on drier ground"), Dusk > 0.f && Dusk < Trot.Rate && Drier > Trot.Rate);
 	TestTrue(TEXT("its puffs the walkers' size, its footprint the herd's, drifting as it goes"), Big.Size > Trot.Size && Trot.Radius == 2500.f && Trot.Drift.Equals(In.VelWorldCmS));
 	TestTrue(TEXT("paler than the ground, fainter at night"), Luma(Trot.Color) > Luma(Ground) && Trot.Color.A > Night.A && Night.A > 0.f);
+
+	// Its gate, frame by frame at 60 Hz: walking at 1.1 m/s with a hitch of a quarter of a second read as 1.6 m/s, and a
+	// frame its ground shifted under it read as 1.3 m/s; then a trot at 2.4 m/s; a second's slowing to 1.1 m/s two seconds
+	// into it; and walking again at 1.1 m/s.
+	SlonkFauna::FDustGate Gate;
+	double Clock = 0.0;
+	auto GateFor = [&](double Speed, double Dt) { Clock += Dt; return SlonkFauna::StepDustGate(Gate, Speed, Dt, Clock); };
+	bool bSpiked = false;
+	for (int32 f = 0; f < 120; ++f) { bSpiked |= GateFor(1.1, 1.0 / 60.0); }
+	bSpiked |= GateFor(1.6, 0.25);
+	for (int32 f = 0; f < 60; ++f) { bSpiked |= GateFor(f == 30 ? 1.3 : 1.1, 1.0 / 60.0); }
+	double OnAfter = -1.0;
+	for (int32 f = 1; f <= 120; ++f) { if (GateFor(2.4, 1.0 / 60.0) && OnAfter < 0.0) { OnAfter = f / 60.0; } }
+	bool bKept = true;
+	for (int32 f = 0; f < 60; ++f) { bKept &= GateFor(1.1, 1.0 / 60.0); }
+	double OffAfter = -1.0;
+	for (int32 f = 1; f <= 600; ++f) { if (!GateFor(1.1, 1.0 / 60.0) && OffAfter < 0.0) { OffAfter = f / 60.0; } }
+	AddInfo(FString::Printf(TEXT("its dust's gate: a hitch and a shift of its ground while it walks raise %s; a trot raises it after %.2f s; a second's slowing to a walk %s; walking again it is let go after %.2f s more"),
+		bSpiked ? TEXT("some") : TEXT("none"), OnAfter, bKept ? TEXT("keeps it") : TEXT("lets it go"), OffAfter));
+	TestFalse(TEXT("a single fast frame raises no dust"), bSpiked);
+	TestTrue(TEXT("a trot raises it within half a second"), OnAfter > 0.0 && OnAfter < 0.5);
+	TestTrue(TEXT("a moment's slowing keeps it"), bKept);
+	TestTrue(TEXT("walking again lets it go"), OffAfter > 0.0 && OffAfter < 3.0);
+
+	// The ground's own velocity: none while the world holds its spin or does not turn; on a world turning a day of 24
+	// hours at the clock's x60, tilted, a point 6,371 km from its middle moves as the planet's turn (its rotation run on
+	// as APlanetBody::Tick runs it, by a yaw of its spin in its own frame) moves it.
+	const FQuat Tilt = FQuat(FVector(1.0, 0.3, 0.0).GetSafeNormal(), FMath::DegreesToRadians(23.4)) * FQuat(FVector::ZAxisVector, 0.7);
+	const FVector Centre(1.0e8, -3.0e7, 5.0e6);
+	const float Spin = 0.0042f;
+	const double Scale = 60.0;
+	const FVector Local = FVector(0.3, -0.8, 0.52).GetSafeNormal() * 6.371e8;
+	const FVector At0 = Centre + Tilt.RotateVector(Local);
+	const FVector Held = SlonkFauna::GroundCarryCmS(Tilt.GetUpVector(), Centre, Spin, Scale, true, At0);
+	const FVector Still = SlonkFauna::GroundCarryCmS(Tilt.GetUpVector(), Centre, 0.0, Scale, false, At0);
+	const FVector Carry = SlonkFauna::GroundCarryCmS(Tilt.GetUpVector(), Centre, Spin, Scale, false, At0);
+	constexpr double Step = 1.0e-3;
+	const FQuat Turned = Tilt * FQuat(FRotator(0.f, (float)(Spin * Scale * Step), 0.f));
+	const FVector Moved = (Centre + Turned.RotateVector(Local) - At0) / Step;
+	const double Want = FMath::DegreesToRadians(Spin * Scale) * FVector::CrossProduct(Tilt.GetUpVector(), At0 - Centre).Size();
+	AddInfo(FString::Printf(TEXT("the ground's own velocity: %.3f cm/s with the spin held, %.3f on a world that does not turn; on a turning world %.1f m/s (omega r cos latitude %.1f m/s), %.4f of it off the way the planet's turn moves the point (%.1f m/s)"),
+		Held.Size(), Still.Size(), Carry.Size() / 100.0, Want / 100.0, (Carry - Moved).Size() / FMath::Max(Moved.Size(), 1.0), Moved.Size() / 100.0));
+	TestTrue(TEXT("no carry while the spin is held, nor on a world that does not turn"), Held.IsZero() && Still.IsZero());
+	TestTrue(TEXT("the ground's velocity, omega cross r, the way and as fast as the turn moves it"), Carry.Size() > 1.0e4 && FMath::IsNearlyEqual(Carry.Size(), Want, Want * 1e-6)
+		&& (Carry - Moved).Size() < 1e-3 * Moved.Size());
+	In.CarryWorldCmS = Carry;
+	TestTrue(TEXT("and handed to the asset as it is"), SlonkFauna::HerdDustFor(In).Carry.Equals(Carry));
 
 	// The pool: two herds raise dust, one stops (its component rests), a third starts before it has rested (a new one),
 	// a fourth after (the rested one again); the components all come back.

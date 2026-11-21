@@ -131,8 +131,10 @@ private:
 		/** A herd's clocks, ground and place (SlonkFauna::StepHerd), and how many frames it has been about. */
 		TSharedPtr<SlonkFauna::FHerdState> Herd;
 		uint32 Frames = 0;
-		/** How wet the ground under a herd raising dust was when last read, and when (the world's seconds). */
+		/** How wet the ground under a herd raising dust was when last read, and when (the world's seconds); whether it
+		 *  goes fast enough to raise any, its speed smoothed (SlonkFauna::StepDustGate). */
 		double DustWet = 0.5, DustWetAt = -1.0e9;
+		SlonkFauna::FDustGate DustGate;
 	};
 	using FScanRef = TSharedPtr<SlonkFauna::FFaunaField::FScan, ESPMode::ThreadSafe>;
 
@@ -142,8 +144,9 @@ private:
 	void EnsureHerdMaterial();
 	/** A herd's step this frame: its frame on the drawn ground, its fright, the crew, its material's data, its dust. */
 	void UpdateHerd(uint64 Id, FGroupSet& S, const TArray<SlonkFauna::FFaunaThreat>& Threats, const FVector& CamLocal, const FVector& Sun, double Now, double Dt);
-	/** A herd's dust this frame (how deep in the night it stands): raised, kept up or given back to the pool. */
-	void UpdateDust(uint64 Id, FGroupSet& S, const FVector& CamLocal, float Night);
+	/** A herd's dust this frame (how deep in the night it stands, and the frame's step, s): raised, kept up or given back
+	 *  to the pool; its puffs born moving with the ground as the planet turns (User.Carry). */
+	void UpdateDust(uint64 Id, FGroupSet& S, const FVector& CamLocal, float Night, double Dt);
 	/** Gives a herd's dust back, its puffs left to fade. */
 	void ReleaseDust(uint64 Id);
 	/** NS_HerdDust, loaded the first time a herd would raise dust (false, and one line in the log, without it). */

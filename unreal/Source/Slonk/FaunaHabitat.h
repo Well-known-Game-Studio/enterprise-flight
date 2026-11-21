@@ -256,11 +256,11 @@ namespace SlonkFauna
 	 * (GrazeRef) and its way through it (TurnHeading); the turn before it (the other way: LastTurnHeading its way) and what
 	 * came between (SinceLastTurn: before a turn to walk, the grazing clock the stop before left it at; before one back to
 	 * graze, how far its legs walked, m), through which a walker's feet still down are carried; how sharply its way turns
-	 * as it walks (WalkKap, radians a metre, kept from its last walk). A turn once begun runs on to its end. A herd that
-	 * has to turn more than
-	 * TurnAroundRad off its way while on the move stops, turns where it stands and sets off again (bTurnAround). Out of the
-	 * crew's way: the way it wants to go and how fast (AvoidWay, planet-local cm/s) and how much of that pace it has come
-	 * up to (AvoidPace).
+	 * as it walks (WalkKap, radians a metre, changing smoothly, kept from its last walk). A turn once begun runs on to its
+	 * end. A herd that has to turn more than TurnAroundRad off its way while on the move stops, turns where it stands and
+	 * sets off again (bTurnAround). Out of the crew's way: the way it wants to go and how fast (AvoidWay, planet-local
+	 * cm/s), the way it is walking (AvoidGoing, which it eases off along when it may not go the way it wants) and how much
+	 * of that pace it has come up to (AvoidPace).
 	 */
 	struct FHerdState
 	{
@@ -269,17 +269,28 @@ namespace SlonkFauna
 		bool bTurnAround = false;
 		FVector Avoid = FVector::ZeroVector;
 		FVector AvoidWay = FVector::ZeroVector;
+		FVector AvoidGoing = FVector::ZeroVector;
 		double AvoidPace = 0.0;
 		FVector FramePos = FVector::ZeroVector;
 		FQuat FrameRot = FQuat::Identity;
 		/** Its frame's velocity along its plane over the last step, planet-local cm/s, and its offset off its path then. */
 		FVector VelCmS = FVector::ZeroVector;
 		FVector LastOffset = FVector::ZeroVector;
+		/** The way it was steering for at the last step (its frame's way on the move), which WalkKap follows as it turns. */
+		double TargetWas = 0.0;
+		bool bTargetWas = false;
 		bool bStarted = false;
 		FHerdGround Ground;
 	};
-	/** How far off its way a herd on the move has to turn to stop and turn where it stands, radians. */
-	constexpr double TurnAroundRad = 1.75;
+	/** How far off its way a herd on the move has to turn to stop and turn where it stands, radians (its frame all but
+	 *  standing, slower than 10 cm/s, TurnStandingRad: at a stand it turns where it stands rather than on the move). How
+	 *  fast its walkers
+	 *  turn to walk or back to graze, a share of the whole turn a second, calm and frightened. How fast a herd's frame goes
+	 *  over the ground, m/s, past which a fright cannot stop it dead (a gallop: its walk and trot are no faster than about
+	 *  3.4 m/s). */
+	constexpr double TurnAroundRad = 1.75, TurnStandingRad = 0.35;
+	constexpr double HerdTurnRate = 0.5, HerdShakenTurnRate = 2.5;
+	constexpr double HerdGallopMS = 4.0;
 	/** A herd come about at a time: its clocks from its schedule (as far along its loop as the hour has walked it, as
 	 *  long grazed as the hour has left it standing), turned as its schedule has it. */
 	SLONK_API void StartHerd(FHerdState& S, const FFaunaGroup& G, double Seconds);
@@ -289,8 +300,10 @@ namespace SlonkFauna
 	 * Moves a herd off its path out of the way of the crew on foot (planet-local positions): away from anyone nearer its
 	 * nearest member than the kind's KeepFromCrewCm, at a walk (a trot for one close in), and back to its path at a stroll
 	 * once nobody is near, never back toward anyone. It turns to go before it goes: it moves only once all of it is on the
-	 * move (Travel 1, not turning about), coming up to its pace over a second, and meanwhile keeps the way it wants to go
-	 * (AvoidWay). True while it wants to move for them.
+	 * move (Travel 1, not turning about) and the way it wants to go (AvoidWay) is within TurnAroundRad of the way it faces,
+	 * coming up to its pace over a second; when it may not, it eases off over half a second on along the way it was
+	 * walking (AvoidGoing), so it comes to a stop going forward and only then turns about. True while it wants to move
+	 * for them.
 	 */
 	SLONK_API bool KeepFromCrew(FHerdState& S, const FFaunaGroup& G, const FFaunaKindDesc& D, const TArray<FVector>& CrewPosCm, double Dt);
 	/**
@@ -301,9 +314,12 @@ namespace SlonkFauna
 	 * its walkers' steps as they turn, its grazing clock by the time it stood grazing; its travel share turned toward what
 	 * its schedule, its fright (bShaken) or the crew (bMoving) ask, and its heading toward the way it is going or about to
 	 * go: its path and OffsetAheadCm (its offset a second on, the way its fright or the crew will take it; OffsetCm if
-	 * null). The heading is set at once while it grazes, turned as it walks (at most a few radians a second, and
-	 * MaxWalkKap a metre) and held while its walkers turn; a herd on the move asked to go more than TurnAroundRad off its
-	 * way stops, turns and sets off again. ClockOffsetSec is the paths' clock's offset from the material's
+	 * null). The heading is set at once while it grazes, turned as it walks (by WalkKap a metre walked, which steers
+	 * toward the way it goes as sharply as it can still straighten out by the time it faces it, at most MaxWalkKap a
+	 * metre and a few radians a second, changing by no more than Walker::MaxKapRate a second) and held while its walkers
+	 * turn; a herd on the move asked to go more than TurnAroundRad off its way stops, turns and sets off again. Its legs
+	 * walk by its frame's way along its plane from where it stood, laid level first, so the drawn ground rising or falling
+	 * under it (its chunks splitting) walks no legs on. ClockOffsetSec is the paths' clock's offset from the material's
 	 * (UPlanetFaunaComponent::SetTimeOffset).
 	 */
 	SLONK_API void StepHerd(FHerdState& S, const FFaunaGroup& G, double RadiusCm, double Now, double Dt, const FVector& OffsetCm, bool bShaken, bool bMoving, bool bRefreshGround,
@@ -329,6 +345,13 @@ namespace SlonkFauna
 	struct FPanic
 	{
 		double T0 = -1.0e30;
+		/** How long it stays shaken from T0, s (its kind's FFaunaKindDesc::FrightSec). */
+		double LiveSec = PanicSec;
+		/** A galloping kind's: when its gallop comes on (the paths' clock: its walkers have turned to flee by then), and
+		 *  whether the startle stopped it where it stood (its path's own walk held back until the gallop has come on:
+		 *  HerdFrightOffset). */
+		double FleeT0 = -1.0e30;
+		bool bHold = false;
 		FVector Dir = FVector::ZeroVector;
 		/** The side a galloping kind loops round to come back to its path (planet-local unit, level). */
 		FVector Side = FVector::ZeroVector;
@@ -342,13 +365,18 @@ namespace SlonkFauna
 		 *  fright wears on it comes back from where it had eased to (this set back as far as the coming-in has got
 		 *  there). */
 		double OnsetT0 = -1.0e30;
-		bool IsLive(double Now) const { return Now >= T0 && Now - T0 < PanicSec; }
+		bool IsLive(double Now) const { return Now >= T0 && Now - T0 < LiveSec; }
 		/** Whether its members' scatter is still open (ScatterSec from when it opened, while the fright lasts). */
 		bool IsScattered(double Now) const { return IsLive(Now) && Now - ScatterT0 < ScatterSec; }
 	};
 	/** How far a group's frame is off its path for its fright at a time, planet-local cm: away fast, held a while, back
-	 *  by PanicSec (exactly zero from then). */
+	 *  by its LiveSec (exactly zero from then). A galloping kind's gallop comes on at its FleeT0, and it comes back from
+	 *  its kind's FleeBackSec at a steady pace eased in and out. */
 	SLONK_API FVector PanicOffset(const FPanic& P, const FFaunaKindDesc& D, double Now);
+	/** A herd's offset off its path for its fright at a time, planet-local cm: its flight (PanicOffset) and, while a
+	 *  startle holds it where it stood (FPanic::bHold), its path's own walk since the startle held back, let go as its
+	 *  gallop comes on and as it comes back (exactly zero by its LiveSec). */
+	SLONK_API FVector HerdFrightOffset(const FFaunaGroup& G, const FFaunaKindDesc& D, const FPanic& P, double RadiusCm, double Now);
 	/** How fast a shaken group's frame wheels round to the way it flies, and how fast its members' bank follows the turn,
 	 *  radians a second. */
 	constexpr double FlightTurnRadS = 2.5;
@@ -369,6 +397,16 @@ namespace SlonkFauna
 	/** Startles a group at its place now if the threat scares it (unless it was startled in the last RestartleSec, or is
 	 *  already half again its flight off its path): true if it did, as StartleNow. */
 	SLONK_API bool StartleGroup(FPanic& P, const FFaunaKindDesc& D, const FVector& GroupPosCm, const FFaunaThreat& T, double Now, double GroupRadiusCm = 0.0);
+	/**
+	 * Startles a herd where its frame stands (S, as last stepped) if the threat scares it, as StartleGroup does a flock
+	 * (bForce: however lately it was startled, as StartleNow), its flight running on from where its fright (its hold of its
+	 * path among it) has it now. A herd going no faster than HerdGallopMS stops where it stands: its walkers turn back and
+	 * round to the way it flees (S.bTurnAround, if any of it was on the move), its path held where it was (FPanic::bHold)
+	 * and its gallop coming on only once they have turned (FPanic::FleeT0), so its frame never moves while its walkers
+	 * turn. One galloping turns away on the run, carrying its speed; asked to flee more than TurnAroundRad off the way it
+	 * faces (the fright ahead of it), it flees on the way it is going.
+	 */
+	SLONK_API bool StartleHerd(FPanic& P, FHerdState& S, const FFaunaGroup& G, const FFaunaKindDesc& D, double RadiusCm, const FFaunaThreat& T, double Now, bool bForce = false);
 	/** Startles a group at its place now, however lately it was: it flees away from the threat (or off its track, the
 	 *  threat overhead), what is left of its last flight carried; its panic runs from now; its members' scatter, if still
 	 *  open, is kept, and its wingbeat's urge comes in from where it stands (FPanic::OnsetT0). */

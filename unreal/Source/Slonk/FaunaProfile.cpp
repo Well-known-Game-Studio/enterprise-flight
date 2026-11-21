@@ -36,15 +36,18 @@ namespace
 	 * their middles, so one comes and goes past the 2.2 km their members fade by), at most 16 of them and 960 walkers (16
 	 * herds of the largest, 60), none while the camera is more than 2.5 km over the ground (so one comes and goes, as the
 	 * camera climbs and comes down, past its members' fade too). A craft in the air (not set down) lower than 150 m over
-	 * the ground and within 150 m of a herd's middle startles it: its walkers turn to flee where they stand (half a
-	 * second), then it gallops off 250 m, at its fastest (about 11 m/s) 8 s in, and loops round (25 m to its side) and
-	 * walks back. Someone on foot it keeps 50 m from its nearest member, and one who runs in to 20 m of it startles it.
-	 * Their shadows within 600 m, where a walker is at least 3 pixels long and its shadow reads from the air at a low sun.
-	 * The material moves a walker's vertices up to about 3.7 unit-mesh metres past its box (its round of its grazing
-	 * circle, up to 1.93 of its lengths from its instance; the speck floor's growth to four times its size; its legs'
-	 * stride; the ground under it, up to 1.5 m off its herd's plane), which every instance's box is padded by (4 m); their
-	 * LOD screen sizes are set with that box (about 7.9 lengths round, where a walker is 1), so a walker goes to its 30
-	 * triangles about 30 pixels long and to its 2 about 6 (Slonk.Fauna.Walker).
+	 * the ground and within 150 m of a herd's middle startles it: its walkers turn to flee where they stand (half a second;
+	 * on the move it stops first, and turns back and round where it stands), then it gallops off 250 m (across the way its
+	 * path goes if that walks during its fright), at its fastest (about 11 m/s) 8 s in, loops round (25 m to its side) and
+	 * from 40 s comes back at a steady pace no faster than about 2.1 m/s (its slowest trot is 2.4), on its path again 200 s
+	 * after; galloping, a second fright turns it on the run, or from ahead sends it on. Someone on foot it keeps 50 m from
+	 * its nearest member, and one who runs in to 20 m of it startles it. Their shadows within 600 m, where a walker is at
+	 * least 3 pixels long and its shadow reads from the air at a low sun. The material moves a walker's vertices up to
+	 * about 3.7 unit-mesh metres past its box (its round of its grazing circle, up to 1.93 of its lengths from its
+	 * instance; the speck floor's growth to four times its size; its legs' stride; the ground under it, up to 1.5 m off its
+	 * herd's plane), which every instance's box is padded by (4 m); their LOD screen sizes are set with that box (about 7.9
+	 * lengths round, where a walker is 1), so a walker goes to its 30 triangles about 30 pixels long and to its 2 about 6
+	 * (Slonk.Fauna.Walker).
 	 * The rest are the later phases' budgets (not spawned yet): 30 leapers in 6 groups, 24 floaters alone. 2,414 instances
 	 * and 58 group sets in all.
 	 */
@@ -69,6 +72,7 @@ namespace
 			D.GroupMin = 15; D.GroupMax = 60; D.MaxGroups = 16; D.MaxMembers = 960;
 			D.ScareRadiusCm = 1.5e4; D.ScareAltitudeCm = 1.5e4; D.CrewScareCm = 2.0e3; D.FleeCm = 2.5e4;
 			D.FleeRiseSec = 8.0; D.bGallop = true; D.FleeUp = 0.0; D.FleeTurnSec = 0.5; D.FleeLoopCm = 2.5e3; D.KeepFromCrewCm = 5.0e3;
+			D.FrightSec = 200.0; D.FleeBackSec = 40.0;
 			D.ShadowReachCm = 6.0e4; D.FadeCm = 2.2e5;
 			D.CullPaddingUnits = 400.0;
 			D.LodScreenSize[0] = 1.f; D.LodScreenSize[1] = 0.44f; D.LodScreenSize[2] = 0.088f;

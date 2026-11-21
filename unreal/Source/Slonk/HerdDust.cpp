@@ -16,6 +16,7 @@ SlonkFauna::FHerdDust SlonkFauna::HerdDustFor(const FHerdDustInput& In)
 	D.Size = (float)(DustPuffCmPerM * FMath::Max(In.SpanM, 0.1));
 	D.Color = In.Color;
 	D.Drift = In.VelWorldCmS;
+	D.Carry = In.CarryWorldCmS;
 	// None too far off to make out, by night or on a dead world.
 	const double Night = FMath::Clamp(In.Night, 0.0, 1.0);
 	if (In.DistCm > DustReachCm || In.Life <= 0.0 || Night >= 1.0) { return D; }
@@ -35,6 +36,26 @@ FLinearColor SlonkFauna::HerdDustColor(const FScatterPalette& Pal, double Wet, d
 	C = FMath::Lerp(C, FLinearColor::White, 0.35f);
 	C.A = (float)(0.45 * (1.0 - 0.7 * FMath::Clamp(Night, 0.0, 1.0)));
 	return C;
+}
+
+FVector SlonkFauna::GroundCarryCmS(const FVector& PlanetUp, const FVector& PlanetCentre, double SpinDegPerSec, double ClockScale, bool bSpinHeld, const FVector& AtWorld)
+{
+	if (bSpinHeld || FMath::IsNearlyZero(SpinDegPerSec) || ClockScale <= 0.0) { return FVector::ZeroVector; }
+	// The planet turns about its up by SpinDegPerSec of the game clock's seconds (a positive yaw turning its x toward its
+	// y): the ground at a place goes round with it at omega cross r.
+	const FVector Omega = PlanetUp.GetSafeNormal() * FMath::DegreesToRadians(SpinDegPerSec) * ClockScale;
+	return FVector::CrossProduct(Omega, AtWorld - PlanetCentre);
+}
+
+bool SlonkFauna::StepDustGate(FDustGate& Gate, double SpeedMS, double Dt, double Now)
+{
+	// The speed smoothed over DustSmoothSec (the first frame taken as it is).
+	if (!Gate.bPrimed) { Gate.SpeedMS = SpeedMS; Gate.bPrimed = true; }
+	else if (Dt > 0.0) { Gate.SpeedMS += (SpeedMS - Gate.SpeedMS) * (1.0 - FMath::Exp(-Dt / DustSmoothSec)); }
+	// On once it passes a brisk walk by a margin, off once it falls back to it (and not before it has been on a while).
+	if (!Gate.bOn && Gate.SpeedMS > DustWalkMS + DustOnMS) { Gate.bOn = true; Gate.OnAt = Now; }
+	else if (Gate.bOn && Gate.SpeedMS <= DustWalkMS && Now - Gate.OnAt >= DustMinOnSec) { Gate.bOn = false; }
+	return Gate.bOn;
 }
 
 UNiagaraComponent* SlonkFauna::FDustPool::Find(uint64 Id) const

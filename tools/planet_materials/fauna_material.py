@@ -102,17 +102,19 @@ Per-herd custom primitive data (SlonkFauna::HerdData, every one of the 36 slots,
     35  how far that grid reaches either way of the herd's middle, cm (its nodes half that apart)
 Each walker: grazing, it walks its circle a stride at a time (a whole number of times an hour of grazing), its head down
 in the grass and up now and then; on the move with its herd it turns the way the herd walks, its head carried, a little
-higher at a trot, up while frightened; turning to walk or back to graze, it steps round where it stands, the same way all
-through the turn; its legs sheared from the hip, each foot planted for 0.6 of each stride where it was put down while the
-body goes on over it (walking, round its circle, round where it stands: each way the body has gone since the foot was put
-down, through the turn before the latest, what came between, the latest and what came after, carries it back in the
-body's frame), so no foot slides, then swung forward to where the way the body will then be going puts it down, and
-lifted; its tail swishing;
+higher at a trot, up while frightened; turning to walk or back to graze, it steps round where it stands, the same way
+all through the turn (its body by the turn's own way as slot 4 packs it, as its feet are carried round, so both go the
+same way round however near a half turn it is); its legs sheared from the hip, each foot planted for 0.6 of each stride
+where it was put down while the body goes on over it (walking, round its circle, round where it stands: each way the
+body has gone since the foot was put down, through the turn before the latest, what came between, the latest and what
+came after, carries it back in the body's frame), so no foot slides, then swung forward to where the way the body will
+then be going puts it down, and lifted; its tail swishing;
 grown by a speck floor (no shorter than 3 pixels, at most 4 times its size, from its feet); and every vertex stood on the
 ground under it, read from the grid. Every vertex stays within 400 unit-mesh cm of the mesh's box (its circle, up to
 2.8 m for a walker at least 1.45 m long, 193; the speck floor's growth of a vertex at most 53 cm out to four times that;
 the ground, up to 150 cm, 104), which the instances' boxes are padded by (FFaunaKindDesc::CullPaddingUnits), and
-Slonk.Fauna.Walker checks a float copy of this branch against it (SlonkFauna::WalkerMotion, which must change with it).
+Slonk.Fauna.Walker checks a float copy of this branch against it (SlonkFauna::WalkerMotion, which must change with it:
+the test holds the CRC of the branch's lines, its comments aside, as the copy was made, and fails when they change).
 Its normals are turned the way it faces (the Normal output, in tangent space; every other branch gives the vertex's own).
 
 The motion (WPO_CODE): bursts of wingbeats on a cycle of 3 to 7 s of each bird's own, gliding with the wings a little
@@ -161,9 +163,9 @@ Nrm = float3(0.0, 0.0, 1.0);
     Sub = float3(0.0, 0.0, 0.0);
     Emis = GlowColor * (Glow * Night * 0.3);
     // The way it faces in its herd's frame, as the vertex shader turns it (Heading: the herd's way, slot 5, run on as it
-    // walks by WalkKap, slot 3; HerdGait: how fast its legs walk, slot 7; PivotRef: its latest turn, slot 1; PerKind: its
-    // grazing circle; Rate: its stride): its normal turned by it about its up, then into the tangent space the engine
-    // takes the normal in.
+    // walks by WalkKap, slot 3; HerdGait: how fast its legs walk, slot 7; PivotRef: its latest turn, slot 1; TurnPack: the
+    // ways through its turns, slot 4; PerKind: its grazing circle; Rate: its stride): its normal turned by it about its
+    // up, then into the tangent space the engine takes the normal in.
     float wls = max(Rate, 0.05);
     float wrho = clamp(abs(PerKind), 0.01, 2.8);
     float wsg = PerKind < 0.0 ? -1.0 : 1.0;
@@ -183,6 +185,13 @@ Nrm = float3(0.0, 0.0, 1.0);
     float whd = Heading + (wtr0 >= 1.0 ? WalkKap * wspd * wage : 0.0);
     float wdy = whd - wyc;
     wdy -= 6.2831853 * round(wdy / 6.2831853);
+    if (wtr0 > 0.0 && wtr0 < 1.0)
+    {
+        // Through a turn, by the turn's own way as TurnPack (slot 4) packs it, as the vertex shader turns the body.
+        float wtq = floor((TurnPack + 0.5) / 3142.0);
+        wdy = (TurnPack - wtq * 3142.0) * (6.2831853 / 3142.0) - wyc;
+        wdy -= 6.2831853 * round(wdy / 6.2831853);
+    }
     float wyaw = wyc + wtr * wdy;
     float3 wkx = normalize(BodyUp);
     float3 wn0 = normalize(N);
@@ -364,11 +373,30 @@ WPO_CODE = r"""
     float wth = 6.2831853 * (Phase + wsg * wst / wk);
     float2 wcirc = float2(cos(wth), sin(wth)) * wrho * 100.0;
     float wyc = wth + wsg * 1.5707963;
+    // The herd's latest turn, as this walker takes it. Its grazing clock through it (it grazes no more till all the herd
+    // stands grazing again: Graze while any of it is on the move, after a turn back to graze SDX), so where it stood on
+    // its circle then; the herd's ways through the turn before and the latest (SDZ, each to a 3142nd of a round); and
+    // how far it turned, the way round its feet below are carried by.
+    float wgr0 = wtr0 > 0.0 ? Graze : SDX;
+    float wu1 = wgr0 / wps + wof;
+    float wq1 = saturate((frac(wu1) - 0.15) / 0.35);
+    float wsr0 = floor(wu1) + wq1 * wq1 * (3.0 - 2.0 * wq1);
+    float wtq = floor((SDZ + 0.5) / 3142.0);
+    float wway1 = (SDZ - wtq * 3142.0) * (6.2831853 / 3142.0);
+    float wway0 = wtq * (6.2831853 / 3142.0);
+    float wdyp = wway1 - (6.2831853 * (Phase + wsg * wsr0 / wk) + wsg * 1.5707963);
+    wdyp -= 6.2831853 * round(wdyp / 6.2831853);
     // On the move, turned the way the herd walks (run on as it walks by how sharply that turns), by its share on the
-    // move. The herd's way never moves while its walkers turn, nor their circles, so each turns one way all through.
+    // move. The herd's way never moves while its walkers turn, nor their circles, so each turns one way all through:
+    // through a turn by that same turn as its feet take it, so body and feet go the same way round however near a half
+    // turn it is.
     float whd = Bank + (wtr0 >= 1.0 ? SDY * spd * wage : 0.0);
     float wdy = whd - wyc;
     wdy -= 6.2831853 * round(wdy / 6.2831853);
+    if (wtr0 > 0.0 && wtr0 < 1.0)
+    {
+        wdy = wdyp;
+    }
     float wyaw = wyc + wtr * wdy;
     // Its strides walked: round its circle and with the herd (its turns' steps among them), the exact integral of each
     // rate; and how fast it walks.
@@ -389,22 +417,10 @@ WPO_CODE = r"""
         // A leg, sheared from its hip: its foot planted where it was put down for 0.6 of each stride while the body goes
         // on over it (walking, grazing round its circle, stepping round where it stands as the herd turns to walk or back
         // to graze), then swung forward to where it will next be put down, lifted the more the faster it walks.
-        // The herd's latest turn and the one before it, as this walker's feet take them. Its grazing clock through the
-        // latest (it grazes no more till all the herd stands grazing again: Graze while any of it is on the move, after a
-        // turn back to graze SDX), so where it stood on its circle then and how far it turned (SDZ: the herd's ways
-        // through the turn before and the latest, each to a 3142nd of a round). The turn before, the other way, and what
-        // came between: before a turn to walk, the last stop (from the herd's way then back to where it stood grazing at
-        // the clock SDX) and its own steps grazing since; before one back to graze, the last set-off (from its circle's
-        // way to the herd's) and the herd's walk since (SDX metres; none once it grazes again).
-        float wgr0 = wtr0 > 0.0 ? Graze : SDX;
-        float wu1 = wgr0 / wps + wof;
-        float wq1 = saturate((frac(wu1) - 0.15) / 0.35);
-        float wsr0 = floor(wu1) + wq1 * wq1 * (3.0 - 2.0 * wq1);
-        float wtq = floor((SDZ + 0.5) / 3142.0);
-        float wway1 = (SDZ - wtq * 3142.0) * (6.2831853 / 3142.0);
-        float wway0 = wtq * (6.2831853 / 3142.0);
-        float wdyp = wway1 - (6.2831853 * (Phase + wsg * wsr0 / wk) + wsg * 1.5707963);
-        wdyp -= 6.2831853 * round(wdyp / 6.2831853);
+        // The herd's latest turn (above) and the one before it, as this walker's feet take them. The turn before, the
+        // other way, and what came between: before a turn to walk, the last stop (from the herd's way then back to where
+        // it stood grazing at the clock SDX) and its own steps grazing since; before one back to graze, the last set-off
+        // (from its circle's way to the herd's) and the herd's walk since (SDX metres; none once it grazes again).
         float wbetween = 0.0;
         float wat2 = 0.0;
         float wdy0 = 0.0;
@@ -610,7 +626,7 @@ return p - LP;
 HERD_GROUND = ["H%d" % i for i in range(21)]
 INPUTS = ["VC", "N", "BodyUp", "Pigment", "Glow", "Seed", "FadeFar", "WP", "ViewPos", "Night", "GlowColor",
           "Motes", "UV", "SunDir", "T", "Phase", "PerKind", "PxPerRad",
-          "Walkers", "Rate", "Heading", "Graze", "ClockT0", "Travel", "VCA", "HerdGait", "PivotRef", "WalkKap"]
+          "Walkers", "Rate", "Heading", "Graze", "ClockT0", "Travel", "VCA", "HerdGait", "PivotRef", "WalkKap", "TurnPack"]
 WPO_INPUTS = ["LP", "VC", "VCA", "T", "Size", "Seed", "Phase", "Rate", "Bearing", "ScatterT0", "SDX", "SDY", "SDZ", "Bank", "Startled", "Spread",
               "PanicT0", "OnsetT0", "WP", "ViewPos", "PxPerRad", "Motes", "UV", "SunDir", "BodyUp", "AxX", "AxY",
               "Walkers", "LPP", "Dist", "Graze", "ClockT0", "Travel", "GroundHalf"] + HERD_GROUND
@@ -680,7 +696,7 @@ def build():
                      ("WP", wp), ("ViewPos", view_pos), ("Night", night), ("GlowColor", glow_color),
                      ("Motes", motes), ("UV", uv), ("SunDir", sun_dir), ("T", tm), ("Phase", phase), ("PerKind", bearing), ("PxPerRad", px_per_rad),
                      ("Walkers", walkers), ("Rate", rate), ("Heading", bank), ("Graze", herd_graze), ("ClockT0", herd_clock), ("Travel", herd_travel),
-                     ("HerdGait", spread), ("PivotRef", scatter_t0), ("WalkKap", sdy)]:
+                     ("HerdGait", spread), ("PivotRef", scatter_t0), ("WalkKap", sdy), ("TurnPack", sdz)]:
         g.c(src, e, pin)
     # A walker's joint kind, the colour node's alpha pin.
     g.c(vc, e, "VCA", "A")

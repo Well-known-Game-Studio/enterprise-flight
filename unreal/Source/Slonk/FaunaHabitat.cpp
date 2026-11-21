@@ -387,8 +387,9 @@ namespace
 		return G.ExtentCm() + 1.5 * D.FleeCm + D.FleeLoopCm + 3.0e4;
 	}
 
-	/** A herd's habitat read along its loop: its middle, 96 points round the loop, and 54 on three rings out to as far as
-	 *  it can be taken for water. */
+	/** A herd's habitat read along its loop: its middle, 96 points round the loop; and for water, rings 60 m apart out to
+	 *  as far as it can be taken, each read every 60 m or less round it (about 1,450 points for the widest loops, the
+	 *  field's water alone, stopping at the first). */
 	SlonkFauna::FHerdHabitatRead ReadHerdLoop(const SlonkFauna::FFaunaWorld& W, const FFaunaGroup& G)
 	{
 		SlonkFauna::FHerdHabitatRead R;
@@ -420,17 +421,21 @@ namespace
 		if (R.Off > 0) { return R; }
 		R.MeanWet = WetSum / FMath::Max(R.Points - R.Off, 1);
 		// No water anywhere it could be taken: across its loop and out to a flight from it (half again, carried on by a
-		// second fright) and the crew's 300 m beyond, read on three rings and its middle as the loop's points are read.
+		// second fright) and the crew's 300 m beyond, read on rings 60 m apart, every 60 m or less round each, the field's
+		// water to ten metres as HabitatAt reads it, so no pond or river much wider than a step of them is missed; the
+		// first found is enough.
 		const double FlightReach = HerdFlightReachCm(G);
-		const int32 RingPoints[3] = { 10, 18, 26 };
-		for (int32 Ring = 0; Ring < 3; ++Ring)
+		constexpr double WaterStepCm = 6000.0;
+		const int32 Rings = FMath::CeilToInt32(FlightReach / WaterStepCm);
+		for (int32 Ring = 1; Ring <= Rings && R.WaterNear == 0; ++Ring)
 		{
-			const double Rr = FlightReach * (Ring + 1) / 3.0;
-			for (int32 k = 0; k < RingPoints[Ring]; ++k)
+			const double Rr = FlightReach * Ring / Rings;
+			const int32 Points = FMath::Max(FMath::CeilToInt32(UE_DOUBLE_TWO_PI * Rr / WaterStepCm), 6);
+			for (int32 k = 0; k < Points; ++k)
 			{
-				const double A = UE_DOUBLE_TWO_PI * (k + 0.5 * (Ring % 2)) / RingPoints[Ring];
+				const double A = UE_DOUBLE_TWO_PI * (k + 0.5 * (Ring % 2)) / Points;
 				const FVector Dir = (G.Centre + (G.East * FMath::Cos(A) + G.North * FMath::Sin(A)) * (Rr / Rad)).GetSafeNormal();
-				R.WaterNear += SlonkScatter::HabitatAt(W.P, Dir).bWater ? 1 : 0;
+				if (SlonkTerrain::Sample(W.P, Dir, 1000.0).bWater) { ++R.WaterNear; break; }
 			}
 		}
 		// No town near it, nor its ground (a cliff town's runs along its wall either way).
@@ -727,21 +732,22 @@ namespace
 		const double Rf = G.FormationCm, Keep = HerdKeepCm(G);
 		TArray<FVector> P;
 		P.Reserve(N);
-		// Each middle thrown into the formation until it lands Keep from every one before it (the farthest of its throws
-		// if none does: the formation is wide enough that one nearly always does).
+		// Each middle thrown into the formation until it lands Keep from every one before it: the formation is wide enough
+		// that one nearly always does within 48 throws, and is widened by a twentieth for each 48 more that miss, so one
+		// always does (the circles round them then always fit: HerdKeepCm).
 		for (int32 i = 0; i < N; ++i)
 		{
 			FVector Best = FVector::ZeroVector;
-			double BestGap = -1.0;
-			for (int32 Try = 0; Try < 48; ++Try)
+			double BestGap = -1.0, Reach = Rf;
+			for (int32 Try = 0; BestGap < Keep; ++Try)
 			{
+				if (Try > 0 && Try % 48 == 0) { Reach *= 1.05; }
 				FVector B;
 				do { B = FVector(Rng.FRandRange(-1.f, 1.f), Rng.FRandRange(-1.f, 1.f), 0.0); } while (B.SizeSquared() > 1.0);
-				B *= Rf;
+				B *= Reach;
 				double Gap = TNumericLimits<double>::Max();
 				for (const FVector& Q : P) { Gap = FMath::Min(Gap, FVector::Dist2D(B, Q)); }
 				if (Gap > BestGap) { BestGap = Gap; Best = B; }
-				if (Gap >= Keep) { break; }
 			}
 			P.Add(Best);
 		}
@@ -879,34 +885,79 @@ void SlonkFauna::MembersOf(const FFaunaGroup& G, TArray<FTransform>& OutXf, TArr
 	}
 }
 
+namespace
+{
+	/** smootherstep of V from A to B: its first and second derivatives 0 at both ends. */
+	double EaseC2(double A, double B, double V)
+	{
+		const double U = FMath::Clamp((V - A) / (B - A), 0.0, 1.0);
+		return U * U * U * (U * (U * 6.0 - 15.0) + 10.0);
+	}
+	/** A steady pace eased in and out, 0 at U 0 to 1 at U 1: its rate comes in smoothly over the first quarter to a steady
+	 *  4/3 and goes over the last, its first and second derivatives continuous throughout. */
+	double PaceEase(double U)
+	{
+		constexpr double W = 0.25, C = 1.0 / (1.0 - W);
+		U = FMath::Clamp(U, 0.0, 1.0);
+		if (U < W) { return C * W * RampIntegral(U / W); }
+		if (U > 1.0 - W) { return 1.0 - C * W * RampIntegral((1.0 - U) / W); }
+		return C * (0.5 * W + (U - W));
+	}
+	/** How far a galloping kind's gallop has come on, 0 to 1: from a stand at its FleeT0, at its fastest FleeRiseSec in. */
+	double GallopRise(const SlonkFauna::FPanic& P, const SlonkFauna::FFaunaKindDesc& D, double Now)
+	{
+		const double X = FMath::Max(Now - P.FleeT0, 0.0) / FMath::Max(D.FleeRiseSec, 0.1);
+		return 1.0 - FMath::Exp(-X) * (1.0 + X);
+	}
+	/** How far a galloping kind has come back from its flight, 0 to 1, Age seconds after its startle: at a steady pace
+	 *  from its FleeBackSec to the fright's end. */
+	double ComeBack(const SlonkFauna::FPanic& P, const SlonkFauna::FFaunaKindDesc& D, double Age)
+	{
+		return PaceEase((Age - D.FleeBackSec) / FMath::Max(P.LiveSec - D.FleeBackSec, 1.0));
+	}
+}
+
 FVector SlonkFauna::PanicOffset(const FPanic& P, const FFaunaKindDesc& D, double Now)
 {
 	const double Age = Now - P.T0;
-	if (Age < 0.0 || Age >= PanicSec) { return FVector::ZeroVector; }
-	const double Hold = 1.0 - SlonkScatter::SmoothStep(0.3 * PanicSec, PanicSec, Age);
-	const double CarryFade = 1.0 - SlonkScatter::SmoothStep(0.0, PanicSec, Age);
+	const double Live = P.LiveSec;
+	if (Age < 0.0 || Age >= Live) { return FVector::ZeroVector; }
+	const double Hold = 1.0 - SlonkScatter::SmoothStep(0.3 * Live, Live, Age);
+	const double CarryFade = 1.0 - SlonkScatter::SmoothStep(0.0, Live, Age);
 	if (D.bGallop)
 	{
-		// A walker turns to flee where it stands (FleeTurnSec), then breaks into a gallop from a stand, at its fastest
-		// (FleeCm over e times FleeRiseSec) that long in, and slows as it nears its flight's end; held for half a minute,
-		// then back at a walk over the rest. A second fright carries on the gallop it was in as it turns (slowing over a
-		// few seconds), what was left of the last flight fading as this one runs.
-		const double X = FMath::Max(Age - D.FleeTurnSec, 0.0) / FMath::Max(D.FleeRiseSec, 0.1);
-		const double Rise = 1.0 - FMath::Exp(-X) * (1.0 + X);
+		// A walker turns to flee where it stands, then breaks into a gallop from a stand (at its FleeT0), at its fastest
+		// (FleeCm over e times FleeRiseSec) that long in, and slows as it nears its flight's end; from FleeBackSec it comes
+		// back at a steady walking pace, eased in and out, onto its path by the fright's end. A second fright carries on
+		// the gallop it was in as it turns (slowing over a few seconds), what was left of the last flight fading as this
+		// one runs.
+		const double Rise = GallopRise(P, D, Now);
 		constexpr double Coast = 3.0;
 		// Its way eased in and out smoothly enough (to the second derivative) that its walkers' way never turns at a
 		// jump: back from its flight, and back round a loop rather than turning about where it stops: off to its side over
-		// the twenty seconds its flight slows and turns back, held there as it walks back, and onto its path over the last
-		// two fifths.
-		auto Ease = [](double A, double B, double V) { const double U = FMath::Clamp((V - A) / (B - A), 0.0, 1.0); return U * U * U * (U * (U * 6.0 - 15.0) + 10.0); };
-		const double Back = 1.0 - Ease(0.3 * PanicSec, PanicSec, Age);
-		const double Loop = D.FleeLoopCm * Ease(0.3 * PanicSec - 5.0, 0.3 * PanicSec + 15.0, Age) * (1.0 - Ease(0.6 * PanicSec, PanicSec, Age));
+		// the forty seconds its flight slows and turns back, held there as it walks back, and onto its path over the last
+		// half of its walk back.
+		const double Back = 1.0 - ComeBack(P, D, Age);
+		const double Loop = D.FleeLoopCm * EaseC2(D.FleeBackSec - 10.0, D.FleeBackSec + 30.0, Age) * (1.0 - EaseC2(0.5 * (D.FleeBackSec + Live), Live, Age));
 		return (P.Carry + P.CarryVel * (Coast * (1.0 - FMath::Exp(-Age / Coast)))) * CarryFade + P.Dir * (D.FleeCm * Rise * Back) + P.Side * Loop;
 	}
 	// Away at a bird's escape speed (FleeCm over 8 s, at first), held for half a minute, then back over the rest; what
 	// was left of the last flight fades as this runs.
 	const double Rise = 1.0 - FMath::Exp(-Age / D.FleeRiseSec);
 	return P.Carry * CarryFade + P.Dir * (D.FleeCm * Rise * Hold);
+}
+
+FVector SlonkFauna::HerdFrightOffset(const FFaunaGroup& G, const FFaunaKindDesc& D, const FPanic& P, double RadiusCm, double Now)
+{
+	FVector Off = PanicOffset(P, D, Now);
+	if (P.bHold && P.IsLive(Now))
+	{
+		// Its path's own walk since the startle, held back while its walkers turn to flee, let go as its gallop comes on
+		// (and what is left of it as it comes back), so it gallops off from where it stood.
+		const double Let = (1.0 - GallopRise(P, D, Now)) * (1.0 - ComeBack(P, D, Now - P.T0));
+		if (Let > 0.0) { Off += (PathAt(G, RadiusCm, P.T0).PosCm - PathAt(G, RadiusCm, Now).PosCm) * Let; }
+	}
+	return Off;
 }
 
 SlonkFauna::FFaunaPose SlonkFauna::FlightAt(const FFaunaGroup& G, const FFaunaKindDesc& D, const FPanic& P, double RadiusCm, double Now, const FFaunaPose& Was, double Dt)
@@ -1013,12 +1064,89 @@ void SlonkFauna::StartleNow(FPanic& P, const FFaunaKindDesc& D, const FVector& G
 	P.Side = FVector::CrossProduct(Up, Away).GetSafeNormal();
 	if (FVector::DotProduct(Level(T.VelCmS), P.Side) > 0.0) { P.Side = -P.Side; }
 	P.T0 = Now;
+	P.LiveSec = D.FrightSec;
+	P.FleeT0 = Now + D.FleeTurnSec;
+	P.bHold = false;
 	if (!bOpen)
 	{
 		P.ScatterT0 = Now;
 		P.ScatterDir = P.Dir;
 	}
 	P.OnsetT0 = Urge <= 0.0 ? Now : Now - (Urge >= 1.0 ? 1.0 : 0.3 * InverseSmoothStep(Urge));
+}
+
+bool SlonkFauna::StartleHerd(FPanic& P, FHerdState& S, const FFaunaGroup& G, const FFaunaKindDesc& D, double RadiusCm, const FFaunaThreat& T, double Now, bool bForce)
+{
+	if (!S.bStarted) { return false; }
+	// Where its fright has it now (its hold of its path among it) and how fast that is taking it.
+	const FVector Was = HerdFrightOffset(G, D, P, RadiusCm, Now);
+	if (!bForce)
+	{
+		if (!Scares(D, S.FramePos, T, T.bCraft ? 0.0 : G.HerdRadiusCm)) { return false; }
+		if (P.IsLive(Now) && Now - P.T0 < RestartleSec) { return false; }
+		// A herd already chased half again its flight off its path keeps the flight it has.
+		if (Was.Size() > 1.5 * D.FleeCm) { return false; }
+	}
+	const FVector WasVel = P.IsLive(Now) ? (Was - HerdFrightOffset(G, D, P, RadiusCm, Now - 0.05)) / 0.05 : FVector::ZeroVector;
+	const FVector Up = S.FramePos.GetSafeNormal();
+	auto Level = [&Up](const FVector& V) { return V - Up * FVector::DotProduct(V, Up); };
+	// How fast its frame goes over the ground (its path's own walk and its fright's), and the way it faces.
+	const double FrameCmS = Level(PathAt(G, RadiusCm, Now).VelCmS + WasVel).Size();
+	const FVector Facing = Level(S.FrameRot.GetAxisX() * FMath::Cos(S.Heading) + S.FrameRot.GetAxisY() * FMath::Sin(S.Heading)).GetSafeNormal();
+	const bool bGalloping = S.Travel >= 1.0 && FrameCmS > 100.0 * HerdGallopMS;
+	// Its alarm, its moment and the way away from the threat, as any group's.
+	StartleNow(P, D, S.FramePos, T, Now);
+	FVector Away = Level(P.Dir).GetSafeNormal();
+	if (Away.IsNearlyZero()) { Away = Facing; }
+	P.Carry = Was;
+	if (bGalloping)
+	{
+		// It cannot stop dead: it turns away on the run, carrying its speed, or (the fright ahead of it, more than it can
+		// turn on the run) flees on the way it is going.
+		if (FVector::DotProduct(Away, Facing) < FMath::Cos(TurnAroundRad)) { Away = Facing; }
+		P.CarryVel = WasVel;
+		P.bHold = false;
+		P.FleeT0 = Now + D.FleeTurnSec;
+	}
+	else
+	{
+		// Its path walking while it is frightened, it flees across the way its path goes (between a third of a turn and a
+		// sixth of one off it, on the side away from the threat): fled along that way or back against it, its flight and
+		// its path's walk would cancel as its gallop slows or as it comes back, its way swinging right round as it all but
+		// stood.
+		const FFaunaPose Path = PathAt(G, RadiusCm, Now);
+		bool bPathWalks = false;
+		for (double At = 0.0; At <= D.FrightSec && !bPathWalks; At += 5.0) { bPathWalks = HerdSpeedCmS(G, Now + At) > 1.0; }
+		const FVector PathWay = Level(Path.Ahead).GetSafeNormal();
+		if (bPathWalks && !PathWay.IsNearlyZero())
+		{
+			FVector Across = FVector::CrossProduct(Up, PathWay);
+			const double Side = FVector::DotProduct(Away, Across);
+			if (Side < 0.0 || (Side == 0.0 && FVector::DotProduct(Level(T.VelCmS), Across) > 0.0)) { Across = -Across; }
+			// Turned from straight across toward the way away from the threat, a twelfth of a turn at most.
+			const double Off = FMath::Atan2(FVector::DotProduct(Away, PathWay), FMath::Max(FVector::DotProduct(Away, Across), 0.0));
+			const double Turn = FMath::Clamp(Off, -UE_DOUBLE_PI / 6.0, UE_DOUBLE_PI / 6.0);
+			Away = (Across * FMath::Cos(Turn) + PathWay * FMath::Sin(Turn)).GetSafeNormal();
+		}
+		// It stops where it stands, its path held there (and its walk out of the crew's way), its walkers turning back and
+		// round to the way it flees before its gallop comes on: the rest of any turn under way, back to their grazing, and
+		// round to it.
+		P.CarryVel = FVector::ZeroVector;
+		P.bHold = true;
+		double Stand = 0.0;
+		if (S.Travel > 0.0)
+		{
+			Stand = (S.PivotSign > 0.0 ? 2.0 - S.Travel : S.Travel) / HerdShakenTurnRate;
+			S.bTurnAround = true;
+		}
+		S.AvoidPace = 0.0;
+		S.AvoidGoing = FVector::ZeroVector;
+		P.FleeT0 = Now + Stand + D.FleeTurnSec;
+	}
+	P.Dir = (Away + Up * D.FleeUp).GetSafeNormal();
+	P.Side = FVector::CrossProduct(Up, Away).GetSafeNormal();
+	if (FVector::DotProduct(Level(T.VelCmS), P.Side) > 0.0) { P.Side = -P.Side; }
+	return true;
 }
 
 void SlonkFauna::FrightData(const FPanic& P, double Now, const FQuat& Rot, double ClockOffsetSec, float* Group)
@@ -1234,25 +1362,28 @@ bool SlonkFauna::KeepFromCrew(FHerdState& S, const FFaunaGroup& G, const FFaunaK
 	{
 		const bool bGo = bOnTheMove && FVector::DotProduct(Way.GetSafeNormal(), Facing) > FMath::Cos(TurnAroundRad);
 		S.AvoidPace = FMath::Clamp(S.AvoidPace + (bGo ? Dt : -2.0 * Dt), 0.0, 1.0);
+		// It walks the way it wants once it may; easing off, on along the way it was walking, so it stops going forward
+		// (its legs walking it down) and turns about only once it stands.
+		if (bGo || S.AvoidPace <= 0.0) { S.AvoidGoing = Way; }
+		S.Avoid += S.AvoidGoing * (S.AvoidPace * Dt);
 	};
 	if (!Push.IsNearlyZero())
 	{
 		// Off at a walk, at a trot for anyone close in; never further than 300 m off its path.
 		S.AvoidWay = Push.GetSafeNormal() * (Nearest < Keep * 0.6 ? 260.0 : 140.0);
 		Pace(S.AvoidWay);
-		S.Avoid = (S.Avoid + S.AvoidWay * (S.AvoidPace * Dt)).GetClampedToMaxSize(3.0e4);
+		S.Avoid = S.Avoid.GetClampedToMaxSize(3.0e4);
 		return true;
 	}
-	if (S.Avoid.IsNearlyZero(0.01)) { S.Avoid = FVector::ZeroVector; S.AvoidWay = FVector::ZeroVector; S.AvoidPace = 0.0; return false; }
+	if (S.Avoid.IsNearlyZero(0.01)) { S.Avoid = FVector::ZeroVector; S.AvoidWay = FVector::ZeroVector; S.AvoidGoing = FVector::ZeroVector; S.AvoidPace = 0.0; return false; }
 	// Nobody near: back to its path at a stroll, unless that would walk it at someone.
 	const FVector Back = -S.Avoid.GetSafeNormal();
 	for (const FVector& C : CrewPosCm)
 	{
-		if (Level(S.FramePos + Back * 100.0 - C).Size() - G.HerdRadiusCm < Keep + 3000.0) { S.AvoidWay = FVector::ZeroVector; S.AvoidPace = 0.0; return false; }
+		if (Level(S.FramePos + Back * 100.0 - C).Size() - G.HerdRadiusCm < Keep + 3000.0) { S.AvoidWay = FVector::ZeroVector; S.AvoidGoing = FVector::ZeroVector; S.AvoidPace = 0.0; return false; }
 	}
 	S.AvoidWay = Back * FMath::Min(60.0, S.Avoid.Size() / FMath::Max(Dt, 1e-3));
 	Pace(S.AvoidWay);
-	S.Avoid += S.AvoidWay * (S.AvoidPace * Dt);
 	return true;
 }
 
@@ -1266,7 +1397,6 @@ void SlonkFauna::StepHerd(FHerdState& S, const FFaunaGroup& G, double RadiusCm, 
 	if (bRefreshGround || !S.Ground.bValid) { SampleHerdGround(G, RadiusCm, Pos, HeightAt, S.Ground); }
 	const FQuat Rot = HerdFrameRot(G, Pos, S.Ground);
 	const FVector Ax = Rot.GetAxisX(), Ay = Rot.GetAxisY(), Az = Rot.GetAxisZ();
-	auto OnPlane = [&Az](const FVector& V) { return V - Az * FVector::DotProduct(V, Az); };
 	// A way over the ground (level) laid on its plane straight up or down, so it runs over the same ground.
 	auto LiftOnPlane = [&Dir, &Az](const FVector& V)
 	{
@@ -1275,53 +1405,79 @@ void SlonkFauna::StepHerd(FHerdState& S, const FFaunaGroup& G, double RadiusCm, 
 	};
 	auto AngleOf = [&Ax, &Ay](const FVector& V) { return FMath::Atan2(FVector::DotProduct(V, Ay), FVector::DotProduct(V, Ax)); };
 	const bool bStep = S.bStarted && Dt > 0.0;
-	// How far its frame went along its plane since the last step (not off it: the drawn ground's own changes as its
-	// chunks split move no feet), and how much of that was ahead, the way its walkers faced: only that walks their legs on.
+	// How far its frame went along its plane since the last step, laid level first and then onto the plane (so the drawn
+	// ground's own rise or fall under it, as its chunks split, moves no feet), and how much of that was ahead, the way its
+	// walkers faced: only that walks their legs on.
 	double Moved = 0.0, Ahead = 0.0;
 	FVector Way = FVector::ZeroVector;
 	if (bStep)
 	{
-		Way = OnPlane(Pos - S.FramePos);
+		Way = LiftOnPlane(Pos - S.FramePos);
 		Moved = Way.Size();
 		// A jump (the paths' clock moved): no walk.
 		if (Moved > 5000.0) { Moved = 0.0; Way = FVector::ZeroVector; }
 		Ahead = FMath::Max(FVector::DotProduct(Way, Ax * FMath::Cos(S.Heading) + Ay * FMath::Sin(S.Heading)), 0.0);
 	}
-	// The way it is going, on the move (its path's way now and its fright's and the crew's since the last step); else the
-	// way it is about to go (its path and that offset a second on); else, its walk near, the way along its loop; else
-	// none (it holds the way it has).
+	// The way it is going, on the move (its path's way now and its fright's and the crew's since the last step, once it
+	// goes faster than a creep); else the way it is about to go (its path and that offset a second on); else, its walk
+	// near, the way along its loop; else none (it holds the way it has). Standing grazing, only the way it is about to go:
+	// it turns to that before its frame moves.
 	const FVector Moving = bStep ? LiftOnPlane(Pose.VelCmS + (OffsetCm - S.LastOffset) / Dt) : FVector::ZeroVector;
-	const FVector Going = LiftOnPlane(Pose.VelCmS + ((OffsetAheadCm ? *OffsetAheadCm : OffsetCm) - OffsetCm));
+	const FVector Going = LiftOnPlane(PathAt(G, RadiusCm, Now + 1.0).PosCm - Pose.PosCm + ((OffsetAheadCm ? *OffsetAheadCm : OffsetCm) - OffsetCm));
 	double Target = S.Heading;
 	bool bTarget = true;
-	if (Moving.Size() > 3.0) { Target = AngleOf(Moving); }
+	if (S.Travel > 0.0 && Moving.Size() > 10.0) { Target = AngleOf(Moving); }
 	else if (Going.Size() > 2.0) { Target = AngleOf(Going); }
 	else if (Pose.Intent > 0.0 || !S.bStarted) { Target = AngleOf(Pose.Ahead); }
 	else { bTarget = false; }
 	const double Off = FMath::UnwindRadians(Target - S.Heading);
-	// Asked, on the move, to go well off the way it walks: it stops, its walkers turn back to their grazing where they
-	// stand, the way is set while it stands grazing, and it sets off again (its walkers turning to it).
+	// Asked, on the move, to go well off the way it walks (or, its frame all but standing, any way much off it): it stops,
+	// its walkers turn back to their grazing where they stand, the way is set while it stands grazing, and it sets off
+	// again (its walkers turning to it).
 	const double Travel0 = S.Travel;
-	if (bStep && bTarget && Travel0 > 0.0 && FMath::Abs(Off) > TurnAroundRad) { S.bTurnAround = true; }
+	const bool bStanding = Moving.Size() <= 10.0;
+	if (bStep && bTarget && Travel0 > 0.0 && FMath::Abs(Off) > (bStanding ? TurnStandingRad : TurnAroundRad)) { S.bTurnAround = true; }
 	if (Travel0 <= 0.0) { S.bTurnAround = false; }
 	// Turned to walk as its schedule, its fright or the crew ask (quickly when frightened), or back to graze; a turn under
 	// way runs on to its end the way it began, never turned back half way (its walkers' steps through it are one turn).
 	double Want = S.bTurnAround ? 0.0 : FMath::Max3(Pose.Intent, bShaken ? 1.0 : 0.0, bMoving ? 1.0 : 0.0);
 	if (Travel0 > 0.0 && Travel0 < 1.0) { Want = S.PivotSign > 0.0 ? 1.0 : 0.0; }
-	const double Rate = bShaken ? 2.5 : 0.5;
+	const double Rate = bShaken ? HerdShakenTurnRate : HerdTurnRate;
 	const double Travel1 = bStep ? FMath::Clamp(Travel0 + FMath::Clamp(Want - Travel0, -Rate * Dt, Rate * Dt), 0.0, 1.0) : Travel0;
-	// Its way: set at once while it grazes (no walker faces it then), turned toward the way it goes as it walks, no
-	// faster than a few radians a second nor more sharply than MaxWalkKap a metre ahead, and held while its walkers turn
-	// to walk or back to graze (so each of them turns the same way all through its turn).
-	double Turned = 0.0;
-	if (!S.bStarted) { S.Heading = Target; S.TurnHeading = Target; S.LastTurnHeading = Target; }
-	else if (Travel0 <= 0.0) { if (bTarget) { S.Heading += Off; } }
-	else if (bStep && bTarget && Travel0 >= 1.0 && Travel1 >= 1.0)
+	// Its way: set at once while it grazes (no walker faces it then), turned as it walks, and held while its walkers turn
+	// to walk or back to graze (so each of them turns the same way all through its turn). As it walks it turns by how
+	// sharply its way turned over the step (WalkKap, as the material ran it on) for how far it went ahead; how sharply it
+	// turns from here is steered toward the way it goes (as sharply as that way is turning, and more to close what is
+	// left of the gap over SteerM, or as sharply as it can still straighten out by the time it faces it if that is less),
+	// no more than MaxWalkKap a metre nor a few radians a second, and
+	// changes by no more than MaxKapRate a second: a planted hoof is carried round by how sharply its body turns now.
+	if (!S.bStarted)
 	{
-		const double MaxTurn = FMath::Min((bShaken ? 2.5 : 1.5) * Dt, Walker::MaxWalkKap * Ahead / 100.0);
-		Turned = FMath::Clamp(Off, -MaxTurn, MaxTurn);
-		S.Heading += Turned;
+		// Come about on the move, it faces the way its path goes now and turns as sharply as that way turns.
+		if (Travel0 >= 1.0 && Pose.VelCmS.Size() > 10.0)
+		{
+			Target = AngleOf(LiftOnPlane(Pose.VelCmS));
+			const FVector Was = LiftOnPlane(PathAt(G, RadiusCm, Now - 0.5).VelCmS), Will = LiftOnPlane(PathAt(G, RadiusCm, Now + 0.5).VelCmS);
+			S.WalkKap = FMath::Clamp(FMath::UnwindRadians(AngleOf(Will) - AngleOf(Was)) / FMath::Max(Pose.VelCmS.Size() / 100.0, 0.1), -Walker::MaxWalkKap, Walker::MaxWalkKap);
+		}
+		S.Heading = Target; S.TurnHeading = Target; S.LastTurnHeading = Target;
 	}
+	else if (Travel0 <= 0.0) { if (bTarget) { S.Heading += Off; } }
+	else if (bStep && Travel0 >= 1.0 && Travel1 >= 1.0)
+	{
+		const double AheadM = Ahead / 100.0;
+		S.Heading += S.WalkKap * AheadM;
+		const double V = FMath::Max(AheadM / Dt, 0.1);
+		const double Left = bTarget ? FMath::UnwindRadians(Target - S.Heading) : 0.0;
+		const double Along = bTarget && S.bTargetWas && AheadM > 0.005 ? FMath::Clamp(FMath::UnwindRadians(Target - S.TargetWas) / AheadM, -Walker::MaxWalkKap, Walker::MaxWalkKap) : 0.0;
+		const double Cap = FMath::Min(Walker::MaxWalkKap, (bShaken ? 2.5 : 1.5) / V);
+		const double Close = FMath::Min(FMath::Abs(Left) / Walker::SteerM, FMath::Sqrt(2.0 * Walker::MaxKapRate * FMath::Abs(Left) / V));
+		const double Steer = FMath::Clamp(Along + FMath::Sign(Left) * Close, -Cap, Cap);
+		const double Most = Walker::MaxKapRate * Dt;
+		S.WalkKap = FMath::Clamp(S.WalkKap + FMath::Clamp(Steer - S.WalkKap, -Most, Most), -Walker::MaxWalkKap, Walker::MaxWalkKap);
+	}
+	S.TargetWas = Target;
+	S.bTargetWas = bTarget && Travel0 >= 1.0;
 	S.Heading = FMath::UnwindRadians(S.Heading);
 	// A new turn begins: what came between it and the last (the other way), so a walker's feet still down from the last are
 	// carried through the last, that and this one: to walk, the grazing clock the last stop left it at (it has grazed
@@ -1329,7 +1485,8 @@ void SlonkFauna::StepHerd(FHerdState& S, const FFaunaGroup& G, double RadiusCm, 
 	const bool bNewTurn = Travel1 != Travel0 && (Travel0 <= 0.0 || Travel0 >= 1.0);
 	if (bNewTurn)
 	{
-		if (Travel1 > Travel0) { S.SinceLastTurn = S.GrazeRef; }
+		// A walk sets off straight (no foot is carried by how sharply it turns until its walkers have turned to it).
+		if (Travel1 > Travel0) { S.SinceLastTurn = S.GrazeRef; S.WalkKap = 0.0; }
 		else { S.SinceLastTurn = FMath::Clamp(S.DistM - (S.PivotStartM + Walker::PivotM), 0.0, 1000.0); }
 		S.LastTurnHeading = S.TurnHeading;
 		S.TurnHeading = S.Heading;
@@ -1362,8 +1519,6 @@ void SlonkFauna::StepHerd(FHerdState& S, const FFaunaGroup& G, double RadiusCm, 
 	S.VelCmS = bStep ? Way / Dt : FVector::ZeroVector;
 	const bool bTurning = Travel1 > 0.0 && Travel1 < 1.0;
 	S.GaitMS = bStep ? Ahead / Dt / 100.0 + (bTurning ? Pivot / Dt : 0.0) : (Travel1 >= 1.0 ? S.SpeedMS : 0.0);
-	// How sharply its way turns as it walks, kept from its last walk.
-	if (Turned != 0.0 || (bStep && Travel1 >= 1.0 && Ahead > 1.0)) { S.WalkKap = FMath::Clamp(Ahead > 1.0 ? Turned / (Ahead / 100.0) : 0.0, -Walker::MaxWalkKap, Walker::MaxWalkKap); }
 	// Its latest turn: begun where its legs' walk less a whole turn's share of how far it has gone (so the share it is on
 	// the move runs on from it in step with its legs), the way it went, and the grazing clock it stood at (grazing stops
 	// while it turns); each kept within reach of now.
@@ -1457,12 +1612,6 @@ namespace
 		const float Th = 6.2831853f * (C[Custom::Phase] + Sgn * Stair / K);
 		W.Circle = FVector2f(FMath::Cos(Th), FMath::Sin(Th)) * (ARho * 100.f);
 		const float YawC = YawAt(Stair);
-		const float Hd = Gd[HerdData::Heading] + (Travel0 >= 1.f ? Gd[HerdData::WalkKap] * Gait * Age : 0.f);
-		W.Yaw = YawC + Travel * Wrap(Hd - YawC);
-		W.Strides = Stair + Dist / Ls;
-		W.SpeedMS = Gait + (Travel0 <= 0.f ? Ls * (6.f * T1 * (1.f - T1) / 0.35f) / Ps : 0.f);
-		W.Travel = Travel;
-		W.Gait = Gait;
 		// Its ways through the latest turn and the one before, each to the turn's step (HerdData::PackTurns).
 		const float Steps = (float)HerdData::TurnSteps;
 		const float QLast = FMath::FloorToFloat((Gd[HerdData::TurnHeading] + 0.5f) / Steps);
@@ -1471,6 +1620,14 @@ namespace
 		// it is on the move, after a turn back to graze slot 2), so where it stood on its circle then; how far it turned.
 		const float StairRef = GrazeStair(Travel0 > 0.f ? Gd[HerdData::GrazeSec] : Gd[HerdData::GrazeRef], Ps, Of);
 		const float Dyp = Wrap(Way1 - YawAt(StairRef));
+		// Turned the way the herd walks by its share on the move; through a turn by the turn as its feet take it (Dyp: its
+		// stair then is the one it stands on now), so body and feet go the same way round however near a half turn it is.
+		const float Hd = Gd[HerdData::Heading] + (Travel0 >= 1.f ? Gd[HerdData::WalkKap] * Gait * Age : 0.f);
+		W.Yaw = YawC + Travel * (Travel0 > 0.f && Travel0 < 1.f ? Dyp : Wrap(Hd - YawC));
+		W.Strides = Stair + Dist / Ls;
+		W.SpeedMS = Gait + (Travel0 <= 0.f ? Ls * (6.f * T1 * (1.f - T1) / 0.35f) / Ps : 0.f);
+		W.Travel = Travel;
+		W.Gait = Gait;
 		// The turn before, the other way, and what came between: before a turn to walk, the last stop (from the herd's way
 		// then back to where it stood grazing at the clock it left it at) and its own steps grazing since; before one back
 		// to graze, the last set-off (from its circle's way to the herd's) and the herd's walk since (none once it grazes

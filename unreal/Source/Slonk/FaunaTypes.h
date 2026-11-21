@@ -142,7 +142,8 @@ namespace SlonkFauna
 		 *  constant from its fastest at the start; a walker (bGallop) breaks into a gallop from a stand, at its fastest this
 		 *  long in, and a second fright carries the gallop it was in rather than stopping it dead. How far up off the ground
 		 *  it flees, as a share of the way away (a bird climbs, a walker keeps to the ground). A walker's gallop comes in
-		 *  FleeTurnSec after the fright, the time its members take to turn to flee where they stand. */
+		 *  FleeTurnSec after its members have stopped and turned to flee where they stand (at once from grazing; on the move
+		 *  they first turn back to their grazing: SlonkFauna::StartleHerd). */
 		double FleeRiseSec = 8.0;
 		bool bGallop = false;
 		double FleeUp = 0.35;
@@ -150,6 +151,11 @@ namespace SlonkFauna
 		/** How far to its side a walker's flight loops as it slows, turns and comes back, cm (it never turns about on the
 		 *  spot: its walkers turn as they go). */
 		double FleeLoopCm = 0.0;
+		/** How long a startled group of it stays shaken, s (PanicSec unless its flight back takes longer), and when a
+		 *  walker's flight turns back, s after the startle: it comes back over the rest at a steady pace, eased in and out
+		 *  (a herd's no faster than its slowest trot). */
+		double FrightSec = PanicSec;
+		double FleeBackSec = 0.3 * PanicSec;
 		/** Someone on foot nearer than this to a group's nearest member, cm, sees it walk off out of their way (0: it never
 		 *  does): a herd keeps about this far from the crew, and only one run in on to CrewScareCm of its middle bolts. */
 		double KeepFromCrewCm = 0.0;
@@ -236,24 +242,25 @@ namespace SlonkFauna
 	 * slots are a flock's (HerdFrightData writes them: 6 whether a startle is live, 8 when it was last startled and 9 when
 	 * its alarm began to come in, each on the material's clock), and 0 the night. The rest are the herd's own: 5 the way it
 	 * walks, radians in its frame (from its x toward its y), turned only while it walks (by 3 a metre walked) or while it
-	 * grazes (when no walker faces it), never while its walkers turn to walk or back to graze; 7 how fast its walkers'
-	 * legs walk, m/s (its frame's way along the ground ahead of it, and a turn's own steps); 10 how far its legs have
-	 * walked, m (wrapped to its loop's length, a whole number of every member's strides; each whole turn to walk or back
-	 * to graze adds Walker::PivotM, its walkers stepping round where they stand) and 11 how long it has grazed, s (wrapped
-	 * to the hour, a whole number of every member's rounds of its grazing circle; it grazes only while none of it is on
-	 * the move), each as of 12, a moment on the material's clock, and running on from it at 7 and while 13 is 0; 13 the
-	 * share of it that is on the move (0 grazing, 1 walking with the herd), run on through a turn at 7 over PivotM, so the
-	 * material's walking is the exact integral of the speeds given and the velocity pass sees the legs move. Its latest
-	 * turn to walk or back to graze and the one before it, so the material knows how each foot still down has turned and
-	 * walked since it was put down: 1 how far its legs had walked when the latest began (as 10 counts it, carried back
-	 * through 10's wraps), PivotBack more for a turn back to graze; 2 what came between the two: before a turn to walk, the
-	 * grazing clock the stop before left it at (as 11 counts it; its grazing clock through the latest is 11, which stands
-	 * still till it grazes again), before a turn back to graze how far its legs walked, m, and once it grazes again its
-	 * grazing clock through that turn; 3 how fast the herd's way turns, radians a metre walked (signed as 5 turns, kept
-	 * from its last walk); 4 its ways through the turn before and the latest (5 is held while its walkers turn), packed by
-	 * PackTurns. 14 to 34 the drawn ground's height over the herd's frame, cm along its z, at the nodes of a 5 by 5 grid in
-	 * its xy (the corners left out: the material makes each of them from the three nodes beside it), row by row from the
-	 * most negative y; and 35 how far the grid reaches either way of the frame's middle, cm (its nodes half that apart).
+	 * grazes (when no walker faces it), never while its walkers turn to walk or back to graze; 7 how fast its walkers' legs
+	 * walk, m/s (its frame's way along the ground ahead of it, and a turn's own steps); 10 how far its legs have walked, m
+	 * (wrapped to its loop's length, a whole number of every member's strides; each whole turn to walk or back to graze
+	 * adds Walker::PivotM, its walkers stepping round where they stand) and 11 how long it has grazed, s (wrapped to the
+	 * hour, a whole number of every member's rounds of its grazing circle; it grazes only while none of it is on the move),
+	 * each as of 12, a moment on the material's clock, and running on from it at 7 and while 13 is 0; 13 the share of it
+	 * that is on the move (0 grazing, 1 walking with the herd), run on through a turn at 7 over PivotM, so the material's
+	 * walking is the exact integral of the speeds given and the velocity pass sees the legs move. Its latest turn to walk
+	 * or back to graze and the one before it, so the material knows how each foot still down has turned and walked since it
+	 * was put down: 1 how far its legs had walked when the latest began (as 10 counts it, carried back through 10's wraps),
+	 * PivotBack more for a turn back to graze; 2 what came between the two: before a turn to walk, the grazing clock the
+	 * stop before left it at (as 11 counts it; its grazing clock through the latest is 11, which stands still till it
+	 * grazes again), before a turn back to graze how far its legs walked, m, and once it grazes again its grazing clock
+	 * through that turn; 3 how fast the herd's way turns, radians a metre walked (signed as 5 turns, changing smoothly as
+	 * it walks: Walker::MaxKapRate; kept from its last walk); 4 its ways through the turn before and the latest (5 is held
+	 * while its walkers turn), packed by PackTurns. 14 to 34 the drawn ground's height over the herd's frame, cm along its
+	 * z, at the nodes of a 5 by 5 grid in its xy (the corners left out: the material makes each of them from the three
+	 * nodes beside it), row by row from the most negative y; and 35 how far the grid reaches either way of the frame's
+	 * middle, cm (its nodes half that apart).
 	 */
 	namespace HerdData
 	{
@@ -298,9 +305,13 @@ namespace SlonkFauna
 		/** A whole turn from grazing to walking with the herd (or back) is as many steps as this many metres walked, each
 		 *  walker stepping round where it stands (two and a half to four and a half strides, so a walker turning right
 		 *  round turns at most about 1.3 radians a stride), and the herd turns as it walks no more sharply than MaxWalkKap
-		 *  radians a metre. */
+		 *  radians a metre, how sharply changing by no more than MaxKapRate radians a metre each second (a planted hoof is
+		 *  carried round by how sharply its body turns now, so a sudden change would move every hoof that is down). */
 		constexpr double PivotM = 4.0;
 		constexpr double MaxWalkKap = 0.5;
+		constexpr double MaxKapRate = 0.25;
+		/** A herd on the move closes the gap between the way it faces and the way it goes over about this many metres. */
+		constexpr double SteerM = 0.5;
 	}
 	/**
 	 * A fauna mesh's vertex colour: R the surface (0 body, 0.25 a bill or a beak, 0.5 a tail, 0.75 a mote's card, 1 a

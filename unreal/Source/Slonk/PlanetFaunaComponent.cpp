@@ -6,6 +6,7 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "FaunaMeshes.h"
+#include "GameClock.h"
 #include "GameFramework/PlayerController.h"
 #include "HAL/IConsoleManager.h"
 #include "HAL/PlatformTime.h"
@@ -262,8 +263,8 @@ void UPlanetFaunaComponent::SpawnSet(const SlonkFauna::FFaunaField::FGroupRef& G
 		Herd = MakeShared<SlonkFauna::FHerdState>();
 		SlonkFauna::StartHerd(*Herd, *G, Now);
 		const SlonkFauna::FPanic Panic = Panics.FindRef(G->Id);
-		const FVector Ahead = SlonkFauna::PanicOffset(Panic, D, Now + 1.0);
-		SlonkFauna::StepHerd(*Herd, *G, Params.RadiusCm, Now, 0.0, SlonkFauna::PanicOffset(Panic, D, Now), Panic.IsLive(Now), false, true,
+		const FVector Ahead = SlonkFauna::HerdFrightOffset(*G, D, Panic, Params.RadiusCm, Now + 1.0);
+		SlonkFauna::StepHerd(*Herd, *G, Params.RadiusCm, Now, 0.0, SlonkFauna::HerdFrightOffset(*G, D, Panic, Params.RadiusCm, Now), Panic.IsLive(Now), false, true,
 			[this](const FVector& Dir) { return GroundHeightAt(Dir); }, TimeOffset, nullptr, &Ahead);
 		C->SetRelativeLocationAndRotation(Herd->FramePos, Herd->FrameRot);
 	}
@@ -511,13 +512,14 @@ void UPlanetFaunaComponent::UpdateHerd(uint64 Id, FGroupSet& S, const TArray<Slo
 	// Its first frame about stands where its spawn stood it, the same moment.
 	const double StepDt = S.Frames == 0 ? 0.0 : Dt;
 	++S.Frames;
-	// Startled where it stands: by a craft passing low over it, by someone run in close to its nearest member.
+	// Startled where it stands: by a craft passing low over it, by someone run in close to its nearest member. On the
+	// move at a walk or a trot it stops and turns to flee where it stands before it goes (SlonkFauna::StartleHerd).
 	SlonkFauna::FPanic Panic = Panics.FindRef(Id);
 	TArray<FVector> Crew;
 	for (const SlonkFauna::FFaunaThreat& T : Threats)
 	{
 		if (!T.bCraft) { Crew.Add(T.PosCm); }
-		if (SlonkFauna::StartleGroup(Panic, D, H.FramePos, T, Now, T.bCraft ? 0.0 : G.HerdRadiusCm))
+		if (SlonkFauna::StartleHerd(Panic, H, G, D, Params.RadiusCm, T, Now))
 		{
 			Panics.Add(Id, Panic);
 			++Startles;
@@ -532,9 +534,9 @@ void UPlanetFaunaComponent::UpdateHerd(uint64 Id, FGroupSet& S, const TArray<Slo
 	// crew or back to its path, which its walkers turn to before it goes).
 	const bool bNear = FVector::Dist(H.FramePos, CamLocal) < 4.0e4;
 	const bool bRefresh = bNear || bShaken || bMoving || ((S.Frames + (uint32)(Id % 6)) % 6) == 0;
-	const FVector Ahead = SlonkFauna::PanicOffset(Panic, D, Now + 1.0) + H.Avoid + (bMoving ? H.AvoidWay : FVector::ZeroVector);
+	const FVector Ahead = SlonkFauna::HerdFrightOffset(G, D, Panic, Params.RadiusCm, Now + 1.0) + H.Avoid + (bMoving ? H.AvoidWay : FVector::ZeroVector);
 	float Gd[SlonkFauna::HerdData::Num] = {};
-	SlonkFauna::StepHerd(H, G, Params.RadiusCm, Now, StepDt, SlonkFauna::PanicOffset(Panic, D, Now) + H.Avoid, bShaken, bMoving, bRefresh,
+	SlonkFauna::StepHerd(H, G, Params.RadiusCm, Now, StepDt, SlonkFauna::HerdFrightOffset(G, D, Panic, Params.RadiusCm, Now) + H.Avoid, bShaken, bMoving, bRefresh,
 		[this](const FVector& Dir) { return GroundHeightAt(Dir); }, TimeOffset, Gd, &Ahead);
 	// The whole herd moves as its frame: the velocity pass sees its walk in the transform, its walkers' own in the
 	// material's clocks.
@@ -551,7 +553,7 @@ void UPlanetFaunaComponent::UpdateHerd(uint64 Id, FGroupSet& S, const TArray<Slo
 		const bool bShadow = S.bShadow ? Dist < D.ShadowReachCm * 1.2 : Dist < D.ShadowReachCm;
 		if (bShadow != S.bShadow) { S.bShadow = bShadow; S.Set->SetCastShadow(bShadow); }
 	}
-	UpdateDust(Id, S, CamLocal, Gd[SlonkFauna::HerdData::Night]);
+	UpdateDust(Id, S, CamLocal, Gd[SlonkFauna::HerdData::Night], StepDt);
 }
 
 double UPlanetFaunaComponent::WorldSeconds() const
@@ -598,14 +600,17 @@ void UPlanetFaunaComponent::ReleaseDust(uint64 Id)
 	}
 }
 
-void UPlanetFaunaComponent::UpdateDust(uint64 Id, FGroupSet& S, const FVector& CamLocal, float Night)
+void UPlanetFaunaComponent::UpdateDust(uint64 Id, FGroupSet& S, const FVector& CamLocal, float Night, double Dt)
 {
 	const SlonkFauna::FHerdState& H = *S.Herd;
 	const SlonkFauna::FFaunaGroup& G = *S.Group;
 	UNiagaraComponent* Have = DustPool.Find(Id);
+	// Whether it goes fast enough, its speed smoothed (a single fast frame, a hitch or its ground shifting under it, is no
+	// trot) and switched with some slack and a least time on (SlonkFauna::StepDustGate).
+	const bool bFast = SlonkFauna::StepDustGate(S.DustGate, H.SpeedMS, Dt, WorldSeconds());
 	// The cheap reasons first: the dust off, too far off, too slow, too dark, a dead world, no system.
 	const double Dist = FVector::Dist(H.FramePos, CamLocal);
-	const bool bCould = SlonkFauna::DustEnabled() && Dist < SlonkFauna::DustReachCm * (Have ? 1.1 : 1.0) && H.SpeedMS > SlonkFauna::DustWalkMS && Night < 1.f
+	const bool bCould = SlonkFauna::DustEnabled() && Dist < SlonkFauna::DustReachCm * (Have ? 1.1 : 1.0) && bFast && Night < 1.f
 		&& Life > 0.f && EnsureDustSystem();
 	SlonkFauna::FHerdDust Dust;
 	if (bCould)
@@ -614,8 +619,14 @@ void UPlanetFaunaComponent::UpdateDust(uint64 Id, FGroupSet& S, const FVector& C
 		const double Now = WorldSeconds();
 		if (Now - S.DustWetAt > 1.0) { S.DustWet = SlonkScatter::HabitatAt(Params, H.FramePos.GetSafeNormal()).Wet; S.DustWetAt = Now; }
 		SlonkFauna::FHerdDustInput In;
-		In.SpeedMS = H.SpeedMS;
+		In.SpeedMS = S.DustGate.SpeedMS;
 		In.VelWorldCmS = GetComponentTransform().TransformVectorNoScale(H.VelCmS);
+		// The ground's own way through the world as the planet turns, which every puff is born with and comes to rest in.
+		if (const APlanetBody* Planet = Cast<APlanetBody>(GetOwner()))
+		{
+			In.CarryWorldCmS = SlonkFauna::GroundCarryCmS(Planet->GetActorUpVector(), Planet->GetActorLocation(), Planet->SpinDegPerSec, UGameClockSubsystem::ScaleOf(this),
+				Planet->IsSpinHeld(), GetComponentTransform().TransformPositionNoScale(H.FramePos));
+		}
 		In.Wet = S.DustWet;
 		In.Life = Life;
 		In.Night = Night;
@@ -626,7 +637,8 @@ void UPlanetFaunaComponent::UpdateDust(uint64 Id, FGroupSet& S, const FVector& C
 		In.Color = SlonkFauna::HerdDustColor(Palette, S.DustWet, Night);
 		Dust = SlonkFauna::HerdDustFor(In);
 	}
-	if (Dust.Rate <= 0.f)
+	// Kept while the gate holds it on, at whatever rate its smoothed speed gives (none for a moment does not let it go).
+	if (!bCould || (Dust.Rate <= 0.f && !Have))
 	{
 		if (Have) { ReleaseDust(Id); }
 		return;
@@ -637,6 +649,7 @@ void UPlanetFaunaComponent::UpdateDust(uint64 Id, FGroupSet& S, const FVector& C
 	C->SetVariableFloat(TEXT("Radius"), Dust.Radius);
 	C->SetVariableLinearColor(TEXT("Color"), Dust.Color);
 	C->SetVariableVec3(TEXT("Drift"), Dust.Drift);
+	C->SetVariableVec3(TEXT("Carry"), Dust.Carry);
 	C->SetVariableFloat(TEXT("Size"), Dust.Size);
 	if (!Have)
 	{
@@ -655,7 +668,7 @@ FVector UPlanetFaunaComponent::HerdPlaceNow(const SlonkFauna::FFaunaGroup& G) co
 	}
 	const double Now = ClockSeconds();
 	const SlonkFauna::FPanic Panic = Panics.FindRef(G.Id);
-	return SlonkFauna::PathAt(G, Params.RadiusCm, Now).PosCm + SlonkFauna::PanicOffset(Panic, SlonkFauna::KindDesc(G.Kind), Now);
+	return SlonkFauna::PathAt(G, Params.RadiusCm, Now).PosCm + SlonkFauna::HerdFrightOffset(G, SlonkFauna::KindDesc(G.Kind), Panic, Params.RadiusCm, Now);
 }
 
 int32 UPlanetFaunaComponent::StartleAll(const AActor* Craft)
@@ -691,8 +704,10 @@ int32 UPlanetFaunaComponent::StartleAll(const AActor* Craft)
 		T.bCraft = true;
 		if (!SlonkFauna::Scares(D, Pos, T)) { continue; }
 		// However lately it was startled, as any startle leaves it: what is left of its last flight carried, its members'
-		// scatter kept if still open, its wingbeat going on from where it stands.
-		SlonkFauna::StartleNow(Panic, D, Pos, T, Now);
+		// scatter kept if still open, its wingbeat going on from where it stands; a herd stopping and turning to flee where
+		// it stands, unless it is galloping.
+		if (Pair.Value.Herd.IsValid()) { SlonkFauna::StartleHerd(Panic, *Pair.Value.Herd, G, D, Params.RadiusCm, T, Now, true); }
+		else { SlonkFauna::StartleNow(Panic, D, Pos, T, Now); }
 		Panics.Add(Pair.Key, Panic);
 		++N;
 		++Startles;
