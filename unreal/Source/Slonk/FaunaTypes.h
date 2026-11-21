@@ -306,10 +306,12 @@ namespace SlonkFauna
 		 *  walker stepping round where it stands (two and a half to four and a half strides, so a walker turning right
 		 *  round turns at most about 1.3 radians a stride), and the herd turns as it walks no more sharply than MaxWalkKap
 		 *  radians a metre, how sharply changing by no more than MaxKapRate radians a metre each second (a planted hoof is
-		 *  carried round by how sharply its body turns now, so a sudden change would move every hoof that is down). */
+		 *  carried round by how sharply its body turns now, so a sudden change would move every hoof that is down; and a
+		 *  way that came round more slowly would lag the bend it walks, and slide its hooves sideways the more for it,
+		 *  the longest-legged herds' a centimetre a second on the whole round a sharp one). */
 		constexpr double PivotM = 4.0;
 		constexpr double MaxWalkKap = 0.5;
-		constexpr double MaxKapRate = 0.25;
+		constexpr double MaxKapRate = 0.3;
 		/** A herd on the move closes the gap between the way it faces and the way it goes over about this many metres. */
 		constexpr double SteerM = 0.5;
 	}

@@ -2428,6 +2428,42 @@ void AStarshipPawn::ProcessDebugCommand()
 			UE_LOG(LogTemp, Log, TEXT("Fauna groups of the last scan on %s: %d"), *Planet->GetDisplayName(), Lines.Num());
 			for (const FString& L : Lines) { UE_LOG(LogTemp, Log, TEXT("  %s"), *L); }
 		}
+		else if (Mode == TEXT("habitat") && Planet->Terrain)
+		{
+			// fauna habitat [km]: the ground within that far of the point under the ship (50 km), as the herds read it: how
+			// much is water, how much of the land is their grass (and their strict grass, which a herd's middle needs), and
+			// what keeps the rest from it, with the land's spread of level, wet and wooded.
+			const double ReachCm = FMath::Max(Arg(2, 50.f), 1.f) * 1.0e5;
+			const FPlanetTerrainParams& TP = Planet->Terrain->GetParams();
+			const FVector From = Planet->Terrain->GetComponentTransform().InverseTransformPositionNoScale(GetActorLocation()).GetSafeNormal();
+			const FVector E = FVector::CrossProduct(FMath::Abs(From.Z) < 0.95 ? FVector::ZAxisVector : FVector::XAxisVector, From).GetSafeNormal();
+			const FVector N = FVector::CrossProduct(From, E);
+			const int32 Count = 3000;
+			int32 Water = 0, Land = 0, Grass = 0, Strict = 0, NotFlat = 0, TooDry = 0, TooWet = 0, Wooded = 0, Iced = 0;
+			int32 FlatBins[5] = {}, WetBins[5] = {}, WoodBins[5] = {};
+			for (int32 i = 0; i < Count; ++i)
+			{
+				const double Rr = ReachCm * FMath::Sqrt((i + 0.5) / Count), A = i * UE_DOUBLE_PI * (3.0 - FMath::Sqrt(5.0));
+				const FVector Dir = (From + (E * FMath::Cos(A) + N * FMath::Sin(A)) * (Rr / TP.RadiusCm)).GetSafeNormal();
+				const SlonkScatter::FHabitat H = SlonkScatter::HabitatAt(TP, Dir);
+				if (H.bWater) { ++Water; continue; }
+				++Land;
+				Grass += SlonkFauna::HerdGrass(H, false) ? 1 : 0;
+				Strict += SlonkFauna::HerdGrass(H, true) ? 1 : 0;
+				NotFlat += H.Flat <= 0.85 ? 1 : 0;
+				TooDry += H.Wet < 0.2 ? 1 : 0;
+				TooWet += H.Wet > 0.6 ? 1 : 0;
+				Wooded += H.Forest >= 0.3 ? 1 : 0;
+				Iced += (H.Ice > 0.2 || H.Alpine > 0.7) ? 1 : 0;
+				++FlatBins[FMath::Clamp((int32)(H.Flat * 5.0), 0, 4)];
+				++WetBins[FMath::Clamp((int32)(H.Wet * 5.0), 0, 4)];
+				++WoodBins[FMath::Clamp((int32)(H.Forest * 5.0), 0, 4)];
+			}
+			auto Pct = [Land](int32 V) { return Land > 0 ? 100.0 * V / Land : 0.0; };
+			auto Bins = [&](const int32* B) { return FString::Printf(TEXT("%.0f/%.0f/%.0f/%.0f/%.0f%%"), Pct(B[0]), Pct(B[1]), Pct(B[2]), Pct(B[3]), Pct(B[4])); };
+			UE_LOG(LogTemp, Log, TEXT("Fauna habitat within %.0f km on %s: %.0f%% water; of the land, %.1f%% herd grass, %.1f%% strict (a herd's middle); not level %.0f%%, too dry %.0f%%, too wet %.0f%%, wooded %.0f%%, ice or alpine %.0f%%; level by fifths %s, wet %s, wooded %s"),
+				ReachCm / 1e5, *Planet->GetDisplayName(), 100.0 * Water / Count, Pct(Grass), Pct(Strict), Pct(NotFlat), Pct(TooDry), Pct(TooWet), Pct(Wooded), Pct(Iced), *Bins(FlatBins), *Bins(WetBins), *Bins(WoodBins));
+		}
 		else if (Mode == TEXT("goto") && Movement && Planet->Terrain)
 		{
 			EFaunaKind Kind = EFaunaKind::Flier;
@@ -2964,7 +3000,7 @@ void AStarshipPawn::ProcessDebugCommand()
 			TEXT("ship camera [chase|bridge|cinematic|front|port|starboard|top|bottom] | zoom <x> | look <yaw> <pitch> [s]"),
 			TEXT("ship warpvis [classic|real] | cscale <0..1> | systems | shipwarp [km] [far]"),
 			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mesa|badlands|cliffs|city|mountain|coast|river|linea|green|land|substellar|ring|nightcap> <alt m> [across|sun|away|along|uphill|giant] [night] | terrain rocks [on|off|density <x>|check]"),
-			TEXT("ship fauna [status|on|off|density <x>|only <flier|herd|mote|leaper|floater|all>|startle|time <s>|strange <0..1>|cells] | fauna goto <flier|herd> <alt m> [night] | fauna goto mote <alt m> [night|dusk|day] | fauna watch [m] [low|off]  (the animals of the world below: flocks, herds, motes)"),
+			TEXT("ship fauna [status|on|off|density <x>|only <flier|herd|mote|leaper|floater|all>|startle|time <s>|strange <0..1>|cells|habitat [km]] | fauna goto <flier|herd> <alt m> [night] | fauna goto mote <alt m> [night|dusk|day] | fauna watch [m] [low|off]  (the animals of the world below: flocks, herds, motes)"),
 			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km] [hazy] [strange <0..1>] [seed <n>] [locked] | people [none|stone|iron|industrial|modern|starfaring] [organic] [cliff]"),
 			TEXT("ship shuttle  (launch the shuttlecraft; aboard it, dock when the bay is within 500 m) | ship takeoff"),
 			TEXT("ship scan [stop]  (sensors on the locked / nav target; landed: survey the ground) | ship science [reset]"),

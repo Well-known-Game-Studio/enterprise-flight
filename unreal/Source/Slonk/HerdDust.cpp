@@ -22,9 +22,10 @@ SlonkFauna::FHerdDust SlonkFauna::HerdDustFor(const FHerdDustInput& In)
 	const double Night = FMath::Clamp(In.Night, 0.0, 1.0);
 	if (In.DistCm > DustReachCm || In.Life <= 0.0 || Night >= 1.0) { return D; }
 	// Kicked up by the walkers' feet as they go faster than a walk: the faster, the more of them and the drier the ground
-	// the more, fewer as the light goes.
+	// the more (lush grass still throws up some, two fifths of the driest's), fewer as the light goes.
 	const double Above = FMath::Max(In.SpeedMS - DustWalkMS, 0.0);
-	const double Rate = Above * FMath::Max(In.Members, 0) * DustPuffsPerWalker * FMath::Clamp(1.0 - In.Wet, 0.0, 1.0) * FMath::Clamp(In.Life, 0.0, 1.0) * (1.0 - Night);
+	const double Dry = 0.4 + 0.6 * FMath::Clamp(1.0 - In.Wet, 0.0, 1.0);
+	const double Rate = Above * FMath::Max(In.Members, 0) * DustPuffsPerWalker * Dry * FMath::Clamp(In.Life, 0.0, 1.0) * (1.0 - Night);
 	D.Rate = (float)FMath::Min(Rate, DustMaxRate);
 	return D;
 }

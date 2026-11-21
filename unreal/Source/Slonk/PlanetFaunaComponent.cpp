@@ -530,7 +530,9 @@ void UPlanetFaunaComponent::UpdateHerd(uint64 Id, FGroupSet& S, const TArray<Slo
 	}
 	// Out of the way of anyone walking toward it, never into the water.
 	const bool bShaken = Panic.IsLive(Now);
-	const bool bMoving = SlonkFauna::KeepFromCrew(H, G, D, Crew, StepDt, S.Water.Get());
+	// Its crew offset held while it is frightened: its flight was read dry with the offset it had when startled
+	// (SlonkFauna::StartleHerd), and anyone closing on it frightens it again rather than pushing it.
+	const bool bMoving = !bShaken && SlonkFauna::KeepFromCrew(H, G, D, Crew, StepDt, S.Water.Get());
 	// The ground under it read again each frame for a herd near the camera or fleeing, every sixth frame further off
 	// (each herd on frames of its own); its frame set on the ground at its place each frame, turned toward the way its
 	// fright and the crew are taking it (where they will have it a second on: a fright's flight, a walk away from the
