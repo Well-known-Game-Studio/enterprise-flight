@@ -464,6 +464,18 @@ void UPlanetTerrainComponent::EnsureWriterAnchor()
 	WriterAnchor->RegisterComponent();
 }
 
+void UPlanetTerrainComponent::QueuePlanetInstanceWrites()
+{
+	// Planet instances of the world's other things (its animals) are written whether or not the rocks and plants are:
+	// the anchor made if there is none, and the write queued if this frame's view update has not queued it.
+	EnsureWriterAnchor();
+	if (WriterAnchor && WriterQueuedFrame != GFrameCounter)
+	{
+		WriterAnchor->QueueWriteAll();
+		WriterQueuedFrame = GFrameCounter;
+	}
+}
+
 UStaticMeshComponent* UPlanetTerrainComponent::AcquireSet(int32 Mesh)
 {
 	const bool bGPU = CVarScatterGPUInstances.GetValueOnGameThread() != 0;
@@ -875,7 +887,7 @@ void UPlanetTerrainComponent::UpdateView(const FVector& ViewLocationWorld, const
 	// anchor made first if GPU instances were switched on since the terrain was configured, so the sets made this frame
 	// are written this frame too.
 	if (CVarScatterGPUInstances.GetValueOnGameThread() != 0) { EnsureWriterAnchor(); }
-	if (WriterAnchor) { WriterAnchor->QueueWriteAll(); }
+	if (WriterAnchor) { WriterAnchor->QueueWriteAll(); WriterQueuedFrame = GFrameCounter; }
 	// The chunks refine for the camera (what is seen) and for the pawn (what is stood on, a chase camera's length
 	// behind it): the split distance is the nearer of the two.
 	PawnLocal = GetComponentTransform().InverseTransformPositionNoScale(PawnLocationWorld);

@@ -149,6 +149,12 @@ public:
 	int32 GetDeepestVisibleDepth() const { return DeepestVisible; }
 	int32 GetParkedChunkCount() const { return ParkedChunks; }
 
+	/** Has every planet instance in the world's scene written into the GPU scene this frame (UPlanetInstancesComponent::
+	 *  QueueWriteAll), through this terrain's anchor, made if there is none: for planet instances that are not the
+	 *  scatter's (the animals, UPlanetFaunaComponent), which need it whatever slonk.Scatter.GPUInstances says. Once a
+	 *  frame at most, with the view update's own. */
+	void QueuePlanetInstanceWrites();
+
 	/** Every surface material parameter set so far is also applied to new chunk instances. */
 	void SetScalarParameter(FName Name, float Value);
 	void SetVectorParameter(FName Name, const FLinearColor& Value);
@@ -256,6 +262,8 @@ private:
 	/** Always in the scene while the terrain is: carries each frame's write of every planet instance into the GPU scene
 	 *  (UPlanetInstancesComponent::QueueWriteAll), one empty instance of its own. */
 	UPROPERTY() TObjectPtr<UPlanetInstancesComponent> WriterAnchor;
+	/** The frame the anchor's write was last queued in (GFrameCounter). */
+	uint64 WriterQueuedFrame = MAX_uint64;
 	/** Collision-only copies of the rocks round the pawn, one per kind, planet-local. */
 	UPROPERTY() TArray<TObjectPtr<UScatterInstancesComponent>> SolidSets;
 	uint64 SolidSignature = 0;

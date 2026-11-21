@@ -38,6 +38,11 @@ public:
 	double GetMaxInstanceRadius() const { return MaxInstanceRadius; }
 	void SetNumCustomDataFloats(int32 InNumCustomDataFloats);
 	int32 GetNumCustomDataFloats() const { return NumCustomFloats; }
+	/** How far past its mesh's box the material moves an instance's vertices, in the mesh's own units (before the
+	 *  instance's scale): every instance's box, which the GPU culls it and picks its LOD by, is padded by it (0, the
+	 *  default, for the rocks and plants, whose sway the box's own padding holds). Set before SetPieces. */
+	void SetCullPadding(double InMeshUnits);
+	double GetCullPadding() const { return CullPadding; }
 
 	/**
 	 * Has every planet instance in this component's scene written into the GPU scene this frame, through this
@@ -64,7 +69,8 @@ public:
 	virtual void PrecachePSOs() override;
 
 private:
-	/** An instance's box in its own frame: the mesh's (50 cm each way with none), padded for the wind the plants sway in. */
+	/** An instance's box in its own frame: the mesh's (50 cm each way with none), padded for the wind the plants sway in
+	 *  and by the set's CullPadding. */
 	FBox InstanceBox() const;
 
 	/** Per instance: three float4 rows of its 3x4 transform in this component's frame (translation in w), then its custom
@@ -72,6 +78,7 @@ private:
 	TArray<FVector4f> Packed;
 	int32 NumInstances = 0;
 	int32 NumCustomFloats = 0;
+	double CullPadding = 0.0;
 	FBox LocalBox = FBox(ForceInit);
 	/** The largest instance's bounding radius (its box's, turned and scaled), which the renderer narrows the set's range
 	 *  of LODs by (TPlanetInstancesProxy::GetGpuLodInstanceRadius). */

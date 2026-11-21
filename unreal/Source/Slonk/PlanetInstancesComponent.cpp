@@ -407,7 +407,12 @@ void UPlanetInstancesComponent::PrecachePSOs()
 FBox UPlanetInstancesComponent::InstanceBox() const
 {
 	const FBox Mesh = GetStaticMesh() ? GetStaticMesh()->GetBounds().GetBox() : FBox(FVector(-50.0), FVector(50.0));
-	return Mesh.ExpandBy(Mesh.GetExtent() * 0.15 + FVector(20.0));
+	return Mesh.ExpandBy(Mesh.GetExtent() * 0.15 + FVector(20.0 + CullPadding));
+}
+
+void UPlanetInstancesComponent::SetCullPadding(double InMeshUnits)
+{
+	CullPadding = FMath::Max(InMeshUnits, 0.0);
 }
 
 FMatrix UPlanetInstancesComponent::GetRenderMatrix() const
