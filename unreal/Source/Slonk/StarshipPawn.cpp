@@ -5,7 +5,9 @@
 #include "GameFramework/PlayerController.h"
 #include "StarshipHUD.h"
 #include "PlanetBody.h"
+#include "Camera/CameraActor.h"
 #include "PlanetTerrainComponent.h"
+#include "PlanetFaunaComponent.h"
 #include "StarBody.h"
 #include "StarSystem.h"
 #include "SpaceVessel.h"
@@ -1520,6 +1522,7 @@ void AStarshipPawn::Tick(float DeltaTime)
 	}
 	FSlonkScopeTimer SlonkTimer_(TEXT("Tick StarshipPawn"));
 	Super::Tick(DeltaTime);
+	if (FaunaWatchId) { TickFaunaWatch(); }
 	// The wake under the player's craft, given to the world below once the craft has moved this frame (the worlds tick
 	// before it, so theirs would trail it): the craft flown, or the one the crew stepped out of, still hovering.
 	{
@@ -2320,6 +2323,155 @@ void AStarshipPawn::ProcessDebugCommand()
 		}
 		else { UE_LOG(LogTemp, Log, TEXT("Terrain: no planet within 1.5 radii")); }
 	}
+	else if (Op == TEXT("fauna"))
+	{
+		// fauna [status|on|off|density <x>|only <kind|all>|startle|time <s>|strange <0..1>|cells]: the animals of the world
+		// below, and how many are about. on/off and density set slonk.Fauna.Enable and slonk.Fauna.Density (every world;
+		// off leaves each as it was before it had any, its seas' plankton and shoals too); only keeps one kind; startle
+		// startles every group about from the ship; time moves the paths' clock (where the flocks will be); strange gives
+		// the animals the look of another strangeness; cells lists the groups of the last scan of the cells round you.
+		// fauna goto <kind> <alt m> [night]: park over the nearest group of the kind (searched from the middle of the
+		// night side with night), on its path 1.6 times its kind's scare radius ahead of it (400 m for a flock), out of
+		// the reach of its fright until it comes, facing it as it comes, the ground followed at that height.
+		APlanetBody* Planet = Movement ? Cast<APlanetBody>(Movement->GroundBody.Get()) : nullptr;
+		if (!Planet)
+		{
+			double BestD = TNumericLimits<double>::Max();
+			for (TActorIterator<APlanetBody> It(GetWorld()); It; ++It)
+			{
+				const double D = FVector::Dist(It->GetActorLocation(), GetActorLocation());
+				if (It->HasTerrain() && D < BestD) { BestD = D; Planet = *It; }
+			}
+		}
+		UPlanetFaunaComponent* F = Planet ? Planet->Fauna.Get() : nullptr;
+		const FString Mode = ArgStr(1);
+		auto SetCVar = [](const TCHAR* Name, const FString& Value)
+		{
+			if (IConsoleVariable* V = IConsoleManager::Get().FindConsoleVariable(Name)) { V->Set(*Value, ECVF_SetByConsole); }
+		};
+		if (Mode == TEXT("on") || Mode == TEXT("off")) { SetCVar(TEXT("slonk.Fauna.Enable"), Mode == TEXT("on") ? TEXT("1") : TEXT("0")); }
+		else if (Mode == TEXT("density")) { SetCVar(TEXT("slonk.Fauna.Density"), FString::SanitizeFloat(FMath::Max(Arg(2, 1.f), 0.f))); }
+		else if (!F || !F->IsConfigured()) { UE_LOG(LogTemp, Log, TEXT("Fauna: no world with terrain near")); }
+		else if (Mode == TEXT("watch"))
+		{
+			// fauna watch [distance m] [low] | fauna watch off: the view follows the drawn flock nearest the camera from that
+			// far behind and to one side of it (40 m), a little above it, or below it with low (the birds against the sky),
+			// as it flies, through a camera of its own; off gives the view back.
+			APlayerController* PC = Cast<APlayerController>(GetController());
+			if (!PC) { PC = GetWorld()->GetFirstPlayerController(); }
+			if (ArgStr(2) == TEXT("off"))
+			{
+				FaunaWatchId = 0;
+				if (PC && PC->GetPawn()) { PC->SetViewTarget(PC->GetPawn()); }
+				UE_LOG(LogTemp, Log, TEXT("Fauna watch: off"));
+			}
+			else
+			{
+				FaunaWatchDistCm = FMath::Max(Arg(2, 40.f), 2.f) * 100.0;
+				bFaunaWatchLow = ArgStr(3) == TEXT("low");
+				FVector View = GetActorLocation(); FRotator ViewRot;
+				if (PC) { PC->GetPlayerViewPoint(View, ViewRot); }
+				FaunaWatchId = F->NearestDrawnGroup(View);
+				FVector Pos; FQuat Rot;
+				if (FaunaWatchId && F->GetDrawnGroupPose(FaunaWatchId, Pos, Rot))
+				{
+					if (!FaunaWatchCamera) { FaunaWatchCamera = GetWorld()->SpawnActor<ACameraActor>(); }
+					TickFaunaWatch();
+					if (PC && FaunaWatchCamera) { PC->SetViewTarget(FaunaWatchCamera); }
+					UE_LOG(LogTemp, Log, TEXT("Fauna watch: the flock %016llx, %.0f m from the view, followed from %.0f m"), FaunaWatchId, FVector::Dist(Pos, View) / 100.0, FaunaWatchDistCm / 100.0);
+				}
+				else { FaunaWatchId = 0; UE_LOG(LogTemp, Log, TEXT("Fauna watch: no flock drawn")); }
+			}
+		}
+		else if (Mode == TEXT("only"))
+		{
+			EFaunaKind Kind;
+			if (ArgStr(2) == TEXT("all") || ArgStr(2).IsEmpty()) { F->SetKindMask(SlonkFauna::AllKinds); }
+			else if (SlonkFauna::KindFromName(ArgStr(2), Kind)) { F->SetKindMask(SlonkFauna::KindBit(Kind)); }
+			else { UE_LOG(LogTemp, Warning, TEXT("fauna only: %s is no kind (flier, herd, mote, leaper, floater, all)"), *ArgStr(2)); }
+		}
+		else if (Mode == TEXT("startle"))
+		{
+			// By the player's craft (the one flown, or the one the crew stepped out of), where it is and as it flies; by
+			// this ship when the player flies none; by the camera when the crew are out with no craft.
+			const APawn* Player = UGameplayStatics::GetPlayerPawn(this, 0);
+			const AActor* Craft = this;
+			if (const APersonPawn* Person = Cast<APersonPawn>(Player)) { Craft = Person->Craft.Get(); }
+			else if (Cast<AStarshipPawn>(Player)) { Craft = Player; }
+			UE_LOG(LogTemp, Log, TEXT("Fauna: %d groups startled by %s"), F->StartleAll(Craft), Craft ? *Craft->GetName() : TEXT("the camera"));
+		}
+		else if (Mode == TEXT("time")) { F->SetTimeOffset(Arg(2, 0.f)); }
+		else if (Mode == TEXT("strange"))
+		{
+			// The world's own genome at its own strangeness, or the genome it would roll at another.
+			const float S = FMath::Clamp(Arg(2, 0.f), 0.f, 1.f);
+			const SlonkFauna::FFaunaProfile& Was = F->GetProfile();
+			const FWorldGenome G = FMath::IsNearlyEqual(S, Planet->Genome.Strangeness) ? Planet->Genome : SlonkGenome::Roll(Planet->ResolvedArchetype, S, Was.Hash);
+			F->SetProfile(SlonkFauna::Roll(G, Planet->ResolvedArchetype, Was.Hash));
+			UE_LOG(LogTemp, Log, TEXT("Fauna on %s at strangeness %.2f: pigments turned %.0f deg, %.0f%% of the way to the ground's own colour"), *Planet->GetDisplayName(), S, F->GetProfile().Look.HueTurnDeg, F->GetProfile().Look.Vivid * 100.f);
+		}
+		else if (Mode == TEXT("cells"))
+		{
+			TArray<FString> Lines;
+			F->DescribeCells(Lines);
+			UE_LOG(LogTemp, Log, TEXT("Fauna groups of the last scan on %s: %d"), *Planet->GetDisplayName(), Lines.Num());
+			for (const FString& L : Lines) { UE_LOG(LogTemp, Log, TEXT("  %s"), *L); }
+		}
+		else if (Mode == TEXT("goto") && Movement && Planet->Terrain)
+		{
+			EFaunaKind Kind = EFaunaKind::Flier;
+			if (!SlonkFauna::KindFromName(ArgStr(2), Kind)) { UE_LOG(LogTemp, Warning, TEXT("fauna goto: %s is no kind (flier, herd, mote, leaper, floater)"), *ArgStr(2)); }
+			else
+			{
+				const double AltCm = FMath::Max(Arg(3, 40.f), 2.f) * 100.0;
+				const bool bNight = ArgStr(4) == TEXT("night");
+				const FTransform& TT = Planet->Terrain->GetComponentTransform();
+				const FVector SunLocal = TT.InverseTransformVectorNoScale(Planet->GetStarDirection()).GetSafeNormal();
+				const FVector From = bNight ? -SunLocal : TT.InverseTransformPositionNoScale(GetActorLocation()).GetSafeNormal();
+				const SlonkFauna::FFaunaWorld W = F->MakeFaunaWorld();
+				// Close by first (20 km, every cell), then further and coarser (400 km).
+				SlonkFauna::FFaunaGroup G;
+				const bool bFound = SlonkFauna::FindGroupNear(W, Kind, From, 2.0e6, 1200, G) || SlonkFauna::FindGroupNear(W, Kind, From, 4.0e7, 4000, G);
+				if (!bFound) { UE_LOG(LogTemp, Log, TEXT("Fauna goto: no %s group found on %s"), SlonkFauna::KindName(Kind), *Planet->GetDisplayName()); }
+				else
+				{
+					const double R = W.P.RadiusCm;
+					const double Now = F->ClockSeconds();
+					// Far enough along its path that the group is not startled the moment the ship comes.
+					const double AheadCm = 1.6 * SlonkFauna::KindDesc(Kind).ScareRadiusCm;
+					const SlonkFauna::FFaunaPose Here = SlonkFauna::PathAt(G, R, Now);
+					const SlonkFauna::FFaunaPose Ahead = SlonkFauna::PathAt(G, R, Now + AheadCm / FMath::Max(G.SpeedCmS, 100.0));
+					const FVector UpL = Ahead.PosCm.GetSafeNormal();
+					const double Ground = FMath::Max(SlonkTerrain::SurfaceHeightCm(W.P, UpL), 0.0);
+					const FVector PosL = UpL * (R + Ground + AltCm);
+					const FVector Pos = TT.TransformPositionNoScale(PosL);
+					const FVector Up = TT.TransformVectorNoScale(UpL);
+					FVector Fwd = TT.TransformVectorNoScale(Here.PosCm - Ahead.PosCm);
+					Fwd = (Fwd - Up * FVector::DotProduct(Fwd, Up)).GetSafeNormal();
+					if (Fwd.IsNearlyZero()) { Fwd = FVector::CrossProduct(Up, FVector::ZAxisVector).GetSafeNormal(); }
+					Movement->SetThrottle(0.0); Movement->Velocity = FVector::ZeroVector; Movement->AngularVelocity = FRotator::ZeroRotator;
+					SetActorLocationAndRotation(Pos, FRotationMatrix::MakeFromXZ(Fwd, Up).ToQuat(), false, nullptr, ETeleportType::TeleportPhysics);
+					Movement->SetTerrainFollow(AltCm);
+					// A world that keeps turning under the ship (slonk.Planet.HoldSpin 0) carries the flock off a little before the
+					// ship rides the ground with it: the parking holds exactly with the world held.
+					static const IConsoleVariable* HoldSpin = IConsoleManager::Get().FindConsoleVariable(TEXT("slonk.Planet.HoldSpin"));
+					if (HoldSpin && HoldSpin->GetInt() == 0) { UE_LOG(LogTemp, Log, TEXT("Fauna goto: the world turns under the ship (slonk.Planet.HoldSpin 0), so the flock drifts off a little at first; set it to 1 for an exact parking")); }
+					// The flock's height over the ground under it (the sea's surface over water), not under the ship.
+					const double GroundUnder = FMath::Max(SlonkTerrain::SurfaceHeightCm(W.P, Here.PosCm.GetSafeNormal()), 0.0);
+					UE_LOG(LogTemp, Log, TEXT("Fauna goto %s on %s: a %s group of %d (%016llx, %.2f m span) %.1f km from the search's start, %.0f m over the ground; parked %.0f m ahead of it along its path (%.0f m from it, its scare radius %.0f m), %.0f m up, facing it (nose.sun %.2f)"),
+						SlonkFauna::KindName(Kind), *Planet->GetDisplayName(), SlonkFauna::HabitatName(G.Habitat), G.Members, G.Id, G.SpanM, FVector::Dist(G.Centre, From) * R / 1e5,
+						(Here.PosCm.Size() - R - GroundUnder) / 100.0, AheadCm / 100.0, FVector::Dist(Here.PosCm, PosL) / 100.0, SlonkFauna::KindDesc(Kind).ScareRadiusCm / 100.0,
+						AltCm / 100.0, FVector::DotProduct(Fwd, Planet->GetStarDirection()));
+				}
+			}
+		}
+		if (F && F->IsConfigured())
+		{
+			const FString Line = FString::Printf(TEXT("Fauna on %s: %s"), *Planet->GetDisplayName(), *F->Describe());
+			UE_LOG(LogTemp, Log, TEXT("%s"), *Line);
+			ScreenMessage(Line, FColor::Cyan);
+		}
+	}
 	else if (Op == TEXT("terrain") && Movement && ArgStr(1) == TEXT("param") && Args.Num() > 3)
 	{
 		// terrain param <name> <value>: a scalar of the ground's material on the world below (CanopyShade, for tuning).
@@ -2675,6 +2827,7 @@ void AStarshipPawn::ProcessDebugCommand()
 			TEXT("ship camera [chase|bridge|cinematic|front|port|starboard|top|bottom] | zoom <x> | look <yaw> <pitch> [s]"),
 			TEXT("ship warpvis [classic|real] | cscale <0..1> | systems | shipwarp [km] [far]"),
 			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mesa|badlands|cliffs|city|mountain|coast|river|linea|green|land|substellar|ring|nightcap> <alt m> [across|sun|away|along|uphill|giant] [night] | terrain rocks [on|off|density <x>|check]"),
+			TEXT("ship fauna [status|on|off|density <x>|only <flier|herd|mote|leaper|floater|all>|startle|time <s>|strange <0..1>|cells] | fauna goto <kind> <alt m> [night]  (the animals of the world below)"),
 			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km] [hazy] [strange <0..1>] [seed <n>] [locked] | people [none|stone|iron|industrial|modern|starfaring] [organic] [cliff]"),
 			TEXT("ship shuttle  (launch the shuttlecraft; aboard it, dock when the bay is within 500 m) | ship takeoff"),
 			TEXT("ship scan [stop]  (sensors on the locked / nav target; landed: survey the ground) | ship science [reset]"),
@@ -4066,6 +4219,24 @@ void AStarshipPawn::StartScript(const FString& Path)
 	bScriptWaitPilot = false;
 	if (!FFileHelper::LoadFileToStringArray(ScriptLines, *Path)) { UE_LOG(LogTemp, Warning, TEXT("Script: cannot read %s"), *Path); return; }
 	UE_LOG(LogTemp, Log, TEXT("Script: %s, %d lines"), *Path, ScriptLines.Num());
+}
+
+void AStarshipPawn::TickFaunaWatch()
+{
+	// The watched flock, from behind and to one side of its flight, a little above it, looking at it.
+	APlanetBody* Planet = Movement ? Cast<APlanetBody>(Movement->GroundBody.Get()) : nullptr;
+	const UPlanetFaunaComponent* F = Planet ? Planet->Fauna.Get() : nullptr;
+	FVector Pos; FQuat Rot;
+	if (!F || !FaunaWatchCamera || !F->GetDrawnGroupPose(FaunaWatchId, Pos, Rot))
+	{
+		FaunaWatchId = 0;
+		if (APlayerController* PC = GetWorld()->GetFirstPlayerController()) { if (PC->GetPawn()) { PC->SetViewTarget(PC->GetPawn()); } }
+		return;
+	}
+	const FVector Fwd = Rot.GetForwardVector(), Up = (Pos - Planet->GetActorLocation()).GetSafeNormal();
+	const FVector Side = FVector::CrossProduct(Up, Fwd).GetSafeNormal();
+	const FVector Cam = Pos - Fwd * FaunaWatchDistCm + Side * (FaunaWatchDistCm * 0.6) + Up * (FaunaWatchDistCm * (bFaunaWatchLow ? -0.25 : 0.2));
+	FaunaWatchCamera->SetActorLocationAndRotation(Cam, FRotationMatrix::MakeFromXZ(Pos - Cam, Up).ToQuat());
 }
 
 void AStarshipPawn::TickScript()

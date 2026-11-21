@@ -1,5 +1,6 @@
 #include "PlanetBody.h"
 #include "PlanetTerrainComponent.h"
+#include "PlanetFaunaComponent.h"
 #include "FaunaProfile.h"
 #include "StarshipMovementComponent.h"
 #include "GameClock.h"
@@ -673,6 +674,10 @@ void APlanetBody::ResolveStyleFromArchetype()
 	// strangeness 0 (home, the charted neighbours) it is the archetype's own and changes nothing.
 	Genome = SlonkGenome::Roll(Type, SlonkGenome::AppliesTo(Type, Style.bAtmosphere) ? Strangeness : 0.f, Hash, TidalPull);
 	SlonkGenome::SettleLock(Genome, Type, StarBearing, bForceTidalLock);
+	// Its animals, rolled from the genome on a stream of their own (nothing above or below moves): the Earth's at
+	// strangeness 0. Given to the animals about if there are any (a world resolved again keeps its terrain).
+	FaunaProfile = SlonkFauna::Roll(Genome, Type, Hash);
+	if (Fauna && bTerrainActive) { ConfigureFauna(); }
 	// The layer was placed from sea level, but on a world with relief most land stands a kilometre or more above
 	// it, so over the plateaus people fly across and land on the cloud base sat on the ground. Lift the layer by
 	// the typical land height, read once from the height field at a coarse wavelength (a hundred-odd samples).
@@ -1028,6 +1033,7 @@ void APlanetBody::SetNightLights(float Intensity)
 		ApplyTerrainMaterialParams();
 		// A colony founded (or a world gone dark) brings its towns or takes them away; the rocks follow.
 		Terrain->SetScatterOptions(Terrain->GetScatterSettings().bEnabled, Terrain->GetScatterSettings().Density, HasCities(), GroundLife(), GetPeople());
+		ConfigureFauna();
 	}
 	const FCivilization& Now = GetPeople();
 	if (HasCities() != bHadCities || Now.bInhabited != Was.bInhabited || Now.bColonists != Was.bColonists || Now.Age != Was.Age || Now.Organic != Was.Organic)
@@ -1065,6 +1071,7 @@ void APlanetBody::SetPeople(const FCivilization& People)
 	}
 	ApplyTerrainMaterialParams();
 	if (Terrain) { Terrain->SetScatterOptions(Terrain->GetScatterSettings().bEnabled, Terrain->GetScatterSettings().Density, HasCities(), GroundLife(), GetPeople()); }
+	ConfigureFauna();
 	ApplyBuildingParams();
 	ClearCities();
 }
@@ -1460,6 +1467,7 @@ void APlanetBody::EnsureTerrain()
 	if (!bWant)
 	{
 		if (Terrain) { Terrain->SetTerrainVisible(false); }
+		if (Fauna) { Fauna->Suspend(); }
 		bTerrainActive = false;
 		return;
 	}
@@ -1470,6 +1478,13 @@ void APlanetBody::EnsureTerrain()
 		Terrain->RegisterComponent();
 		Terrain->SetRelativeLocation(FVector::ZeroVector);
 		Terrain->SetWorldScale3D(FVector::OneVector);
+	}
+	if (!Fauna)
+	{
+		// On the terrain's frame, the planet's, unscaled: its groups' places are planet-local centimetres.
+		Fauna = NewObject<UPlanetFaunaComponent>(this, TEXT("Fauna"));
+		Fauna->SetupAttachment(Terrain);
+		Fauna->RegisterComponent();
 	}
 	const FPlanetTerrainParams P = MakeTerrainParams();
 	// The rocks keep off the streets of a world with towns; set before the chunks are built.
@@ -1483,6 +1498,14 @@ void APlanetBody::EnsureTerrain()
 	bTerrainActive = true;
 	Terrain->SetTerrainVisible(true);
 	ApplyTerrainMaterialParams();
+	ConfigureFauna();
+}
+
+void APlanetBody::ConfigureFauna()
+{
+	if (!Fauna || !Terrain || !bTerrainActive) { return; }
+	// The living ground's colours as the terrain's material was last given them (the plants' palette).
+	Fauna->Configure(Terrain, TerrainParams, FaunaProfile, GroundLife(), Terrain->GetScatterSettings().Palette);
 }
 
 void APlanetBody::ApplyTerrainMaterialParams()
@@ -1517,7 +1540,9 @@ void APlanetBody::ApplyTerrainMaterialParams()
 	Terrain->SetVectorParameter(TEXT("SunDirection"), FLinearColor(CachedStarDirection.X, CachedStarDirection.Y, CachedStarDirection.Z, 0.f));
 	// What the seas carry: plankton that glow where the sea is stirred at night, shoals under it by day, on a living
 	// world whose seas are liquid. A dead, airless or molten world's seas get none, which leaves them as they were.
-	const SlonkFauna::FSeaLife Sea = SlonkFauna::SeaLifeOf(S.LavaEmissive > 0.f ? 0.f : GroundLife(), Genome);
+	// None at all with slonk.Fauna.Enable 0: the seas as they were before they carried any.
+	bFaunaOnApplied = SlonkFauna::IsEnabled();
+	const SlonkFauna::FSeaLife Sea = bFaunaOnApplied ? SlonkFauna::SeaLifeOf(S.LavaEmissive > 0.f ? 0.f : GroundLife(), Genome) : SlonkFauna::FSeaLife();
 	bLivingSea = Sea.PlanktonGlow > 0.f;
 	Terrain->SetScalarParameter(TEXT("PlanktonGlow"), Sea.PlanktonGlow);
 	Terrain->SetScalarParameter(TEXT("ShoalDensity"), Sea.ShoalDensity);
@@ -1849,11 +1874,18 @@ void APlanetBody::Tick(float DeltaTime)
 			PC->GetPlayerViewPoint(ViewLoc, ViewRot);
 			const APawn* Pawn = PC->GetPawn();
 			Terrain->UpdateView(ViewLoc, Pawn ? Pawn->GetActorLocation() : ViewLoc);
+			// The animals after the chunks: their groups move along their paths, written with the planet instances.
+			if (Fauna) { Fauna->UpdateView(PC, ViewLoc, GetStarDirection()); }
+			// The seas' plankton and shoals as slonk.Fauna.Enable has it now.
+			if (bFaunaOnApplied != SlonkFauna::IsEnabled()) { ApplyTerrainMaterialParams(); }
 			// The player's craft keeps its wake up from its own tick (UpdateShipWake); one it stopped keeping is cleared.
 			if (ShipStirApplied > 0.f && World->GetTimeSeconds() - ShipWakeAt > 0.5) { UpdateShipWake(nullptr); }
 			UpdateCities(ViewLoc, DeltaTime);
 		}
+		else if (Fauna) { Fauna->Suspend(); }
 	}
+	// A world not being updated keeps no animals: nothing would move them, or write them as it turns.
+	else if (Fauna) { Fauna->Suspend(); }
 
 	// The star direction only changes as bodies move; refresh a few times a second.
 	StarSearchTimer -= DeltaTime;

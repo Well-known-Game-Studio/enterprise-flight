@@ -10,10 +10,12 @@
 #include "Civilization.h"
 #include "BuildingMeshes.h"
 #include "WorldGenome.h"
+#include "FaunaProfile.h"
 #include "Async/Future.h"
 #include "PlanetBody.generated.h"
 
 class UPlanetTerrainComponent;
+class UPlanetFaunaComponent;
 
 class UStaticMeshComponent;
 class USphereComponent;
@@ -212,6 +214,11 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UPlanetTerrainComponent> Terrain;
 
+	/** The animals round the camera on a world with life (PlanetFaunaComponent.h), on the terrain's frame: made with the
+	 *  terrain, configured with its scatter. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UPlanetFaunaComponent> Fauna;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> Atmosphere;
 
@@ -291,6 +298,10 @@ public:
 	/** The alien layer over the archetype, rolled with the style from the location hash and Strangeness. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Planet")
 	FWorldGenome Genome;
+	/** The world's animals, rolled from the genome with it (SlonkFauna::Roll): the Earth's at strangeness 0. */
+	SlonkFauna::FFaunaProfile FaunaProfile;
+	/** Gives the animals the world as it stands: its field, its profile, its life and its living ground's colours. */
+	void ConfigureFauna();
 
 	/** For Moon archetypes: which kind of moon the location hash produced. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Planet")
@@ -555,6 +566,8 @@ private:
 	/** Whether the seas carry life (SlonkFauna::SeaLifeOf, set with the terrain material's parameters): a ship hovering
 	 *  low stirs only a living sea's plankton. */
 	bool bLivingSea = false;
+	/** slonk.Fauna.Enable as the terrain material's sea life was last set by: switched, the seas are set again. */
+	bool bFaunaOnApplied = true;
 	/** The ship's stir last given the terrain material (ShipStir), so it is sent only as it changes, and when a craft
 	 *  last gave it: a wake nobody keeps up (the craft gone, or another world under it) is cleared. */
 	float ShipStirApplied = 0.f;

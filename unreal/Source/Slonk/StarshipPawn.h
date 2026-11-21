@@ -154,6 +154,12 @@ public:
 	// ---- On foot ----
 	/** The crew member out of the craft (null while everyone is aboard). */
 	UPROPERTY(BlueprintReadOnly, Category = "Person") TWeakObjectPtr<APersonPawn> ActivePerson;
+	/** Debug (fauna watch): the flock the view follows, how far off, and the camera it is seen through. */
+	uint64 FaunaWatchId = 0;
+	double FaunaWatchDistCm = 4000.0;
+	bool bFaunaWatchLow = false;
+	UPROPERTY() TObjectPtr<class ACameraActor> FaunaWatchCamera;
+	void TickFaunaWatch();
 	/** The world whose sea this craft last stirred (APlanetBody::UpdateShipWake), cleared when it flies off it. */
 	TWeakObjectPtr<class APlanetBody> WakeBody;
 	/** Stepped into the car: the deck buttons come up once the rider is clear of the doors' sensor. */

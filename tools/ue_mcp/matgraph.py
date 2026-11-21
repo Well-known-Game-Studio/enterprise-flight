@@ -32,6 +32,8 @@ BYCLASS = {
     "MaterialExpressionTransformPosition": ["TransformSourceType", "TransformType"],
     "MaterialExpressionPerInstanceCustomData": ["DataIndex", "ConstDefaultValue"],
     "MaterialExpressionPerInstanceCustomData3Vector": ["DataIndex", "ConstDefaultValue"],
+    "MaterialExpressionTime": ["bIgnorePause", "bOverride_Period", "Period"],
+    "MaterialExpressionLocalPosition": ["IncludedOffsets", "LocalOrigin"],
 }
 MATPROPS = ["ShadingModel", "BlendMode", "TwoSided", "bTangentSpaceNormal", "OpacityMaskClipValue", "bUsedWithInstancedStaticMeshes",
             "bUsedWithStaticLighting", "MaterialDomain"]
