@@ -21,12 +21,12 @@
 
 static_assert(SlonkFauna::Custom::Num == SlonkScatter::NumCustomFloats, "every planet instance has the scatter's count of custom floats, so one pass writes them all");
 
-// The animals on the worlds with life. 0 takes every one away, and the seas' plankton and shoals with them (APlanetBody),
-// so a world looks as it did before it had any (for captures to compare with).
+// The animals on the worlds with life. 0 takes every one away, the seas' plankton and shoals (APlanetBody) and the motes
+// over the ground with them, so a world looks as it did before it had any (for captures to compare with).
 static TAutoConsoleVariable<int32> CVarFaunaEnable(TEXT("slonk.Fauna.Enable"), 1,
-	TEXT("The animals on the worlds with life: the flocks, and the seas' plankton and shoals (1, the default), or none, every world as it was before them (0)"));
+	TEXT("The animals on the worlds with life: the flocks, the seas' plankton and shoals, the pollen, gnats and fireflies over the ground (1, the default), or none, every world as it was before them (0)"));
 static TAutoConsoleVariable<float> CVarFaunaDensity(TEXT("slonk.Fauna.Density"), 1.f,
-	TEXT("Scales the share of the habitat's cells holding a group of animals (1 as designed, 0 none; the caps on groups and members still hold)"));
+	TEXT("Scales the share of the habitat's cells holding a group of animals, and of the ground's cells holding a cloud of motes (1 as designed, 0 none; the caps on groups and members still hold)"));
 
 bool SlonkFauna::IsEnabled() { return CVarFaunaEnable.GetValueOnGameThread() != 0; }
 float SlonkFauna::DensitySetting() { return FMath::Max(CVarFaunaDensity.GetValueOnGameThread(), 0.f); }
@@ -48,6 +48,17 @@ void UPlanetFaunaComponent::Configure(UPlanetTerrainComponent* InTerrain, const 
 	RefreshWorld();
 }
 
+SlonkScatter::FMoteSettings UPlanetFaunaComponent::MakeMoteSettings() const
+{
+	SlonkScatter::FMoteSettings M;
+	M.Life = Life;
+	M.Density = SlonkFauna::DensitySetting();
+	M.bEnabled = bConfigured && SlonkFauna::IsEnabled() && Life > 0.f && M.Density > 0.f && !Params.bAirless && (KindMask & SlonkFauna::KindBit(EFaunaKind::Mote)) != 0u;
+	M.Pollen = Profile.Look.Pollen;
+	M.Glow = Profile.Look.Firefly;
+	return M;
+}
+
 SlonkFauna::FFaunaWorld UPlanetFaunaComponent::MakeFaunaWorld() const
 {
 	SlonkFauna::FFaunaWorld W;
@@ -62,6 +73,9 @@ SlonkFauna::FFaunaWorld UPlanetFaunaComponent::MakeFaunaWorld() const
 
 void UPlanetFaunaComponent::RefreshWorld()
 {
+	if (!bConfigured || !Terrain) { return; }
+	// The motes on the terrain's chunks, as the settings have them now (nothing is built again unless they moved).
+	Terrain->SetMoteOptions(MakeMoteSettings());
 	const SlonkFauna::FFaunaWorld W = MakeFaunaWorld();
 	if (Field.HasWorld() && W == Field.GetWorld()) { return; }
 	// Another world, density, kinds or profile: every group goes, and the cells are read again.
@@ -94,7 +108,18 @@ int32 UPlanetFaunaComponent::GetMemberCount() const
 // fade), 2 also twenty times their size, so where the groups are and that they draw can be seen apart from M_Fauna.
 // A change lets every group go, and they come back drawn as it asks (UpdateView).
 static TAutoConsoleVariable<int32> CVarFaunaDebug(TEXT("slonk.Fauna.Debug"), 0,
-	TEXT("1: the animals in the engine's basic material; 2: that, at twenty times their size (every group drawn anew as it changes)"));
+	TEXT("1: the animals in the engine's basic material (the motes too, as plain cards where they stand, M_Fauna's mote branch or no); 2: that, the flocks at twenty times their size (every group drawn anew as it changes)"));
+
+int32 SlonkFauna::DebugSetting() { return FMath::Max(CVarFaunaDebug.GetValueOnGameThread(), 0); }
+
+float SlonkFauna::PixelsPerRadian(const APlayerController* PC)
+{
+	float Fov = 90.f;
+	if (PC && PC->PlayerCameraManager) { Fov = PC->PlayerCameraManager->GetFOVAngle(); }
+	FVector2D Viewport(1920.0, 1080.0);
+	if (GEngine && GEngine->GameViewport) { GEngine->GameViewport->GetViewportSize(Viewport); }
+	return 0.5f * (float)FMath::Max(Viewport.X, 1.0) / FMath::Tan(FMath::DegreesToRadians(FMath::Clamp(Fov, 5.f, 170.f)) * 0.5f);
+}
 
 void UPlanetFaunaComponent::EnsureMaterial()
 {
@@ -233,7 +258,7 @@ void UPlanetFaunaComponent::GatherThreats(const APlayerController* PC, TArray<Sl
 void UPlanetFaunaComponent::UpdateView(const APlayerController* PC, const FVector& ViewLocationWorld, const FVector& SunDirectionWorld)
 {
 	if (!bConfigured || !Terrain) { return; }
-	RefreshWorld();
+	// The world as the settings have it now was taken by the planet's tick (RefreshWorld) before its chunks were chosen.
 	// slonk.Fauna.Debug changed: every group goes, and comes back drawn as it now asks.
 	const int32 Debug = CVarFaunaDebug.GetValueOnGameThread();
 	if (Debug != DebugDrawn)
@@ -361,11 +386,7 @@ void UPlanetFaunaComponent::UpdateView(const APlayerController* PC, const FVecto
 		// and the speck floor, and how many pixels a radian is to it.
 		if (MID)
 		{
-			float Fov = 90.f;
-			if (PC && PC->PlayerCameraManager) { Fov = PC->PlayerCameraManager->GetFOVAngle(); }
-			FVector2D Viewport(1920.0, 1080.0);
-			if (GEngine && GEngine->GameViewport) { GEngine->GameViewport->GetViewportSize(Viewport); }
-			const float PxPerRad = 0.5f * (float)FMath::Max(Viewport.X, 1.0) / FMath::Tan(FMath::DegreesToRadians(FMath::Clamp(Fov, 5.f, 170.f)) * 0.5f);
+			const float PxPerRad = SlonkFauna::PixelsPerRadian(PC);
 			MID->SetVectorParameterValue(TEXT("ViewPos"), FLinearColor((float)ViewLocationWorld.X, (float)ViewLocationWorld.Y, (float)ViewLocationWorld.Z, 0.f));
 			if (!FMath::IsNearlyEqual(PxPerRad, LastPxPerRad, 0.5f)) { LastPxPerRad = PxPerRad; MID->SetScalarParameterValue(TEXT("PxPerRad"), PxPerRad); }
 		}
@@ -448,10 +469,11 @@ FString UPlanetFaunaComponent::Describe() const
 	int32 Shaken = 0;
 	const double Now = ClockSeconds();
 	for (const TPair<uint64, SlonkFauna::FPanic>& P : Panics) { Shaken += P.Value.IsLive(Now) ? 1 : 0; }
-	return FString::Printf(TEXT("%s, life %.2f, density %.2f, strangeness %.2f: %s; %d groups in the last scan of %d cells (%d read anew, %.1f ms), %d shaken, %d startles, clock %+.0f s, %s"),
+	return FString::Printf(TEXT("%s, life %.2f, density %.2f, strangeness %.2f: %s; %d groups in the last scan of %d cells (%d read anew, %.1f ms), %d shaken, %d startles, clock %+.0f s, %s; %s"),
 		SlonkFauna::IsEnabled() ? TEXT("on") : TEXT("off"), W.Life, W.Density, Profile.Strangeness, Kinds.IsEmpty() ? TEXT("none live here") : *Kinds,
 		Field.GetCandidates().Num(), LastScanCells, LastScanEvaluated, LastScanMs, Shaken, Startles, TimeOffset,
-		MID ? (bFaunaMaterial ? TEXT("M_Fauna") : (bPlainAsked ? TEXT("the basic material (slonk.Fauna.Debug)") : TEXT("the basic material (M_Fauna missing)"))) : TEXT("no material yet"));
+		MID ? (bFaunaMaterial ? TEXT("M_Fauna") : (bPlainAsked ? TEXT("the basic material (slonk.Fauna.Debug)") : TEXT("the basic material (M_Fauna missing)"))) : TEXT("no material yet"),
+		Terrain ? *Terrain->DescribeMotes() : TEXT("no motes"));
 }
 
 void UPlanetFaunaComponent::DescribeCells(TArray<FString>& OutLines) const

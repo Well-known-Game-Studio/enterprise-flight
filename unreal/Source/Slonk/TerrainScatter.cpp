@@ -1,4 +1,5 @@
 #include "TerrainScatter.h"
+#include "FaunaTypes.h"
 #include "PlanetCities.h"
 #include "ScatterSpot.h"
 
@@ -116,7 +117,10 @@ namespace
 		}
 		return 0;
 	}
+}
 
+namespace SlonkScatter
+{
 	/** The settlements near a chunk, as circles the scatter keeps out of, and the ways the terrain paints round them
 	 *  (the roads between them, a grown town's outer ring ways). */
 	struct FKeepOut
@@ -149,7 +153,23 @@ namespace
 		/** On a way the terrain paints, or within a couple of metres of one. */
 		bool OnWay(const FVector& Up) const { return SlonkCities::PaintedWayCm(Params, Civ, Up) < 200.0; }
 	};
+}
 
+SlonkScatter::FChunkKeepOut::FChunkKeepOut() = default;
+SlonkScatter::FChunkKeepOut::~FChunkKeepOut() = default;
+
+const SlonkScatter::FKeepOut& SlonkScatter::FChunkKeepOut::Get(const FPlanetTerrainParams& P, const FCivilization& People, const FChunkGrid& G)
+{
+	if (!KeepOut)
+	{
+		KeepOut = MakeUnique<FKeepOut>();
+		KeepOut->Build(P, People, G);
+	}
+	return *KeepOut;
+}
+
+namespace
+{
 	void AddPiece(SlonkScatter::FChunkScatter& Out, int32 Mesh, const FTransform& Xf, const float (&C)[SlonkScatter::NumCustomFloats], bool bSolid)
 	{
 		Out.Transforms[Mesh].Add(Xf);
@@ -222,22 +242,62 @@ bool SlonkScatter::ScrubDotAt(const FVector& NoiseP, FVector& OutCentre, double&
 	return true;
 }
 
+namespace
+{
+	/** The salt of the motes' cells: where a cloud is and what it is (its keep draw takes KeepSalt as well). */
+	constexpr uint64 MoteSalt = 0x2b7e151628aed2a6ULL;
+	/** The best chance of a cloud over a cell: over the wettest level ground along a forest's edge. */
+	constexpr double MotePeak = 0.45;
+
+	/** The spot as a chunk would read it at a unit direction, on the field's own ground rather than a drawn triangle,
+	 *  and the field's sample there. */
+	SlonkScatter::FSpot FieldSpot(const FPlanetTerrainParams& P, const FVector& Up, FPlanetTerrainSample& OutT)
+	{
+		using SlonkScatter::SmoothStep;
+		const FPlanetTerrainSample T = SlonkTerrain::Sample(P, Up, 1000.0);
+		SlonkScatter::FSpot Sp;
+		Sp.Slope = T.Slope; Sp.Rock = T.Rock; Sp.Wet = T.Wet; Sp.Ice = T.Ice; Sp.Canyon = T.Canyon; Sp.Wall = T.Wall;
+		Sp.Crater = T.Crater; Sp.Table = T.Table; Sp.River = T.River; Sp.HeightCm = T.HeightCm; Sp.Stratum = T.Stratum;
+		Sp.Up = Up; Sp.Nt = Up; Sp.Pt = Up * (P.RadiusCm + T.HeightCm);
+		// The regimes from the slope, as SpotAt has them.
+		Sp.Cliff = SmoothStep(0.7, 1.3, Sp.Slope);
+		Sp.Talus = SmoothStep(0.18, 0.5, Sp.Slope) * (1.0 - Sp.Cliff);
+		Sp.Flat = 1.0 - SmoothStep(0.12, 0.4, Sp.Slope);
+		Sp.Rocky = SmoothStep(0.35, 0.8, Sp.Rock) * (1.0 - Sp.Cliff);
+		Sp.WallFoot = SmoothStep(0.05, 0.3, Sp.Wall) * (1.0 - Sp.Cliff);
+		Sp.Gorge = Sp.Canyon * (1.0 - SmoothStep(0.03, 0.2, Sp.Slope));
+		OutT = T;
+		return Sp;
+	}
+
+	/**
+	 * The chance of a mote cloud over a spot, before the world's life and the density setting: the wet, level ground,
+	 * thickest along a forest's edge (the stands' field at half, where the woods give onto the meadows) and thinner in
+	 * open country or deep in the trees; none on a cliff, in a river, on lying snow or ice, near the treeline or above
+	 * it, nor on a locked world's ground too hot for the grass or at freezing.
+	 */
+	double MoteDensityOf(const FPlanetTerrainParams& P, const SlonkScatter::FSpot& Sp)
+	{
+		using SlonkScatter::SmoothStep;
+		if (Sp.River > 0.15 || Sp.Cliff > 0.3) { return 0.0; }
+		const double Base = SmoothStep(0.25, 0.6, Sp.Wet) * Sp.Flat * (1.0 - SmoothStep(0.05, 0.35, Sp.Ice));
+		if (Base <= 0.0) { return 0.0; }
+		const SlonkScatter::FClimate Clim = SlonkScatter::ClimateAt(P, Sp);
+		double D = Base * (1.0 - SmoothStep(0.55, 0.85, Clim.Alpine));
+		if (Clim.bClimate) { D *= (1.0 - SmoothStep(0.7, 0.95, Clim.Heat)) * SmoothStep(0.0, 0.08, Clim.Heat); }
+		if (D <= 0.0) { return 0.0; }
+		const double Forest = SlonkScatter::ForestAt(P, Sp);
+		const double Edge = 4.0 * Forest * (1.0 - Forest);
+		return D * (0.15 + 0.85 * Edge) * MotePeak;
+	}
+}
+
 SlonkScatter::FHabitat SlonkScatter::HabitatAt(const FPlanetTerrainParams& P, const FVector& Dir)
 {
 	const FVector Up = Dir.GetSafeNormal();
-	const FPlanetTerrainSample T = SlonkTerrain::Sample(P, Up, 1000.0);
 	// The spot as a chunk would read it there, on the field's own ground rather than a drawn triangle.
-	FSpot Sp;
-	Sp.Slope = T.Slope; Sp.Rock = T.Rock; Sp.Wet = T.Wet; Sp.Ice = T.Ice; Sp.Canyon = T.Canyon; Sp.Wall = T.Wall;
-	Sp.Crater = T.Crater; Sp.Table = T.Table; Sp.River = T.River; Sp.HeightCm = T.HeightCm; Sp.Stratum = T.Stratum;
-	Sp.Up = Up; Sp.Nt = Up; Sp.Pt = Up * (P.RadiusCm + T.HeightCm);
-	// The regimes from the slope, as SpotAt has them.
-	Sp.Cliff = SmoothStep(0.7, 1.3, Sp.Slope);
-	Sp.Talus = SmoothStep(0.18, 0.5, Sp.Slope) * (1.0 - Sp.Cliff);
-	Sp.Flat = 1.0 - SmoothStep(0.12, 0.4, Sp.Slope);
-	Sp.Rocky = SmoothStep(0.35, 0.8, Sp.Rock) * (1.0 - Sp.Cliff);
-	Sp.WallFoot = SmoothStep(0.05, 0.3, Sp.Wall) * (1.0 - Sp.Cliff);
-	Sp.Gorge = Sp.Canyon * (1.0 - SmoothStep(0.03, 0.2, Sp.Slope));
+	FPlanetTerrainSample T;
+	const FSpot Sp = FieldSpot(P, Up, T);
 	const FClimate Clim = ClimateAt(P, Sp);
 	FHabitat H;
 	H.Wet = Sp.Wet;
@@ -276,15 +336,17 @@ void SlonkScatter::TreeCover(const FPlanetTerrainParams& P, const FChunkGrid& G,
 	}
 }
 
-void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSettings& S, const FChunkGrid& G, FChunkScatter& Out)
+void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSettings& S, const FChunkGrid& G, FChunkScatter& Out, FChunkKeepOut* Shared)
 {
 	const double R = P.RadiusCm;
 	const double FaceArcCm = FaceEdgeCm(R);
 	if (!S.bEnabled || S.Density <= 0.f || G.EdgeCm > MaxChunkEdgeCm(S, FaceArcCm) || !G.Samples || !G.Dirs || !G.Pos || G.Steps <= 0) { return; }
 	const FChunkFrame F(G);
 	const bool bLiving = S.Life > 0.f && !P.bAirless;
-	FKeepOut KeepOut;
-	if (S.bCities) { KeepOut.Build(P, S.People, G); }
+	// The settlements, the build's own if it shares one with the motes.
+	FChunkKeepOut Own;
+	const FKeepOut NoTowns{};
+	const FKeepOut& KeepOut = S.bCities ? (Shared ? Shared : &Own)->Get(P, S.People, G) : NoTowns;
 	const FCivilization ClearCiv = S.People.bInhabited ? S.People : SlonkCivs::Colonists();
 
 	int32 Rocks = 0, Plants = 0;
@@ -520,5 +582,124 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 			AddPiece(Out, PlantMesh(EPlant::Shrub), Xf, C, false);
 			++Plants;
 		}
+	}
+}
+
+int32 SlonkScatter::MoteFarLevelsUsed(const FScatterSettings& S)
+{
+	return FMath::Clamp(FMath::Min(MoteFarLevels, S.MaxFarLevels), 0, MoteFarLevels);
+}
+
+double SlonkScatter::MoteMaxChunkEdgeCm(const FScatterSettings& S, const FMoteSettings& M)
+{
+	if (!M.bEnabled || M.Life <= 0.f || M.Density <= 0.f) { return 0.0; }
+	return MoteMaxEdgeCm * FMath::Pow(2.0, (double)MoteFarLevelsUsed(S));
+}
+
+double SlonkScatter::MoteDensityAt(const FPlanetTerrainParams& P, const FVector& Dir)
+{
+	if (P.bAirless) { return 0.0; }
+	FPlanetTerrainSample T;
+	const FSpot Sp = FieldSpot(P, Dir.GetSafeNormal(), T);
+	return T.bWater ? 0.0 : MoteDensityOf(P, Sp);
+}
+
+bool SlonkScatter::FindMoteSpot(const FPlanetTerrainParams& P, const FVector& From, double MaxCm, FVector& OutDir, double& OutDensity)
+{
+	const FVector Up = From.GetSafeNormal();
+	if (Up.IsNearlyZero() || P.bAirless) { return false; }
+	const FVector Ref = FMath::Abs(Up.Z) < 0.95 ? FVector::ZAxisVector : FVector::XAxisVector;
+	const FVector E = FVector::CrossProduct(Ref, Up).GetSafeNormal();
+	const FVector N = FVector::CrossProduct(Up, E);
+	// Points spread evenly over a disc round a centre (a sunflower's), the nearest a little ahead of an equal one further.
+	auto Search = [&](const FVector& Centre, const FVector& Ea, const FVector& Na, double RadiusCm, int32 Count, double& InOutBest, FVector& InOutDir)
+	{
+		bool bFound = false;
+		for (int32 i = 0; i < Count; ++i)
+		{
+			const double Rr = RadiusCm * FMath::Sqrt((i + 0.5) / Count), A = i * UE_DOUBLE_PI * (3.0 - FMath::Sqrt(5.0));
+			const FVector Dir = (Centre + (Ea * FMath::Cos(A) + Na * FMath::Sin(A)) * (Rr / P.RadiusCm)).GetSafeNormal();
+			const double D = MoteDensityAt(P, Dir) * (1.0 - 0.1 * Rr / FMath::Max(MaxCm, 1.0));
+			if (D > InOutBest) { InOutBest = D; InOutDir = Dir; bFound = true; }
+		}
+		return bFound;
+	};
+	double Best = 0.0;
+	FVector BestDir = Up;
+	Search(Up, E, N, MaxCm, 3000, Best, BestDir);
+	if (Best <= 0.0) { return false; }
+	// Round the best, finer: a forest's edge is a few hundred metres wide.
+	const FVector E2 = FVector::CrossProduct(FMath::Abs(BestDir.Z) < 0.95 ? FVector::ZAxisVector : FVector::XAxisVector, BestDir).GetSafeNormal();
+	Search(BestDir, E2, FVector::CrossProduct(BestDir, E2), FMath::Min(MaxCm * 0.05, 1.5e5), 600, Best, BestDir);
+	OutDir = BestDir;
+	OutDensity = Best;
+	return true;
+}
+
+void SlonkScatter::PlaceMotes(const FPlanetTerrainParams& P, const FScatterSettings& S, const FMoteSettings& M, const FChunkGrid& G, FChunkFauna& Out,
+	FChunkKeepOut* Shared)
+{
+	const double R = P.RadiusCm;
+	const double FaceArcCm = FaceEdgeCm(R);
+	if (!M.bEnabled || M.Life <= 0.f || M.Density <= 0.f || P.bAirless || !G.Samples || !G.Dirs || !G.Pos || G.Steps <= 0) { return; }
+	// On the motes' own levels all of them; on their far level the share their keep draw allows, as the plants'.
+	const int32 FarLevels = MoteFarLevelsUsed(S);
+	const int32 Above = LevelsAbove(G.EdgeCm, MoteMaxEdgeCm);
+	if (Above > FarLevels) { return; }
+	const double KeepHere = FMath::Pow(MoteKeep, (double)Above);
+	const FChunkFrame F(G);
+	// The lattice: cells of 2 / 2^L in face coordinates, nested in the chunks of the quadtree; half-open windows put each
+	// cell's cloud in exactly one chunk of each level.
+	const int32 L = FMath::Clamp(FMath::RoundToInt32(FMath::Log2(FaceArcCm / MoteSpacingCm)), 0, 40);
+	const double Delta = 2.0 / (double)((int64)1 << L);
+	const int64 GX0 = (int64)FMath::FloorToDouble((F.U0 + 1.0) / Delta), GX1 = (int64)FMath::CeilToDouble((F.U1 + 1.0) / Delta) - 1;
+	const int64 GY0 = (int64)FMath::FloorToDouble((F.V0 + 1.0) / Delta), GY1 = (int64)FMath::CeilToDouble((F.V1 + 1.0) / Delta) - 1;
+	// The settlements are looked for only once a cloud would stand here (most chunks carry none), unless the build's
+	// scatter has looked for them already.
+	FChunkKeepOut Own;
+	FChunkKeepOut& KeepOutHere = Shared ? *Shared : Own;
+	for (int64 GY = GY0; GY <= GY1 && Out.Num() < MaxMotesPerChunk; ++GY)
+	for (int64 GX = GX0; GX <= GX1 && Out.Num() < MaxMotesPerChunk; ++GX)
+	{
+		const double KeepDraw = FDraw(CellHash(G.Face, L, GX, GY, MoteSalt ^ KeepSalt)).Next();
+		if (KeepDraw >= KeepHere) { continue; }
+		FDraw D(CellHash(G.Face, L, GX, GY, MoteSalt));
+		const double U = -1.0 + ((double)GX + D.Next()) * Delta, V = -1.0 + ((double)GY + D.Next()) * Delta;
+		if (!F.Inside(U, V)) { continue; }
+		// None over water: SpotAt finds nothing in a cell with water at a corner.
+		FSpot Sp;
+		if (!F.SpotAt(U, V, Sp)) { continue; }
+		const double Density = FMath::Min(MoteDensityOf(P, Sp) * M.Life * M.Density, 0.9);
+		if (D.Next() >= Density) { continue; }
+		if (S.bCities)
+		{
+			const FKeepOut& KeepOut = KeepOutHere.Get(P, S.People, G);
+			if (KeepOut.Towns.Num() > 0 && (KeepOut.Contains(Sp.Up, R, true) || KeepOut.OnWay(Sp.Up))) { continue; }
+		}
+		const double Seed = D.Next();
+		// A cloud 6 to 9 m across over its cell, standing on the drawn ground and level with it, turned. The turn is
+		// reckoned about the radial up, the same on every level of the quadtree, so a chunk and its children turn a cloud
+		// alike; the drawn triangle under it differs between them, and a turn reckoned about its normal could swing half
+		// round from one level to the next. Two draws are passed over where a standing frame's tilt takes them, so the
+		// cloud's other draws (its colour, glow and cycles) stay as they were.
+		const double SpanM = FMath::Lerp(6.0, 9.0, D.Next());
+		D.Next(); D.Next();
+		const FVector YawRef = FMath::Abs(Sp.Up.Z) < 0.9 ? FVector::ZAxisVector : FVector::XAxisVector;
+		const FVector Ta = FVector::CrossProduct(YawRef, Sp.Up).GetSafeNormal();
+		const FVector Tb = FVector::CrossProduct(Sp.Up, Ta);
+		const double Yaw = UE_DOUBLE_TWO_PI * D.Next();
+		const FQuat Rot = FRotationMatrix::MakeFromZX(Sp.Nt, Ta * FMath::Cos(Yaw) + Tb * FMath::Sin(Yaw)).ToQuat();
+		const FTransform Xf(Rot, Sp.Pt, FVector(SpanM * 100.0 / SlonkFauna::UnitCm));
+		const FLinearColor Day = M.Pollen * (float)(0.8 + 0.4 * D.Next());
+		const double Glow = 0.75 + 0.5 * D.Next();
+		const double Phase = D.Next();
+		// Its motes wander on 3 to 7 cycles a minute, so the clock's hour holds a whole number of them.
+		const double RateHz = (3.0 + FMath::FloorToDouble(D.Next() * 4.999)) / 60.0;
+		// The wetter the ground, the more of its motes are fireflies at night.
+		const double Fireflies = 0.35 + 0.55 * SmoothStep(0.3, 0.8, Sp.Wet);
+		const double FadeCm = FadeFarCm(G, MoteMaxEdgeCm, FarLevels, MoteKeep, KeepDraw, S.FadeEdges);
+		const float C[NumCustomFloats] = { Day.R, Day.G, Day.B, (float)Glow, (float)Seed, (float)SpanM, (float)Phase, (float)RateHz, (float)Fireflies, (float)FadeCm };
+		Out.Motes.Add(Xf);
+		Out.MoteCustom.Append(C, NumCustomFloats);
 	}
 }

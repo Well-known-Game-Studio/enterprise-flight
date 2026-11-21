@@ -1873,6 +1873,9 @@ void APlanetBody::Tick(float DeltaTime)
 			FVector ViewLoc; FRotator ViewRot;
 			PC->GetPlayerViewPoint(ViewLoc, ViewRot);
 			const APawn* Pawn = PC->GetPawn();
+			// The motes' settings before the chunks are chosen: a change builds again the chunks carrying them, and the
+			// choosing then keeps their parents on screen this same frame, so the ground never opens.
+			if (Fauna) { Fauna->RefreshWorld(); }
 			Terrain->UpdateView(ViewLoc, Pawn ? Pawn->GetActorLocation() : ViewLoc);
 			// The animals after the chunks: their groups move along their paths, written with the planet instances.
 			if (Fauna) { Fauna->UpdateView(PC, ViewLoc, GetStarDirection()); }

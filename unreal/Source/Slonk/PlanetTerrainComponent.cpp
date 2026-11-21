@@ -1,5 +1,7 @@
 #include "PlanetTerrainComponent.h"
+#include "FaunaMeshes.h"
 #include "PlanetCities.h"
+#include "PlanetFaunaComponent.h"
 #include "GroundRocks.h"
 #include "SlonkMaterials.h"
 
@@ -124,6 +126,7 @@ void UPlanetTerrainComponent::Configure(const FPlanetTerrainParams& InParams, UM
 		UMaterialInterface* PlantMat = SlonkMaterials::LoadOrFallback(TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_Foliage.M_Foliage"))), TEXT("Foliage"), true);
 		if (PlantMat) { FoliageMID = UMaterialInstanceDynamic::Create(PlantMat, this); }
 	}
+	EnsureFaunaMaterial();
 	if (CVarScatterGPUInstances.GetValueOnGameThread() != 0) { EnsureWriterAnchor(); }
 	MakeRoots();
 	bConfigured = true;
@@ -197,25 +200,127 @@ void UPlanetTerrainComponent::SetScatterFarLevels(int32 Levels)
 
 void UPlanetTerrainComponent::RebuildScatterChunks(int32 FarLevelsBefore)
 {
-	// The scatter is built with the chunks, so the chunks fine enough to carry any go round again. The builds in
-	// flight land first; then those chunks let their meshes go, and the coarser chunk above each shows until its
-	// children are rebuilt (Select keeps a parent on screen while they cook), so the ground never opens.
+	// Only the chunks that carried scatter or will: at no more than the far levels in use before or after (the largest
+	// edge carrying any only grows with them), the coarser ones carry none; the motes' too, whose far level follows the
+	// same setting.
+	FScatterSettings Wider = BuildScatterSettings();
+	Wider.MaxFarLevels = FMath::Max(FarLevelsBefore, Scatter.MaxFarLevels);
+	RebuildChunksUpTo(FMath::Max(SlonkScatter::MaxChunkEdgeCm(Wider, SlonkScatter::FaceEdgeCm(Params.RadiusCm)), SlonkScatter::MoteMaxChunkEdgeCm(Wider, MoteBuildSettings())));
+}
+
+void UPlanetTerrainComponent::RebuildChunksUpTo(double MaxEdge)
+{
+	// The scatter (and the motes) are built with the chunks, so the chunks fine enough to carry any go round again. The
+	// builds in flight land first; then those chunks let their meshes go, and the coarser chunk above each shows until its
+	// children are rebuilt (Select keeps a parent on screen while they cook), so the ground never opens. Measured as their
+	// build measured them. With no edge to rebuild up to nothing carries what changed, and the builds in flight are left be.
+	if (MaxEdge <= 0.0) { return; }
 	for (FNode* N : InFlight) { if (N && N->Task.IsValid()) { N->Task.Wait(); } }
 	for (FNode* N : InFlight) { if (N) { ApplyResult(*N); } }
 	InFlight.Reset();
 	Requests.Reset();
-	// Only the chunks that carried scatter or will: at no more than the far levels in use before or after (the largest
-	// edge carrying any only grows with them), the coarser ones carry none. Measured as their build measured them.
-	FScatterSettings Wider = BuildScatterSettings();
-	Wider.MaxFarLevels = FMath::Max(FarLevelsBefore, Scatter.MaxFarLevels);
-	const double MaxEdge = SlonkScatter::MaxChunkEdgeCm(Wider, SlonkScatter::FaceEdgeCm(Params.RadiusCm));
 	TFunction<void(FNode&)> Walk = [&](FNode& N)
 	{
-		if (N.Mesh && N.BuiltEdgeCm <= MaxEdge) { ReleaseMesh(N); }
+		// With the same give the builds' gates have, so no chunk built carrying motes is passed over.
+		if (N.Mesh && N.BuiltEdgeCm <= MaxEdge * 1.0001) { ReleaseMesh(N); }
 		for (const TUniquePtr<FNode>& C : N.Children) { if (C) { Walk(*C); } }
 	};
 	for (const TUniquePtr<FNode>& Root : Roots) { if (Root) { Walk(*Root); } }
 	ClearSolidRocks();
+}
+
+void UPlanetTerrainComponent::SetMoteOptions(const SlonkScatter::FMoteSettings& InMotes)
+{
+	// The motes as the chunks were built with them, and as they will be: with no material to draw them in there are none
+	// (MoteBuildSettings), so a material that would not load builds nothing again frame after frame.
+	const SlonkScatter::FMoteSettings Before = MoteBuildSettings();
+	Motes = InMotes;
+	// slonk.Fauna.Debug may have changed what draws them.
+	if (bConfigured) { EnsureFaunaMaterial(); }
+	if (FaunaMID && bMoteMaterial && FaunaGlow != Motes.Glow)
+	{
+		FaunaGlow = Motes.Glow;
+		FaunaMID->SetVectorParameterValue(TEXT("GlowColor"), FaunaGlow);
+	}
+	const SlonkScatter::FMoteSettings After = MoteBuildSettings();
+	if (!bConfigured || Before.SamePlacement(After)) { return; }
+	// The chunks that carried motes or will, and none coarser (none at all, and no wait on the builds in flight, when
+	// neither places any).
+	const FScatterSettings Sc = BuildScatterSettings();
+	RebuildChunksUpTo(FMath::Max(SlonkScatter::MoteMaxChunkEdgeCm(Sc, Before), SlonkScatter::MoteMaxChunkEdgeCm(Sc, After)));
+	UE_LOG(LogTemp, Log, TEXT("PlanetTerrain: motes %s (life %.2f, density %.2f), the chunks carrying them built again"), After.bEnabled ? TEXT("on") : TEXT("off"), After.Life, After.Density);
+}
+
+SlonkScatter::FMoteSettings UPlanetTerrainComponent::MoteBuildSettings() const
+{
+	SlonkScatter::FMoteSettings M = Motes;
+	M.bEnabled = M.bEnabled && FaunaMID != nullptr && (bMoteMaterial || FaunaMIDDebug > 0);
+	return M;
+}
+
+void UPlanetTerrainComponent::EnsureFaunaMaterial()
+{
+	// Made once for each slonk.Fauna.Debug, whether or not its material loads: one that will not is not tried again until
+	// the setting changes, but for an M_Fauna without its mote branch, looked at again every few seconds in case it has
+	// been built again since (which builds the chunks again only once it has the branch).
+	const int32 Debug = SlonkFauna::DebugSetting();
+	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
+	if (FaunaMIDDebug == Debug && (bMoteMaterial || Debug > 0 || Now - FaunaProbedAt < 5.0)) { return; }
+	if (FaunaMIDDebug == Debug && Debug == 0)
+	{
+		UMaterialInterface* Again = LoadObject<UMaterialInterface>(nullptr, SlonkFauna::MaterialPath, nullptr, LOAD_Quiet | LOAD_NoWarn);
+		float Probe = 0.f;
+		FaunaProbedAt = Now;
+		if (!Again || !Again->GetScalarParameterValue(FHashedMaterialParameterInfo(TEXT("Motes")), Probe)) { return; }
+	}
+	FaunaMIDDebug = Debug;
+	FaunaProbedAt = Now;
+	FaunaMID = nullptr;
+	bMoteMaterial = false;
+	FaunaGlow = FLinearColor::Black;
+	FaunaPxPerRad = -1.f;
+	// M_Fauna draws the motes in its mote branch, which its Motes parameter switches on: one built before the branch has
+	// no such parameter, and draws none. slonk.Fauna.Debug draws them in the engine's basic material instead, plain
+	// cards where they stand.
+	UMaterialInterface* Mat = Debug > 0 ? nullptr : LoadObject<UMaterialInterface>(nullptr, SlonkFauna::MaterialPath, nullptr, LOAD_Quiet | LOAD_NoWarn);
+	float Probe = 0.f;
+	bMoteMaterial = Mat && Mat->GetScalarParameterValue(FHashedMaterialParameterInfo(TEXT("Motes")), Probe);
+	if (!bMoteMaterial)
+	{
+		Mat = Debug > 0 ? LoadObject<UMaterialInterface>(nullptr, SlonkMaterials::FallbackLitPath) : nullptr;
+		static bool bWarned = false;
+		if (!Mat && Debug > 0)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Motes: the basic material (%s) did not load: no motes under slonk.Fauna.Debug %d"), SlonkMaterials::FallbackLitPath, Debug);
+		}
+		else if (!Mat && !bWarned)
+		{
+			bWarned = true;
+			UE_LOG(LogTemp, Warning, TEXT("Motes: %s has no mote branch (its Motes parameter; tools/planet_materials/fauna_material.py builds it): no pollen, gnats or fireflies until it is built again"), SlonkFauna::MaterialPath);
+		}
+	}
+	if (Mat)
+	{
+		FaunaMID = UMaterialInstanceDynamic::Create(Mat, this);
+		if (bMoteMaterial)
+		{
+			FaunaMID->SetScalarParameterValue(TEXT("Motes"), 1.f);
+			FaunaMID->SetVectorParameterValue(TEXT("SunDirection"), FaunaSunDirection);
+			FaunaGlow = Motes.Glow;
+			FaunaMID->SetVectorParameterValue(TEXT("GlowColor"), FaunaGlow);
+		}
+	}
+	// The sets showing take it at once. Whether there are any motes may change with it (none without a material, nor in
+	// M_Fauna without its branch): SetMoteOptions builds again the chunks that carried them or will.
+	for (UStaticMeshComponent* R : MoteSetPool) { if (R) { R->SetMaterial(0, FaunaMID); } }
+}
+
+FString UPlanetTerrainComponent::DescribeMotes() const
+{
+	const SlonkScatter::FMoteSettings M = MoteBuildSettings();
+	const TCHAR* Drawn = bMoteMaterial ? TEXT("M_Fauna's mote branch") : (FaunaMID ? TEXT("the basic material (slonk.Fauna.Debug)")
+		: (FaunaMIDDebug > 0 ? TEXT("nothing: the basic material did not load") : TEXT("nothing: M_Fauna has no mote branch yet")));
+	return FString::Printf(TEXT("%d mote clouds on the chunks showing (%s, in %s)"), VisibleMotes, M.bEnabled ? TEXT("on") : TEXT("off"), Drawn);
 }
 
 void UPlanetTerrainComponent::PinSolidRocks(const FVector& WorldPos, double Seconds)
@@ -245,6 +350,12 @@ void UPlanetTerrainComponent::SetVectorParameter(FName Name, const FLinearColor&
 		Scatter.Palette.Ice = Value;
 		if (RockMID) { RockMID->SetVectorParameterValue(Name, Value); }
 		if (FoliageMID) { FoliageMID->SetVectorParameterValue(Name, Value); }
+	}
+	// The motes tell day from night by it: the pollen by day, the fireflies at dusk and through the night.
+	else if (Name == TEXT("SunDirection") && FaunaSunDirection != Value)
+	{
+		FaunaSunDirection = Value;
+		if (FaunaMID && bMoteMaterial) { FaunaMID->SetVectorParameterValue(Name, Value); }
 	}
 }
 
@@ -417,7 +528,7 @@ void UPlanetTerrainComponent::ShowNode(FNode& N, bool bShow)
 		SetChunkVisible(N, bWant);
 		if (bWant)
 		{
-			++VisibleChunks; VisibleRocks += N.RockCount; VisiblePlants += N.PlantCount; DeepestVisible = FMath::Max(DeepestVisible, N.Depth);
+			++VisibleChunks; VisibleRocks += N.RockCount; VisiblePlants += N.PlantCount; VisibleMotes += N.MoteCount; DeepestVisible = FMath::Max(DeepestVisible, N.Depth);
 			for (int32 K = 0; K < SlonkScatter::NumMeshes; ++K) { if (N.Sets[K]) { VisibleByMesh[K] += PieceCount(N.Sets[K]); ++VisibleSetsByMesh[K]; } }
 		}
 	}
@@ -430,6 +541,7 @@ void UPlanetTerrainComponent::SetChunkVisible(FNode& N, bool bShow)
 	{
 		if (R && R->IsVisible() != bShow) { R->SetVisibility(bShow); }
 	}
+	if (N.MoteSet && N.MoteSet->IsVisible() != bShow) { N.MoteSet->SetVisibility(bShow); }
 }
 
 void UPlanetTerrainComponent::SetTerrainVisible(bool bShow)
@@ -439,6 +551,7 @@ void UPlanetTerrainComponent::SetTerrainVisible(bool bShow)
 	{
 		for (UDynamicMeshComponent* C : Pool) { if (C) { C->SetVisibility(false); } }
 		for (UStaticMeshComponent* R : SetPool) { if (R) { R->SetVisibility(false); } }
+		for (UStaticMeshComponent* R : MoteSetPool) { if (R) { R->SetVisibility(false); } }
 		ClearSolidRocks();
 	}
 }
@@ -582,6 +695,71 @@ void UPlanetTerrainComponent::ReleaseScatter(FNode& N)
 		N.Solids[K].Empty();
 	}
 	N.RockCount = N.PlantCount = 0;
+	if (N.MoteSet) { PoolSet(N.MoteSet, FreeMoteSets); N.MoteSet = nullptr; }
+	N.MoteCount = 0;
+}
+
+UStaticMeshComponent* UPlanetTerrainComponent::AcquireMoteSet()
+{
+	const bool bGPU = CVarScatterGPUInstances.GetValueOnGameThread() != 0;
+	for (int32 i = FreeMoteSets.Num() - 1; i >= 0; --i)
+	{
+		if (FreeMoteSets[i]->IsA<UPlanetInstancesComponent>() == bGPU) { UStaticMeshComponent* R = FreeMoteSets[i]; FreeMoteSets.RemoveAtSwap(i, EAllowShrinking::No); return R; }
+	}
+	// As a scatter set is made (so its instances are written with theirs, the same count of custom floats), in the motes'
+	// mesh and material: no shadows, nothing traced, and their motion at any distance (a firefly far off still twinkles).
+	UObject* Outer = GetOwner() ? (UObject*)GetOwner() : (UObject*)this;
+	UStaticMeshComponent* R = nullptr;
+	if (bGPU)
+	{
+		EnsureWriterAnchor();
+		UPlanetInstancesComponent* G = NewObject<UPlanetInstancesComponent>(Outer, NAME_None, RF_Transient);
+		G->SetNumCustomDataFloats(SlonkScatter::NumCustomFloats);
+		R = G;
+	}
+	else
+	{
+		UScatterInstancesComponent* I = NewObject<UScatterInstancesComponent>(Outer, NAME_None, RF_Transient);
+		I->SetNumCustomDataFloats(SlonkScatter::NumCustomFloats);
+		R = I;
+	}
+	R->SetMobility(EComponentMobility::Movable);
+	R->SetStaticMesh(SlonkFaunaMeshes::GetMoteCloudMesh());
+	R->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	R->SetGenerateOverlapEvents(false);
+	R->SetCanEverAffectNavigation(false);
+	R->bAffectDistanceFieldLighting = false;
+	R->bAffectDynamicIndirectLighting = false;
+	R->bReceivesDecals = false;
+	R->CastShadow = false;
+	R->bCastDynamicShadow = false;
+	R->bVisibleInRayTracing = false;
+	R->bEvaluateWorldPositionOffsetInRayTracing = false;
+	R->SetWorldPositionOffsetDisableDistance(0);
+	R->SetVisibility(false);
+	if (FaunaMID) { R->SetMaterial(0, FaunaMID); }
+	R->RegisterComponent();
+	MoteSetPool.Add(R);
+	return R;
+}
+
+void UPlanetTerrainComponent::ApplyMotes(FNode& N, SlonkScatter::FChunkFauna& Fauna)
+{
+	N.MoteCount = 0;
+	UStaticMeshComponent*& R = N.MoteSet;
+	if (Fauna.Num() == 0 || !FaunaMID || !N.Mesh)
+	{
+		if (R) { PoolSet(R, FreeMoteSets); R = nullptr; }
+		return;
+	}
+	if (!R) { R = AcquireMoteSet(); }
+	// On the chunk's mesh, chunk-relative, as the scatter's sets are.
+	if (R->GetAttachParent() != N.Mesh) { R->AttachToComponent(N.Mesh, FAttachmentTransformRules::KeepRelativeTransform); }
+	R->SetRelativeTransform(FTransform::Identity);
+	if (R->GetMaterial(0) != FaunaMID) { R->SetMaterial(0, FaunaMID); }
+	SetPiecesOn(R, Fauna.Motes, Fauna.MoteCustom);
+	R->SetVisibility(N.Mesh->IsVisible());
+	N.MoteCount = Fauna.Num();
 }
 
 int32 UPlanetTerrainComponent::CheckSolidRocks(int32 MaxRocks, int32& OutHits) const
@@ -784,11 +962,12 @@ void UPlanetTerrainComponent::LaunchBuilds()
 		TSharedPtr<FBuildResult, ESPMode::ThreadSafe> Out = N.Result;
 		const FPlanetTerrainParams P = Params;
 		const FScatterSettings Sc = BuildScatterSettings();
+		const SlonkScatter::FMoteSettings Mo = MoteBuildSettings();
 		const int32 Face = N.Face, Depth = N.Depth, Steps = FMath::Clamp(GridSteps, 8, 128);
 		const int64 X = N.X, Y = N.Y;
-		N.Task = UE::Tasks::Launch(TEXT("SlonkTerrainChunk"), [P, Sc, Face, Depth, X, Y, Steps, Out]()
+		N.Task = UE::Tasks::Launch(TEXT("SlonkTerrainChunk"), [P, Sc, Mo, Face, Depth, X, Y, Steps, Out]()
 		{
-			BuildChunk(P, Sc, Face, Depth, X, Y, Steps, *Out);
+			BuildChunk(P, Sc, Mo, Face, Depth, X, Y, Steps, *Out);
 		});
 		InFlight.Add(&N);
 	}
@@ -864,6 +1043,7 @@ void UPlanetTerrainComponent::ApplyResult(FNode& N)
 	N.HeightSteps = N.Result->Steps;
 	N.BuiltEdgeCm = N.Result->EdgeCm;
 	ApplyScatter(N, N.Result->Scatter);
+	ApplyMotes(N, N.Result->Fauna);
 	N.Result.Reset();
 	N.bReady = true;
 }
@@ -875,7 +1055,7 @@ void UPlanetTerrainComponent::UpdateView(const FVector& ViewLocationWorld, const
 	if (const int32 Far = FMath::Clamp(CVarScatterFarLevels.GetValueOnGameThread(), 0, 8); Far != Scatter.MaxFarLevels) { SetScatterFarLevels(Far); }
 	++Stamp;
 	VisibleChunks = 0;
-	VisibleRocks = VisiblePlants = 0;
+	VisibleRocks = VisiblePlants = VisibleMotes = 0;
 	FMemory::Memzero(VisibleByMesh);
 	FMemory::Memzero(VisibleSetsByMesh);
 	DeepestVisible = 0;
@@ -883,6 +1063,13 @@ void UPlanetTerrainComponent::UpdateView(const FVector& ViewLocationWorld, const
 	// The plants fade by their distance from the camera (their custom data says where): from this parameter rather
 	// than the view's own position, so the shadow passes fade them by the same distance as the view does.
 	if (FoliageMID) { FoliageMID->SetVectorParameterValue(TEXT("ViewPos"), FLinearColor((float)ViewLocationWorld.X, (float)ViewLocationWorld.Y, (float)ViewLocationWorld.Z, 0.f)); }
+	// The motes' too, for their fade, their turn to the camera and their speck floor, with how many pixels a radian is.
+	if (FaunaMID && bMoteMaterial && MoteSetPool.Num() > 0)
+	{
+		FaunaMID->SetVectorParameterValue(TEXT("ViewPos"), FLinearColor((float)ViewLocationWorld.X, (float)ViewLocationWorld.Y, (float)ViewLocationWorld.Z, 0.f));
+		const float PxPerRad = SlonkFauna::PixelsPerRadian(GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr);
+		if (!FMath::IsNearlyEqual(PxPerRad, FaunaPxPerRad, 0.5f)) { FaunaPxPerRad = PxPerRad; FaunaMID->SetScalarParameterValue(TEXT("PxPerRad"), PxPerRad); }
+	}
 	// The rocks and plants turn with the world on the GPU: every one written with its set's transform of this frame. The
 	// anchor made first if GPU instances were switched on since the terrain was configured, so the sets made this frame
 	// are written this frame too.
@@ -969,7 +1156,7 @@ void UPlanetTerrainComponent::BuildChunkScatterForTest(const FPlanetTerrainParam
 	TArray<FTransform> (&OutPlanetLocal)[SlonkScatter::NumMeshes], TArray<double> (&OutDrawnHeightCm)[SlonkScatter::NumMeshes], FVector* OutOrigin, TArray<float>* OutTreeCover)
 {
 	FBuildResult R;
-	BuildChunk(P, S, Face, Depth, X, Y, Steps, R);
+	BuildChunk(P, S, SlonkScatter::FMoteSettings(), Face, Depth, X, Y, Steps, R);
 	if (OutOrigin) { *OutOrigin = R.Origin; }
 	if (OutTreeCover && R.Mesh)
 	{
@@ -992,10 +1179,29 @@ void UPlanetTerrainComponent::BuildChunkScatterForTest(const FPlanetTerrainParam
 	}
 }
 
-uint32 UPlanetTerrainComponent::ChunkBuildCrcForTest(const FPlanetTerrainParams& P, const FScatterSettings& S, int32 Face, int32 Depth, int64 X, int64 Y, int32 Steps)
+void UPlanetTerrainComponent::BuildChunkMotesForTest(const FPlanetTerrainParams& P, const FScatterSettings& S, const SlonkScatter::FMoteSettings& M, int32 Face, int32 Depth, int64 X, int64 Y,
+	int32 Steps, TArray<FTransform>& OutPlanetLocal, TArray<float>& OutCustom, TArray<double>& OutDrawnHeightCm, FVector* OutOrigin)
 {
 	FBuildResult R;
-	BuildChunk(P, S, Face, Depth, X, Y, Steps, R);
+	BuildChunk(P, S, M, Face, Depth, X, Y, Steps, R);
+	if (OutOrigin) { *OutOrigin = R.Origin; }
+	OutCustom.Append(R.Fauna.MoteCustom);
+	for (const FTransform& T : R.Fauna.Motes)
+	{
+		FTransform W = T;
+		W.AddToTranslation(R.Origin);
+		OutPlanetLocal.Add(W);
+		int32 F; double U, V;
+		FaceUV(W.GetLocation().GetSafeNormal(), F, U, V);
+		OutDrawnHeightCm.Add(GridHeightAt(R.Heights, R.Steps, Depth, X, Y, U, V));
+	}
+}
+
+uint32 UPlanetTerrainComponent::ChunkBuildCrcForTest(const FPlanetTerrainParams& P, const FScatterSettings& S, int32 Face, int32 Depth, int64 X, int64 Y, int32 Steps,
+	const SlonkScatter::FMoteSettings* Motes)
+{
+	FBuildResult R;
+	BuildChunk(P, S, Motes ? *Motes : SlonkScatter::FMoteSettings(), Face, Depth, X, Y, Steps, R);
 	uint32 Crc = 0;
 	auto Add = [&Crc](const void* Data, int32 Bytes) { if (Bytes > 0) { Crc = FCrc::MemCrc32(Data, Bytes, Crc); } };
 	// Field by field, so no padding reaches the CRC.
@@ -1280,7 +1486,8 @@ bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& Ne
 
 // ---- off-thread chunk build ----
 
-void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, const FScatterSettings& Sc, int32 Face, int32 Depth, int64 X, int64 Y, int32 Steps, FBuildResult& Out)
+void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, const FScatterSettings& Sc, const SlonkScatter::FMoteSettings& Mo, int32 Face, int32 Depth, int64 X, int64 Y, int32 Steps,
+	FBuildResult& Out)
 {
 	const double R = P.RadiusCm;
 	const double Cells = (double)((int64)1 << Depth);
@@ -1399,9 +1606,16 @@ void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, const FS
 	Grid.Origin = Origin;
 	// The rocks on this chunk, on these vertices' triangles.
 	Out.EdgeCm = N_EdgeCm;
+	// The settlements both keep out of, looked for once a build, by whichever asks first.
+	SlonkScatter::FChunkKeepOut KeepOut;
 	if (Sc.bEnabled && N_EdgeCm <= SlonkScatter::MaxChunkEdgeCm(Sc, SlonkScatter::FaceEdgeCm(P.RadiusCm)))
 	{
-		SlonkScatter::ScatterChunk(P, Sc, Grid, Out.Scatter);
+		SlonkScatter::ScatterChunk(P, Sc, Grid, Out.Scatter, &KeepOut);
+	}
+	// The motes over it, on the same triangles, apart from the scatter: nothing it places moves for them.
+	if (Mo.bEnabled && N_EdgeCm <= SlonkScatter::MoteMaxChunkEdgeCm(Sc, Mo) * 1.0001)
+	{
+		SlonkScatter::PlaceMotes(P, Sc, Mo, Grid, Out.Fauna, &KeepOut);
 	}
 	// The trees' cover at every vertex, on every chunk however coarse: the material paints the ground the canopy's
 	// colour by it, so a forest is there in colour long before (and after) its trees are drawn.
