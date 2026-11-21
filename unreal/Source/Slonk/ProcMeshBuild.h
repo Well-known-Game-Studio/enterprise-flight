@@ -103,7 +103,10 @@ namespace SlonkProcMesh
 	 * screen size from ScreenSizes (the engine's: the diameter over the screen's of the sphere round the bounds), and the
 	 * bounds grown by BoundsExtension each way, for a world position offset that moves the mesh past its own box (the
 	 * instances are culled by the bounds). Transient and rooted, so it survives PIE sessions; never reference it from
-	 * anything saved. No collision: the caller adds its own body setup.
+	 * anything saved. No collision: the caller adds its own body setup. With bTangents each vertex is given a tangent at
+	 * right angles to its normal (the mesh's +x laid on its surface, its +y where the normal runs along x), so a
+	 * material can turn its normals in tangent space; else its tangents are left at zero, as the plants' are.
 	 */
-	SLONK_API UStaticMesh* MakeStaticMesh(FName Name, FName SlotName, TArrayView<const UE::Geometry::FDynamicMesh3> Lods, TArrayView<const float> ScreenSizes, const FVector& BoundsExtension);
+	SLONK_API UStaticMesh* MakeStaticMesh(FName Name, FName SlotName, TArrayView<const UE::Geometry::FDynamicMesh3> Lods, TArrayView<const float> ScreenSizes, const FVector& BoundsExtension,
+		bool bTangents = false);
 }

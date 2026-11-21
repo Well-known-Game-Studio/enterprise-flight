@@ -31,8 +31,22 @@ namespace
 	 * all about a camera on an Earth's land out to their fades, 5,000 in the densest country, about 75,000 triangles
 	 * there; the debug line's count, every cloud on the chunks showing, runs higher, a chunk carrying its clouds on past
 	 * where they fade).
-	 * The rest are the later phases' budgets (not spawned yet): 2,000 walkers in 16 herds, 30 leapers in 6 groups, 24
-	 * floaters alone. 3,454 instances and 58 group sets in all.
+	 * The herds: a 2 km cell holds at most one, grazing round a loop of about 2 km a lap an hour on open, level grass;
+	 * herds are spawned within 3 km of the camera's ground point and kept to 3.75 km (their loops reach about 560 m from
+	 * their middles, so one comes and goes past the 2.2 km their members fade by), at most 16 of them and 960 walkers (16
+	 * herds of the largest, 60), none while the camera is more than 2.5 km over the ground (so one comes and goes, as the
+	 * camera climbs and comes down, past its members' fade too). A craft in the air (not set down) lower than 150 m over
+	 * the ground and within 150 m of a herd's middle startles it: its walkers turn to flee where they stand (half a
+	 * second), then it gallops off 250 m, at its fastest (about 11 m/s) 8 s in, and loops round (25 m to its side) and
+	 * walks back. Someone on foot it keeps 50 m from its nearest member, and one who runs in to 20 m of it startles it.
+	 * Their shadows within 600 m, where a walker is at least 3 pixels long and its shadow reads from the air at a low sun.
+	 * The material moves a walker's vertices up to about 3.7 unit-mesh metres past its box (its round of its grazing
+	 * circle, up to 1.93 of its lengths from its instance; the speck floor's growth to four times its size; its legs'
+	 * stride; the ground under it, up to 1.5 m off its herd's plane), which every instance's box is padded by (4 m); their
+	 * LOD screen sizes are set with that box (about 7.9 lengths round, where a walker is 1), so a walker goes to its 30
+	 * triangles about 30 pixels long and to its 2 about 6 (Slonk.Fauna.Walker).
+	 * The rest are the later phases' budgets (not spawned yet): 30 leapers in 6 groups, 24 floaters alone. 2,414 instances
+	 * and 58 group sets in all.
 	 */
 	FFaunaKindDesc MakeDesc(EFaunaKind K)
 	{
@@ -50,10 +64,14 @@ namespace
 			D.LodScreenSize[0] = 1.f; D.LodScreenSize[1] = 0.55f; D.LodScreenSize[2] = 0.055f;
 			break;
 		case EFaunaKind::Herd:
-			D.CellCm = 2.0e5; D.ReachCm = 3.0e5; D.MaxAltitudeCm = 1.5e5;
-			D.GroupMin = 8; D.GroupMax = 200; D.MaxGroups = 16; D.MaxMembers = 2000;
-			D.ScareRadiusCm = 1.5e4; D.ScareAltitudeCm = 1.5e4; D.CrewScareCm = 6.0e3; D.FleeCm = 3.0e4;
+			D.bLive = true;
+			D.CellCm = 2.0e5; D.ReachCm = 3.0e5; D.MaxAltitudeCm = 2.5e5;
+			D.GroupMin = 15; D.GroupMax = 60; D.MaxGroups = 16; D.MaxMembers = 960;
+			D.ScareRadiusCm = 1.5e4; D.ScareAltitudeCm = 1.5e4; D.CrewScareCm = 2.0e3; D.FleeCm = 2.5e4;
+			D.FleeRiseSec = 8.0; D.bGallop = true; D.FleeUp = 0.0; D.FleeTurnSec = 0.5; D.FleeLoopCm = 2.5e3; D.KeepFromCrewCm = 5.0e3;
 			D.ShadowReachCm = 6.0e4; D.FadeCm = 2.2e5;
+			D.CullPaddingUnits = 400.0;
+			D.LodScreenSize[0] = 1.f; D.LodScreenSize[1] = 0.44f; D.LodScreenSize[2] = 0.088f;
 			break;
 		case EFaunaKind::Mote:
 			D.CellCm = SlonkScatter::MoteSpacingCm; D.ReachCm = 9.2e4; D.MaxAltitudeCm = 1.0e5;
@@ -224,6 +242,22 @@ FLinearColor SlonkFauna::FlierPigment(const FFaunaLook& L, const FScatterPalette
 	}
 	// A strange world's: the ground's colour itself, as bright as the Earth's tone, at full strength on the strangest.
 	FLinearColor Own = Ground * ((0.2126f * Earth.R + 0.7152f * Earth.G + 0.0722f * Earth.B) / Luma);
+	FLinearColor C = FMath::Lerp(Earth, Own, L.Vivid);
+	C = TurnPigment(C, L.HueTurnDeg) * (float)Vary;
+	C.A = 1.f;
+	return C;
+}
+
+FLinearColor SlonkFauna::HerdPigment(const FFaunaLook& L, const FScatterPalette& Pal, double Dry, double Tone, double Vary)
+{
+	// The grass the herd grazes, the plants' own colour there.
+	const FLinearColor Ground = SlonkScatter::FoliageAt(Pal, Dry, 1.0);
+	const float Luma = FMath::Max(0.2126f * Ground.R + 0.7152f * Ground.G + 0.0722f * Ground.B, 1e-3f);
+	// An Earth's grazers: a bison's dark brown to a deer's tan, the drier the country the paler.
+	const FLinearColor Dark(0.10f, 0.065f, 0.042f), Tan(0.42f, 0.30f, 0.17f);
+	FLinearColor Earth = FMath::Lerp(Dark, Tan, (float)FMath::Clamp(Tone * 0.8 + Dry * 0.3, 0.0, 1.0));
+	// A strange world's: the ground's colour itself, as bright as the Earth's coat, at full strength on the strangest.
+	const FLinearColor Own = Ground * ((0.2126f * Earth.R + 0.7152f * Earth.G + 0.0722f * Earth.B) / Luma);
 	FLinearColor C = FMath::Lerp(Earth, Own, L.Vivid);
 	C = TurnPigment(C, L.HueTurnDeg) * (float)Vary;
 	C.A = 1.f;

@@ -64,6 +64,10 @@ namespace SlonkFauna
 	 * grows strange. Vary (about 0.8 to 1.2) is the flock's own shade.
 	 */
 	SLONK_API FLinearColor FlierPigment(const FFaunaLook& L, const FScatterPalette& Pal, EFlierHabitat H, double Dry, double Vary);
+	/** A herd's coat where it grazes: on an Earth at strangeness 0 a grazer's brown, a bison's dark one to a deer's tan by
+	 *  Tone (0..1) and paler on drier grass; turned round the wheel and made vivid (the grass's own colour) as the world
+	 *  grows strange, as the fliers' are. Vary (about 0.85 to 1.15) is the herd's own shade. */
+	SLONK_API FLinearColor HerdPigment(const FFaunaLook& L, const FScatterPalette& Pal, double Dry, double Tone, double Vary);
 
 	/** What a world's seas carry, as the terrain material paints them: how brightly the plankton glow where the sea is
 	 *  stirred (PlanktonGlow: emissive at full stir, at night) and in what colour, and the share of the shoal lattice's

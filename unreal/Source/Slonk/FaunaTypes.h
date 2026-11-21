@@ -118,7 +118,7 @@ namespace SlonkFauna
 	struct FFaunaKindDesc
 	{
 		EFaunaKind Kind = EFaunaKind::Flier;
-		/** Whether this build spawns it (the fliers so far; the others are the later phases'). */
+		/** Whether this build spawns it (the fliers and the herds so far; the others are the later phases'). */
 		bool bLive = false;
 		/** The side of its habitat cells on the cube's faces, cm: at most one group to a cell. */
 		double CellCm = 1.0e5;
@@ -138,6 +138,21 @@ namespace SlonkFauna
 		double ScareAltitudeCm = 0.0;
 		double CrewScareCm = 0.0;
 		double FleeCm = 0.0;
+		/** How its flight off its path comes on, s: a bird is away at once, its flight closing on FleeCm by this time
+		 *  constant from its fastest at the start; a walker (bGallop) breaks into a gallop from a stand, at its fastest this
+		 *  long in, and a second fright carries the gallop it was in rather than stopping it dead. How far up off the ground
+		 *  it flees, as a share of the way away (a bird climbs, a walker keeps to the ground). A walker's gallop comes in
+		 *  FleeTurnSec after the fright, the time its members take to turn to flee where they stand. */
+		double FleeRiseSec = 8.0;
+		bool bGallop = false;
+		double FleeUp = 0.35;
+		double FleeTurnSec = 0.0;
+		/** How far to its side a walker's flight loops as it slows, turns and comes back, cm (it never turns about on the
+		 *  spot: its walkers turn as they go). */
+		double FleeLoopCm = 0.0;
+		/** Someone on foot nearer than this to a group's nearest member, cm, sees it walk off out of their way (0: it never
+		 *  does): a herd keeps about this far from the crew, and only one run in on to CrewScareCm of its middle bolts. */
+		double KeepFromCrewCm = 0.0;
 		/** Its groups cast shadows within this of the camera, cm (0: never). */
 		double ShadowReachCm = 0.0;
 		/** The members dither away by this distance from the camera, cm, so a group spawned at its reach (beyond this
@@ -195,6 +210,14 @@ namespace SlonkFauna
 		constexpr double ReachCm = 33.0;
 	}
 	/**
+	 * A walker's custom floats, in the same slots (SlonkFauna::MembersOf writes them for a herd): its coat RGB; how
+	 * brightly it glows at night (0 on an Earth); a seed; its length in metres (its scale); where on its grazing circle it
+	 * starts, a share of a round (Phase); its stride, m (RateHz's slot: its herd's loop a whole number of them, and its
+	 * circle too); the radius of the circle it ambles round as it grazes, m, negative for one it walks clockwise
+	 * (PerKind); and the distance from the camera it fades out by, cm. Its instance stands at its circle's middle, unturned
+	 * in its herd's frame, which never turns: the material turns it the way it walks.
+	 */
+	/**
 	 * Each group's custom primitive data, set on its component each frame (FrightData writes its fright's part), by slot:
 	 * 0 how deep in the night it is (0 day, 1 night); 1 when its members' scatter last opened, on the material's clock
 	 * (seconds, the world's time wrapped to ClockPeriodSec; a startle while it is open keeps it), and 2 to 4 the way it
@@ -209,18 +232,93 @@ namespace SlonkFauna
 		enum : int32 { Night = 0, ScatterT0 = 1, ScatterDirX = 2, ScatterDirY = 3, ScatterDirZ = 4, Bank = 5, Startled = 6, SpreadM = 7, PanicT0 = 8, OnsetT0 = 9, Num = 10 };
 	}
 	/**
+	 * A herd's custom primitive data, every slot the engine has (36), set each frame (SlonkFauna::StepHerd). The fright's
+	 * slots are a flock's (HerdFrightData writes them: 6 whether a startle is live, 8 when it was last startled and 9 when
+	 * its alarm began to come in, each on the material's clock), and 0 the night. The rest are the herd's own: 5 the way it
+	 * walks, radians in its frame (from its x toward its y), turned only while it walks (by 3 a metre walked) or while it
+	 * grazes (when no walker faces it), never while its walkers turn to walk or back to graze; 7 how fast its walkers'
+	 * legs walk, m/s (its frame's way along the ground ahead of it, and a turn's own steps); 10 how far its legs have
+	 * walked, m (wrapped to its loop's length, a whole number of every member's strides; each whole turn to walk or back
+	 * to graze adds Walker::PivotM, its walkers stepping round where they stand) and 11 how long it has grazed, s (wrapped
+	 * to the hour, a whole number of every member's rounds of its grazing circle; it grazes only while none of it is on
+	 * the move), each as of 12, a moment on the material's clock, and running on from it at 7 and while 13 is 0; 13 the
+	 * share of it that is on the move (0 grazing, 1 walking with the herd), run on through a turn at 7 over PivotM, so the
+	 * material's walking is the exact integral of the speeds given and the velocity pass sees the legs move. Its latest
+	 * turn to walk or back to graze and the one before it, so the material knows how each foot still down has turned and
+	 * walked since it was put down: 1 how far its legs had walked when the latest began (as 10 counts it, carried back
+	 * through 10's wraps), PivotBack more for a turn back to graze; 2 what came between the two: before a turn to walk, the
+	 * grazing clock the stop before left it at (as 11 counts it; its grazing clock through the latest is 11, which stands
+	 * still till it grazes again), before a turn back to graze how far its legs walked, m, and once it grazes again its
+	 * grazing clock through that turn; 3 how fast the herd's way turns, radians a metre walked (signed as 5 turns, kept
+	 * from its last walk); 4 its ways through the turn before and the latest (5 is held while its walkers turn), packed by
+	 * PackTurns. 14 to 34 the drawn ground's height over the herd's frame, cm along its z, at the nodes of a 5 by 5 grid in
+	 * its xy (the corners left out: the material makes each of them from the three nodes beside it), row by row from the
+	 * most negative y; and 35 how far the grid reaches either way of the frame's middle, cm (its nodes half that apart).
+	 */
+	namespace HerdData
+	{
+		enum : int32 { Night = 0, PivotRef = 1, GrazeRef = 2, WalkKap = 3, TurnHeading = 4, Heading = 5, Startled = 6, SpeedMS = 7, PanicT0 = 8, OnsetT0 = 9, DistM = 10, GrazeSec = 11,
+			ClockT0 = 12, Travel = 13, Ground0 = 14, GroundHalfCm = 35, Num = 36 };
+		/** What slot 1 adds for a turn back to graze. */
+		constexpr double PivotBack = 1.0e4;
+		/** Slot 4: the way through the turn before the latest and through the latest, each to a TurnSteps-th of a round, as
+		 *  the one times TurnSteps plus the other (a whole number a float holds exactly). */
+		constexpr int32 TurnSteps = 3142;
+		inline float PackTurns(double Before, double Latest)
+		{
+			auto Step = [](double A) { const double F = A / (2.0 * UE_DOUBLE_PI); return (int32)FMath::RoundToDouble((F - FMath::FloorToDouble(F)) * TurnSteps) % TurnSteps; };
+			return (float)(Step(Before) * TurnSteps + Step(Latest));
+		}
+		/** The grid's nodes sent (a 5 by 5 grid less its corners), and the most a node stands off the herd's plane, cm, as
+		 *  sent and as the material takes it (the box each walker is culled by holds that much). */
+		constexpr int32 GroundSide = 5;
+		constexpr int32 GroundNodes = 21;
+		constexpr double MaxGroundCm = 150.0;
+	}
+	/**
+	 * A walker (a herd's member) as the material moves it, its unit mesh's metre its length from rump to muzzle, its feet
+	 * on its z 0 and its nose along +x: the gait (every leg on the same walk at every speed, the hind left, the fore left,
+	 * the hind right and the fore right a quarter of a stride apart, each foot down for Duty of it); the neck's pivot,
+	 * which the material turns the neck and head about to graze (GrazePitch, the muzzle to the grass) and to walk, trot
+	 * and stand alarmed (radians, negative nose down); and the speck floor (a walker far off drawn no shorter than
+	 * SpeckPx, at most SpeckMax times its size).
+	 */
+	namespace Walker
+	{
+		constexpr float Duty = 0.6f;
+		constexpr float LiftCm = 6.f;
+		constexpr float NeckRootX = 14.f, NeckRootZ = 40.f;
+		constexpr float GrazePitch = -1.25f, WalkPitch = -0.1f, TrotPitch = 0.05f, AlarmPitch = 0.25f;
+		constexpr float SpeckPx = 3.f, SpeckMax = 4.f;
+		/** A walker's stride is about this share of its length (each member's set so its herd's loop is a whole number of
+		 *  them), and the grazing circle it ambles round no wider than MaxCircleM (every member at least MinSizeM long). */
+		constexpr double StrideShare = 0.62;
+		constexpr double MaxCircleM = 2.8;
+		constexpr double MinSizeM = 1.45;
+		/** A whole turn from grazing to walking with the herd (or back) is as many steps as this many metres walked, each
+		 *  walker stepping round where it stands (two and a half to four and a half strides, so a walker turning right
+		 *  round turns at most about 1.3 radians a stride), and the herd turns as it walks no more sharply than MaxWalkKap
+		 *  radians a metre. */
+		constexpr double PivotM = 4.0;
+		constexpr double MaxWalkKap = 0.5;
+	}
+	/**
 	 * A fauna mesh's vertex colour: R the surface (0 body, 0.25 a bill or a beak, 0.5 a tail, 0.75 a mote's card, 1 a
 	 * wing), G how far it flexes (0 at its joint, rising to 1 at the tip), B its side (0 left, 0.5 the middle, 1 right) and
-	 * A the kind of joint the material moves it by (0 rigid, 0.25 a tail, 0.5 a wing hinged along the body, 0.75 a leg, 1
-	 * a fin or a body that undulates). A mote's card is drawn by the material's mote branch alone (its Motes parameter,
-	 * which the terrain's chunks set), and reads them otherwise: G is how many of its cloud's motes the card stands for
-	 * over Mote::MotesPerCloud, B its own random (a gnat's under Mote::GnatShare), A rigid.
+	 * A the kind of joint the material moves it by (0 rigid, 0.25 a tail, 0.375 a neck, 0.5 a wing hinged along the body,
+	 * 0.75 a leg, 1 a fin or a body that undulates). A mote's card is drawn by the material's mote branch alone (its Motes
+	 * parameter, which the terrain's chunks set), and reads them otherwise: G is how many of its cloud's motes the card
+	 * stands for over Mote::MotesPerCloud, B its own random (a gnat's under Mote::GnatShare), A rigid. A walker is drawn by
+	 * its walker branch alone (its Walkers parameter, which a herd's sets set): its horns, hooves and muzzle are the beak's
+	 * surface (dark), a leg's G is 0 at the hip and 1 at the hoof and its B the leg's place in the gait (Walker: 0 the hind
+	 * left, 0.25 the fore left, 0.5 the hind right, 0.75 the fore right), and the neck's and head's G is 0 at its root and 1
+	 * at the muzzle; its UV is its place along the body (U 0 at the rump, 1 at the muzzle) and up it (V, z over 60 cm).
 	 */
 	namespace Vc
 	{
 		constexpr float SurfaceBody = 0.f, SurfaceBeak = 0.25f, SurfaceTail = 0.5f, SurfaceMote = 0.75f, SurfaceWing = 1.f;
 		constexpr float SideLeft = 0.f, SideMiddle = 0.5f, SideRight = 1.f;
-		constexpr float JointRigid = 0.f, JointTail = 0.25f, JointWing = 0.5f, JointLeg = 0.75f, JointUndulate = 1.f;
+		constexpr float JointRigid = 0.f, JointTail = 0.25f, JointNeck = 0.375f, JointWing = 0.5f, JointLeg = 0.75f, JointUndulate = 1.f;
 		/** A wing's hinge stands this far out from the body's axis, unit-mesh cm: its root vertices (G 0) lie on it. */
 		constexpr double WingRootCm = 4.0;
 	}

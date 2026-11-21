@@ -1505,7 +1505,8 @@ void APlanetBody::ConfigureFauna()
 {
 	if (!Fauna || !Terrain || !bTerrainActive) { return; }
 	// The living ground's colours as the terrain's material was last given them (the plants' palette).
-	Fauna->Configure(Terrain, TerrainParams, FaunaProfile, GroundLife(), Terrain->GetScatterSettings().Palette);
+	// And whether it has towns, and whose: the herds keep their loops out of them.
+	Fauna->Configure(Terrain, TerrainParams, FaunaProfile, GroundLife(), Terrain->GetScatterSettings().Palette, HasCities(), GetPeople());
 }
 
 void APlanetBody::ApplyTerrainMaterialParams()

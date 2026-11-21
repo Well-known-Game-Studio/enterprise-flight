@@ -1197,6 +1197,23 @@ void UPlanetTerrainComponent::BuildChunkMotesForTest(const FPlanetTerrainParams&
 	}
 }
 
+void UPlanetTerrainComponent::BuildChunkHeightsForTest(const FPlanetTerrainParams& P, int32 Face, int32 Depth, int64 X, int64 Y, int32 Steps, TArray<float>& OutHeights)
+{
+	// The ground alone: nothing placed on it.
+	FScatterSettings Bare;
+	Bare.bEnabled = false;
+	FBuildResult R;
+	BuildChunk(P, Bare, SlonkScatter::FMoteSettings(), Face, Depth, X, Y, Steps, R);
+	OutHeights = MoveTemp(R.Heights);
+}
+
+double UPlanetTerrainComponent::ChunkHeightAtForTest(const TArray<float>& Heights, int32 Steps, int32 Depth, int64 X, int64 Y, const FVector& Dir)
+{
+	int32 F; double U, V;
+	FaceUV(Dir.GetSafeNormal(), F, U, V);
+	return GridHeightAt(Heights, Steps, Depth, X, Y, U, V);
+}
+
 uint32 UPlanetTerrainComponent::ChunkBuildCrcForTest(const FPlanetTerrainParams& P, const FScatterSettings& S, int32 Face, int32 Depth, int64 X, int64 Y, int32 Steps,
 	const SlonkScatter::FMoteSettings* Motes)
 {
