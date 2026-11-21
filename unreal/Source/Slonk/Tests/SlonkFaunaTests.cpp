@@ -11,6 +11,9 @@
 
 #if WITH_DEV_AUTOMATION_TESTS
 
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+
 #ifndef SLONK_TEST_FLAGS
 #define SLONK_TEST_FLAGS (EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
 #endif
@@ -28,6 +31,7 @@ namespace
 	 * runs it, from the pixel's planet-local position on the sea: how far into the shoal's shape it lies before its edge
 	 * is frayed (under 1 inside, 0 at its middle), or -1 if the pixel's cell has none. The material's noise-space point is
 	 * the chunk origin modulo the period plus the vertex's place, the planet-local point less whole periods, as here.
+	 * A hand copy: Slonk.Fauna.ShoalMirror ties it to the script by the CRC of the block it copies (MaterialShoalBlock).
 	 */
 	float MaterialShoalShape(const FVector& Local, float Density, float Time)
 	{
@@ -62,6 +66,28 @@ namespace
 		const float along = sd.X * sdir.X + sd.Y * sdir.Y, across = sd.Y * sdir.X - sd.X * sdir.Y;
 		return FMath::Sqrt(along * along + (across / 0.45f) * (across / 0.45f)) / shalf;
 	}
+
+	/** The block MaterialShoalShape and SlonkFauna::ShoalAt copy, as terrain_material.py has it now: from its
+	 *  "if (ShoalDensity" line to its "if (se < 1.3)" line, each line trimmed. Empty if the script or the block is not
+	 *  found. */
+	FString MaterialShoalBlock()
+	{
+		FString Py;
+		if (!FFileHelper::LoadFileToString(Py, *FPaths::Combine(FPaths::ProjectDir(), TEXT("../tools/planet_materials/terrain_material.py")))) { return FString(); }
+		TArray<FString> Lines;
+		Py.ParseIntoArrayLines(Lines, false);
+		FString Block;
+		for (FString& L : Lines)
+		{
+			L.TrimStartAndEndInline();
+			if (Block.IsEmpty() && !L.StartsWith(TEXT("if (ShoalDensity > 0.0"))) { continue; }
+			Block += L + TEXT("\n");
+			if (L.StartsWith(TEXT("if (se < 1.3)"))) { return Block; }
+		}
+		return FString();
+	}
+	/** Its CRC (FCrc::StrCrc32) when MaterialShoalShape and SlonkFauna::ShoalAt were last brought in line with it. */
+	constexpr uint32 MaterialShoalBlockCrc = 0x6b319d0au;
 
 }
 
@@ -135,17 +161,43 @@ bool FSlonkFaunaPlanktonParamsTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaShipWakeTest, "Slonk.Fauna.ShipWake", SLONK_TEST_FLAGS)
+bool FSlonkFaunaShipWakeTest::RunTest(const FString& Parameters)
+{
+	// A craft stirs the sea (APlanetBody::ShipStirOf, which UpdateShipWake gives the terrain material) by its height over
+	// the sea's level, not over the ground under it, and only while it hovers: the shuttle set down on a beach, or a ship
+	// hovering over a cliff top whose foot is in the sea far below, stirs nothing.
+	const double R = 6.371e8;
+	const FVector Up = FVector(0.3, -0.5, 0.8).GetSafeNormal();
+	auto StirAt = [&](double OverSeaCm, bool bLanded) { return APlanetBody::ShipStirOf(Up * (R + OverSeaCm), R, bLanded); };
+	// The shuttle hovering a metre and a half over the waves, the mothership held 30 m up by its ground clearance, a ship
+	// 150 m up and one 250 m up.
+	const float Low = StirAt(150.0, false), Held = StirAt(3000.0, false), High = StirAt(15000.0, false), Above = StirAt(25000.0, false);
+	// The shuttle set down 1.5 m over a beach two metres above the sea; a ship 60 m over a cliff top 150 m above it.
+	const float Landed = StirAt(350.0, true), OverCliff = StirAt(21000.0, false), Under = StirAt(-500.0, false);
+	AddInfo(FString::Printf(TEXT("the sea stirred %.3f by the shuttle 1.5 m over it, %.3f by a ship 30 m up, %.3f at 150 m, %.3f at 250 m; %.3f by the shuttle set down on a beach, %.3f by a ship 60 m over a 150 m cliff top"),
+		Low, Held, High, Above, Landed, OverCliff));
+	TestTrue(TEXT("the lower a craft hovers over the sea, the harder it stirs it"), Low > Held && Held > High && High > 0.f);
+	TestTrue(TEXT("a ship held 30 m up stirs it about 0.72"), FMath::IsNearlyEqual(Held, 0.7225f, 1e-3f));
+	TestEqual(TEXT("none from 200 m up"), Above, 0.f);
+	TestEqual(TEXT("none from a craft set down"), Landed, 0.f);
+	TestEqual(TEXT("none from a ship over high ground, however low over it"), OverCliff, 0.f);
+	TestEqual(TEXT("none below the sea's level"), Under, 0.f);
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaShoalMirrorTest, "Slonk.Fauna.ShoalMirror", SLONK_TEST_FLAGS)
 bool FSlonkFaunaShoalMirrorTest::RunTest(const FString& Parameters)
 {
-	// SlonkFauna::ShoalAt mirrors the terrain material's shoals: the same cells, the same share of them holding one, and
-	// the shoal where the material draws it, at any time; a shoal never leaves its cell and swims the way it heads.
+	// SlonkFauna::ShoalAt mirrors the terrain material's shoals, as the float copy of the material's code above has them:
+	// the same cells, the same share of them holding one, and the shoal where the material draws it, at any time; a shoal
+	// never leaves its cell and swims the way it heads.
 	const double R = 6.371e8;
 	const float Density = SlonkFauna::ShoalDensityAtLife;
 	const double Times[] = { 0.0, 37.25, 1234.5, 86400.0 };
 	FRandomStream Rng(4242);
 	const int32 N = 4000;
-	int32 Held = 0, Inside = 0, Outside = 0, Disagree = 0, Strayed = 0, Followed = 0, Backward = 0, Unstable = 0;
+	int32 Held = 0, Inside = 0, Outside = 0, Disagree = 0, Strayed = 0, Followed = 0, Backward = 0, Unstable = 0, Lifted = 0;
 	for (int32 i = 0; i < N; ++i)
 	{
 		const FVector Local = Rng.GetUnitVector() * R;
@@ -155,6 +207,13 @@ bool FSlonkFaunaShoalMirrorTest::RunTest(const FString& Parameters)
 		// The same cell as the material's: whether it holds one, from the transliterated hash at the same point.
 		const bool bMaterial = MaterialShoalShape(Local, Density, (float)T) >= 0.f;
 		Disagree += bHas != bMaterial ? 1 : 0;
+		// Ten metres over the sea, or thirty down in it, the shoal drawn on the sea there: the lattice lies on the sea.
+		for (const double Lift : { 1000.0, -3000.0 })
+		{
+			SlonkFauna::FShoal L;
+			const bool bL = SlonkFauna::ShoalAt(Local * ((R + Lift) / R), R, Density, T, L);
+			Lifted += bL == bHas && (!bHas || (L.Axis == S.Axis && L.Key == S.Key && L.CentreCm.Equals(S.CentreCm, 1.0))) ? 0 : 1;
+		}
 		if (!bHas) { continue; }
 		++Held;
 		SlonkFauna::FShoal Again;
@@ -189,14 +248,23 @@ bool FSlonkFaunaShoalMirrorTest::RunTest(const FString& Parameters)
 	}
 	const double Share = (double)Held / N;
 	AddInfo(FString::Printf(TEXT("%d points of an Earth's sea: %.3f of them in a cell holding a shoal (%.2f asked)"), N, Share, Density));
-	AddInfo(FString::Printf(TEXT("%d points well inside a mirrored shoal and %d well outside: %d disagree with the material; %d strayed from their cells, %d of %d swam other than they head, %d unstable"),
-		Inside, Outside, Disagree, Strayed, Backward, Followed, Unstable));
+	AddInfo(FString::Printf(TEXT("%d points well inside a mirrored shoal and %d well outside: %d disagree with the material's float copy; %d strayed from their cells, %d of %d swam other than they head, %d unstable, %d of %d off the sea found another shoal"),
+		Inside, Outside, Disagree, Strayed, Backward, Followed, Unstable, Lifted, 2 * N));
 	TestTrue(TEXT("the share of cells holding a shoal is the density asked"), FMath::Abs(Share - Density) < 0.03);
 	TestTrue(TEXT("enough points tried in and round the shoals"), Inside > 2000 && Outside > 2000);
-	TestEqual(TEXT("the mirror agrees with the material, cell for cell and shape for shape"), Disagree, 0);
+	TestEqual(TEXT("the mirror agrees with the material's float copy, cell for cell and shape for shape"), Disagree, 0);
 	TestEqual(TEXT("a shoal never leaves its cell"), Strayed, 0);
 	TestEqual(TEXT("a shoal swims the way it heads, at 0.6 to 1.5 m/s"), Backward, 0);
 	TestEqual(TEXT("the same shoal every time it is asked for"), Unstable, 0);
+	TestEqual(TEXT("over the sea or in it, the shoal drawn on the sea there"), Lifted, 0);
+	// The float copy is of the material's code as it stands: a change to the block in terrain_material.py changes its CRC
+	// and fails here, until the copy and SlonkFauna::ShoalAt are brought in line with it and the CRC is set anew. (What
+	// reaches the block, the pixel's noise-space point and the projection's plane, is the material's and taken as given.)
+	const FString Block = MaterialShoalBlock();
+	const uint32 BlockCrc = FCrc::StrCrc32(*Block);
+	AddInfo(FString::Printf(TEXT("terrain_material.py's shoal block: %d characters, CRC 0x%08x (0x%08x when the copy was made)"), Block.Len(), BlockCrc, MaterialShoalBlockCrc));
+	TestFalse(TEXT("the shoal block is found in terrain_material.py"), Block.IsEmpty());
+	TestTrue(TEXT("the float copy is of the material's shoal block as it stands"), BlockCrc == MaterialShoalBlockCrc);
 	// No shoals at all where the material is given none.
 	SlonkFauna::FShoal None;
 	TestFalse(TEXT("no shoals at density 0"), SlonkFauna::ShoalAt(FVector(R, 0.0, 0.0), R, 0.f, 0.0, None));
@@ -212,14 +280,17 @@ bool FSlonkFaunaHabitatTest::RunTest(const FString& Parameters)
 	P.Seed = FVector(3.1, 7.7, 1.3);
 	P.Moisture = 0.55f;
 	int32 Sea = 0, Deep = 0, Land = 0, Wooded = 0, Level = 0, Steep = 0, OutOfRange = 0, Mismatch = 0;
+	double MostOffCm = 0.0;
 	const int32 N = 3000;
 	for (int32 i = 0; i < N; ++i)
 	{
 		const double Z = 1.0 - 2.0 * (i + 0.5) / N, Rr = FMath::Sqrt(FMath::Max(1.0 - Z * Z, 0.0)), A = i * UE_DOUBLE_PI * (3.0 - FMath::Sqrt(5.0));
 		const FVector Dir(Rr * FMath::Cos(A), Rr * FMath::Sin(A), Z);
 		const SlonkScatter::FHabitat H = SlonkScatter::HabitatAt(P, Dir);
-		const FPlanetTerrainSample S = SlonkTerrain::Sample(P, Dir.GetSafeNormal(), 1000.0);
-		Mismatch += H.bWater == S.bWater && H.HeightCm == S.HeightCm ? 0 : 1;
+		// Near the field at its finest: the detail under ten metres it leaves out moves the ground by under a metre.
+		const FPlanetTerrainSample S = SlonkTerrain::Sample(P, Dir.GetSafeNormal(), 0.0);
+		MostOffCm = FMath::Max(MostOffCm, FMath::Abs(H.HeightCm - S.HeightCm));
+		Mismatch += H.bWater == S.bWater && FMath::Abs(H.HeightCm - S.HeightCm) < 100.0 ? 0 : 1;
 		auto Unit = [](double V) { return V >= 0.0 && V <= 1.0; };
 		OutOfRange += Unit(H.Wet) && Unit(H.Flat) && Unit(H.Cliff) && Unit(H.WallFoot) && Unit(H.Forest) && Unit(H.Ice) && H.Alpine >= 0.0 && H.Alpine <= 1.5 && H.DepthCm >= 0.0 ? 0 : 1;
 		if (H.bWater) { ++Sea; Deep += H.DepthCm > 1000.0 ? 1 : 0; OutOfRange += H.Forest == 0.0 ? 0 : 1; continue; }
@@ -228,8 +299,8 @@ bool FSlonkFaunaHabitatTest::RunTest(const FString& Parameters)
 		Level += H.Flat > 0.9 ? 1 : 0;
 		Steep += H.Cliff > 0.1 || H.Flat < 0.5 ? 1 : 0;
 	}
-	AddInfo(FString::Printf(TEXT("%d directions: %d sea (%d deeper than 10 m), %d land (%d wooded, %d level, %d steep); %d out of range, %d off the field"), N, Sea, Deep, Land, Wooded, Level, Steep, OutOfRange, Mismatch));
-	TestEqual(TEXT("the habitat is the field's"), Mismatch, 0);
+	AddInfo(FString::Printf(TEXT("%d directions: %d sea (%d deeper than 10 m), %d land (%d wooded, %d level, %d steep); %d out of range, %d off the field at its finest (%.2f m at most)"), N, Sea, Deep, Land, Wooded, Level, Steep, OutOfRange, Mismatch, MostOffCm / 100.0));
+	TestEqual(TEXT("the habitat is the field's, to within a metre of its finest detail"), Mismatch, 0);
 	TestEqual(TEXT("every habitat within its ranges, no forest at sea"), OutOfRange, 0);
 	TestTrue(TEXT("seas with depth, and land"), Sea > N / 10 && Deep > Sea / 2 && Land > N / 10);
 	TestTrue(TEXT("forest, level ground and steep ground on the land"), Wooded > 0 && Level > 0 && Steep > 0);

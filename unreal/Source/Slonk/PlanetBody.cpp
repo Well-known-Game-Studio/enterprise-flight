@@ -1527,23 +1527,32 @@ void APlanetBody::ApplyTerrainMaterialParams()
 	Terrain->SetScalarParameter(TEXT("ShipStir"), ShipStirApplied);
 }
 
+float APlanetBody::ShipStirOf(const FVector& FromCentreCm, double SeaRadiusCm, bool bLanded)
+{
+	// Within a couple of hundred metres of the water: the downwash of a ship that low reaches it.
+	constexpr double ShipStirAltitudeCm = 20000.0;
+	const double OverSeaCm = FromCentreCm.Size() - SeaRadiusCm;
+	if (bLanded || OverSeaCm < 0.0 || OverSeaCm >= ShipStirAltitudeCm) { return 0.f; }
+	return (float)FMath::Square(1.0 - OverSeaCm / ShipStirAltitudeCm);
+}
+
 void APlanetBody::UpdateShipWake(const APawn* Pawn)
 {
 	if (!Terrain) { return; }
-	// Within a couple of hundred metres of the water: the downwash of a ship that low reaches it.
-	constexpr double ShipStirAltitudeCm = 20000.0;
 	float Stir = 0.f;
 	FVector Ground = FVector::ZeroVector;
 	if (Pawn && GetWorld()) { ShipWakeAt = GetWorld()->GetTimeSeconds(); }
 	if (bLivingSea && Pawn)
 	{
 		const UStarshipMovementComponent* M = Pawn->FindComponentByClass<UStarshipMovementComponent>();
-		if (M && M->GroundBody == this && M->AltitudeAGLCm >= 0.0 && M->AltitudeAGLCm < ShipStirAltitudeCm)
+		if (M && M->GroundBody == this)
 		{
-			// The point under the ship on the ground or the sea, in the world, which the material measures the wake from.
-			const FVector Here = Pawn->GetActorLocation();
-			Ground = Here - (Here - GetActorLocation()).GetSafeNormal() * M->AltitudeAGLCm;
-			Stir = (float)FMath::Square(1.0 - M->AltitudeAGLCm / ShipStirAltitudeCm);
+			// Over the sea's level (GetRadiusCm, where the sea is drawn), not over the beach or the cliff top under the
+			// craft; none from a craft set down.
+			const FVector FromCentre = Pawn->GetActorLocation() - GetActorLocation();
+			Stir = ShipStirOf(FromCentre, GetRadiusCm(), M->bLanded);
+			// The point on the sea under the ship, in the world, which the material measures the wake from.
+			Ground = GetActorLocation() + FromCentre.GetSafeNormal() * GetRadiusCm();
 		}
 	}
 	if (Stir > 0.f) { Terrain->SetVectorParameter(TEXT("ShipGroundPos"), FLinearColor((float)Ground.X, (float)Ground.Y, (float)Ground.Z, 0.f)); }

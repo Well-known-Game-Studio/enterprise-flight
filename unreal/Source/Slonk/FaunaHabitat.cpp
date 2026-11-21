@@ -6,8 +6,11 @@ bool SlonkFauna::ShoalAt(const FVector& PlanetLocalCm, double RadiusCm, float De
 	const FVector U = PlanetLocalCm.GetSafeNormal();
 	if (Density <= 0.f || U.IsNearlyZero()) { return false; }
 	// terrain_material.py's water block, number for number: the plane across the direction's largest axis, the point's
-	// cell on it in the material's noise space, the cell's index wrapped to the period, its hash and its gate.
-	const FVector Pn = SlonkScatter::ToNoiseSpace(PlanetLocalCm);
+	// cell on it in the material's noise space, the cell's index wrapped to the period, its hash and its gate. The
+	// material lays its lattice on the sea's own surface, so a point above or below it is first brought down onto the
+	// sea-level sphere along its direction: a leaping fish or a camera over the water finds the shoal drawn under it.
+	const FVector SeaPt = U * RadiusCm;
+	const FVector Pn = SlonkScatter::ToNoiseSpace(SeaPt);
 	const FVector A = U.GetAbs();
 	int32 Ax, Iu, Iv;
 	if (A.X >= A.Y && A.X >= A.Z) { Ax = 0; Iu = 1; Iv = 2; }
@@ -38,8 +41,8 @@ bool SlonkFauna::ShoalAt(const FVector& PlanetLocalCm, double RadiusCm, float De
 	const double Sn = FMath::Sin(Ang), Cs = FMath::Cos(Ang);
 	// Back on the planet: the middle's place on the plane, unwrapped as the point's own was, then up onto the sphere on
 	// the point's side of it.
-	const double Pu = (Fu + CtrU + LoopR * Cs) * Cell + (PlanetLocalCm[Iu] - Pn[Iu]);
-	const double Pv = (Fv + CtrV + LoopR * Sn) * Cell + (PlanetLocalCm[Iv] - Pn[Iv]);
+	const double Pu = (Fu + CtrU + LoopR * Cs) * Cell + (SeaPt[Iu] - Pn[Iu]);
+	const double Pv = (Fv + CtrV + LoopR * Sn) * Cell + (SeaPt[Iv] - Pn[Iv]);
 	const double Rest = RadiusCm * RadiusCm - Pu * Pu - Pv * Pv;
 	if (Rest <= 0.0) { return false; }
 	FVector Centre;

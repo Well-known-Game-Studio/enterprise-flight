@@ -626,14 +626,17 @@ if (water > 0.001)
     float shore = (1.0 - smoothstep(0.0, 400.0, depthCm)) * (1.0 - river);
     foam = saturate(shore * (0.55 + 0.6 * w1.a + 0.3 * w2.a) + 0.35 * w1.a * w2.a * waveFade
         + 0.6 * smoothstep(0.55, 0.85, gd.z / max(SwellCm * 1.2, 1.0)) * w1.a * swellFade);
-    // A ship's wake (ShipStir, 1 hovering at the water and 0 from 200 m up; the game gives it only over a living sea):
-    // rings of foam spreading from the point under it (ShipGroundPos, world space), one every two seconds out to sixty
-    // metres, and the churn of its downwash below it. Measured across the sea's surface, so the swell does not move it.
+    // A ship's wake (ShipStir, APlanetBody::ShipStirOf: by its height over the sea's level, 1 at the water and 0 from
+    // 200 m up, about 0.7 for a ship held 30 m up by its ground clearance; none from a craft set down, and given only on
+    // a world whose seas live): rings of foam spreading from the point on the sea under it (ShipGroundPos, world space),
+    // one every two seconds out to sixty metres, and the churn of its downwash below it, on the sea alone. Measured
+    // across the sea's surface, so the swell's rise and fall does not move it (its sway does, by under a metre), and
+    // only within a hundred metres of that point: the far side of the world lies square to the sea there too.
     float wake = 0.0;
     if (ShipStir > 0.0)
     {
         float3 toShip = WP - ShipGroundPos.xyz;
-        float shipR = length(toShip - Nn * dot(toShip, Nn));
+        float shipR = dot(toShip, toShip) < 1.0e8 ? length(toShip - Nn * dot(toShip, Nn)) : 1.0e9;
         [unroll] for (int kr = 0; kr < 2; kr++)
         {
             float age = frac(Time * 0.25 + 0.5 * (float)kr);
@@ -649,7 +652,9 @@ if (water > 0.001)
     // fade the deeper they swim, the sun glinting off a flank here and there by day, gone by three kilometres. One in a
     // cell of a lattice on the projection above (52 cells to the noise period, about 200 m), each swimming a loop round
     // a point near the middle of its cell, so it never leaves it and only its own cell is looked at. SlonkFauna::ShoalAt
-    // (FaunaHabitat.cpp) mirrors this for the game: a change to the cells, the hash, the gate or the loop goes there too.
+    // (FaunaHabitat.cpp) mirrors this for the game: a change to the cells, the hash, the gate or the loop goes there too,
+    // and to the test Slonk.Fauna.ShoalMirror's float copy of this block, which fails until its copy is brought in line
+    // and its CRC of the block (from the "if (ShoalDensity" line to the "if (se < 1.3)" line) is set anew.
     // Nothing of them shows in the dark of the night side, where they are left out.
     float shoalFade = (1.0 - smoothstep(150000.0, 300000.0, dist)) * (1.0 - river) * (1.0 - SeaIce * smoothstep(0.4, 0.7, ice));
     if (ShoalDensity > 0.0 && shoalFade > 0.0 && night < 1.0)
@@ -698,14 +703,15 @@ if (water > 0.001)
     // 400 m, moving through the sea with Time) the sea glows where it is stirred: in the foam (the swell's breaking
     // crests, broken up by the water's own texture, so the glow never lines up with the swell's regular crests), all
     // along the surf, and in a ship's wake. Given off at night only (Emis, at the end), in PlanktonColor, so
-    // left out by day, and where nothing stirs the sea (the open sea past the waves' twenty kilometres).
+    // left out by day; and the bloom is left out where nothing it shapes shows: where nothing stirs the sea (the open
+    // sea past the waves' twenty kilometres) beyond the milky sea's sixty.
     bool bGlowNight = PlanktonGlow > 0.0 && night > 0.0;
     float stir = bGlowNight ? foam + shore * (0.3 + 0.7 * w1.a) + 4.0 * wake : 0.0;
     // The bloom's 400 m cells even out to their mean once they are under a pixel, as the noise octaves do, so a night
     // coast seen from high up glows steadily instead of in a crawling speckle.
     float bloomFade = saturate((NoisePeriodCm / 26.0) / (dist * 0.0045) - 0.35);
     float bloomV = 0.0;
-    if (bGlowNight && bloomFade > 0.0)
+    if (bGlowNight && bloomFade > 0.0 && (stir > 0.0 || dist < 6000000.0))
     {
         float3 pq = (p + Time * float3(23.0, -17.0, 11.0)) / (NoisePeriodCm / 26.0);
         float3 pfl = floor(pq); float3 pfr = pq - pfl; pfr = pfr * pfr * (3.0 - 2.0 * pfr);
@@ -723,8 +729,8 @@ if (water > 0.001)
     if (bGlowNight)
     {
         // 0.35 and 0.1: about the means of the bloom's two smoothsteps over this value noise. Where a bloom is thickest
-        // the sea glows faintly of itself as well, unstirred (a milky sea), in drifting patches within twenty
-        // kilometres, gone before the night side is seen from orbit.
+        // the sea glows faintly of itself as well, unstirred (a milky sea), in drifting patches: in full within twenty
+        // kilometres, fading out by sixty, gone before the night side is seen from orbit.
         float stirred = lerp(0.35, smoothstep(0.35, 0.8, bloomV), bloomFade) * stir;
         float milky = 0.35 * lerp(0.1, smoothstep(0.65, 0.95, bloomV), bloomFade) * (1.0 - smoothstep(2000000.0, 6000000.0, dist));
         plankton = PlanktonGlow * (stirred + milky) * water * (1.0 - river) * (1.0 - SeaIce * smoothstep(0.4, 0.7, ice));
