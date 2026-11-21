@@ -95,7 +95,10 @@ public:
 	void SetScatterFarLevels(int32 Levels);
 
 	/** The motes over the ground, carried on the chunks with the scatter (SlonkScatter::FMoteSettings, from the world's
-	 *  fauna): a change that moves them rebuilds the chunks carrying any, in place; their glow goes to the material alone.
+	 *  fauna): a change that moves them builds again every chunk fine enough to carry any (RebuildChunksUpTo, as a change
+	 *  of the scatter's settings does), the builds in flight waited for first; until they land the near ground shows the
+	 *  coarser chunks above, with the little their level carries (no grass, stones or shrubs) and nothing solid round the
+	 *  pawn. Their glow goes to the material alone.
 	 *  Drawn in M_Fauna's mote branch; while M_Fauna has none (built before it) there are none, unless slonk.Fauna.Debug
 	 *  draws them in the engine's basic material. */
 	void SetMoteOptions(const SlonkScatter::FMoteSettings& InMotes);

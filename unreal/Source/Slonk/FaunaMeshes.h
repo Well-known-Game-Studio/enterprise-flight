@@ -26,11 +26,12 @@ namespace SlonkFaunaMeshes
 	/**
 	 * The LOD screen sizes of a mote cloud (the engine's: the diameter over the screen's of the sphere round the box an
 	 * instance's LOD is picked by). On the terrain's GPU instances (UPlanetInstancesComponent) that box is the mesh's
-	 * bounds (its motes' reach included) padded by 15% and 20 cm, and the sphere round it is 20 m across for a cloud 6.75 m
-	 * across, which through a 90-degree view at 16:9 keeps its 24 cards out to about 110 m, 8 from there and 2 from about
-	 * 550 m (a 6 m cloud's about 100 m and 490 m, a 7.5 m one's 125 m and 620 m). The engine's own instances
-	 * (slonk.Scatter.GPUInstances 0) pick it by the bounds alone, two thirds the size, and so come down to 8 cards from
-	 * about 75 m and to 2 from about 370 m.
+	 * bounds (its motes' reach included) padded by 15% and 20 cm of the unit mesh (1.35 m at a 6.75 m cloud's scale), and
+	 * the sphere round it is 22 m across for a cloud 6.75 m across, which through a 90-degree view at 16:9 keeps its 24
+	 * cards out to about 123 m, 8 from there and 2 from about 615 m (a 6 m cloud's about 110 m and 545 m, a 9 m one's
+	 * 165 m and 820 m). The engine's own instances (slonk.Scatter.GPUInstances 0) pick it by the bounds alone, about two
+	 * thirds the size, and so come down to 8 cards from about 85 m and to 2 from about 425 m. Slonk.Fauna.MoteCloud holds
+	 * both paths to these figures.
 	 */
 	inline constexpr float MoteLodScreenSize[NumLods] = { 1.f, 0.16f, 0.032f };
 	/**

@@ -24,11 +24,13 @@ namespace
 	 * about 9 m, all of them on the chunks to 160 m and a quarter of them on the next level up, so on an Earth they fade
 	 * out by about 460 m from the camera and the share kept by about 920 m (MoteMaxEdgeCm, MoteKeep, the plants' fade), far
 	 * enough for a ship's chase camera to see the meadows twinkle; none are built while the camera and the pawn are both
-	 * more than about a kilometre over the ground, the chunks carrying them not being made. A cloud past about 110 m is 8
-	 * cards and past 550 m 2 (16 and 4 triangles, on the GPU instances: SlonkFaunaMeshes::MoteLodScreenSize), so their row
-	 * here is the budget of those drawn whole, at 24 cards: 400 clouds (about 170 in the densest country,
-	 * Slonk.Fauna.MotesNest; some 1,700 clouds in all about a camera on an Earth's land, 5,000 in the densest country,
-	 * about 65,000 triangles there).
+	 * more than about a kilometre over the ground, the chunks carrying them not being made. A cloud 6 to 9 m across is 8
+	 * cards past about 110 to 165 m and 2 past about 545 to 820 m (16 and 4 triangles, on the GPU instances:
+	 * SlonkFaunaMeshes::MoteLodScreenSize), so their row here is the budget of those drawn whole, at 24 cards: 400 clouds,
+	 * which nothing caps but Slonk.Fauna.MotesNest holds them to (about 260 in the densest country; some 1,700 clouds in
+	 * all about a camera on an Earth's land out to their fades, 5,000 in the densest country, about 75,000 triangles
+	 * there; the debug line's count, every cloud on the chunks showing, runs higher, a chunk carrying its clouds on past
+	 * where they fade).
 	 * The rest are the later phases' budgets (not spawned yet): 2,000 walkers in 16 herds, 30 leapers in 6 groups, 24
 	 * floaters alone. 3,454 instances and 58 group sets in all.
 	 */

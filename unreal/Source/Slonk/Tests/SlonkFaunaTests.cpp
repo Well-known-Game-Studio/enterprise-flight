@@ -1234,28 +1234,40 @@ bool FSlonkFaunaFlightTest::RunTest(const FString& Parameters)
 
 namespace
 {
-	/** fauna_material.py's WPO_CODE, which SlonkFauna::FlierMotion copies: its lines trimmed, the blank ones and the
-	 *  comments left out. Empty if the script or the block is not found. */
-	FString MaterialMotionBlock()
+	/** fauna_material.py's WPO_CODE, its lines trimmed, the blank ones and the comments left out: the fliers' motion, which
+	 *  SlonkFauna::FlierMotion copies, or with bMotes its mote branch (from its test of Motes to the brace that closes it),
+	 *  whose turn to the camera Slonk.Fauna.MoteCloud copies. Each leaves the other out. Empty if the script or the block
+	 *  is not found. */
+	FString MaterialMotionBlock(bool bMotes = false)
 	{
 		FString Py;
 		if (!FFileHelper::LoadFileToString(Py, *FPaths::Combine(FPaths::ProjectDir(), TEXT("../tools/planet_materials/fauna_material.py")))) { return FString(); }
 		TArray<FString> Lines;
 		Py.ParseIntoArrayLines(Lines, false);
 		FString Block;
-		bool bIn = false;
+		bool bIn = false, bInMotes = false;
+		int32 Depth = 0;
 		for (FString& L : Lines)
 		{
 			L.TrimStartAndEndInline();
 			if (!bIn) { bIn = L.StartsWith(TEXT("WPO_CODE = r\"\"\"")); continue; }
 			if (L.StartsWith(TEXT("\"\"\""))) { return Block; }
 			if (L.IsEmpty() || L.StartsWith(TEXT("//"))) { continue; }
-			Block += L + TEXT("\n");
+			bInMotes |= L.StartsWith(TEXT("[branch] if (Motes"));
+			const bool bMoteLine = bInMotes;
+			if (bInMotes)
+			{
+				for (const TCHAR C : L) { Depth += C == TEXT('{') ? 1 : (C == TEXT('}') ? -1 : 0); }
+				bInMotes = Depth > 0 || !L.Contains(TEXT("}"));
+			}
+			if (bMoteLine == bMotes) { Block += L + TEXT("\n"); }
 		}
 		return FString();
 	}
-	/** Its CRC (FCrc::StrCrc32) when SlonkFauna::FlierMotion was last brought in line with it. */
+	/** The fliers' part's CRC (FCrc::StrCrc32) when SlonkFauna::FlierMotion was last brought in line with it. */
 	constexpr uint32 MaterialMotionBlockCrc = 0x0a6c86cdu;
+	/** The mote branch's CRC when Slonk.Fauna.MoteCloud's copy of its turn to the camera was last brought in line with it. */
+	constexpr uint32 MaterialMoteBlockCrc = 0xa89449edu;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaMeshesTest, "Slonk.Fauna.Meshes", SLONK_TEST_FLAGS)
@@ -1375,10 +1387,11 @@ bool FSlonkFaunaMeshesTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("the material keeps every vertex in its instance's box"), Escaped, 0);
 	TestEqual(TEXT("a wing's root stays on its hinge"), Detached, 0);
 	// Those hold of the float copy (SlonkFauna::FlierMotion) only while the material's motion is what was copied: an edit
-	// to fauna_material.py's WPO_CODE alone fails here, until the copy is brought in line and the CRC with it.
+	// to the fliers' part of fauna_material.py's WPO_CODE alone fails here, until the copy is brought in line and the CRC
+	// with it (the mote branch is Slonk.Fauna.MoteCloud's to hold).
 	const FString Block = MaterialMotionBlock();
 	const uint32 BlockCrc = FCrc::StrCrc32(*Block);
-	AddInfo(FString::Printf(TEXT("fauna_material.py's WPO_CODE: %d characters of code, CRC 0x%08x (0x%08x when the copy was made)"), Block.Len(), BlockCrc, MaterialMotionBlockCrc));
+	AddInfo(FString::Printf(TEXT("fauna_material.py's WPO_CODE, the fliers' part: %d characters of code, CRC 0x%08x (0x%08x when the copy was made)"), Block.Len(), BlockCrc, MaterialMotionBlockCrc));
 	TestTrue(TEXT("fauna_material.py's WPO_CODE found"), Block.Len() > 1000);
 	TestEqual(TEXT("FlierMotion copies the material's motion as it is now"), BlockCrc, MaterialMotionBlockCrc);
 
@@ -1403,8 +1416,9 @@ bool FSlonkFaunaBudgetTest::RunTest(const FString& Parameters)
 	for (int32 K = 0; K < SlonkFauna::NumKinds; ++K)
 	{
 		const SlonkFauna::FFaunaKindDesc& D = SlonkFauna::KindDesc((EFaunaKind)K);
+		// The motes ride on the terrain's chunks, in no group sets of their own, and nothing caps them there: their row is
+		// the clouds drawn whole (24 cards), which Slonk.Fauna.MotesNest holds them to about a camera in the densest country.
 		Instances += D.MaxMembers;
-		// The motes ride on the terrain's chunks, in no group sets of their own.
 		GroupSets += (EFaunaKind)K == EFaunaKind::Mote ? 0 : D.MaxGroups;
 	}
 	TestTrue(TEXT("about 3,500 instances at most"), Instances <= 3500);
@@ -1499,6 +1513,27 @@ namespace
 	int32 MoteDepth(const FPlanetTerrainParams& P)
 	{
 		return FMath::CeilToInt32(FMath::Log2(P.RadiusCm * UE_DOUBLE_HALF_PI / SlonkScatter::MoteMaxEdgeCm));
+	}
+
+	/** How far off a mote cloud of a span comes down to a far LOD (1, 8 cards; 2, two), m, through a 90-degree view at 16:9
+	 *  (the engine's screen size is the view's projection scale times the radius over the distance): on the terrain's GPU
+	 *  instances by the radius they pick an instance's LOD by (their padded box's), else on the engine's own by the mesh's
+	 *  bounds alone. */
+	double MoteLodFromM(double SpanM, int32 Lod, bool bGpuInstances)
+	{
+		UStaticMesh* Mesh = SlonkFaunaMeshes::GetMoteCloudMesh();
+		if (!Mesh) { return 0.0; }
+		const double Scale = SpanM * 100.0 / SlonkFauna::UnitCm;
+		double RadiusCm = Mesh->GetBounds().BoxExtent.Length() * Scale;
+		if (bGpuInstances)
+		{
+			UPlanetInstancesComponent* Set = NewObject<UPlanetInstancesComponent>();
+			Set->SetStaticMesh(Mesh);
+			Set->SetPieces(TArray<FTransform>{ FTransform(FQuat::Identity, FVector::ZeroVector, FVector(Scale)) }, TConstArrayView<float>());
+			RadiusCm = Set->GetMaxInstanceRadius();
+		}
+		const double Proj = (16.0 / 9.0) / FMath::Tan(FMath::DegreesToRadians(45.0));
+		return Proj * RadiusCm / SlonkFaunaMeshes::MoteLodScreenSize[FMath::Clamp(Lod, 1, SlonkFaunaMeshes::NumLods - 1)] / 100.0;
 	}
 
 	/** Motes on, at a world's life. */
@@ -1617,7 +1652,8 @@ bool FSlonkFaunaMotesNestTest::RunTest(const FString& Parameters)
 	// of their own. The far level keeps about MoteKeep of them, and those fade twice as far off. The children turn every
 	// cloud as the parent does about the ground's up; on a world without ice caps, on the lines where the ground's up runs
 	// 0.9 along the planet's z, too, where a turn reckoned from the drawn triangles' normals would swing from one level to
-	// the next as the normals under a cloud fall either side of it.
+	// the next as the normals under a cloud fall either side of it. About a camera in the densest country the clouds
+	// drawn whole keep to the motes' row of the budget (FFaunaKindDesc::MaxMembers).
 	const FPlanetTerrainParams P = FaunaEarthParams(6371.0);
 	const SlonkScatter::FMoteSettings M = MotesOn();
 	const int32 D = MoteDepth(P);
@@ -1694,11 +1730,29 @@ bool FSlonkFaunaMotesNestTest::RunTest(const FString& Parameters)
 	// About a camera in country as dense as this: every cloud out to the near level's fade, the far level's share past it.
 	const double NearKm = 3.0 * P.RadiusCm * UE_DOUBLE_HALF_PI / (double)((int64)1 << D) / 1.0e5, FarKm = NearKm * 2.0;
 	const double Reach = UE_DOUBLE_PI * (NearKm * NearKm + SlonkScatter::MoteKeep * (FarKm * FarKm - NearKm * NearKm));
-	const double LodNearKm = 0.11;
+	// And how they are drawn there, on the GPU instances, for spans spread evenly over a cloud's 6 to 9 m: whole (24 cards)
+	// nearer than their LOD 1 comes in, 8 cards to their LOD 2, 2 past it (MoteLodFromM).
+	auto CloudsWithin = [&](double Km)
+	{
+		const double Nk = FMath::Min(Km, NearKm), Fk = FMath::Clamp(Km, NearKm, FarKm);
+		return PerKm2 * UE_DOUBLE_PI * (Nk * Nk + SlonkScatter::MoteKeep * (Fk * Fk - NearKm * NearKm));
+	};
+	double Whole = 0.0, Triangles = 0.0, LodNearKm = 0.0;
+	const int32 Spans = 12;
+	for (int32 s = 0; s < Spans; ++s)
+	{
+		const double SpanM = 6.0 + 3.0 * (s + 0.5) / Spans;
+		const double L1 = MoteLodFromM(SpanM, 1, true) / 1000.0, L2 = MoteLodFromM(SpanM, 2, true) / 1000.0;
+		const double N0 = CloudsWithin(L1), N1 = CloudsWithin(L2) - N0, N2 = CloudsWithin(FarKm) - N0 - N1;
+		Whole += N0 / Spans;
+		LodNearKm += L1 / Spans;
+		Triangles += 2.0 * (SlonkFauna::Mote::CardsAtLod[0] * N0 + SlonkFauna::Mote::CardsAtLod[1] * N1 + SlonkFauna::Mote::CardsAtLod[2] * N2) / Spans;
+	}
+	const int32 WholeBudget = SlonkFauna::KindDesc(EFaunaKind::Mote).MaxMembers;
 	AddInfo(FString::Printf(TEXT("%d clouds on %d chunks of depth %d (%.0f a square km in the densest country, %.0f on the land's mean): %d found again on the children (their fades at most %.3f times apart); the far level %d clouds of %d under it (%.0f%%), %d found again, %d fading further"),
 		Clouds, Tried, D, PerKm2, LandPerKm2, Matched, Near.WorstFade, FarClouds, FarKids, FarKids > 0 ? 100.0 * FarClouds / FarKids : 0.0, FarMatched, FarFadesFurther));
-	AddInfo(FString::Printf(TEXT("fading out by %.0f m, the far level's by %.0f m: about a camera %.0f clouds in the densest country (%.0f of them within %.0f m, at LOD 0), %.0f on the land's mean"),
-		NearKm * 1000.0, FarKm * 1000.0, PerKm2 * Reach, PerKm2 * UE_DOUBLE_PI * LodNearKm * LodNearKm, LodNearKm * 1000.0, LandPerKm2 * Reach));
+	AddInfo(FString::Printf(TEXT("fading out by %.0f m, the far level's by %.0f m: about a camera %.0f clouds in the densest country (%.0f of them drawn whole, within about %.0f m, of a budget of %d; %.0f triangles in all), %.0f on the land's mean"),
+		NearKm * 1000.0, FarKm * 1000.0, PerKm2 * Reach, Whole, LodNearKm * 1000.0, WholeBudget, Triangles, LandPerKm2 * Reach));
 	AddInfo(FString::Printf(TEXT("turned more than 10 deg on the children: %d of those found again (at most %.2f deg); thawed, on the lines at z 0.9, %d clouds on %d chunks, %d found again (%d of them on ground whose normal lies either side of z 0.9 on the two levels), %d turned (at most %.2f deg)"),
 		Near.Turned + Again.Turned, FMath::Max(Near.WorstTurnDeg, Again.WorstTurnDeg), LineClouds, LineChunks, LineMatched, Line.Straddling, Line.Turned, Line.WorstTurnDeg));
 	TestTrue(TEXT("found mote country"), Tried > 0);
@@ -1710,6 +1764,7 @@ bool FSlonkFaunaMotesNestTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("and every far-level cloud on the motes' own"), FarClouds > 0 && FarMatched >= FarClouds * 0.85);
 	TestTrue(TEXT("the far level keeps about a quarter"), FarKids > 0 && FarClouds > FarKids * (SlonkScatter::MoteKeep - 0.1) && FarClouds < FarKids * (SlonkScatter::MoteKeep + 0.1));
 	TestEqual(TEXT("the far level's fade further off"), FarFadesFurther, FarClouds);
+	TestTrue(TEXT("the clouds drawn whole about a camera in the densest country keep to the motes' row of the budget"), Whole > 0.0 && Whole <= WholeBudget);
 	return true;
 }
 
@@ -1717,8 +1772,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaMotesOnLandTest, "Slonk.Fauna.MotesO
 bool FSlonkFaunaMotesOnLandTest::RunTest(const FString& Parameters)
 {
 	// A cloud hovers over land, never water, standing on the drawn ground, up along it, its custom floats as the
-	// material reads them; on a coast the clouds keep to the land. A chunk builds exactly as it did with its motes on:
-	// they are kept out of everything the golden CRCs hash.
+	// material reads them; on a coast the clouds keep to the land. The golden CRCs never see the motes: the build's CRC
+	// hashes the ground and the scatter, never the chunk's fauna, and the golden tests build with the motes off. A chunk
+	// with its motes on hashes as it does with them off, which the build's order makes so today (the scatter is placed,
+	// and the settlements it keeps out of looked for, before the motes are): the check stands guard, so a change that lets
+	// the motes touch the ground or the scatter fails here.
 	const FPlanetTerrainParams P = FaunaEarthParams(6371.0);
 	const SlonkScatter::FMoteSettings M = MotesOn();
 	const int32 D = MoteDepth(P);
@@ -1760,8 +1818,8 @@ bool FSlonkFaunaMotesOnLandTest::RunTest(const FString& Parameters)
 				&& C[SlonkFauna::Custom::PigmentR] >= M.Pollen.R * 0.8f - 1e-4f && C[SlonkFauna::Custom::PigmentR] <= M.Pollen.R * 1.2f + 1e-4f;
 			BadFloats += bOk ? 0 : 1;
 		}
-		// The build's CRC (the drawn ground, its attributes, the rocks and plants) with the motes on and off; and on a world
-		// with settlements, whose keep-out the motes share with the scatter.
+		// The build's CRC (the drawn ground, its attributes, the rocks and plants) with the motes on, the build carrying the
+		// clouds just counted, and off; and on a world with settlements, whose keep-out the motes share with the scatter.
 		if (R.Num() > 0 && CrcTried < 4)
 		{
 			FScatterSettings Living;
@@ -1943,7 +2001,9 @@ bool FSlonkFaunaMoteCloudTest::RunTest(const FString& Parameters)
 	// over a disc half a span round from 0.03 to 0.31 of a span up, each card's colour as the material reads it (a mote's
 	// surface, how many of the 24 it stands for, its own random, a gnat's under the share), the gnats' six on the near
 	// LODs and none on the far one, the other eighteen on every LOD; every card, turned to a camera as the material turns
-	// it, showing the camera its front; its mesh made once, three LODs, its bounds grown by the motes' reach.
+	// it (a copy of the material's turn, held to the script by its mote branch's CRC), showing the camera its front; its
+	// mesh made once, three LODs, its bounds grown by the motes' reach, and its LODs coming in where FaunaMeshes.h says on
+	// both the terrain's GPU instances and the engine's own.
 	namespace Mo = SlonkFauna::Mote;
 	using namespace UE::Geometry;
 	int32 BadCard = 0, BadColour = 0, Repeated = 0, Tris[SlonkFaunaMeshes::NumLods] = {}, Free[SlonkFaunaMeshes::NumLods] = {}, Gnats[SlonkFaunaMeshes::NumLods] = {};
@@ -1987,7 +2047,8 @@ bool FSlonkFaunaMoteCloudTest::RunTest(const FString& Parameters)
 			Randoms.Add(FMath::RoundToInt32(Col.Z * 255.f), &bAlready);
 			Repeated += bAlready ? 1 : 0;
 		}
-		// Each card turned as the material turns it to face the camera (fauna_material.py, WPO_CODE): a corner at its middle
+		// Each card turned as the material turns it to face the camera (fauna_material.py, WPO_CODE's mote branch, tied to
+		// this copy by its CRC below): a corner at its middle
 		// plus (rt (2u - 1) + upv (2v - 1)) times its half-width, rt = z x v (x where v is straight up) and upv = v x rt,
 		// v the way to the camera. The front the engine draws a triangle (A, B, C) by, (C - A) x (B - A), toward the camera.
 		for (const int32 T : M.TriangleIndicesItr())
@@ -2024,6 +2085,14 @@ bool FSlonkFaunaMoteCloudTest::RunTest(const FString& Parameters)
 	const int32 NumViews = (int32)UE_ARRAY_COUNT(Views);
 	AddInfo(FString::Printf(TEXT("%d triangles turned to %d cameras as the material turns them: %d showing the camera their backs"), Faced / NumViews, NumViews, BackToCamera));
 	TestTrue(TEXT("every card turned to the camera shows it its front"), Faced > 0 && BackToCamera == 0);
+	// That holds of the copy of the turn above only while the material turns its cards as it did when the copy was made:
+	// an edit to the mote branch of fauna_material.py's WPO_CODE fails here, until the copy is brought in line and the CRC
+	// with it.
+	const FString MoteBlock = MaterialMotionBlock(true);
+	const uint32 MoteBlockCrc = FCrc::StrCrc32(*MoteBlock);
+	AddInfo(FString::Printf(TEXT("fauna_material.py's WPO_CODE, the mote branch: %d characters of code, CRC 0x%08x (0x%08x when the copy was made)"), MoteBlock.Len(), MoteBlockCrc, MaterialMoteBlockCrc));
+	TestTrue(TEXT("fauna_material.py's mote branch found"), MoteBlock.Len() > 500 && MoteBlock.Contains(TEXT("float3 upv = cross(v, rt);")));
+	TestEqual(TEXT("the turn copied here is the material's as it is now"), MoteBlockCrc, MaterialMoteBlockCrc);
 	UStaticMesh* Mesh = SlonkFaunaMeshes::GetMoteCloudMesh();
 	TestTrue(TEXT("the cloud's mesh is made, and kept"), Mesh != nullptr && Mesh == SlonkFaunaMeshes::GetMoteCloudMesh());
 	if (Mesh)
@@ -2031,20 +2100,17 @@ bool FSlonkFaunaMoteCloudTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("with three LODs"), Mesh->GetNumLODs(), SlonkFaunaMeshes::NumLods);
 		const FBox B = Mesh->GetBounds().GetBox();
 		TestTrue(TEXT("its bounds grown by the motes' reach"), B.Min.X <= Box0.Min.X - Mo::ReachCm + 0.5 && B.Max.Z >= Box0.Max.Z + Mo::ReachCm - 0.5);
-		// Where its LODs come in for a cloud of a middling span, through a 90-degree view at 16:9 (the engine's screen size
-		// is the view's projection scale times the radius over the distance): on the terrain's GPU instances by the radius
-		// they pick an instance's LOD by (their padded box's), and on the engine's own by the mesh's bounds alone.
-		const double SpanM = 6.75, Scale = SpanM * 100.0 / SlonkFauna::UnitCm;
-		UPlanetInstancesComponent* Set = NewObject<UPlanetInstancesComponent>();
-		Set->SetStaticMesh(Mesh);
-		Set->SetPieces(TArray<FTransform>{ FTransform(FQuat::Identity, FVector::ZeroVector, FVector(Scale)) }, TConstArrayView<float>());
-		const double Proj = (16.0 / 9.0) / FMath::Tan(FMath::DegreesToRadians(45.0));
-		const double GpuR = Set->GetMaxInstanceRadius(), EngineR = Mesh->GetBounds().BoxExtent.Length() * Scale;
-		auto ComesInM = [Proj](double RadiusCm, int32 L) { return Proj * RadiusCm / SlonkFaunaMeshes::MoteLodScreenSize[L] / 100.0; };
-		AddInfo(FString::Printf(TEXT("a %.2f m cloud: on the GPU instances (LOD radius %.0f cm) 8 cards from %.0f m, 2 from %.0f m; on the engine's (%.0f cm) from %.0f m and %.0f m"),
-			SpanM, GpuR, ComesInM(GpuR, 1), ComesInM(GpuR, 2), EngineR, ComesInM(EngineR, 1), ComesInM(EngineR, 2)));
-		TestTrue(TEXT("on the GPU instances 8 cards from about 110 m"), ComesInM(GpuR, 1) > 95.0 && ComesInM(GpuR, 1) < 130.0);
-		TestTrue(TEXT("and 2 from about 550 m"), ComesInM(GpuR, 2) > 480.0 && ComesInM(GpuR, 2) < 650.0);
+		// Where its LODs come in for a cloud of a middling span, on the terrain's GPU instances and on the engine's own
+		// (MoteLodFromM), as FaunaMeshes.h has them (MoteLodScreenSize): each within a twentieth of its figure.
+		const double SpanM = 6.75;
+		const double Gpu1 = MoteLodFromM(SpanM, 1, true), Gpu2 = MoteLodFromM(SpanM, 2, true), Engine1 = MoteLodFromM(SpanM, 1, false), Engine2 = MoteLodFromM(SpanM, 2, false);
+		AddInfo(FString::Printf(TEXT("a %.2f m cloud: on the GPU instances 8 cards from %.0f m, 2 from %.0f m; on the engine's from %.0f m and %.0f m (on the GPU instances a 6 m cloud's %.0f m and %.0f m, a 9 m one's %.0f m and %.0f m)"),
+			SpanM, Gpu1, Gpu2, Engine1, Engine2, MoteLodFromM(6.0, 1, true), MoteLodFromM(6.0, 2, true), MoteLodFromM(9.0, 1, true), MoteLodFromM(9.0, 2, true)));
+		auto Near = [](double M, double Figure) { return FMath::Abs(M - Figure) < Figure * 0.05; };
+		TestTrue(TEXT("on the GPU instances 8 cards from about 123 m"), Near(Gpu1, 123.0));
+		TestTrue(TEXT("and 2 from about 615 m"), Near(Gpu2, 615.0));
+		TestTrue(TEXT("on the engine's own 8 cards from about 85 m"), Near(Engine1, 85.0));
+		TestTrue(TEXT("and 2 from about 425 m"), Near(Engine2, 425.0));
 	}
 	return true;
 }

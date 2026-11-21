@@ -2537,11 +2537,15 @@ void AStarshipPawn::ProcessDebugCommand()
 		{
 			// A setting just changed is taken at once (the motes on the terrain's chunks with it), so the line reads the
 			// settings as they now stand rather than as the last frame had them.
+			const SlonkScatter::FMoteSettings MotesBefore = Planet->Terrain ? Planet->Terrain->MoteBuildSettings() : SlonkScatter::FMoteSettings();
 			F->RefreshWorld();
-			// From a script this runs in the ship's tick, after the planet chose its chunks this frame: any chunks the motes
-			// built again were let go after that choice, so choose again, and their parents show this frame (no hole).
+			// A change that moved the motes let go of the chunks carrying them; if the planet chose its chunks this frame
+			// before the ship's tick, that choice still has them, so choose again and their parents show this frame (no
+			// hole). Only then, and only on a terrain the planet draws and updates now: a command that moved no mote (a
+			// status, or a goto, which has just moved the ship while the camera is still last frame's) leaves the choosing
+			// to the planet's next tick.
 			APlayerController* VPC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
-			if (VPC && Planet->Terrain)
+			if (VPC && Planet->Terrain && Planet->HasTerrain() && !Planet->IsBeyondHorizon() && !MotesBefore.SamePlacement(Planet->Terrain->MoteBuildSettings()))
 			{
 				FVector ViewLoc; FRotator ViewRot;
 				VPC->GetPlayerViewPoint(ViewLoc, ViewRot);

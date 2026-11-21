@@ -52,7 +52,9 @@ Each card's middle wanders about its place on cycles a whole number of times an 
 and grown by a speck floor (no smaller than a pixel by day, three at night, at most forty times its size), every vertex
 kept within 33 cm of the unit mesh of where the mesh has it (the mesh's bounds are grown by that). It is turned from where
 its middle is drawn, so a card the wander carries past a camera standing in the cloud still faces it, its U to the
-camera's right and its V up (the mesh winds every card so the camera sees its front). By day the pollen drifts pale gold in
+camera's right and its V up (the mesh winds every card so the camera sees its front: Slonk.Fauna.MoteCloud checks a
+copy of the turn against the mesh, and holds the CRC of the mote branch's lines, its comments aside, as the copy was
+made, so it fails when they change). By day the pollen drifts pale gold in
 the sun and the gnats dance dark in their swarm, a speck far off thinning out rather than swelling (its share of the
 cover falls as its card grows, and over the last fifth of the fade): the cards that make up the share are chosen each by
 a number of its own that holds from frame to frame, so a speck shown is drawn whole every frame (the temporal upscaler
@@ -68,8 +70,9 @@ closing over half a minute (the flight itself is the group's frame); and a speck
 than about two pixels across (at most four times its size), its wings and bank scaled back as it grows so the box it is
 culled by holds it. Every vertex stays within 400 unit-mesh cm of the mesh's box: the instances' boxes are padded by
 that (FFaunaKindDesc::CullPaddingUnits), and Slonk.Fauna.Meshes checks a float copy of this code against it
-(SlonkFauna::FlierMotion, which must change with it: the test holds the CRC of this code's lines, its comments aside,
-as the copy was made, and fails when they change). Two-sided foliage shading lets the sun through the wings.
+(SlonkFauna::FlierMotion, which must change with it: the test holds the CRC of this code's lines, its comments and the
+mote branch aside, as the copy was made, and fails when they change). Two-sided foliage shading lets the sun through
+the wings.
 
 Run with the editor open and no play session:  python3 tools/planet_materials/fauna_material.py
 To see whether the asset has drifted from it:  python3 tools/ue_mcp/matgraph.py check tools/planet_materials/fauna_material.py M_Fauna
