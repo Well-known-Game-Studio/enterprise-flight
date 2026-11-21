@@ -161,14 +161,15 @@ namespace SlonkFauna
 	 *  floats (Custom::Num each). */
 	SLONK_API void MembersOf(const FFaunaGroup& G, TArray<FTransform>& OutXf, TArray<float>& OutCustom);
 
-	/** Something that may scare a group: a craft (bCraft: its height over the ground, cm) or someone on foot,
-	 *  planet-local. */
+	/** Something that may scare a group: a craft (bCraft: its height over the ground, cm, and whether it is set down) or
+	 *  someone on foot, planet-local. */
 	struct FFaunaThreat
 	{
 		FVector PosCm = FVector::ZeroVector;
 		FVector VelCmS = FVector::ZeroVector;
 		double AltitudeCm = -1.0;
 		bool bCraft = true;
+		bool bLanded = false;
 	};
 	/** A group's fright: when it was last startled (the path clock's seconds), which its panic eases from; the way it
 	 *  fled (planet-local unit, away from what scared it and up), and how far off its path it was at that moment, which
@@ -196,8 +197,21 @@ namespace SlonkFauna
 	/** How far a group's frame is off its path for its fright at a time, planet-local cm: away fast, held a while, back
 	 *  by PanicSec (exactly zero from then). */
 	SLONK_API FVector PanicOffset(const FPanic& P, const FFaunaKindDesc& D, double Now);
-	/** Whether a threat scares a group at a place: a craft below the kind's ScareAltitudeCm and within its
-	 *  ScareRadiusCm, someone on foot within CrewScareCm. */
+	/** How fast a shaken group's frame wheels round to the way it flies, and how fast its members' bank follows the turn,
+	 *  radians a second. */
+	constexpr double FlightTurnRadS = 2.5;
+	constexpr double FlightBankRadS = 2.0;
+	/**
+	 * A group's frame as it flies at a time (the paths' clock), on its path and off it for its fright: a calm group's is
+	 * its path's (PathAt), exactly. A shaken one is where its path and its flight (PanicOffset) put it, at their velocity
+	 * together, facing the way it flies, level: it wheels round to that from Was (its frame Dt seconds before) at
+	 * FlightTurnRadS at most, so a startle turns the formation rather than flipping it, and leans into the turn it makes
+	 * (hard over while it wheels), its bank following at FlightBankRadS at most. A group just come has no frame before:
+	 * any long Dt faces it its flight at once.
+	 */
+	SLONK_API FFaunaPose FlightAt(const FFaunaGroup& G, const FFaunaKindDesc& D, const FPanic& P, double RadiusCm, double Now, const FFaunaPose& Was, double Dt);
+	/** Whether a threat scares a group at a place: a craft in the air (not set down) below the kind's ScareAltitudeCm
+	 *  and within its ScareRadiusCm, someone on foot within CrewScareCm. */
 	SLONK_API bool Scares(const FFaunaKindDesc& D, const FVector& GroupPosCm, const FFaunaThreat& T);
 	/** Startles a group at its place now if the threat scares it (unless it was startled in the last RestartleSec, or is
 	 *  already half again its flight off its path): true if it did, as StartleNow. */
@@ -216,7 +230,9 @@ namespace SlonkFauna
 	 * The material's motion of a flier's vertex (fauna_material.py, WPO_CODE), transliterated in floats as the GPU runs
 	 * it: the offset of a vertex at LP (the unit mesh's cm, in its instance's frame) with its vertex colour, at the
 	 * material's time T, for a member's custom floats (Custom::Num) in a group's custom primitive data (GroupData::Num),
-	 * DistCm from the camera, which sees PxPerRad pixels a radian. In the instance's frame, unit-mesh cm.
+	 * DistCm from the camera, which sees PxPerRad pixels a radian. In the instance's frame, unit-mesh cm. A hand copy:
+	 * Slonk.Fauna.Meshes ties it to the script by the CRC of WPO_CODE's lines, so an edit to the material's motion alone
+	 * fails it.
 	 */
 	SLONK_API FVector3f FlierMotion(const FVector3f& LP, const FLinearColor& VC, float T, const float* Custom, const float* Group, float DistCm, float PxPerRad);
 

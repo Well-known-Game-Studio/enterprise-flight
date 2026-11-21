@@ -132,8 +132,8 @@ namespace SlonkFauna
 		/** Groups and members about at once, at most. */
 		int32 MaxGroups = 0;
 		int32 MaxMembers = 0;
-		/** A craft lower than ScareAltitudeCm over the ground and within ScareRadiusCm of a group startles it; so does
-		 *  someone on foot within CrewScareCm. A startled group flees this far, cm, before it drifts back. */
+		/** A craft in the air lower than ScareAltitudeCm over the ground and within ScareRadiusCm of a group startles
+		 *  it; so does someone on foot within CrewScareCm. A startled group flees this far, cm, before it drifts back. */
 		double ScareRadiusCm = 0.0;
 		double ScareAltitudeCm = 0.0;
 		double CrewScareCm = 0.0;

@@ -733,26 +733,55 @@ bool FSlonkFaunaHabitatFliersTest::RunTest(const FString& Parameters)
 	GroupsOverGlobe(W, 1500, Groups, &Cells);
 	int32 ByHabitat[(int32)EFlierHabitat::Count] = {};
 	int32 Wrong = 0, Members = 0;
+	// Each flock's habitat read afresh round its middle, not by the reading that placed it: the scatter's habitat at 49
+	// points out to 450 m, and whether there is water out to a kilometre. Wooded ground by a woodland flock, steep ground
+	// by a cliff's, water within a kilometre of a shore's, level land with little water about a meadow's; land by every
+	// flock, most of it free of ice.
+	const double R = W.P.RadiusCm;
+	double LeastWood = 1.0, LeastSteep = 1.0, LeastLevel = 1.0;
 	for (const SlonkFauna::FFaunaGroup& G : Groups)
 	{
 		++ByHabitat[(int32)G.Habitat];
 		Members += G.Members;
-		const SlonkFauna::FFlierHabitatRead H = SlonkFauna::FlierHabitatAt(W.P, G.Centre);
-		bool bOk = H.BestScore > 0.f && H.Best == G.Habitat && H.LandPoints > 0;
+		double MaxForest = 0.0, MaxSteep = 0.0, FlatSum = 0.0;
+		int32 Points = 0, Land = 0, Icy = 0, Wet = 0;
+		for (int32 Ring = 0; Ring <= 4; ++Ring)
+		{
+			const int32 Around = Ring == 0 ? 1 : 12;
+			for (int32 k = 0; k < Around; ++k)
+			{
+				const FVector Dir = Ring == 0 ? G.Centre : AlongGround(G.Centre, 11250.0 * Ring, R, UE_DOUBLE_TWO_PI * (k + 0.5 * (Ring % 2)) / Around);
+				const SlonkScatter::FHabitat H = SlonkScatter::HabitatAt(W.P, Dir);
+				++Points;
+				if (H.bWater) { ++Wet; continue; }
+				++Land;
+				MaxForest = FMath::Max(MaxForest, H.Forest);
+				MaxSteep = FMath::Max(MaxSteep, FMath::Max(H.Cliff, 0.6 * H.WallFoot));
+				FlatSum += H.Flat;
+				Icy += H.Ice > 0.35 ? 1 : 0;
+			}
+		}
+		bool bWaterWithinKm = Wet > 0;
+		for (const double Out : { 6.0e4, 8.0e4, 1.0e5 })
+		{
+			for (int32 k = 0; k < 12 && !bWaterWithinKm; ++k) { bWaterWithinKm = SlonkScatter::HabitatAt(W.P, AlongGround(G.Centre, Out, R, UE_DOUBLE_TWO_PI * k / 12.0)).bWater; }
+		}
+		const double Level = FlatSum / FMath::Max(Land, 1);
+		bool bOk = Land > 0 && Icy * 2 <= Land;
 		switch (G.Habitat)
 		{
-		case EFlierHabitat::Woodland: bOk &= H.MaxForest > 0.25; break;
-		case EFlierHabitat::Cliff: bOk &= H.MaxCliff > 0.15; break;
-		case EFlierHabitat::Coast: bOk &= H.ShoreWaterPoints >= 2 && H.LandPoints >= 3; break;
-		case EFlierHabitat::Meadow: bOk &= H.MeanFlat > 0.75 && H.WaterPoints == 0; break;
+		case EFlierHabitat::Woodland: bOk &= MaxForest > 0.2; LeastWood = FMath::Min(LeastWood, MaxForest); break;
+		case EFlierHabitat::Cliff: bOk &= MaxSteep > 0.1; LeastSteep = FMath::Min(LeastSteep, MaxSteep); break;
+		case EFlierHabitat::Coast: bOk &= bWaterWithinKm && Land >= 3; break;
+		case EFlierHabitat::Meadow: bOk &= Level > 0.6 && Wet * 10 <= Points; LeastLevel = FMath::Min(LeastLevel, Level); break;
 		default: bOk = false; break;
 		}
 		const SlonkFauna::FFaunaKindDesc& D = SlonkFauna::KindDesc(EFaunaKind::Flier);
 		bOk &= G.Members >= D.GroupMin && G.Members <= D.GroupMax && G.SpanM > 0.3f && G.SpanM < 1.5f;
 		Wrong += bOk ? 0 : 1;
 	}
-	AddInfo(FString::Printf(TEXT("%d cells of an Earth-like world: %d flocks (%d woodland, %d meadow, %d coast, %d cliff; %d birds), %d off their habitat"), Cells, Groups.Num(),
-		ByHabitat[0], ByHabitat[1], ByHabitat[2], ByHabitat[3], Members, Wrong));
+	AddInfo(FString::Printf(TEXT("%d cells of an Earth-like world: %d flocks (%d woodland, %d meadow, %d coast, %d cliff; %d birds), %d off their habitat read afresh (the least wooded wood %.2f, the least steep cliff %.2f, the least level meadow %.2f)"),
+		Cells, Groups.Num(), ByHabitat[0], ByHabitat[1], ByHabitat[2], ByHabitat[3], Members, Wrong, LeastWood, LeastSteep, LeastLevel));
 	TestTrue(TEXT("flocks on an Earth-like world"), Groups.Num() > 50);
 	TestTrue(TEXT("by the woods, the cliffs and the shores"), ByHabitat[(int32)EFlierHabitat::Woodland] > 0 && ByHabitat[(int32)EFlierHabitat::Cliff] > 0 && ByHabitat[(int32)EFlierHabitat::Coast] > 0);
 	TestEqual(TEXT("every flock where its habitat is"), Wrong, 0);
@@ -849,7 +878,8 @@ bool FSlonkFaunaStartleTest::RunTest(const FString& Parameters)
 {
 	// A craft passing 30 m over the ground through a flock scatters it; one passing 300 m up does not; the flock is back
 	// on its path two minutes after its last fright. Someone walking just under a flock startles it too, one far off
-	// does not; and the material's scatter is open at once and closed again by its fortieth second.
+	// does not; a craft set down by it does not, the same craft in the air does; and the material's scatter is open at
+	// once and closed again by its fortieth second.
 	const SlonkFauna::FFaunaWorld W = EarthFauna();
 	SlonkFauna::FFaunaGroup G;
 	if (!TestFlock(W, G)) { AddError(TEXT("no flock found on the Earth-like world")); return false; }
@@ -911,6 +941,16 @@ bool FSlonkFaunaStartleTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("someone walking under a flock startles it"), SlonkFauna::StartleGroup(Under, D, Here, Walker, 2000.0));
 	Walker.PosCm = Here + FVector::CrossProduct(Here.GetSafeNormal(), FVector::ZAxisVector).GetSafeNormal() * 2.0e5;
 	TestFalse(TEXT("someone 2 km off does not"), SlonkFauna::StartleGroup(Away, D, Here, Walker, 2000.0));
+	// A craft set down 20 m under a flock and 30 m to one side, as a ship parked there is, scares nothing; lifted off
+	// there, it does.
+	SlonkFauna::FFaunaThreat Parked;
+	Parked.PosCm = Here - Here.GetSafeNormal() * 2000.0 + FVector::CrossProduct(Here.GetSafeNormal(), FVector::ZAxisVector).GetSafeNormal() * 3000.0;
+	Parked.AltitudeCm = 150.0;
+	Parked.bLanded = true;
+	SlonkFauna::FPanic ByParked, ByLifting;
+	TestFalse(TEXT("a craft set down by a flock does not startle it"), SlonkFauna::StartleGroup(ByParked, D, Here, Parked, 2000.0));
+	Parked.bLanded = false;
+	TestTrue(TEXT("the same craft in the air there does"), SlonkFauna::StartleGroup(ByLifting, D, Here, Parked, 2000.0));
 	// The material's scatter: within two spans, open a few seconds in, closed by the fortieth.
 	FMotionCase M;
 	M.Custom[SlonkFauna::Custom::SizeM] = 0.4f;
@@ -1081,6 +1121,139 @@ bool FSlonkFaunaStartleTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaFlightTest, "Slonk.Fauna.Flight", SLONK_TEST_FLAGS)
+bool FSlonkFaunaFlightTest::RunTest(const FString& Parameters)
+{
+	// A group's frame as the game draws it, a frame at a time from the one before (SlonkFauna::FlightAt): a calm flock's
+	// is its path's, exactly. Startled, a flock faces the way it really flies within a second and a half and keeps to it
+	// wherever it flies at a bird's pace, where its path's frame had it fly sideways (a craft beside it) or tail first (a
+	// craft just ahead, its flight back the way it came outrunning its path's at first); its frame never turns faster
+	// than FlightTurnRadS, it banks hard into the wheel, its bank never changes faster than FlightBankRadS, and its frame
+	// is its path's again once its fright is over. The flock is the Earth-like world's slowest, whose flight outruns its
+	// path's the longest.
+	const SlonkFauna::FFaunaWorld W = EarthFauna();
+	TArray<SlonkFauna::FFaunaGroup> Groups;
+	GroupsOverGlobe(W, 600, Groups);
+	if (Groups.Num() == 0) { AddError(TEXT("no flock found on the Earth-like world")); return false; }
+	const SlonkFauna::FFaunaGroup* Slowest = &Groups[0];
+	for (const SlonkFauna::FFaunaGroup& F : Groups) { if (F.SpeedCmS < Slowest->SpeedCmS) { Slowest = &F; } }
+	const SlonkFauna::FFaunaGroup& G = *Slowest;
+	const double R = W.P.RadiusCm;
+	const SlonkFauna::FFaunaKindDesc& D = SlonkFauna::KindDesc(EFaunaKind::Flier);
+	// The way a flock flies, level, from where its path and its flight put it a tenth of a second apart, and how fast.
+	auto FlownWay = [&](const SlonkFauna::FPanic& P, double T, double& OutSpeed)
+	{
+		const FVector A = SlonkFauna::PathAt(G, R, T).PosCm + SlonkFauna::PanicOffset(P, D, T);
+		const FVector B = SlonkFauna::PathAt(G, R, T + 0.1).PosCm + SlonkFauna::PanicOffset(P, D, T + 0.1);
+		const FVector Up = A.GetSafeNormal();
+		FVector V = (B - A) / 0.1;
+		V -= Up * FVector::DotProduct(V, Up);
+		OutSpeed = V.Size();
+		return V.GetSafeNormal();
+	};
+	auto Between = [](const FVector& A, const FVector& B) { return FMath::Acos(FMath::Clamp(FVector::DotProduct(A.GetSafeNormal(), B.GetSafeNormal()), -1.0, 1.0)); };
+	struct FRun
+	{
+		bool bStartled = false;
+		int32 OffPath = 0, CalmFrames = 0;
+		double Faced = -1.0, Worst = 0.0, PathWorst = 0.0, MaxTurn = 0.0, MaxBankStep = 0.0, MaxBank = 0.0, WheelBank = 0.0;
+	};
+	const double Ts = 1500.0, Dt = 1.0 / 60.0;
+	// Startled at Ts by a craft 30 m up and 50 m off at a bearing from its heading (0 ahead, a quarter turn to its right).
+	auto Run = [&](double Bearing)
+	{
+		FRun Out;
+		SlonkFauna::FPanic Panic;
+		SlonkFauna::FFaunaPose Was = SlonkFauna::PathAt(G, R, Ts - 1.0 - Dt);
+		const int32 Frames = FMath::CeilToInt32((SlonkFauna::PanicSec + 6.0) / Dt);
+		for (int32 f = 0; f < Frames; ++f)
+		{
+			const double T = Ts - 1.0 + f * Dt;
+			SlonkFauna::FFaunaPose Pose = SlonkFauna::FlightAt(G, D, Panic, R, T, Was, Dt);
+			if (!Out.bStartled && T >= Ts)
+			{
+				SlonkFauna::FFaunaThreat Craft;
+				Craft.PosCm = Pose.PosCm + (Pose.Rot.GetForwardVector() * FMath::Cos(Bearing) + Pose.Rot.GetRightVector() * FMath::Sin(Bearing)) * 5000.0;
+				Craft.AltitudeCm = 3000.0;
+				Out.bStartled = SlonkFauna::StartleGroup(Panic, D, Pose.PosCm, Craft, T);
+				if (Out.bStartled) { Pose = SlonkFauna::FlightAt(G, D, Panic, R, T, Was, Dt); }
+			}
+			const FVector Fwd = Pose.Rot.GetForwardVector();
+			if (!Panic.IsLive(T))
+			{
+				const SlonkFauna::FFaunaPose Path = SlonkFauna::PathAt(G, R, T);
+				++Out.CalmFrames;
+				Out.OffPath += Pose.PosCm == Path.PosCm && Pose.Rot.Equals(Path.Rot, 0.0) && Pose.Bank == Path.Bank ? 0 : 1;
+			}
+			else
+			{
+				double Speed = 0.0;
+				const FVector Way = FlownWay(Panic, T, Speed);
+				const double Age = T - Panic.T0;
+				if (Out.Faced < 0.0 && Between(Fwd, Way) < 0.1) { Out.Faced = Age; }
+				// Where it flies at a bird's pace (not as it slows to turn back to its path), a second and a half on.
+				if (Speed > 500.0 && Age >= 1.5)
+				{
+					Out.Worst = FMath::Max(Out.Worst, Between(Fwd, Way));
+					Out.PathWorst = FMath::Max(Out.PathWorst, Between(SlonkFauna::PathAt(G, R, T).Rot.GetForwardVector(), Way));
+				}
+				if (Age < 1.5) { Out.WheelBank = FMath::Max(Out.WheelBank, FMath::Abs(Pose.Bank)); }
+			}
+			Out.MaxTurn = FMath::Max(Out.MaxTurn, Between(Fwd, Was.Rot.GetForwardVector()));
+			Out.MaxBankStep = FMath::Max(Out.MaxBankStep, FMath::Abs(Pose.Bank - Was.Bank));
+			Out.MaxBank = FMath::Max(Out.MaxBank, FMath::Abs(Pose.Bank));
+			Was = Pose;
+		}
+		return Out;
+	};
+	const FRun Ahead = Run(0.0), Beside = Run(UE_DOUBLE_HALF_PI);
+	for (const TPair<const TCHAR*, const FRun*>& Case : { TPair<const TCHAR*, const FRun*>(TEXT("just ahead"), &Ahead), TPair<const TCHAR*, const FRun*>(TEXT("beside it"), &Beside) })
+	{
+		const FRun& U = *Case.Value;
+		AddInfo(FString::Printf(TEXT("a %s flock at %.1f m/s startled by a craft %s: it faces the way it flies %.2f s on and keeps within %.1f deg of it from 1.5 s on (its path's frame up to %.0f deg off); turning %.2f deg a frame at most (%.2f allowed), banked %.2f rad into the wheel, its bank changing %.4f rad a frame at most (%.4f allowed), %.2f at most; %d of %d calm frames off its path's"),
+			SlonkFauna::HabitatName(G.Habitat), G.SpeedCmS / 100.0, Case.Key, U.Faced, FMath::RadiansToDegrees(U.Worst), FMath::RadiansToDegrees(U.PathWorst), FMath::RadiansToDegrees(U.MaxTurn),
+			FMath::RadiansToDegrees(SlonkFauna::FlightTurnRadS * Dt), U.WheelBank, U.MaxBankStep, SlonkFauna::FlightBankRadS * Dt, U.MaxBank, U.OffPath, U.CalmFrames));
+		TestTrue(TEXT("startled by the craft"), U.bStartled);
+		TestTrue(TEXT("calm before and after"), U.CalmFrames > 300);
+		TestEqual(TEXT("a calm flock's frame is its path's, exactly"), U.OffPath, 0);
+		TestTrue(TEXT("a startled flock faces the way it flies within a second and a half"), U.Faced >= 0.0 && U.Faced <= 1.5);
+		TestTrue(TEXT("and keeps to it"), U.Worst < 0.15);
+		TestTrue(TEXT("its frame never turns faster than FlightTurnRadS"), U.MaxTurn <= SlonkFauna::FlightTurnRadS * Dt + 1e-3);
+		TestTrue(TEXT("it banks hard into the wheel"), U.WheelBank > 0.5);
+		TestTrue(TEXT("its bank never changes faster than FlightBankRadS"), U.MaxBankStep <= SlonkFauna::FlightBankRadS * Dt + 5e-3);
+		TestTrue(TEXT("and never past 0.7 rad"), U.MaxBank <= 0.7 + 1e-9);
+	}
+	TestTrue(TEXT("where its path's frame had it fly tail first from a craft ahead"), Ahead.PathWorst > 2.5);
+	TestTrue(TEXT("and sideways from one beside it"), Beside.PathWorst > 0.6);
+	return true;
+}
+
+namespace
+{
+	/** fauna_material.py's WPO_CODE, which SlonkFauna::FlierMotion copies: its lines trimmed, the blank ones and the
+	 *  comments left out. Empty if the script or the block is not found. */
+	FString MaterialMotionBlock()
+	{
+		FString Py;
+		if (!FFileHelper::LoadFileToString(Py, *FPaths::Combine(FPaths::ProjectDir(), TEXT("../tools/planet_materials/fauna_material.py")))) { return FString(); }
+		TArray<FString> Lines;
+		Py.ParseIntoArrayLines(Lines, false);
+		FString Block;
+		bool bIn = false;
+		for (FString& L : Lines)
+		{
+			L.TrimStartAndEndInline();
+			if (!bIn) { bIn = L.StartsWith(TEXT("WPO_CODE = r\"\"\"")); continue; }
+			if (L.StartsWith(TEXT("\"\"\""))) { return Block; }
+			if (L.IsEmpty() || L.StartsWith(TEXT("//"))) { continue; }
+			Block += L + TEXT("\n");
+		}
+		return FString();
+	}
+	/** Its CRC (FCrc::StrCrc32) when SlonkFauna::FlierMotion was last brought in line with it. */
+	constexpr uint32 MaterialMotionBlockCrc = 0x0a6c86cdu;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaMeshesTest, "Slonk.Fauna.Meshes", SLONK_TEST_FLAGS)
 bool FSlonkFaunaMeshesTest::RunTest(const FString& Parameters)
 {
@@ -1197,6 +1370,13 @@ bool FSlonkFaunaMeshesTest::RunTest(const FString& Parameters)
 	AddInfo(FString::Printf(TEXT("%d vertices moved by the material: %d outside the box padded %.0f units (the closest %.0f units inside); %d wing roots off their hinge"), Tried, Escaped, D.CullPaddingUnits, Margin, Detached));
 	TestEqual(TEXT("the material keeps every vertex in its instance's box"), Escaped, 0);
 	TestEqual(TEXT("a wing's root stays on its hinge"), Detached, 0);
+	// Those hold of the float copy (SlonkFauna::FlierMotion) only while the material's motion is what was copied: an edit
+	// to fauna_material.py's WPO_CODE alone fails here, until the copy is brought in line and the CRC with it.
+	const FString Block = MaterialMotionBlock();
+	const uint32 BlockCrc = FCrc::StrCrc32(*Block);
+	AddInfo(FString::Printf(TEXT("fauna_material.py's WPO_CODE: %d characters of code, CRC 0x%08x (0x%08x when the copy was made)"), Block.Len(), BlockCrc, MaterialMotionBlockCrc));
+	TestTrue(TEXT("fauna_material.py's WPO_CODE found"), Block.Len() > 1000);
+	TestEqual(TEXT("FlierMotion copies the material's motion as it is now"), BlockCrc, MaterialMotionBlockCrc);
 
 	// The static mesh: made once and kept, three LODs at the kind's screen sizes; none for a plan with nothing built.
 	UStaticMesh* Mesh = SlonkFaunaMeshes::GetMesh(Plan, EFaunaKind::Flier);
@@ -1212,7 +1392,9 @@ bool FSlonkFaunaBudgetTest::RunTest(const FString& Parameters)
 {
 	// The kind table's caps hold the plan's budget (about 3,500 instances, at most 60 group sets); about any camera on an
 	// Earth-like world the fliers keep to theirs (12 flocks, 1,000 birds, 60,000 triangles at their nearest LOD); a frame's
-	// work on them is far under 0.15 ms of the game thread; and a scan a sixth of a cell on reads only the cells new to it.
+	// math for them (where each flies and how it is turned, its fright and the threats to it: not the component's writes
+	// to the scene, which want a world to time) is far under 0.15 ms of the game thread; and a scan a sixth of a cell on
+	// reads only the cells new to it.
 	int32 Instances = 0, GroupSets = 0;
 	for (int32 K = 0; K < SlonkFauna::NumKinds; ++K)
 	{
@@ -1252,9 +1434,23 @@ bool FSlonkFaunaBudgetTest::RunTest(const FString& Parameters)
 			ScanAndSelect(F, CameraOver(W, AlongGround(Groups[i].Centre, D.CellCm / 6.0 + 100.0, W.P.RadiusCm, 0.3)), Active, &MovedMs, &MovedRead, &MovedCells);
 		}
 	}
-	// A frame's work for the busiest place: every group's place on its path, its fright and two threats checked.
+	// A frame's math for the busiest place, as UpdateView does it: every group's frame as it flies from the one before
+	// (a third of them shaken, off their paths, turning and reading the ground under them), its fright and two threats
+	// checked.
 	const double R = W.P.RadiusCm;
 	TMap<uint64, SlonkFauna::FPanic> Panics;
+	TMap<uint64, SlonkFauna::FFaunaPose> Poses;
+	int32 Shaken = 0, Nth = 0;
+	for (const TPair<uint64, SlonkFauna::FFaunaField::FGroupRef>& A : Busiest.GetActive())
+	{
+		Poses.Add(A.Key, SlonkFauna::PathAt(*A.Value, R, 500.0));
+		if (Nth++ % 3 != 0) { continue; }
+		SlonkFauna::FPanic Panic;
+		SlonkFauna::FFaunaThreat By;
+		By.PosCm = SlonkFauna::PathAt(*A.Value, R, 495.0).PosCm + FVector(3000.0, 0.0, 0.0);
+		By.AltitudeCm = 3000.0;
+		if (SlonkFauna::StartleGroup(Panic, D, SlonkFauna::PathAt(*A.Value, R, 495.0).PosCm, By, 495.0)) { Panics.Add(A.Key, Panic); ++Shaken; }
+	}
 	SlonkFauna::FFaunaThreat Craft, Walker;
 	Craft.AltitudeCm = 3000.0;
 	Walker.bCraft = false;
@@ -1266,9 +1462,11 @@ bool FSlonkFaunaBudgetTest::RunTest(const FString& Parameters)
 		const double Now = 500.0 + f / 60.0;
 		for (const TPair<uint64, SlonkFauna::FFaunaField::FGroupRef>& A : Busiest.GetActive())
 		{
-			const SlonkFauna::FFaunaPose P = SlonkFauna::PathAt(*A.Value, R, Now);
 			SlonkFauna::FPanic Panic = Panics.FindRef(A.Key);
-			const FVector Pos = P.PosCm + SlonkFauna::PanicOffset(Panic, D, Now);
+			SlonkFauna::FFaunaPose& Was = Poses.FindChecked(A.Key);
+			const SlonkFauna::FFaunaPose P = SlonkFauna::FlightAt(*A.Value, D, Panic, R, Now, Was, 1.0 / 60.0);
+			Was = P;
+			const FVector Pos = P.PosCm;
 			Craft.PosCm = Pos + FVector(0.0, 0.0, 1.0e5);
 			Walker.PosCm = Pos + FVector(1.0e5, 0.0, 0.0);
 			if (SlonkFauna::StartleGroup(Panic, D, Pos, Craft, Now) || SlonkFauna::StartleGroup(Panic, D, Pos, Walker, Now)) { Panics.Add(A.Key, Panic); }
@@ -1279,13 +1477,14 @@ bool FSlonkFaunaBudgetTest::RunTest(const FString& Parameters)
 	const int32 Triangles = MaxMembers * 60;
 	AddInfo(FString::Printf(TEXT("kind table: %d instances, %d group sets at most; about %d places on an Earth-like world, at most %d flocks and %d birds (%d triangles at LOD 0), %d over the caps"),
 		Instances, GroupSets, Places, MaxGroups, MaxMembers, Triangles, Over));
-	AddInfo(FString::Printf(TEXT("a frame's work on %d flocks %.4f ms; a first scan %.1f ms over %d cells; one a sixth of a cell on %.1f ms, %d of its %d cells read anew"),
-		Busiest.GetActive().Num(), FrameMs, FirstMs, FirstCells, MovedMs, MovedRead, MovedCells));
+	AddInfo(FString::Printf(TEXT("a frame's math on %d flocks (%d of them shaken) %.4f ms; a first scan %.1f ms over %d cells; one a sixth of a cell on %.1f ms, %d of its %d cells read anew"),
+		Busiest.GetActive().Num(), Shaken, FrameMs, FirstMs, FirstCells, MovedMs, MovedRead, MovedCells));
 	TestTrue(TEXT("the frames' places all found"), FMath::IsFinite(Sink));
 	TestTrue(TEXT("places with flocks to try"), Places >= 8 && MaxGroups > 0);
+	TestTrue(TEXT("shaken flocks in the frames timed"), Shaken > 0);
 	TestEqual(TEXT("never over the fliers' caps"), Over, 0);
 	TestTrue(TEXT("at most 60,000 triangles of birds at LOD 0"), Triangles <= 60000);
-	TestTrue(TEXT("a frame's work far under 0.15 ms"), FrameMs < 0.15);
+	TestTrue(TEXT("a frame's math far under 0.15 ms"), FrameMs < 0.15);
 	TestTrue(TEXT("a scan a sixth of a cell on reads only the cells new to it"), MovedCells > 0 && MovedRead * 4 < MovedCells);
 	return true;
 }

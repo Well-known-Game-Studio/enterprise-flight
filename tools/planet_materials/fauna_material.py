@@ -29,7 +29,8 @@ Per-group custom primitive data, set by UPlanetFaunaComponent each frame (SlonkF
     9   when its wingbeat's urge began to come in, on the same clock: the fast beat comes in over 0.3 s from then (a
         startle while it is shaken sets it where the coming-in stands, SlonkFauna::FPanic::OnsetT0)
 Parameters set by UPlanetFaunaComponent: ViewPos (the camera, world) and PxPerRad (its pixels a radian), so the fade
-and the speck floor are the same in the shadow passes as in the view; GlowColor.
+and the speck floor are the same in the shadow passes as in the view. GlowColor is left at its default: no flier glows
+yet (MembersOf gives every one a glow of 0).
 
 The motion (WPO_CODE): bursts of wingbeats on a cycle of 3 to 7 s of each bird's own, gliding with the wings a little
 raised between, beating all the time and faster while startled; the body banked into the turn; a ripple through the
@@ -38,7 +39,8 @@ closing over half a minute (the flight itself is the group's frame); and a speck
 than about two pixels across (at most four times its size), its wings and bank scaled back as it grows so the box it is
 culled by holds it. Every vertex stays within 400 unit-mesh cm of the mesh's box: the instances' boxes are padded by
 that (FFaunaKindDesc::CullPaddingUnits), and Slonk.Fauna.Meshes checks a float copy of this code against it
-(SlonkFauna::FlierMotion, which must change with it). Two-sided foliage shading lets the sun through the wings.
+(SlonkFauna::FlierMotion, which must change with it: the test holds the CRC of this code's lines, its comments aside,
+as the copy was made, and fails when they change). Two-sided foliage shading lets the sun through the wings.
 
 Run with the editor open and no play session:  python3 tools/planet_materials/fauna_material.py
 To see whether the asset has drifted from it:  python3 tools/ue_mcp/matgraph.py check tools/planet_materials/fauna_material.py M_Fauna

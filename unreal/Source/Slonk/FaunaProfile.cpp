@@ -13,8 +13,8 @@ namespace
 	 * 2.5 km their members fade by), at most 12 of them and 1,000 birds. With the caps full, the farthest out of sight
 	 * (within reach or past it) give way to a flock 200 m nearer; where the caps are held by flocks it cannot take the
 	 * place of (more in sight than the caps allow, or as far off as it), it waits, and may come in sight before there is
-	 * room. A craft lower than 250 m over the ground and within 250 m of a flock, or someone on foot
-	 * within 40 m, startles it: it flees 220 m and drifts back. Their shadows within 300 m. The material moves a bird's
+	 * room. A craft in the air (not set down) lower than 250 m over the ground and within 250 m of a flock, or someone
+	 * on foot within 40 m, startles it: it turns and flees 220 m, and drifts back. Their shadows within 300 m. The material moves a bird's
 	 * vertices up to 4 unit-mesh metres past its box (its wings, the ripple through the flock, a startle's scatter of up
 	 * to two spans and the speck floor's growth: fauna_material.py), which every instance's box is padded by; their LOD
 	 * screen sizes are set with that box (about 7.8 spans across, where a bird is 1 span), so a bird goes to its 12

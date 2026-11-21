@@ -512,10 +512,45 @@ FVector SlonkFauna::PanicOffset(const FPanic& P, const FFaunaKindDesc& D, double
 	return P.Carry * CarryFade + P.Dir * (D.FleeCm * Rise * Hold);
 }
 
+SlonkFauna::FFaunaPose SlonkFauna::FlightAt(const FFaunaGroup& G, const FFaunaKindDesc& D, const FPanic& P, double RadiusCm, double Now, const FFaunaPose& Was, double Dt)
+{
+	const FFaunaPose Path = PathAt(G, RadiusCm, Now);
+	if (!P.IsLive(Now)) { return Path; }
+	// Where its path and its flight put it now, a moment on and twice that (on from now: before its latest startle it
+	// was on another flight).
+	constexpr double H = 0.25, Hv = 0.05;
+	auto Flown = [&](double T) { return PathAt(G, RadiusCm, T).PosCm + PanicOffset(P, D, T); };
+	const FVector X0 = Path.PosCm + PanicOffset(P, D, Now), X1 = Flown(Now + H), X2 = Flown(Now + 2.0 * H);
+	const FVector Up = X0.GetSafeNormal();
+	auto Level = [&Up](const FVector& V) { return V - Up * FVector::DotProduct(V, Up); };
+	FFaunaPose Pose;
+	Pose.PosCm = X0;
+	Pose.VelCmS = Path.VelCmS + (PanicOffset(P, D, Now + Hv) - PanicOffset(P, D, Now)) / Hv;
+	// Its heading: from the way it faced a moment before, round toward the way it flies.
+	FVector Fwd0 = Level(Was.Rot.GetForwardVector()).GetSafeNormal();
+	if (Fwd0.IsNearlyZero()) { Fwd0 = Level(Path.Rot.GetForwardVector()).GetSafeNormal(); }
+	FVector Want = Level(Pose.VelCmS).GetSafeNormal();
+	if (Want.IsNearlyZero()) { Want = Fwd0; }
+	const FVector Right = FVector::CrossProduct(Up, Fwd0);
+	const double Ang = FMath::Atan2(FVector::DotProduct(Want, Right), FVector::DotProduct(Want, Fwd0));
+	const double MaxTurn = FlightTurnRadS * FMath::Max(Dt, 0.0);
+	const double Turn = FMath::Clamp(Ang, -MaxTurn, MaxTurn);
+	Pose.Rot = FRotationMatrix::MakeFromXZ((Fwd0 * FMath::Cos(Turn) + Right * FMath::Sin(Turn)).GetSafeNormal(), Up).ToQuat();
+	// Its bank (as PathAt's: a turn toward +y drops the right wing): hard over while it wheels round, else into the turn
+	// its flight makes; eased toward that from the bank it had.
+	const bool bWheeling = FMath::Abs(Ang) > MaxTurn + 0.02;
+	const FVector A = Level(X1 - X0), B = Level(X2 - X1);
+	const double Yaw = bWheeling ? FMath::Sign(Ang) * FlightTurnRadS : FMath::Atan2(FVector::DotProduct(FVector::CrossProduct(A, B), Up), FVector::DotProduct(A, B)) / H;
+	const double WantBank = FMath::Clamp(-FMath::Atan(Level(Pose.VelCmS).Size() * Yaw / 981.0), -0.7, 0.7);
+	const double MaxBank = FlightBankRadS * FMath::Max(Dt, 0.0);
+	Pose.Bank = Was.Bank + FMath::Clamp(WantBank - Was.Bank, -MaxBank, MaxBank);
+	return Pose;
+}
+
 bool SlonkFauna::Scares(const FFaunaKindDesc& D, const FVector& GroupPosCm, const FFaunaThreat& T)
 {
 	const double Dist = FVector::Dist(GroupPosCm, T.PosCm);
-	if (T.bCraft) { return T.AltitudeCm >= 0.0 && T.AltitudeCm < D.ScareAltitudeCm && Dist < D.ScareRadiusCm; }
+	if (T.bCraft) { return !T.bLanded && T.AltitudeCm >= 0.0 && T.AltitudeCm < D.ScareAltitudeCm && Dist < D.ScareRadiusCm; }
 	return Dist < D.CrewScareCm;
 }
 

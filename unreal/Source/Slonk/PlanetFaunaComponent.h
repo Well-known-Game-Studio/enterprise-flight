@@ -47,7 +47,8 @@ public:
 	 *  every group go and scans again; the same again changes nothing. */
 	void Configure(UPlanetTerrainComponent* InTerrain, const FPlanetTerrainParams& P, const SlonkFauna::FFaunaProfile& InProfile, float InLife, const FScatterPalette& InPalette);
 	/** Each frame, after the terrain's view update: the groups round the camera come and go, each group's frame moves along
-	 *  its path, and a craft or someone on foot near one startles it. SunDirectionWorld is the way to the star. */
+	 *  its path (and off it, turned the way it flies, while it is shaken: SlonkFauna::FlightAt), and a craft in the air
+	 *  or someone on foot near one startles it. SunDirectionWorld is the way to the star. */
 	void UpdateView(const APlayerController* PC, const FVector& ViewLocationWorld, const FVector& SunDirectionWorld);
 	/** Lets every group go (the world hidden, or not updated this frame): they come back on their paths. */
 	void Suspend();
@@ -69,7 +70,8 @@ public:
 	bool IsConfigured() const { return bConfigured; }
 	int32 GetGroupCount() const { return Sets.Num(); }
 	int32 GetMemberCount() const;
-	/** Whether M_Fauna was found (else the engine's basic material stands in). */
+	/** Whether the groups are drawn in M_Fauna (else the engine's basic material stands in: M_Fauna not found, or
+	 *  slonk.Fauna.Debug asking for it). */
 	bool IsUsingFaunaMaterial() const { return bFaunaMaterial; }
 	/** Debug (fauna watch): the group drawn nearest a point in the world, and where a drawn group is and how it is turned
 	 *  (its frame, its flight along X), in the world; false when it is not drawn. */
@@ -85,6 +87,9 @@ private:
 		SlonkFauna::FFaunaField::FGroupRef Group;
 		UPlanetInstancesComponent* Set = nullptr;
 		bool bShadow = false;
+		/** Its frame as last drawn, and when (the paths' clock): a shaken group wheels round from it. */
+		SlonkFauna::FFaunaPose Pose;
+		double PoseAt = 0.0;
 	};
 	using FScanRef = TSharedPtr<SlonkFauna::FFaunaField::FScan, ESPMode::ThreadSafe>;
 
@@ -126,5 +131,8 @@ private:
 	TArray<UPlanetInstancesComponent*> FreeSets;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> MID;
 	bool bFaunaMaterial = false;
+	/** slonk.Fauna.Debug as the groups drawn have it, and whether MID is the basic material it asked for. */
+	int32 DebugDrawn = 0;
+	bool bPlainAsked = false;
 	float LastPxPerRad = -1.f;
 };

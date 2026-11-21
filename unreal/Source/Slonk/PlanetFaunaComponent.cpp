@@ -92,19 +92,24 @@ int32 UPlanetFaunaComponent::GetMemberCount() const
 
 // A look at the animals with their material set aside: 1 draws them in the engine's basic material (no wingbeat, no
 // fade), 2 also twenty times their size, so where the groups are and that they draw can be seen apart from M_Fauna.
-// Groups spawned after a change take it.
+// A change lets every group go, and they come back drawn as it asks (UpdateView).
 static TAutoConsoleVariable<int32> CVarFaunaDebug(TEXT("slonk.Fauna.Debug"), 0,
-	TEXT("1: the animals in the engine's basic material; 2: that, at twenty times their size (groups spawned after a change)"));
+	TEXT("1: the animals in the engine's basic material; 2: that, at twenty times their size (every group drawn anew as it changes)"));
 
 void UPlanetFaunaComponent::EnsureMaterial()
 {
-	if (MID) { return; }
-	UMaterialInterface* Mat = CVarFaunaDebug.GetValueOnGameThread() > 0 ? nullptr : LoadObject<UMaterialInterface>(nullptr, SlonkFauna::MaterialPath, nullptr, LOAD_Quiet | LOAD_NoWarn);
+	// Made again when slonk.Fauna.Debug asks for the other material.
+	const bool bPlain = DebugDrawn > 0;
+	if (MID && bPlain == bPlainAsked) { return; }
+	bPlainAsked = bPlain;
+	UMaterialInterface* Mat = bPlain ? nullptr : LoadObject<UMaterialInterface>(nullptr, SlonkFauna::MaterialPath, nullptr, LOAD_Quiet | LOAD_NoWarn);
 	bFaunaMaterial = Mat != nullptr;
+	MID = nullptr;
+	LastPxPerRad = -1.f;
 	if (!Mat)
 	{
 		static bool bWarned = false;
-		if (!bWarned)
+		if (!bPlain && !bWarned)
 		{
 			bWarned = true;
 			UE_LOG(LogTemp, Warning, TEXT("Fauna: %s not found (tools/planet_materials/fauna_material.py builds it): the animals are drawn in the engine's basic material, their wings still and nothing faded"), SlonkFauna::MaterialPath);
@@ -149,16 +154,18 @@ void UPlanetFaunaComponent::SpawnSet(const SlonkFauna::FFaunaField::FGroupRef& G
 	C->SetCullPadding(D.CullPaddingUnits);
 	if (MID && C->GetMaterial(0) != MID) { C->SetMaterial(0, MID); }
 	C->AttachToComponent(this, FAttachmentTransformRules::KeepRelativeTransform);
-	const SlonkFauna::FFaunaPose Pose = SlonkFauna::PathAt(*G, Params.RadiusCm, ClockSeconds());
+	// Where it flies now, facing its flight at once if it is still shaken (it had no frame before).
+	const double Now = ClockSeconds();
+	const SlonkFauna::FFaunaPose Pose = SlonkFauna::FlightAt(*G, D, Panics.FindRef(G->Id), Params.RadiusCm, Now, SlonkFauna::FFaunaPose(), SlonkFauna::PanicSec);
 	C->SetRelativeLocationAndRotation(Pose.PosCm, Pose.Rot);
 	TArray<FTransform> Xf;
 	TArray<float> Custom;
 	SlonkFauna::MembersOf(*G, Xf, Custom);
-	if (CVarFaunaDebug.GetValueOnGameThread() >= 2) { for (FTransform& T : Xf) { T.SetScale3D(T.GetScale3D() * 20.0); } }
+	if (DebugDrawn >= 2) { for (FTransform& T : Xf) { T.SetScale3D(T.GetScale3D() * 20.0); } }
 	C->SetPieces(Xf, Custom);
 	if (C->CastShadow) { C->SetCastShadow(false); }
 	C->SetVisibility(true);
-	Sets.Add(G->Id, { G, C, false });
+	Sets.Add(G->Id, { G, C, false, Pose, Now });
 }
 
 void UPlanetFaunaComponent::ReleaseSet(uint64 Id)
@@ -201,12 +208,14 @@ void UPlanetFaunaComponent::GatherThreats(const APlayerController* PC, TArray<Sl
 		T.VelCmS = Frame.InverseTransformVectorNoScale(M->Velocity);
 		T.AltitudeCm = M->AltitudeAGLCm;
 		T.bCraft = true;
+		// A craft set down scares nothing (Scares): a flock comes back to the ground by a ship parked there.
+		T.bLanded = M->bLanded;
 		Out.Add(T);
 	};
 	const APawn* Pawn = PC ? PC->GetPawn() : nullptr;
 	if (const APersonPawn* Person = Cast<APersonPawn>(Pawn))
 	{
-		// Someone on this world's ground, and the craft they came from if it hovers over it.
+		// Someone on this world's ground, and the craft they came from if it is in the air over it.
 		if (Person->GroundPlanet.Get() == World)
 		{
 			SlonkFauna::FFaunaThreat T;
@@ -225,6 +234,13 @@ void UPlanetFaunaComponent::UpdateView(const APlayerController* PC, const FVecto
 {
 	if (!bConfigured || !Terrain) { return; }
 	RefreshWorld();
+	// slonk.Fauna.Debug changed: every group goes, and comes back drawn as it now asks.
+	const int32 Debug = CVarFaunaDebug.GetValueOnGameThread();
+	if (Debug != DebugDrawn)
+	{
+		DebugDrawn = Debug;
+		Suspend();
+	}
 	const SlonkFauna::FFaunaWorld& W = Field.GetWorld();
 	if (!SlonkFauna::IsEnabled() || !W.SpawnsAny())
 	{
@@ -295,20 +311,24 @@ void UPlanetFaunaComponent::UpdateView(const APlayerController* PC, const FVecto
 		FGroupSet& S = Pair.Value;
 		const SlonkFauna::FFaunaGroup& G = *S.Group;
 		const SlonkFauna::FFaunaKindDesc& D = SlonkFauna::KindDesc(G.Kind);
-		const SlonkFauna::FFaunaPose Pose = SlonkFauna::PathAt(G, Params.RadiusCm, Now);
+		// Its frame as it flies, on its path or shaken off it, turning from the frame it had.
 		SlonkFauna::FPanic Panic = Panics.FindRef(Pair.Key);
-		FVector Pos = Pose.PosCm + SlonkFauna::PanicOffset(Panic, D, Now);
+		const double Dt = FMath::Max(Now - S.PoseAt, 0.0);
+		SlonkFauna::FFaunaPose Pose = SlonkFauna::FlightAt(G, D, Panic, Params.RadiusCm, Now, S.Pose, Dt);
 		for (const SlonkFauna::FFaunaThreat& T : Threats)
 		{
-			if (SlonkFauna::StartleGroup(Panic, D, Pos, T, Now))
+			if (SlonkFauna::StartleGroup(Panic, D, Pose.PosCm, T, Now))
 			{
 				Panics.Add(Pair.Key, Panic);
-				Pos = Pose.PosCm + SlonkFauna::PanicOffset(Panic, D, Now);
+				Pose = SlonkFauna::FlightAt(G, D, Panic, Params.RadiusCm, Now, S.Pose, Dt);
 				++Startles;
 				break;
 			}
 		}
-		// The whole group moves as its frame: the velocity pass sees its flight in the transform.
+		S.Pose = Pose;
+		S.PoseAt = Now;
+		const FVector& Pos = Pose.PosCm;
+		// The whole group moves as its frame, facing the way it flies: the velocity pass sees its flight in the transform.
 		S.Set->SetRelativeLocationAndRotation(Pos, Pose.Rot);
 		// What the material reads of the group: the night where it is; its fright, each moment of it on the material's
 		// clock (the world's time, wrapped to its hour): when its members' scatter opened and the way it opened in its own
@@ -431,7 +451,7 @@ FString UPlanetFaunaComponent::Describe() const
 	return FString::Printf(TEXT("%s, life %.2f, density %.2f, strangeness %.2f: %s; %d groups in the last scan of %d cells (%d read anew, %.1f ms), %d shaken, %d startles, clock %+.0f s, %s"),
 		SlonkFauna::IsEnabled() ? TEXT("on") : TEXT("off"), W.Life, W.Density, Profile.Strangeness, Kinds.IsEmpty() ? TEXT("none live here") : *Kinds,
 		Field.GetCandidates().Num(), LastScanCells, LastScanEvaluated, LastScanMs, Shaken, Startles, TimeOffset,
-		MID ? (bFaunaMaterial ? TEXT("M_Fauna") : TEXT("the basic material (M_Fauna missing)")) : TEXT("no material yet"));
+		MID ? (bFaunaMaterial ? TEXT("M_Fauna") : (bPlainAsked ? TEXT("the basic material (slonk.Fauna.Debug)") : TEXT("the basic material (M_Fauna missing)"))) : TEXT("no material yet"));
 }
 
 void UPlanetFaunaComponent::DescribeCells(TArray<FString>& OutLines) const
