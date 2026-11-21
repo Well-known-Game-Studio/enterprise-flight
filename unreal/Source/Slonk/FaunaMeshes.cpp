@@ -201,3 +201,57 @@ UStaticMesh* SlonkFaunaMeshes::GetMesh(const FFaunaBodyPlan& Plan, EFaunaKind Ki
 	GFaunaMeshes.Add(Key, Mesh);
 	return Mesh;
 }
+
+void SlonkFaunaMeshes::BuildMoteCloudLod(int32 Lod, FDynamicMesh3& Out)
+{
+	namespace Mo = SlonkFauna::Mote;
+	Lod = FMath::Clamp(Lod, 0, NumLods - 1);
+	FBuild B;
+	const int32 Cards = Mo::CardsAtLod[Lod];
+	const int32 Gnats = Lod == 0 ? Mo::GnatsPerCloud : (Lod == 1 ? 2 : 0);
+	const int32 Spread = Cards - Gnats;
+	const int32 Free = Mo::MotesPerCloud - Mo::GnatsPerCloud;
+	const double H = Mo::CardHalfCm;
+	auto Card = [&](const FVector& C, float Stands, float Rnd)
+	{
+		const FVector4f Col(Vc::SurfaceMote, Stands / (float)Mo::MotesPerCloud, Rnd, Vc::JointRigid);
+		int32 V[4];
+		for (int32 k = 0; k < 4; ++k)
+		{
+			const float U = (k == 1 || k == 2) ? 1.f : 0.f, Vv = k >= 2 ? 1.f : 0.f;
+			V[k] = B.Vert(C + FVector((2.0 * U - 1.0) * H, 0.0, (2.0 * Vv - 1.0) * H), FVector::ZAxisVector, FVector2f(U, Vv), Col);
+		}
+		// Wound as a leaf card is (FBuild::Card): the material lays a card's U to the camera's right and its V up, so the
+		// camera sees its front, and the two-sided shading keeps its normal up rather than turning it into the ground.
+		B.Quad(V[0], V[3], V[2], V[1]);
+	};
+	// The gnats' swarm: a ball 8 cm of the unit mesh across (about half a metre at a cloud's span), off the middle, about
+	// a fifth of a span up; their randoms under GnatShare.
+	const FVector Swarm(9.0, -7.0, 21.0);
+	for (int32 i = 0; i < Gnats; ++i)
+	{
+		const double A = i * UE_DOUBLE_PI * (3.0 - FMath::Sqrt(5.0)), Z = 1.0 - 2.0 * (i + 0.5) / Gnats, Rr = FMath::Sqrt(FMath::Max(1.0 - Z * Z, 0.0));
+		Card(Swarm + FVector(Rr * FMath::Cos(A), Rr * FMath::Sin(A), Z) * 4.0, (float)Mo::GnatsPerCloud / Gnats, (0.5f + i) / Gnats * (Mo::GnatShare - 0.02f));
+	}
+	// The rest spread over a disc half a span round (a sunflower's spiral), at heights spread through 0.04 to 0.3 of a
+	// span; their randoms through the rest of the range, each its own.
+	for (int32 j = 0; j < Spread; ++j)
+	{
+		const double Rr = 45.0 * FMath::Sqrt((j + 0.5) / Spread), A = j * UE_DOUBLE_PI * (3.0 - FMath::Sqrt(5.0)) + 0.7 * Lod;
+		const double Z = 4.0 + 26.0 * FMath::Frac(j * 0.6180339887 + 0.37 + 0.11 * Lod);
+		const float Rnd = Mo::GnatShare + 0.02f + (1.f - Mo::GnatShare - 0.04f) * (float)FMath::Frac((j + 0.5) / Spread * 0.999 + 0.29 * Lod);
+		Card(FVector(Rr * FMath::Cos(A), Rr * FMath::Sin(A), Z), (float)Free / Spread, Rnd);
+	}
+	Out = MoveTemp(B.Mesh);
+}
+
+UStaticMesh* SlonkFaunaMeshes::GetMoteCloudMesh()
+{
+	static UStaticMesh* Cached = nullptr;
+	if (Cached && IsValid(Cached)) { return Cached; }
+	FDynamicMesh3 Lods[NumLods];
+	for (int32 L = 0; L < NumLods; ++L) { BuildMoteCloudLod(L, Lods[L]); }
+	Cached = SlonkProcMesh::MakeStaticMesh(TEXT("SlonkFauna_MoteCloud"), TEXT("Fauna"), TArrayView<const FDynamicMesh3>(Lods, NumLods),
+		TArrayView<const float>(MoteLodScreenSize, NumLods), FVector(SlonkFauna::Mote::ReachCm));
+	return Cached;
+}

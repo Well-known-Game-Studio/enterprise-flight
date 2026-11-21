@@ -2333,6 +2333,10 @@ void AStarshipPawn::ProcessDebugCommand()
 		// fauna goto <kind> <alt m> [night]: park over the nearest group of the kind (searched from the middle of the
 		// night side with night), on its path 1.6 times its kind's scare radius ahead of it (400 m for a flock), out of
 		// the reach of its fright until it comes, facing it as it comes, the ground followed at that height.
+		// fauna goto mote <alt m> [night|dusk|day]: park over the densest mote country near (wet, level ground along a forest's
+		// edge, where the fireflies are thickest), searched from under the ship, from the middle of the night side with
+		// night, from the dusk side of the terminator nearest the ship with dusk (the sun 8 degrees down), or on the ship's
+		// meridian with the sun 40 degrees up with day, nose across the sun; beam down there to walk among them.
 		APlanetBody* Planet = Movement ? Cast<APlanetBody>(Movement->GroundBody.Get()) : nullptr;
 		if (!Planet)
 		{
@@ -2421,6 +2425,70 @@ void AStarshipPawn::ProcessDebugCommand()
 		{
 			EFaunaKind Kind = EFaunaKind::Flier;
 			if (!SlonkFauna::KindFromName(ArgStr(2), Kind)) { UE_LOG(LogTemp, Warning, TEXT("fauna goto: %s is no kind (flier, herd, mote, leaper, floater)"), *ArgStr(2)); }
+			else if (Kind == EFaunaKind::Mote)
+			{
+				// The motes are the chunks' (SlonkScatter::PlaceMotes): the field's densest mote country near the start.
+				const double AltCm = FMath::Max(Arg(3, 40.f), 2.f) * 100.0;
+				const FString When = ArgStr(4);
+				const FTransform& TT = Planet->Terrain->GetComponentTransform();
+				const FPlanetTerrainParams& TP = Planet->Terrain->GetParams();
+				const FVector SunLocal = TT.InverseTransformVectorNoScale(Planet->GetStarDirection()).GetSafeNormal();
+				const FVector ShipLocal = TT.InverseTransformPositionNoScale(GetActorLocation()).GetSafeNormal();
+				FVector From = ShipLocal;
+				if (When == TEXT("night")) { From = -SunLocal; }
+				else if (When == TEXT("dusk") || When == TEXT("day"))
+				{
+					// Where the ship's meridian crosses the terminator, a little into the night: the sun 8 degrees down; or by
+					// day, along the same meridian with the sun 40 degrees up.
+					FVector Across = ShipLocal - SunLocal * FVector::DotProduct(ShipLocal, SunLocal);
+					if (Across.IsNearlyZero()) { Across = FVector::CrossProduct(SunLocal, FVector::ZAxisVector); }
+					const double A = FMath::DegreesToRadians(When == TEXT("day") ? 50.0 : 98.0);
+					From = (SunLocal * FMath::Cos(A) + Across.GetSafeNormal() * FMath::Sin(A)).GetSafeNormal();
+				}
+				FVector Dir; double Density = 0.0;
+				bool bFound = SlonkScatter::FindMoteSpot(TP, From, 2.0e6, Dir, Density) || SlonkScatter::FindMoteSpot(TP, From, 4.0e7, Dir, Density);
+				if (!bFound)
+				{
+					// The start in open sea or ice: the whole world, where the sun stands as asked (the night side, the band just past
+					// the terminator, or the morning and afternoon), the densest point, nearer ones a little ahead; then the ground
+					// round it, finer.
+					const double Lo = When == TEXT("night") ? -1.0 : (When == TEXT("dusk") ? -0.25 : (When == TEXT("day") ? 0.4 : -1.0));
+					const double Hi = When == TEXT("night") ? -0.5 : (When == TEXT("dusk") ? -0.05 : (When == TEXT("day") ? 0.85 : 1.0));
+					double Best = 0.0; FVector BestDir = From;
+					const int32 N = 20000;
+					for (int32 i = 0; i < N; ++i)
+					{
+						const double Z = 1.0 - (2.0 * i + 1.0) / N, Rr = FMath::Sqrt(FMath::Max(1.0 - Z * Z, 0.0)), A = i * UE_DOUBLE_PI * (3.0 - FMath::Sqrt(5.0));
+						const FVector D(Rr * FMath::Cos(A), Rr * FMath::Sin(A), Z);
+						const double S = FVector::DotProduct(D, SunLocal);
+						if (S < Lo || S > Hi) { continue; }
+						const double Score = SlonkScatter::MoteDensityAt(TP, D) * (1.0 - 0.1 * (1.0 - FVector::DotProduct(D, From)));
+						if (Score > Best) { Best = Score; BestDir = D; }
+					}
+					bFound = Best > 0.0 && SlonkScatter::FindMoteSpot(TP, BestDir, 1.0e6, Dir, Density);
+					// A patch too small for the finer search's points to land in: the scan's own point.
+					if (!bFound && Best > 0.0) { Dir = BestDir; Density = SlonkScatter::MoteDensityAt(TP, BestDir); bFound = true; }
+				}
+				const SlonkScatter::FMoteSettings& Mo = Planet->Terrain->GetMoteSettings();
+				if (!bFound) { UE_LOG(LogTemp, Log, TEXT("Fauna goto mote: no mote country found on %s"), *Planet->GetDisplayName()); }
+				else
+				{
+					const double Ground = FMath::Max(SlonkTerrain::SurfaceHeightCm(TP, Dir), 0.0);
+					const FVector Pos = TT.TransformPositionNoScale(Dir * (TP.RadiusCm + Ground + AltCm));
+					const FVector Up = TT.TransformVectorNoScale(Dir);
+					FVector Fwd = FVector::CrossProduct(Up, Planet->GetStarDirection());
+					Fwd = (Fwd - Up * FVector::DotProduct(Fwd, Up)).GetSafeNormal();
+					if (Fwd.IsNearlyZero()) { Fwd = FVector::CrossProduct(Up, FVector::ZAxisVector).GetSafeNormal(); }
+					Movement->SetThrottle(0.0); Movement->Velocity = FVector::ZeroVector; Movement->AngularVelocity = FRotator::ZeroRotator;
+					SetActorLocationAndRotation(Pos, FRotationMatrix::MakeFromXZ(Fwd, Up).ToQuat(), false, nullptr, ETeleportType::TeleportPhysics);
+					Movement->SetTerrainFollow(AltCm);
+					static const IConsoleVariable* HoldSpin = IConsoleManager::Get().FindConsoleVariable(TEXT("slonk.Planet.HoldSpin"));
+					if (HoldSpin && HoldSpin->GetInt() == 0) { UE_LOG(LogTemp, Log, TEXT("Fauna goto mote: the world turns under the ship (slonk.Planet.HoldSpin 0); the ship rides the ground with it")); }
+					UE_LOG(LogTemp, Log, TEXT("Fauna goto mote on %s: a cloud in %.0f%% of the ground's cells there (%.0f%% at this world's life %.2f and density %.2f), %.1f km from the search's start, ground %.0f m; parked %.0f m over it, up.sun %.2f; motes %s"),
+						*Planet->GetDisplayName(), Density * 100.0, FMath::Min(Density * Mo.Life * Mo.Density, 0.9) * 100.0, Mo.Life, Mo.Density, FVector::Dist(Dir, From) * TP.RadiusCm / 1e5,
+						Ground / 100.0, AltCm / 100.0, FVector::DotProduct(Up, Planet->GetStarDirection()), *Planet->Terrain->DescribeMotes());
+				}
+			}
 			else
 			{
 				const double AltCm = FMath::Max(Arg(3, 40.f), 2.f) * 100.0;
@@ -2467,6 +2535,19 @@ void AStarshipPawn::ProcessDebugCommand()
 		}
 		if (F && F->IsConfigured())
 		{
+			// A setting just changed is taken at once (the motes on the terrain's chunks with it), so the line reads the
+			// settings as they now stand rather than as the last frame had them.
+			F->RefreshWorld();
+			// From a script this runs in the ship's tick, after the planet chose its chunks this frame: any chunks the motes
+			// built again were let go after that choice, so choose again, and their parents show this frame (no hole).
+			APlayerController* VPC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+			if (VPC && Planet->Terrain)
+			{
+				FVector ViewLoc; FRotator ViewRot;
+				VPC->GetPlayerViewPoint(ViewLoc, ViewRot);
+				const APawn* VP = VPC->GetPawn();
+				Planet->Terrain->UpdateView(ViewLoc, VP ? VP->GetActorLocation() : ViewLoc);
+			}
 			const FString Line = FString::Printf(TEXT("Fauna on %s: %s"), *Planet->GetDisplayName(), *F->Describe());
 			UE_LOG(LogTemp, Log, TEXT("%s"), *Line);
 			ScreenMessage(Line, FColor::Cyan);
@@ -2827,7 +2908,7 @@ void AStarshipPawn::ProcessDebugCommand()
 			TEXT("ship camera [chase|bridge|cinematic|front|port|starboard|top|bottom] | zoom <x> | look <yaw> <pitch> [s]"),
 			TEXT("ship warpvis [classic|real] | cscale <0..1> | systems | shipwarp [km] [far]"),
 			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mesa|badlands|cliffs|city|mountain|coast|river|linea|green|land|substellar|ring|nightcap> <alt m> [across|sun|away|along|uphill|giant] [night] | terrain rocks [on|off|density <x>|check]"),
-			TEXT("ship fauna [status|on|off|density <x>|only <flier|herd|mote|leaper|floater|all>|startle|time <s>|strange <0..1>|cells] | fauna goto <kind> <alt m> [night]  (the animals of the world below)"),
+			TEXT("ship fauna [status|on|off|density <x>|only <flier|herd|mote|leaper|floater|all>|startle|time <s>|strange <0..1>|cells] | fauna goto <kind> <alt m> [night] | fauna goto mote <alt m> [night|dusk|day] | fauna watch [m] [low|off]  (the animals of the world below)"),
 			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km] [hazy] [strange <0..1>] [seed <n>] [locked] | people [none|stone|iron|industrial|modern|starfaring] [organic] [cliff]"),
 			TEXT("ship shuttle  (launch the shuttlecraft; aboard it, dock when the bay is within 500 m) | ship takeoff"),
 			TEXT("ship scan [stop]  (sensors on the locked / nav target; landed: survey the ground) | ship science [reset]"),

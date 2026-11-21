@@ -171,6 +171,30 @@ namespace SlonkFauna
 		enum : int32 { PigmentR, PigmentG, PigmentB, Glow, Seed, SizeM, Phase, RateHz, PerKind, FadeCm, Num };
 	}
 	/**
+	 * A mote cloud's custom floats, in the same slots (SlonkScatter::PlaceMotes writes them): its colour by day (the
+	 * pollen's gold, its gnats a dark shade of it); how brightly its fireflies glow at night; a seed; its span in metres
+	 * (its scale); a phase for its motes' cycles; how fast they wander, Hz (a whole number of cycles each minute); the
+	 * share of its motes that are fireflies at night (PerKind); and the distance from the camera it fades out by, cm.
+	 */
+	namespace Mote
+	{
+		/** The motes of a cloud, and the cards that draw them at each LOD (the far LODs' cards each stand for several). */
+		constexpr int32 MotesPerCloud = 24;
+		constexpr int32 CardsAtLod[3] = { 24, 8, 2 };
+		/** Of a cloud's motes, how many are gnats in their swarm by day (they are none at night): the cards whose random
+		 *  (VC.B) is under GnatShare. The far LOD has none of them, too small to see that far. */
+		constexpr int32 GnatsPerCloud = 6;
+		constexpr float GnatShare = 0.25f;
+		/** A card's half-width in the unit mesh, cm: every card stands in the mesh's xz plane, its corner (2u-1, 0, 2v-1)
+		 *  times this from its middle, so the material finds the middle from the corner's UV and turns the card about it. */
+		constexpr double CardHalfCm = 0.6;
+		/** How far the material moves a card's vertices from where the mesh has them, unit-mesh cm, at most (their wander,
+		 *  the turn to the camera, the speck floor's growth): the mesh's bounds are grown by it, so the box an instance is
+		 *  culled by holds every mote however it moves (at most about 32: 17 of wander and 14 of a firefly's corner at forty
+		 *  times its size on a 6 m cloud, and its place). */
+		constexpr double ReachCm = 33.0;
+	}
+	/**
 	 * Each group's custom primitive data, set on its component each frame (FrightData writes its fright's part), by slot:
 	 * 0 how deep in the night it is (0 day, 1 night); 1 when its members' scatter last opened, on the material's clock
 	 * (seconds, the world's time wrapped to ClockPeriodSec; a startle while it is open keeps it), and 2 to 4 the way it
@@ -185,14 +209,16 @@ namespace SlonkFauna
 		enum : int32 { Night = 0, ScatterT0 = 1, ScatterDirX = 2, ScatterDirY = 3, ScatterDirZ = 4, Bank = 5, Startled = 6, SpreadM = 7, PanicT0 = 8, OnsetT0 = 9, Num = 10 };
 	}
 	/**
-	 * A fauna mesh's vertex colour: R the surface (0 body, 0.25 a bill or a beak, 0.5 a tail, 1 a wing), G how far it
-	 * flexes (0 at its joint, rising to 1 at the tip), B its side (0 left, 0.5 the middle, 1 right) and A the kind of
-	 * joint the material moves it by (0 rigid, 0.25 a tail, 0.5 a wing hinged along the body, 0.75 a leg, 1 a fin or a
-	 * body that undulates).
+	 * A fauna mesh's vertex colour: R the surface (0 body, 0.25 a bill or a beak, 0.5 a tail, 0.75 a mote's card, 1 a
+	 * wing), G how far it flexes (0 at its joint, rising to 1 at the tip), B its side (0 left, 0.5 the middle, 1 right) and
+	 * A the kind of joint the material moves it by (0 rigid, 0.25 a tail, 0.5 a wing hinged along the body, 0.75 a leg, 1
+	 * a fin or a body that undulates). A mote's card is drawn by the material's mote branch alone (its Motes parameter,
+	 * which the terrain's chunks set), and reads them otherwise: G is how many of its cloud's motes the card stands for
+	 * over Mote::MotesPerCloud, B its own random (a gnat's under Mote::GnatShare), A rigid.
 	 */
 	namespace Vc
 	{
-		constexpr float SurfaceBody = 0.f, SurfaceBeak = 0.25f, SurfaceTail = 0.5f, SurfaceWing = 1.f;
+		constexpr float SurfaceBody = 0.f, SurfaceBeak = 0.25f, SurfaceTail = 0.5f, SurfaceMote = 0.75f, SurfaceWing = 1.f;
 		constexpr float SideLeft = 0.f, SideMiddle = 0.5f, SideRight = 1.f;
 		constexpr float JointRigid = 0.f, JointTail = 0.25f, JointWing = 0.5f, JointLeg = 0.75f, JointUndulate = 1.f;
 		/** A wing's hinge stands this far out from the body's axis, unit-mesh cm: its root vertices (G 0) lie on it. */

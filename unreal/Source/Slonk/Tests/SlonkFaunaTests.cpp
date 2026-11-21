@@ -6,11 +6,15 @@
 #include "DynamicMesh/DynamicMeshAttributeSet.h"
 #include "Engine/StaticMesh.h"
 #include "HAL/PlatformTime.h"
+#include "../Civilization.h"
 #include "../FaunaHabitat.h"
 #include "../FaunaMeshes.h"
 #include "../FaunaProfile.h"
 #include "../PlanetBody.h"
+#include "../PlanetCities.h"
+#include "../PlanetInstancesComponent.h"
 #include "../PlanetTerrain.h"
+#include "../PlanetTerrainComponent.h"
 #include "../TerrainScatter.h"
 #include "../WorldGenome.h"
 
@@ -1486,6 +1490,562 @@ bool FSlonkFaunaBudgetTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("at most 60,000 triangles of birds at LOD 0"), Triangles <= 60000);
 	TestTrue(TEXT("a frame's math far under 0.15 ms"), FrameMs < 0.15);
 	TestTrue(TEXT("a scan a sixth of a cell on reads only the cells new to it"), MovedCells > 0 && MovedRead * 4 < MovedCells);
+	return true;
+}
+
+namespace
+{
+	/** The coarsest depth whose chunks carry every mote cloud (their near level), on a world of that radius. */
+	int32 MoteDepth(const FPlanetTerrainParams& P)
+	{
+		return FMath::CeilToInt32(FMath::Log2(P.RadiusCm * UE_DOUBLE_HALF_PI / SlonkScatter::MoteMaxEdgeCm));
+	}
+
+	/** Motes on, at a world's life. */
+	SlonkScatter::FMoteSettings MotesOn(float Life = 1.f)
+	{
+		SlonkScatter::FMoteSettings M;
+		M.bEnabled = true;
+		M.Life = Life;
+		return M;
+	}
+
+	/** The densest mote country over the globe (wet, level ground along a forest's edge), densest first, at most Count of
+	 *  them and none within 30 km of another. */
+	TArray<FVector> MoteSpots(const FPlanetTerrainParams& P, int32 Count)
+	{
+		struct FSpot { FVector Dir; double Score; };
+		TArray<FSpot> Spots;
+		const int32 N = 4000;
+		for (int32 i = 0; i < N; ++i)
+		{
+			const FVector Dir = Spread(i, N);
+			const double D = SlonkScatter::MoteDensityAt(P, Dir);
+			if (D > 0.05) { Spots.Add({ Dir, D }); }
+		}
+		Spots.Sort([](const FSpot& A, const FSpot& B) { return A.Score > B.Score; });
+		TArray<FVector> Out;
+		for (const FSpot& S : Spots)
+		{
+			if (Out.Num() >= Count) { break; }
+			bool bNear = false;
+			for (const FVector& O : Out) { bNear |= FVector::Dist(O, S.Dir) * P.RadiusCm < 3.0e6; }
+			if (!bNear) { Out.Add(S.Dir); }
+		}
+		return Out;
+	}
+
+	struct FMotes
+	{
+		TArray<FTransform> Xf;
+		TArray<float> Custom;
+		TArray<double> Drawn;
+		FVector Origin = FVector::ZeroVector;
+		int32 Num() const { return Xf.Num(); }
+		const float* At(int32 i) const { return Custom.GetData() + i * SlonkFauna::Custom::Num; }
+	};
+	FMotes BuildMotes(const FPlanetTerrainParams& P, const SlonkScatter::FMoteSettings& M, int32 Face, int32 Depth, int64 X, int64 Y, const FScatterSettings& S = FScatterSettings())
+	{
+		FMotes R;
+		UPlanetTerrainComponent::BuildChunkMotesForTest(P, S, M, Face, Depth, X, Y, 64, R.Xf, R.Custom, R.Drawn, &R.Origin);
+		return R;
+	}
+
+	/** What MotesFoundAgain makes of the clouds it finds again, summed over its calls. */
+	struct FFoundAgain
+	{
+		/** The largest ratio of a cloud's two fades. */
+		double WorstFade = 1.0;
+		/** How many the child turns more than 10 degrees from the parent about the ground's up (their X axes laid flat
+		 *  across the radial up), and the largest such turn, degrees. */
+		int32 Turned = 0;
+		double WorstTurnDeg = 0.0;
+		/** How many stand on drawn triangles whose normals lie either side of 0.9 along the planet's z on the two levels. */
+		int32 Straddling = 0;
+	};
+
+	/** How many of a coarse chunk's clouds its four children carry again: in the same place (within half a metre along
+	 *  the ground), of the same span and seed, fading out at the same distance within a level's factor of two (the fade is
+	 *  reckoned, as the plants' is, from the edge each chunk's build measures, which a level's chunks measure a little
+	 *  differently); and what InOut makes of them. */
+	int32 MotesFoundAgain(const FPlanetTerrainParams& P, const SlonkScatter::FMoteSettings& M, const FMotes& Parent, int32 Face, int32 Depth, int64 X, int64 Y, int32& OutKids,
+		FFoundAgain* InOut = nullptr)
+	{
+		FMotes Kids[4];
+		OutKids = 0;
+		for (int32 c = 0; c < 4; ++c) { Kids[c] = BuildMotes(P, M, Face, Depth + 1, X * 2 + (c & 1), Y * 2 + (c >> 1)); OutKids += Kids[c].Num(); }
+		int32 Matched = 0;
+		for (int32 i = 0; i < Parent.Num(); ++i)
+		{
+			const FVector Ua = Parent.Xf[i].GetLocation().GetSafeNormal();
+			const float* A = Parent.At(i);
+			bool bFound = false;
+			for (const FMotes& Kid : Kids)
+			{
+				for (int32 j = 0; j < Kid.Num() && !bFound; ++j)
+				{
+					const double Apart = FMath::Acos(FMath::Clamp(FVector::DotProduct(Ua, Kid.Xf[j].GetLocation().GetSafeNormal()), -1.0, 1.0)) * P.RadiusCm;
+					const float* B = Kid.At(j);
+					const float Fa = A[SlonkFauna::Custom::FadeCm], Fb = B[SlonkFauna::Custom::FadeCm];
+					bFound = Apart < 50.0 && A[SlonkFauna::Custom::SizeM] == B[SlonkFauna::Custom::SizeM] && A[SlonkFauna::Custom::Seed] == B[SlonkFauna::Custom::Seed]
+						&& Fa > 0.f && Fb > 0.f && FMath::Max(Fa, Fb) <= 2.01f * FMath::Min(Fa, Fb);
+					if (bFound && InOut)
+					{
+						InOut->WorstFade = FMath::Max(InOut->WorstFade, (double)FMath::Max(Fa, Fb) / FMath::Min(Fa, Fb));
+						auto Flat = [&Ua](const FVector& Ax) { return (Ax - Ua * FVector::DotProduct(Ax, Ua)).GetSafeNormal(); };
+						const FQuat Ra = Parent.Xf[i].GetRotation(), Rb = Kid.Xf[j].GetRotation();
+						const double TurnDeg = FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(FVector::DotProduct(Flat(Ra.GetAxisX()), Flat(Rb.GetAxisX())), -1.0, 1.0)));
+						InOut->Turned += TurnDeg > 10.0 ? 1 : 0;
+						InOut->WorstTurnDeg = FMath::Max(InOut->WorstTurnDeg, TurnDeg);
+						InOut->Straddling += (FMath::Abs(Ra.GetAxisZ().Z) < 0.9) != (FMath::Abs(Rb.GetAxisZ().Z) < 0.9) ? 1 : 0;
+					}
+				}
+				if (bFound) { break; }
+			}
+			Matched += bFound ? 1 : 0;
+		}
+		return Matched;
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaMotesNestTest, "Slonk.Fauna.MotesNest", SLONK_TEST_FLAGS)
+bool FSlonkFaunaMotesNestTest::RunTest(const FString& Parameters)
+{
+	// A mote cloud a chunk carries is carried again by its four children, in the same place, of the same span and seed,
+	// fading out at the same distance (within the level's factor of two the plants' fade allows): on the motes' own
+	// levels, where a chunk carries all of them, and from their far level, where it carries a share, down to the first
+	// of their own. The far level keeps about MoteKeep of them, and those fade twice as far off. The children turn every
+	// cloud as the parent does about the ground's up; on a world without ice caps, on the lines where the ground's up runs
+	// 0.9 along the planet's z, too, where a turn reckoned from the drawn triangles' normals would swing from one level to
+	// the next as the normals under a cloud fall either side of it.
+	const FPlanetTerrainParams P = FaunaEarthParams(6371.0);
+	const SlonkScatter::FMoteSettings M = MotesOn();
+	const int32 D = MoteDepth(P);
+	int32 Tried = 0, Clouds = 0, Matched = 0, FarClouds = 0, FarMatched = 0, FarKids = 0, FarFadesFurther = 0;
+	FFoundAgain Near, Again;
+	double AreaKm2 = 0.0;
+	for (const FVector& Dir : MoteSpots(P, 12))
+	{
+		int32 Face; int64 X, Y;
+		if (!UPlanetTerrainComponent::ChunkAt(Dir, D, Face, X, Y)) { continue; }
+		const FMotes Parent = BuildMotes(P, M, Face, D, X, Y);
+		if (Parent.Num() < 10) { continue; }
+		++Tried;
+		int32 Kids = 0;
+		Clouds += Parent.Num();
+		Matched += MotesFoundAgain(P, M, Parent, Face, D, X, Y, Kids, &Near);
+		AreaKm2 += FMath::Square(P.RadiusCm * UE_DOUBLE_HALF_PI / (double)((int64)1 << D) / 1.0e5);
+		// The far level's chunk over this one, and its children (this one among them).
+		int32 FF; int64 FX, FY;
+		UPlanetTerrainComponent::ChunkAt(Dir, D - 1, FF, FX, FY);
+		const FMotes Far = BuildMotes(P, M, FF, D - 1, FX, FY);
+		FarClouds += Far.Num();
+		FarMatched += MotesFoundAgain(P, M, Far, FF, D - 1, FX, FY, Kids, &Again);
+		FarKids += Kids;
+		// The near level's fade: the nearest any cloud of this chunk fades by (most are the near level's alone).
+		float NearFade = TNumericLimits<float>::Max();
+		for (int32 i = 0; i < Parent.Num(); ++i) { NearFade = FMath::Min(NearFade, Parent.At(i)[SlonkFauna::Custom::FadeCm]); }
+		for (int32 i = 0; i < Far.Num(); ++i) { FarFadesFurther += Far.At(i)[SlonkFauna::Custom::FadeCm] > NearFade * 1.5f ? 1 : 0; }
+		if (Tried >= 4) { break; }
+	}
+	// The densest mote country on the lines where the ground's up runs 0.9 along the planet's z, north and south, of the
+	// world as it would be without its ice caps and with its snowline three times as high (an Earth's caps reach down past
+	// those lines): the chunk there and its children.
+	FPlanetTerrainParams Thawed = P;
+	Thawed.IceCapStart = 2.f;
+	Thawed.SnowlineCm = P.SnowlineCm * 3.0;
+	int32 LineChunks = 0, LineClouds = 0, LineMatched = 0;
+	FFoundAgain Line;
+	for (const double Zs : { 0.9, -0.9 })
+	{
+		const int32 Around = 8000;
+		const double Rxy = FMath::Sqrt(1.0 - Zs * Zs);
+		FVector Best = FVector::ZeroVector;
+		double BestDensity = 0.0;
+		for (int32 a = 0; a < Around; ++a)
+		{
+			const double A = UE_DOUBLE_TWO_PI * (a + 0.5) / Around;
+			const FVector Dir(Rxy * FMath::Cos(A), Rxy * FMath::Sin(A), Zs);
+			const double Dn = SlonkScatter::MoteDensityAt(Thawed, Dir);
+			if (Dn > BestDensity) { BestDensity = Dn; Best = Dir; }
+		}
+		int32 Face; int64 X, Y;
+		if (BestDensity <= 0.0 || !UPlanetTerrainComponent::ChunkAt(Best, D, Face, X, Y)) { continue; }
+		const FMotes Parent = BuildMotes(Thawed, M, Face, D, X, Y);
+		if (Parent.Num() == 0) { continue; }
+		++LineChunks;
+		int32 Kids = 0;
+		LineClouds += Parent.Num();
+		LineMatched += MotesFoundAgain(Thawed, M, Parent, Face, D, X, Y, Kids, &Line);
+	}
+	const double PerKm2 = AreaKm2 > 0.0 ? Clouds / AreaKm2 : 0.0;
+	// And the land's mean: the share of its cells holding a cloud, over the whole globe's land.
+	double LandSum = 0.0;
+	int32 LandPoints = 0;
+	for (int32 i = 0; i < 4000; ++i)
+	{
+		const FVector Dir = Spread(i, 4000);
+		if (SlonkTerrain::Sample(P, Dir, 1.0e4).bWater) { continue; }
+		++LandPoints;
+		LandSum += FMath::Min(SlonkScatter::MoteDensityAt(P, Dir), 0.9);
+	}
+	const double CellKm = P.RadiusCm * UE_DOUBLE_HALF_PI / FMath::Pow(2.0, FMath::RoundToDouble(FMath::Log2(P.RadiusCm * UE_DOUBLE_HALF_PI / SlonkScatter::MoteSpacingCm))) / 1.0e5;
+	const double LandPerKm2 = LandPoints > 0 ? LandSum / LandPoints / (CellKm * CellKm) : 0.0;
+	// About a camera in country as dense as this: every cloud out to the near level's fade, the far level's share past it.
+	const double NearKm = 3.0 * P.RadiusCm * UE_DOUBLE_HALF_PI / (double)((int64)1 << D) / 1.0e5, FarKm = NearKm * 2.0;
+	const double Reach = UE_DOUBLE_PI * (NearKm * NearKm + SlonkScatter::MoteKeep * (FarKm * FarKm - NearKm * NearKm));
+	const double LodNearKm = 0.11;
+	AddInfo(FString::Printf(TEXT("%d clouds on %d chunks of depth %d (%.0f a square km in the densest country, %.0f on the land's mean): %d found again on the children (their fades at most %.3f times apart); the far level %d clouds of %d under it (%.0f%%), %d found again, %d fading further"),
+		Clouds, Tried, D, PerKm2, LandPerKm2, Matched, Near.WorstFade, FarClouds, FarKids, FarKids > 0 ? 100.0 * FarClouds / FarKids : 0.0, FarMatched, FarFadesFurther));
+	AddInfo(FString::Printf(TEXT("fading out by %.0f m, the far level's by %.0f m: about a camera %.0f clouds in the densest country (%.0f of them within %.0f m, at LOD 0), %.0f on the land's mean"),
+		NearKm * 1000.0, FarKm * 1000.0, PerKm2 * Reach, PerKm2 * UE_DOUBLE_PI * LodNearKm * LodNearKm, LodNearKm * 1000.0, LandPerKm2 * Reach));
+	AddInfo(FString::Printf(TEXT("turned more than 10 deg on the children: %d of those found again (at most %.2f deg); thawed, on the lines at z 0.9, %d clouds on %d chunks, %d found again (%d of them on ground whose normal lies either side of z 0.9 on the two levels), %d turned (at most %.2f deg)"),
+		Near.Turned + Again.Turned, FMath::Max(Near.WorstTurnDeg, Again.WorstTurnDeg), LineClouds, LineChunks, LineMatched, Line.Straddling, Line.Turned, Line.WorstTurnDeg));
+	TestTrue(TEXT("found mote country"), Tried > 0);
+	TestEqual(TEXT("the children turn every cloud as the parent does"), Near.Turned + Again.Turned, 0);
+	TestTrue(TEXT("mote country on the lines at z 0.9 of the thawed world"), LineChunks > 0 && LineClouds >= 10 && LineMatched >= LineClouds * 0.85);
+	TestTrue(TEXT("some of it on ground whose normal crosses z 0.9 between the levels"), Line.Straddling > 0);
+	TestEqual(TEXT("and the clouds there turned alike"), Line.Turned, 0);
+	TestTrue(TEXT("nearly every cloud is found again on the finer chunks"), Matched >= Clouds * 0.85);
+	TestTrue(TEXT("and every far-level cloud on the motes' own"), FarClouds > 0 && FarMatched >= FarClouds * 0.85);
+	TestTrue(TEXT("the far level keeps about a quarter"), FarKids > 0 && FarClouds > FarKids * (SlonkScatter::MoteKeep - 0.1) && FarClouds < FarKids * (SlonkScatter::MoteKeep + 0.1));
+	TestEqual(TEXT("the far level's fade further off"), FarFadesFurther, FarClouds);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaMotesOnLandTest, "Slonk.Fauna.MotesOnLand", SLONK_TEST_FLAGS)
+bool FSlonkFaunaMotesOnLandTest::RunTest(const FString& Parameters)
+{
+	// A cloud hovers over land, never water, standing on the drawn ground, up along it, its custom floats as the
+	// material reads them; on a coast the clouds keep to the land. A chunk builds exactly as it did with its motes on:
+	// they are kept out of everything the golden CRCs hash.
+	const FPlanetTerrainParams P = FaunaEarthParams(6371.0);
+	const SlonkScatter::FMoteSettings M = MotesOn();
+	const int32 D = MoteDepth(P);
+	// Coasts: land with the sea 300 m off.
+	TArray<FVector> Coasts;
+	for (int32 i = 0; i < 6000 && Coasts.Num() < 6; ++i)
+	{
+		const FVector Dir = Spread(i, 6000);
+		if (SlonkScatter::MoteDensityAt(P, Dir) < 0.1) { continue; }
+		const FVector Off = AlongGround(Dir, 3.0e4, P.RadiusCm, 0.0);
+		if (SlonkTerrain::Sample(P, Off, 1000.0).bWater) { Coasts.Add(Dir); }
+	}
+	TArray<FVector> Spots = MoteSpots(P, 4);
+	const int32 Inland = Spots.Num();
+	Spots.Append(Coasts);
+	int32 Clouds = 0, Wet = 0, Floating = 0, Tilted = 0, BadFloats = 0, CoastClouds = 0, CoastChunks = 0, CrcSame = 0, CrcSettledSame = 0, CrcTried = 0;
+	for (int32 s = 0; s < Spots.Num(); ++s)
+	{
+		int32 Face; int64 X, Y;
+		if (!UPlanetTerrainComponent::ChunkAt(Spots[s], D, Face, X, Y)) { continue; }
+		const FMotes R = BuildMotes(P, M, Face, D, X, Y);
+		const double CellCm = P.RadiusCm * UE_DOUBLE_HALF_PI / (double)((int64)1 << D) / 64.0;
+		if (s >= Inland && R.Num() > 0) { ++CoastChunks; CoastClouds += R.Num(); }
+		for (int32 i = 0; i < R.Num(); ++i)
+		{
+			++Clouds;
+			const FVector Pos = R.Xf[i].GetLocation();
+			const FVector Up = Pos.GetSafeNormal();
+			Wet += SlonkTerrain::Sample(P, Up, CellCm * 2.0).bWater ? 1 : 0;
+			Floating += FMath::Abs(Pos.Size() - P.RadiusCm - R.Drawn[i]) > 10.0 ? 1 : 0;
+			Tilted += FVector::DotProduct(R.Xf[i].GetRotation().GetAxisZ(), Up) < 0.5 ? 1 : 0;
+			const float* C = R.At(i);
+			const float Span = C[SlonkFauna::Custom::SizeM], Rate = C[SlonkFauna::Custom::RateHz] * 60.f;
+			const bool bOk = Span >= 6.f && Span <= 9.f && FMath::IsNearlyEqual((double)R.Xf[i].GetScale3D().X, (double)Span, 1e-4)
+				&& C[SlonkFauna::Custom::Glow] >= 0.75f && C[SlonkFauna::Custom::Glow] <= 1.25f
+				&& FMath::IsNearlyEqual(Rate, FMath::RoundToFloat(Rate), 1e-3f) && Rate >= 3.f - 1e-3f && Rate <= 7.f + 1e-3f
+				&& C[SlonkFauna::Custom::PerKind] >= 0.35f && C[SlonkFauna::Custom::PerKind] <= 0.9f && C[SlonkFauna::Custom::FadeCm] > 1.0e4f
+				&& C[SlonkFauna::Custom::Seed] >= 0.f && C[SlonkFauna::Custom::Seed] < 1.f && C[SlonkFauna::Custom::Phase] >= 0.f && C[SlonkFauna::Custom::Phase] < 1.f
+				&& C[SlonkFauna::Custom::PigmentR] >= M.Pollen.R * 0.8f - 1e-4f && C[SlonkFauna::Custom::PigmentR] <= M.Pollen.R * 1.2f + 1e-4f;
+			BadFloats += bOk ? 0 : 1;
+		}
+		// The build's CRC (the drawn ground, its attributes, the rocks and plants) with the motes on and off; and on a world
+		// with settlements, whose keep-out the motes share with the scatter.
+		if (R.Num() > 0 && CrcTried < 4)
+		{
+			FScatterSettings Living;
+			Living.Life = 1.f;
+			FScatterSettings Settled = Living;
+			Settled.bCities = true;
+			++CrcTried;
+			CrcSame += UPlanetTerrainComponent::ChunkBuildCrcForTest(P, Living, Face, D, X, Y, 64, &M) == UPlanetTerrainComponent::ChunkBuildCrcForTest(P, Living, Face, D, X, Y) ? 1 : 0;
+			CrcSettledSame += UPlanetTerrainComponent::ChunkBuildCrcForTest(P, Settled, Face, D, X, Y, 64, &M) == UPlanetTerrainComponent::ChunkBuildCrcForTest(P, Settled, Face, D, X, Y) ? 1 : 0;
+		}
+	}
+	AddInfo(FString::Printf(TEXT("%d clouds (%d on %d coast chunks): %d over water, %d off the drawn ground, %d not up along it, %d with custom floats off the contract; the build's CRC the same with motes on on %d of %d chunks (%d with settlements)"),
+		Clouds, CoastClouds, CoastChunks, Wet, Floating, Tilted, BadFloats, CrcSame, CrcTried, CrcSettledSame));
+	TestTrue(TEXT("clouds over the land"), Clouds > 0);
+	TestTrue(TEXT("and on the coasts"), CoastChunks > 0);
+	TestTrue(TEXT("none over water"), Wet <= Clouds / 200);
+	TestEqual(TEXT("every cloud on the drawn ground"), Floating, 0);
+	TestEqual(TEXT("every cloud up along the ground"), Tilted, 0);
+	TestEqual(TEXT("every cloud's custom floats as the material reads them"), BadFloats, 0);
+	TestTrue(TEXT("the build is the same with motes on"), CrcTried > 0 && CrcSame == CrcTried);
+	TestEqual(TEXT("and with settlements"), CrcSettledSame, CrcTried);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaMotesTownsTest, "Slonk.Fauna.MotesTowns", SLONK_TEST_FLAGS)
+bool FSlonkFaunaMotesTownsTest::RunTest(const FString& Parameters)
+{
+	// On a world with settlements the motes keep out of the towns, as the plants do (but for the parks), and off the
+	// painted ways; the same ground without the rule carries them.
+	const FPlanetTerrainParams P = FaunaEarthParams(6371.0);
+	const SlonkScatter::FMoteSettings M = MotesOn();
+	const FCivilization Civ = SlonkCivs::Colonists();
+	const int32 D = MoteDepth(P);
+	TArray<FTownSite> Found;
+	for (int32 i = 0; i < 3000 && Found.Num() < 3; ++i)
+	{
+		const FVector Dir = Spread(i, 3000);
+		if (SlonkTerrain::SampleStructure(P, Dir).bWater) { continue; }
+		TArray<FTownSite> Towns;
+		SlonkCities::EnumerateTowns(P, Civ, Dir * P.RadiusCm, 3.0e6, Towns, 8);
+		for (const FTownSite& T : Towns)
+		{
+			if (T.bCity || T.bCliff || SlonkScatter::MoteDensityAt(P, T.Dir) < 0.1) { continue; }
+			if (Found.ContainsByPredicate([&](const FTownSite& F) { return F.Seed == T.Seed; })) { continue; }
+			Found.Add(T);
+			break;
+		}
+	}
+	if (!TestTrue(TEXT("a town in mote country on the test world"), Found.Num() > 0)) { return true; }
+	FScatterSettings Settled;
+	Settled.bCities = true;
+	const FScatterSettings Wild;
+	int32 InTown = 0, InTownWild = 0, OnWay = 0, OnWayWild = 0, RoadOn = 0, RoadOnWild = 0, RoadChunks = 0;
+	auto Count = [&](const FMotes& R, const FTownSite& T, int32& OutInTown, int32& OutOnWay)
+	{
+		for (const FTransform& Xf : R.Xf)
+		{
+			const FVector Up = Xf.GetLocation().GetSafeNormal();
+			OutInTown += FVector::Dist(Up * P.RadiusCm, T.LocalCm) < T.RadiusCm && SlonkCities::ParkAt(P, T, Up) < 0.7f ? 1 : 0;
+			OutOnWay += SlonkCities::PaintedWayCm(P, Civ, Up) < 150.0 ? 1 : 0;
+		}
+	};
+	for (const FTownSite& T : Found)
+	{
+		int32 Face; int64 X, Y;
+		if (!TestTrue(TEXT("the town's chunk"), UPlanetTerrainComponent::ChunkAt(T.Dir, D, Face, X, Y))) { continue; }
+		Count(BuildMotes(P, M, Face, D, X, Y, Settled), T, InTown, OnWay);
+		Count(BuildMotes(P, M, Face, D, X, Y, Wild), T, InTownWild, OnWayWild);
+	}
+	// The roads out of them, past their ground (so only the way, not the town, keeps the motes off): chunks on a painted
+	// road in mote country, a few for each town, searched for on rings round it every 3 m (a road is a few metres wide).
+	TSet<FIntVector> Seen;
+	for (const FTownSite& T : Found)
+	{
+		int32 Here = 0;
+		for (double Cm = T.RadiusCm + 4.0e4; Cm <= T.RadiusCm + 1.6e5 && Here < 3; Cm += 4.0e4)
+		{
+			const int32 Steps = FMath::CeilToInt32(UE_DOUBLE_TWO_PI * Cm / 300.0);
+			for (int32 b = 0; b < Steps && Here < 3; ++b)
+			{
+				const FVector Dir = AlongGround(T.Dir, Cm, P.RadiusCm, b * UE_DOUBLE_TWO_PI / Steps);
+				if (SlonkCities::PaintedWayCm(P, Civ, Dir) >= 0.0 || SlonkScatter::MoteDensityAt(P, Dir) < 0.05) { continue; }
+				TArray<FTownSite> Near;
+				SlonkCities::EnumerateTowns(P, Civ, Dir * P.RadiusCm, 2.0e5, Near, 16);
+				if (Near.ContainsByPredicate([&](const FTownSite& N) { return FVector::Dist(N.LocalCm, Dir * P.RadiusCm) < N.RadiusCm + 2500.0 + 3.0e4; })) { continue; }
+				int32 Face; int64 X, Y;
+				if (!UPlanetTerrainComponent::ChunkAt(Dir, D, Face, X, Y)) { continue; }
+				const FIntVector Key(Face, (int32)X, (int32)Y);
+				if (Seen.Contains(Key)) { continue; }
+				Seen.Add(Key);
+				++Here; ++RoadChunks;
+				auto OnRoad = [&](const FMotes& R)
+				{
+					int32 N = 0;
+					for (const FTransform& Xf : R.Xf) { N += SlonkCities::PaintedWayCm(P, Civ, Xf.GetLocation().GetSafeNormal()) < 150.0 ? 1 : 0; }
+					return N;
+				};
+				RoadOn += OnRoad(BuildMotes(P, M, Face, D, X, Y, Settled));
+				RoadOnWild += OnRoad(BuildMotes(P, M, Face, D, X, Y, Wild));
+			}
+		}
+	}
+	AddInfo(FString::Printf(TEXT("%d towns in mote country: %d clouds in their streets and lots and %d on the ways, %d and %d without the rule; on %d chunks of the roads out of them, %d clouds on the road, %d without the rule"),
+		Found.Num(), InTown, OnWay, InTownWild, OnWayWild, RoadChunks, RoadOn, RoadOnWild));
+	TestTrue(TEXT("the same ground would carry motes without the rule"), InTownWild > 0);
+	TestEqual(TEXT("no motes in a town's streets and lots"), InTown, 0);
+	TestEqual(TEXT("none on the ways"), OnWay, 0);
+	TestTrue(TEXT("road chunks in mote country found"), RoadChunks > 0);
+	TestTrue(TEXT("the same roads would carry motes without the rule"), RoadOnWild > 0);
+	TestEqual(TEXT("none on the roads"), RoadOn, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaMotesLifeTest, "Slonk.Fauna.MotesLife", SLONK_TEST_FLAGS)
+bool FSlonkFaunaMotesLifeTest::RunTest(const FString& Parameters)
+{
+	// Motes where there is life and air, the more the more life: none on a dead world, none without air, none with the
+	// motes off or their density 0; on a desert's quarter of life a fraction of a living world's. On a world the tides
+	// hold, none on the frozen far side, some round the terminator.
+	const FPlanetTerrainParams P = FaunaEarthParams(6371.0);
+	FPlanetTerrainParams Airless = P;
+	Airless.bAirless = true;
+	SlonkScatter::FMoteSettings Off = MotesOn();
+	Off.bEnabled = false;
+	SlonkScatter::FMoteSettings None = MotesOn();
+	None.Density = 0.f;
+	const int32 D = MoteDepth(P);
+	int32 Living = 0, Quarter = 0, Dead = 0, NoAir = 0, Disabled = 0, Thin = 0;
+	for (const FVector& Dir : MoteSpots(P, 4))
+	{
+		int32 Face; int64 X, Y;
+		if (!UPlanetTerrainComponent::ChunkAt(Dir, D, Face, X, Y)) { continue; }
+		Living += BuildMotes(P, MotesOn(1.f), Face, D, X, Y).Num();
+		Quarter += BuildMotes(P, MotesOn(0.25f), Face, D, X, Y).Num();
+		Dead += BuildMotes(P, MotesOn(0.f), Face, D, X, Y).Num();
+		NoAir += BuildMotes(Airless, MotesOn(1.f), Face, D, X, Y).Num();
+		Disabled += BuildMotes(P, Off, Face, D, X, Y).Num();
+		Thin += BuildMotes(P, None, Face, D, X, Y).Num();
+	}
+	TestEqual(TEXT("the field's mote density is 0 without air"), SlonkScatter::MoteDensityAt(Airless, FVector(0.3, 0.8, 0.5)), 0.0);
+	TestEqual(TEXT("no chunk carries motes switched off"), SlonkScatter::MoteMaxChunkEdgeCm(FScatterSettings(), Off), 0.0);
+	// Held to its star along +X: its far side frozen, its terminator temperate.
+	FPlanetTerrainParams Locked = P;
+	const double T0 = SlonkTerrain::LapseNPerCm * Locked.SnowlineCm;
+	Locked.Climate = EClimateModel::Locked;
+	Locked.ClimateAxis = FVector::XAxisVector;
+	Locked.DayN = (float)(T0 * 2.8);
+	Locked.TermN = (float)(T0 * 0.6);
+	Locked.NightN = -0.4f;
+	Locked.IceCapStart = 2.f;
+	int32 FarSide = 0, FarSideLand = 0, Ring = 0, RingLand = 0;
+	for (int32 i = 0; i < 6000; ++i)
+	{
+		const FVector Dir = Spread(i, 6000);
+		const double Mu = Dir.X;
+		if (Mu > -0.6 && FMath::Abs(Mu) > 0.15) { continue; }
+		if (SlonkTerrain::Sample(Locked, Dir, 1.0e4).bWater) { continue; }
+		const bool bMotes = SlonkScatter::MoteDensityAt(Locked, Dir) > 0.0;
+		if (Mu <= -0.6) { ++FarSideLand; FarSide += bMotes ? 1 : 0; }
+		else { ++RingLand; Ring += bMotes ? 1 : 0; }
+	}
+	AddInfo(FString::Printf(TEXT("clouds on 4 chunks: %d at full life, %d at a quarter, %d at none, %d without air, %d switched off, %d at density 0; a locked world: %d of %d far-side points with motes, %d of %d round the terminator"),
+		Living, Quarter, Dead, NoAir, Disabled, Thin, FarSide, FarSideLand, Ring, RingLand));
+	TestTrue(TEXT("motes on a living world"), Living > 0);
+	TestTrue(TEXT("fewer at a quarter of the life"), Quarter > 0 && Quarter < Living * 0.5);
+	TestEqual(TEXT("none on a dead world"), Dead, 0);
+	TestEqual(TEXT("none without air"), NoAir, 0);
+	TestEqual(TEXT("none switched off"), Disabled, 0);
+	TestEqual(TEXT("none at density 0"), Thin, 0);
+	TestTrue(TEXT("none on a locked world's frozen far side"), FarSideLand > 0 && FarSide == 0);
+	TestTrue(TEXT("some round its terminator"), Ring > 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaMoteCloudTest, "Slonk.Fauna.MoteCloud", SLONK_TEST_FLAGS)
+bool FSlonkFaunaMoteCloudTest::RunTest(const FString& Parameters)
+{
+	// The mote cloud: 24, 8 and 2 cards, each a quad whose middle the material finds from any of its corners by its UV,
+	// over a disc half a span round from 0.03 to 0.31 of a span up, each card's colour as the material reads it (a mote's
+	// surface, how many of the 24 it stands for, its own random, a gnat's under the share), the gnats' six on the near
+	// LODs and none on the far one, the other eighteen on every LOD; every card, turned to a camera as the material turns
+	// it, showing the camera its front; its mesh made once, three LODs, its bounds grown by the motes' reach.
+	namespace Mo = SlonkFauna::Mote;
+	using namespace UE::Geometry;
+	int32 BadCard = 0, BadColour = 0, Repeated = 0, Tris[SlonkFaunaMeshes::NumLods] = {}, Free[SlonkFaunaMeshes::NumLods] = {}, Gnats[SlonkFaunaMeshes::NumLods] = {};
+	int32 Faced = 0, BackToCamera = 0;
+	// The ways to a camera, in the cloud's frame: across it, from above and below to one side, and straight down onto it.
+	const FVector Views[] = { FVector(1.0, 0.0, 0.0), FVector(0.3, -0.8, 0.5).GetSafeNormal(), FVector(-0.6, 0.2, -0.3).GetSafeNormal(), FVector(0.0, 0.0, 1.0) };
+	FBox Box0(ForceInit);
+	for (int32 L = 0; L < SlonkFaunaMeshes::NumLods; ++L)
+	{
+		FDynamicMesh3 M;
+		SlonkFaunaMeshes::BuildMoteCloudLod(L, M);
+		Tris[L] = M.TriangleCount();
+		const FDynamicMeshUVOverlay* UV = M.Attributes()->PrimaryUV();
+		const FDynamicMeshColorOverlay* C = M.Attributes()->PrimaryColors();
+		const FDynamicMeshNormalOverlay* N = M.Attributes()->PrimaryNormals();
+		TSet<int32> Randoms;
+		// The vertices come four to a card, their elements with them.
+		for (int32 V0 = 0; V0 + 3 < M.MaxVertexID(); V0 += 4)
+		{
+			FVector Middle[4];
+			const FVector4f Col = C->GetElement(V0);
+			for (int32 k = 0; k < 4; ++k)
+			{
+				const FVector P = (FVector)M.GetVertex(V0 + k);
+				const FVector2f T = UV->GetElement(V0 + k);
+				if (L == 0) { Box0 += P; }
+				Middle[k] = P - FVector(2.0 * T.X - 1.0, 0.0, 2.0 * T.Y - 1.0) * Mo::CardHalfCm;
+				BadColour += C->GetElement(V0 + k) == Col && FVector(N->GetElement(V0 + k)).Equals(FVector::ZAxisVector, 1e-4) ? 0 : 1;
+			}
+			bool bCard = true;
+			for (int32 k = 1; k < 4; ++k) { bCard &= Middle[k].Equals(Middle[0], 1e-4); }
+			const double Rr = FVector2D(Middle[0].X, Middle[0].Y).Size();
+			bCard &= Rr <= 46.0 && Middle[0].Z >= 3.0 && Middle[0].Z <= 31.0;
+			BadCard += bCard ? 0 : 1;
+			const int32 Stands = FMath::RoundToInt32(Col.Y * Mo::MotesPerCloud);
+			const bool bGnat = Col.Z < Mo::GnatShare;
+			(bGnat ? Gnats[L] : Free[L]) += Stands;
+			BadColour += Col.X == SlonkFauna::Vc::SurfaceMote && Col.W == SlonkFauna::Vc::JointRigid && Stands >= 1 && Stands <= 12 && Col.Z >= 0.f && Col.Z < 1.f
+				&& FMath::Abs(Col.Z - Mo::GnatShare) > 0.01f ? 0 : 1;
+			bool bAlready = false;
+			Randoms.Add(FMath::RoundToInt32(Col.Z * 255.f), &bAlready);
+			Repeated += bAlready ? 1 : 0;
+		}
+		// Each card turned as the material turns it to face the camera (fauna_material.py, WPO_CODE): a corner at its middle
+		// plus (rt (2u - 1) + upv (2v - 1)) times its half-width, rt = z x v (x where v is straight up) and upv = v x rt,
+		// v the way to the camera. The front the engine draws a triangle (A, B, C) by, (C - A) x (B - A), toward the camera.
+		for (const int32 T : M.TriangleIndicesItr())
+		{
+			const FIndex3i Tv = M.GetTriangle(T), Tu = UV->GetTriangle(T);
+			for (const FVector& V : Views)
+			{
+				FVector Rt = FVector::CrossProduct(FVector::ZAxisVector, V);
+				Rt = Rt.SizeSquared() > 1e-6 ? Rt.GetSafeNormal() : FVector::XAxisVector;
+				const FVector Upv = FVector::CrossProduct(V, Rt);
+				FVector Q[3];
+				for (int32 k = 0; k < 3; ++k)
+				{
+					const FVector2f Uv = UV->GetElement(Tu[k]);
+					const FVector Cn(2.0 * Uv.X - 1.0, 0.0, 2.0 * Uv.Y - 1.0);
+					Q[k] = (FVector)M.GetVertex(Tv[k]) - Cn * Mo::CardHalfCm + (Rt * Cn.X + Upv * Cn.Z) * 2.0;
+				}
+				++Faced;
+				BackToCamera += FVector::DotProduct(FVector::CrossProduct(Q[2] - Q[0], Q[1] - Q[0]), V) > 0.0 ? 0 : 1;
+			}
+		}
+	}
+	AddInfo(FString::Printf(TEXT("mote cloud LODs %d, %d and %d triangles; motes stood for %d+%d, %d+%d, %d+%d (free+gnats); LOD 0 %.0f x %.0f x %.0f cm of the unit mesh; %d cards off their middle or the cloud, %d vertices off the colour contract, %d randoms repeated"),
+		Tris[0], Tris[1], Tris[2], Free[0], Gnats[0], Free[1], Gnats[1], Free[2], Gnats[2], Box0.GetSize().X, Box0.GetSize().Y, Box0.GetSize().Z, BadCard, BadColour, Repeated));
+	for (int32 L = 0; L < SlonkFaunaMeshes::NumLods; ++L)
+	{
+		TestEqual(FString::Printf(TEXT("LOD %d's triangles, two a card"), L), Tris[L], 2 * Mo::CardsAtLod[L]);
+		TestEqual(FString::Printf(TEXT("LOD %d stands for the cloud's eighteen free motes"), L), Free[L], Mo::MotesPerCloud - Mo::GnatsPerCloud);
+		TestEqual(FString::Printf(TEXT("LOD %d's gnats"), L), Gnats[L], L < 2 ? Mo::GnatsPerCloud : 0);
+	}
+	TestEqual(TEXT("every card a quad round its middle, in the cloud"), BadCard, 0);
+	TestEqual(TEXT("every vertex as the material reads it"), BadColour, 0);
+	TestEqual(TEXT("each card its own random"), Repeated, 0);
+	const int32 NumViews = (int32)UE_ARRAY_COUNT(Views);
+	AddInfo(FString::Printf(TEXT("%d triangles turned to %d cameras as the material turns them: %d showing the camera their backs"), Faced / NumViews, NumViews, BackToCamera));
+	TestTrue(TEXT("every card turned to the camera shows it its front"), Faced > 0 && BackToCamera == 0);
+	UStaticMesh* Mesh = SlonkFaunaMeshes::GetMoteCloudMesh();
+	TestTrue(TEXT("the cloud's mesh is made, and kept"), Mesh != nullptr && Mesh == SlonkFaunaMeshes::GetMoteCloudMesh());
+	if (Mesh)
+	{
+		TestEqual(TEXT("with three LODs"), Mesh->GetNumLODs(), SlonkFaunaMeshes::NumLods);
+		const FBox B = Mesh->GetBounds().GetBox();
+		TestTrue(TEXT("its bounds grown by the motes' reach"), B.Min.X <= Box0.Min.X - Mo::ReachCm + 0.5 && B.Max.Z >= Box0.Max.Z + Mo::ReachCm - 0.5);
+		// Where its LODs come in for a cloud of a middling span, through a 90-degree view at 16:9 (the engine's screen size
+		// is the view's projection scale times the radius over the distance): on the terrain's GPU instances by the radius
+		// they pick an instance's LOD by (their padded box's), and on the engine's own by the mesh's bounds alone.
+		const double SpanM = 6.75, Scale = SpanM * 100.0 / SlonkFauna::UnitCm;
+		UPlanetInstancesComponent* Set = NewObject<UPlanetInstancesComponent>();
+		Set->SetStaticMesh(Mesh);
+		Set->SetPieces(TArray<FTransform>{ FTransform(FQuat::Identity, FVector::ZeroVector, FVector(Scale)) }, TConstArrayView<float>());
+		const double Proj = (16.0 / 9.0) / FMath::Tan(FMath::DegreesToRadians(45.0));
+		const double GpuR = Set->GetMaxInstanceRadius(), EngineR = Mesh->GetBounds().BoxExtent.Length() * Scale;
+		auto ComesInM = [Proj](double RadiusCm, int32 L) { return Proj * RadiusCm / SlonkFaunaMeshes::MoteLodScreenSize[L] / 100.0; };
+		AddInfo(FString::Printf(TEXT("a %.2f m cloud: on the GPU instances (LOD radius %.0f cm) 8 cards from %.0f m, 2 from %.0f m; on the engine's (%.0f cm) from %.0f m and %.0f m"),
+			SpanM, GpuR, ComesInM(GpuR, 1), ComesInM(GpuR, 2), EngineR, ComesInM(EngineR, 1), ComesInM(EngineR, 2)));
+		TestTrue(TEXT("on the GPU instances 8 cards from about 110 m"), ComesInM(GpuR, 1) > 95.0 && ComesInM(GpuR, 1) < 130.0);
+		TestTrue(TEXT("and 2 from about 550 m"), ComesInM(GpuR, 2) > 480.0 && ComesInM(GpuR, 2) < 650.0);
+	}
 	return true;
 }
 

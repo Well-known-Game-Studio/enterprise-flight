@@ -20,6 +20,10 @@ namespace SlonkFauna
 	{
 		/** Blue-green on an Earth-like world, turned round the colour wheel with a strange world's sky. */
 		FLinearColor Glow = FLinearColor(0.08f, 0.7f, 0.85f);
+		/** The fireflies' light: an Earth's warm yellow-green, turned with the plankton's glow. */
+		FLinearColor Firefly = FLinearColor(0.55f, 1.f, 0.08f);
+		/** The pollen drifting in the sun by day: an Earth's gold, turned with the rest. */
+		FLinearColor Pollen = FLinearColor(0.9f, 0.62f, 0.16f);
 		/** How far round the colour wheel its animals' pigments turn from the Earth's, degrees: the sky's turn times the
 		 *  strangeness, as the glow's. */
 		float HueTurnDeg = 0.f;

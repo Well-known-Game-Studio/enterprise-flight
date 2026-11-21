@@ -8,10 +8,13 @@
 // at is still there. A craft passing low by a flock, or someone walking under it, startles it: it flees, scatters and
 // drifts back to its path over a couple of minutes, and is still shaken if left and come back to within that time.
 //
-// slonk.Fauna.Enable 0 takes every animal away (the seas' plankton and shoals with them, APlanetBody), leaving each world
-// as it was before it had any; slonk.Fauna.Density scales the share of the habitat's cells holding a group. Without
-// M_Fauna (the builder not run yet) the animals are drawn in the engine's basic material, their wings still, and one
-// warning says so.
+// The motes (pollen and gnats by day, fireflies at night) are the terrain's chunks' to carry, as the plants are
+// (SlonkScatter::PlaceMotes): this component says what they are (FMoteSettings) and the terrain places and draws them.
+//
+// slonk.Fauna.Enable 0 takes every animal away (the seas' plankton and shoals with them, APlanetBody, and the motes),
+// leaving each world as it was before it had any; slonk.Fauna.Density scales the share of the habitat's cells holding a
+// group, and of the ground's cells holding a mote cloud. Without M_Fauna (the builder not run yet) the animals are drawn
+// in the engine's basic material, their wings still, and one warning says so; without its mote branch there are no motes.
 
 #pragma once
 
@@ -28,9 +31,12 @@ class UPlanetTerrainComponent;
 
 namespace SlonkFauna
 {
-	/** slonk.Fauna.Enable and slonk.Fauna.Density as they stand (game thread). */
+	/** slonk.Fauna.Enable, slonk.Fauna.Density and slonk.Fauna.Debug as they stand (game thread). */
 	SLONK_API bool IsEnabled();
 	SLONK_API float DensitySetting();
+	SLONK_API int32 DebugSetting();
+	/** How many pixels a radian is to a player's camera (its field of view across the viewport): the speck floors' scale. */
+	SLONK_API float PixelsPerRadian(const APlayerController* PC);
 	/** The material the animals are drawn in. */
 	inline const TCHAR* MaterialPath = TEXT("/Game/Slonk/Materials/M_Fauna.M_Fauna");
 }
@@ -67,6 +73,9 @@ public:
 	double ClockSeconds() const;
 	/** The world as the animals see it now (the settings' density and the kinds allowed in it). */
 	SlonkFauna::FFaunaWorld MakeFaunaWorld() const;
+	/** The motes the terrain's chunks carry as things stand: the fauna on and the motes allowed, the world's life, the
+	 *  settings' density, the look's pollen and fireflies. */
+	SlonkScatter::FMoteSettings MakeMoteSettings() const;
 	bool IsConfigured() const { return bConfigured; }
 	int32 GetGroupCount() const { return Sets.Num(); }
 	int32 GetMemberCount() const;
@@ -80,6 +89,10 @@ public:
 	/** One line for the debug readout, and one a candidate group of the last scan. */
 	FString Describe() const;
 	void DescribeCells(TArray<FString>& OutLines) const;
+	/** The world as the settings have it now, given to the field (a change lets every group go) and the motes' to the
+	 *  terrain: each view update does it, and a debug command that changed a setting does it at once, so the line it reads
+	 *  out after is the settings' as they now stand. */
+	void RefreshWorld();
 
 private:
 	struct FGroupSet
@@ -93,8 +106,6 @@ private:
 	};
 	using FScanRef = TSharedPtr<SlonkFauna::FFaunaField::FScan, ESPMode::ThreadSafe>;
 
-	/** The world as the settings have it now, given to the field: a change lets every group go. */
-	void RefreshWorld();
 	void EnsureMaterial();
 	UPlanetInstancesComponent* AcquireSet();
 	void SpawnSet(const SlonkFauna::FFaunaField::FGroupRef& G);

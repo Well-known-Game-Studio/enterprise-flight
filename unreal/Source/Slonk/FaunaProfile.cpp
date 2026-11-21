@@ -1,4 +1,5 @@
 #include "FaunaProfile.h"
+#include "FaunaMeshes.h"
 #include "ScatterSpot.h"
 #include "TerrainScatter.h"
 
@@ -19,8 +20,17 @@ namespace
 	 * to two spans and the speck floor's growth: fauna_material.py), which every instance's box is padded by; their LOD
 	 * screen sizes are set with that box (about 7.8 spans across, where a bird is 1 span), so a bird goes to its 12
 	 * triangles about 40 pixels across and to its 2 about 4.
-	 * The rest are the later phases' budgets (not spawned yet): 2,000 walkers in 16 herds, 400 mote clouds carried on the
-	 * chunks (no group sets), 30 leapers in 6 groups, 24 floaters alone. 3,454 instances and 58 group sets in all.
+	 * The motes are not the field's: the terrain's chunks carry them (SlonkScatter::PlaceMotes), clouds of 24 over cells of
+	 * about 9 m, all of them on the chunks to 160 m and a quarter of them on the next level up, so on an Earth they fade
+	 * out by about 460 m from the camera and the share kept by about 920 m (MoteMaxEdgeCm, MoteKeep, the plants' fade), far
+	 * enough for a ship's chase camera to see the meadows twinkle; none are built while the camera and the pawn are both
+	 * more than about a kilometre over the ground, the chunks carrying them not being made. A cloud past about 110 m is 8
+	 * cards and past 550 m 2 (16 and 4 triangles, on the GPU instances: SlonkFaunaMeshes::MoteLodScreenSize), so their row
+	 * here is the budget of those drawn whole, at 24 cards: 400 clouds (about 170 in the densest country,
+	 * Slonk.Fauna.MotesNest; some 1,700 clouds in all about a camera on an Earth's land, 5,000 in the densest country,
+	 * about 65,000 triangles there).
+	 * The rest are the later phases' budgets (not spawned yet): 2,000 walkers in 16 herds, 30 leapers in 6 groups, 24
+	 * floaters alone. 3,454 instances and 58 group sets in all.
 	 */
 	FFaunaKindDesc MakeDesc(EFaunaKind K)
 	{
@@ -44,9 +54,11 @@ namespace
 			D.ShadowReachCm = 6.0e4; D.FadeCm = 2.2e5;
 			break;
 		case EFaunaKind::Mote:
-			D.CellCm = 900.0; D.ReachCm = 4.0e4; D.MaxAltitudeCm = 1.0e4;
-			D.GroupMin = 1; D.GroupMax = 1; D.MaxGroups = 0; D.MaxMembers = 400;
-			D.FadeCm = 3.0e4;
+			D.CellCm = SlonkScatter::MoteSpacingCm; D.ReachCm = 9.2e4; D.MaxAltitudeCm = 1.0e5;
+			D.GroupMin = SlonkFauna::Mote::MotesPerCloud; D.GroupMax = SlonkFauna::Mote::MotesPerCloud; D.MaxGroups = 0; D.MaxMembers = 400;
+			D.FadeCm = 4.6e4;
+			D.CullPaddingUnits = SlonkFauna::Mote::ReachCm;
+			for (int32 L = 0; L < 3; ++L) { D.LodScreenSize[L] = SlonkFaunaMeshes::MoteLodScreenSize[L]; }
 			break;
 		case EFaunaKind::Leaper:
 			D.CellCm = 1048576.0 / 52.0; D.ReachCm = 1.5e5; D.MaxAltitudeCm = 5.0e4;
@@ -157,11 +169,10 @@ SlonkFauna::FFaunaLook SlonkFauna::LookOf(const FWorldGenome& G)
 	L.Vivid = FMath::Clamp(G.Strangeness, 0.f, 1.f);
 	if (Turn != 0.f)
 	{
-		// Round the colour wheel, its saturation and brightness kept.
-		FLinearColor Hsv = L.Glow.LinearRGBToHSV();
-		Hsv.R = FMath::Fmod(Hsv.R + Turn + 720.f, 360.f);
-		L.Glow = Hsv.HSVToLinearRGB();
-		L.Glow.A = 1.f;
+		// Round the colour wheel, its saturation and brightness kept: the plankton's glow, the fireflies' and the pollen's.
+		L.Glow = TurnPigment(L.Glow, Turn);
+		L.Firefly = TurnPigment(L.Firefly, Turn);
+		L.Pollen = TurnPigment(L.Pollen, Turn);
 	}
 	return L;
 }
@@ -190,7 +201,8 @@ bool SlonkFauna::SameProfile(const FFaunaProfile& A, const FFaunaProfile& B)
 {
 	if (A.Strangeness != B.Strangeness || A.Type != B.Type || A.Hash != B.Hash || A.Seed != B.Seed) { return false; }
 	for (int32 K = 0; K < NumKinds; ++K) { if (A.Plans[K] != B.Plans[K]) { return false; } }
-	return A.Look.Glow == B.Look.Glow && A.Look.HueTurnDeg == B.Look.HueTurnDeg && A.Look.Vivid == B.Look.Vivid;
+	return A.Look.Glow == B.Look.Glow && A.Look.Firefly == B.Look.Firefly && A.Look.Pollen == B.Look.Pollen && A.Look.HueTurnDeg == B.Look.HueTurnDeg
+		&& A.Look.Vivid == B.Look.Vivid;
 }
 
 FLinearColor SlonkFauna::FlierPigment(const FFaunaLook& L, const FScatterPalette& Pal, EFlierHabitat H, double Dry, double Vary)

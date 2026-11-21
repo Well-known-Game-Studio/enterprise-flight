@@ -130,7 +130,26 @@ namespace SlonkScatter
 	SLONK_API int32 TreeFarLevels(const FScatterSettings& S, double FaceEdge);
 	SLONK_API double TreeReachCm(const FScatterSettings& S, double FaceEdge);
 
-	SLONK_API void ScatterChunk(const FPlanetTerrainParams& P, const FScatterSettings& S, const FChunkGrid& G, FChunkScatter& Out);
+	/**
+	 * The settlements near one chunk that what is placed on it keeps out of (its towns' grounds, the ways the terrain
+	 * paints round them), looked for the first time anything placed there asks and kept for the rest of the chunk's build:
+	 * the scatter and the motes of one build share it, and a chunk where nothing asks looks for none. It holds the first
+	 * chunk it was asked for; one build, one chunk.
+	 */
+	struct FKeepOut;
+	struct SLONK_API FChunkKeepOut
+	{
+		FChunkKeepOut();
+		~FChunkKeepOut();
+		FChunkKeepOut(const FChunkKeepOut&) = delete;
+		FChunkKeepOut& operator=(const FChunkKeepOut&) = delete;
+		const FKeepOut& Get(const FPlanetTerrainParams& P, const FCivilization& People, const FChunkGrid& G);
+	private:
+		TUniquePtr<FKeepOut> KeepOut;
+	};
+
+	/** The rocks and plants on a chunk. Shared, if given, is the chunk build's keep-out (else one of its own is looked for). */
+	SLONK_API void ScatterChunk(const FPlanetTerrainParams& P, const FScatterSettings& S, const FChunkGrid& G, FChunkScatter& Out, FChunkKeepOut* Shared = nullptr);
 
 	/**
 	 * The forest's density at each vertex of a chunk's grid ((Steps + 1)^2, row major, the margin left out): the
@@ -148,6 +167,69 @@ namespace SlonkScatter
 	/** The material's scrub dot in the cell holding a point of noise space, exactly as the shader hashes it: false if
 	 *  the cell has none; else the dot's centre (noise space) and radius, cm. */
 	SLONK_API bool ScrubDotAt(const FVector& NoiseP, FVector& OutCentre, double& OutRadiusCm);
+
+	/**
+	 * The motes over the ground (pollen and gnats by day, fireflies at dusk and through the night), carried on the chunks
+	 * as the plants are: a cloud of them hovers over a cell of a lattice of about 9 m in cube-face coordinates, nested in
+	 * the quadtree like the plants' (a chunk and its children find the same cloud at the same place), on the chunks up to
+	 * MoteMaxEdgeCm across and on the next level up for a share of them, fading out as the plants do. They are the fauna's
+	 * (slonk.Fauna.Enable and slonk.Fauna.Density), not the scatter's: kept apart from FChunkScatter and its count of
+	 * meshes, so nothing the scatter places moves for them.
+	 */
+	struct FMoteSettings
+	{
+		/** Whether any are placed: the fauna on and the motes among its kinds allowed, life and air, and M_Fauna able to
+		 *  draw them (the terrain component sees to the last). */
+		bool bEnabled = false;
+		/** How much lives there (APlanetBody::GroundLife: 0 on a dead world), and slonk.Fauna.Density. */
+		float Life = 0.f;
+		float Density = 1.f;
+		/** The clouds' colour by day, the pollen's (its gnats a dark shade of it): SlonkFauna::FFaunaLook::Pollen. */
+		FLinearColor Pollen = FLinearColor(0.9f, 0.62f, 0.16f);
+		/** The fireflies' light at night (SlonkFauna::FFaunaLook::Firefly): the material's, set on it, not on the clouds,
+		 *  so a change of it builds nothing again. */
+		FLinearColor Glow = FLinearColor(0.55f, 1.f, 0.08f);
+		/** Whether two settings place the same clouds with the same data (the glow aside). */
+		bool SamePlacement(const FMoteSettings& O) const
+		{
+			if (bEnabled != O.bEnabled) { return false; }
+			return !bEnabled || (Life == O.Life && Density == O.Density && Pollen == O.Pollen);
+		}
+	};
+	/** The motes' lattice: wanted spacing, cm (it snaps to a level of the quadtree on each world); all of them on chunks
+	 *  this long or shorter, cm, and MoteKeep of them on the next level up, while the settings allow a far level. */
+	constexpr double MoteSpacingCm = 900.0;
+	constexpr double MoteMaxEdgeCm = 16000.0;
+	constexpr int32 MoteFarLevels = 1;
+	constexpr double MoteKeep = 0.25;
+	/** Most clouds one chunk carries. */
+	constexpr int32 MaxMotesPerChunk = 3000;
+	/** The fauna a chunk carries, apart from its scatter: its mote clouds, chunk-relative (a cloud's scale is its span in
+	 *  metres, the unit mesh being a metre across, its z the ground's up), with SlonkFauna::Custom::Num custom floats each
+	 *  (SlonkFauna::Mote: what they hold). */
+	struct FChunkFauna
+	{
+		TArray<FTransform> Motes;
+		TArray<float> MoteCustom;
+		int32 Num() const { return Motes.Num(); }
+	};
+	/** The largest chunk edge carrying any motes under the settings, cm (0: none). */
+	SLONK_API double MoteMaxChunkEdgeCm(const FScatterSettings& S, const FMoteSettings& M);
+	/** How many far levels the motes use under the scatter's settings (its ground detail): at most MoteFarLevels. */
+	SLONK_API int32 MoteFarLevelsUsed(const FScatterSettings& S);
+	/** The mote clouds on a chunk, on its drawn ground: none over water, none on a world without life or air; the most
+	 *  over wet, level ground along a forest's edge, none on lying snow and ice. S gives the fade, the far levels and the
+	 *  settlements to keep out of (Shared, if given, the chunk build's keep-out, which the scatter may have looked for
+	 *  already). A pure function of the planet and the chunk, safe off the game thread. */
+	SLONK_API void PlaceMotes(const FPlanetTerrainParams& P, const FScatterSettings& S, const FMoteSettings& M, const FChunkGrid& G, FChunkFauna& Out,
+		FChunkKeepOut* Shared = nullptr);
+	/** The chance of a mote cloud over a cell where a planet-local unit direction is, as PlaceMotes reckons it, from the
+	 *  field (finer than ten metres left out) rather than a chunk's drawn mesh, before the world's life and the density
+	 *  setting: 0 over water. For the searches. */
+	SLONK_API double MoteDensityAt(const FPlanetTerrainParams& P, const FVector& Dir);
+	/** The densest mote country near a planet-local direction, searched over the field within MaxCm of it (a few thousand
+	 *  points, coarse then fine round the best): false if none is found there. Synchronous: debug use. */
+	SLONK_API bool FindMoteSpot(const FPlanetTerrainParams& P, const FVector& From, double MaxCm, FVector& OutDir, double& OutDensity);
 
 	/** What a spot offers whatever lives there, read from the field rather than from a chunk's drawn mesh (finer than
 	 *  ten metres left out, near enough for a habitat): how wet it is, the regimes a chunk reads from the slope (level
