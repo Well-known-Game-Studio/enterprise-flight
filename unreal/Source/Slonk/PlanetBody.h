@@ -151,9 +151,12 @@ struct FPlanetStyle
 	/** The haze's colour: white scatters every colour alike, as the air's ordinary haze does; a tint scatters its own
 	 *  colour and takes up the others. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Atmosphere") FLinearColor HazeColor = FLinearColor::White;
-	/** Scales the sky's Rayleigh scattering: 1 as the colour gives it; the genome sets it so a sky turned from blue is
-	 *  no brighter than the archetype's. */
+	/** Scales the sky's Rayleigh scattering (the Sky Atmosphere, near the world): 1 as the colour gives it; the genome
+	 *  sets it so a sky turned from blue is no brighter than the archetype's. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Atmosphere") float SkyScatterScale = 1.f;
+	/** Scales the far atmosphere shell's sky colour: 1 as the colour gives it; the genome sets it so a sky turned from
+	 *  blue glows no brighter from afar than the archetype's (the shell shows the colour itself, not its Rayleigh ratio). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Atmosphere") float SkyShellScale = 1.f;
 };
 
 UCLASS()

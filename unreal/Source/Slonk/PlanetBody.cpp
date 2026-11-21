@@ -909,9 +909,9 @@ void APlanetBody::ApplyMaterials()
 	if (AtmosphereMID)
 	{
 		// The shell has no haze colour of its own: a tinted haze is blended into its sky colour, as the near sky's
-		// haze tints it, so the limb from orbit and the sky inside agree.
-		const bool bTintedHaze = !S.HazeColor.Equals(FLinearColor::White, 1.0e-3f);
-		AtmosphereMID->SetVectorParameterValue(TEXT("AtmosphereColor"), bTintedHaze ? FMath::Lerp(S.AtmosphereColor, S.HazeColor * S.AtmosphereColor.GetMax(), FMath::Clamp(S.Haze, 0.f, 0.6f)) : S.AtmosphereColor);
+		// haze tints it, and a turned sky glows from afar as brightly as the near sky scatters, so the limb from
+		// orbit and the sky inside agree.
+		AtmosphereMID->SetVectorParameterValue(TEXT("AtmosphereColor"), SlonkGenome::ShellSkyColor(S));
 		AtmosphereMID->SetVectorParameterValue(TEXT("SunsetColor"), S.SunsetColor);
 		AtmosphereMID->SetScalarParameterValue(TEXT("AtmosphereDepth"), S.AtmosphereDepth);
 		AtmosphereMID->SetScalarParameterValue(TEXT("Falloff"), S.Falloff);

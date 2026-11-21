@@ -27,6 +27,8 @@ namespace
 		S.OceanColor = FLinearColor(R.FRand(), R.FRand(), R.FRand());
 		S.AtmosphereColor = FLinearColor(R.FRand() * 0.5f, R.FRand() * 0.7f, 1.f);
 		S.Haze = R.FRand() * 0.2f;
+		// The archetypes' air, from a shallow ice world's to a deep Venus's.
+		S.AtmosphereScaleHeightKm = 5.5f + R.FRand() * 14.f;
 		return S;
 	}
 }
@@ -52,6 +54,26 @@ bool FSlonkGenomeNeutralTest::RunTest(const FString& Parameters)
 			}
 		}
 	}
+	// What the far shell and the near sky read off a style the genome left alone: the shell its sky colour as it is (no
+	// brightness scale, no haze blended in), the sky the Rayleigh colour it always made of it; and the settings the
+	// genome moves start at the ones that leave a world as it was (the swell the terrain material's own 120 cm).
+	int32 ShellMoved = 0, RayleighMoved = 0;
+	for (uint32 Hash = 1; Hash <= 64; ++Hash)
+	{
+		for (const FPlanetStyle& S : { FPlanetStyle(), Varied(Hash) })
+		{
+			ShellMoved += SlonkGenome::ShellSkyColor(S) == S.AtmosphereColor ? 0 : 1;
+			const FLinearColor C0 = S.AtmosphereColor / FMath::Max(S.AtmosphereColor.GetMax(), KINDA_SMALL_NUMBER);
+			const FLinearColor Was(FMath::Max(FMath::Pow(C0.R, 1.6f), 0.08f), FMath::Max(FMath::Pow(C0.G, 1.6f), 0.08f), FMath::Max(FMath::Pow(C0.B, 1.6f), 0.08f));
+			RayleighMoved += SlonkGenome::RayleighOf(S.AtmosphereColor).Equals(Was, 1.0e-6f) ? 0 : 1;
+		}
+	}
+	const FPlanetStyle D = FPlanetStyle();
+	AddInfo(FString::Printf(TEXT("128 untouched styles: %d shell sky colours moved, %d Rayleigh colours moved"), ShellMoved, RayleighMoved));
+	TestEqual(TEXT("the far shell takes an untouched style's sky colour as it is"), ShellMoved, 0);
+	TestEqual(TEXT("the near sky scatters an untouched style's colour as it always did"), RayleighMoved, 0);
+	TestTrue(TEXT("a style's genome settings start where they change nothing"), D.SkyScatterScale == 1.f && D.SkyShellScale == 1.f && D.HazeScaleHeightKm == 0.f
+		&& D.HazeColor == FLinearColor::White && D.SwellCm == 120.f);
 	AddInfo(FString::Printf(TEXT("%d styles through a strangeness-0 genome: %d changed, %d genomes off the archetype's own"), Tried, Changed, Shifted));
 	TestEqual(TEXT("a strangeness-0 genome changes no style"), Changed, 0);
 	TestEqual(TEXT("a strangeness-0 genome is the archetype's own"), Shifted, 0);
@@ -65,8 +87,9 @@ bool FSlonkGenomeRollsTest::RunTest(const FString& Parameters)
 	// depart further; what the genome makes is a colour the sky and the sea can use; giants and moons keep theirs.
 	const int32 N = 400;
 	TMap<ESolvent, int32> Seas;
-	int32 BigTurns = 0, Hazy = 0, Bad = 0, Unstable = 0, FarAtLow = 0, Glare = 0;
-	double TurnLow = 0.0, TurnHigh = 0.0; int32 AlienLow = 0, AlienHigh = 0;
+	int32 BigTurns = 0, Hazy = 0, Bad = 0, Unstable = 0, FarAtLow = 0, Glare = 0, ShellGlare = 0, Unmatched = 0, Turned = 0, Capped = 0;
+	double TurnLow = 0.0, TurnHigh = 0.0; int32 AlienLow = 0, AlienHigh = 0, HazyLow = 0, HazyHigh = 0;
+	float ScatterLo = 1.f, ShellLo = 1.f;
 	for (int32 i = 0; i < N; ++i)
 	{
 		const uint32 Hash = 2654435761u * (uint32)(i + 1);
@@ -76,7 +99,8 @@ bool FSlonkGenomeRollsTest::RunTest(const FString& Parameters)
 		BigTurns += FMath::Abs(G.SkyHueShiftDeg) > 60.f ? 1 : 0;
 		Hazy += G.LowHazeKm > 0.f ? 1 : 0;
 		// What the genome makes, on every archetype it changes (the ice worlds' seas and the dry worlds' dust haze have
-		// branches of their own): colours the sky and the sea can use, and a sky no brighter than the archetype's.
+		// branches of their own): colours the sky and the sea can use, a lowland haze the sky draws as it is, and a sky
+		// no brighter than the archetype's, near (the Sky Atmosphere's scattering) or from afar (the shell's glow).
 		for (const EPlanetArchetype Kind : { EPlanetArchetype::Terrestrial, EPlanetArchetype::Ocean, EPlanetArchetype::Ice, EPlanetArchetype::Desert, EPlanetArchetype::Mars, EPlanetArchetype::Venus, EPlanetArchetype::Lava })
 		{
 			const FWorldGenome K = SlonkGenome::Roll(Kind, 1.f, Hash);
@@ -87,27 +111,50 @@ bool FSlonkGenomeRollsTest::RunTest(const FString& Parameters)
 			{
 				Bad += (C.R < 0.f || C.G < 0.f || C.B < 0.f || FMath::Max3(C.R, C.G, C.B) <= 0.f || !FMath::IsFinite(C.R + C.G + C.B)) ? 1 : 0;
 			}
-			Bad += (S.SwellCm <= 0.f || S.Haze < 0.f || S.Haze > 1.f || S.CloudColor.A != Before.CloudColor.A || S.SkyScatterScale < 0.4f || S.SkyScatterScale > 1.5f
-				|| (K.LowHazeKm > 0.f && (S.HazeScaleHeightKm < 0.4f || S.HazeScaleHeightKm > 2.f))) ? 1 : 0;
-			const float Was = Luma(SlonkGenome::RayleighOf(Before.AtmosphereColor)), Now = Luma(SlonkGenome::RayleighOf(S.AtmosphereColor)) * S.SkyScatterScale / Before.SkyScatterScale;
-			Glare += (S.SkyScatterScale > 0.41f && S.SkyScatterScale < 1.49f && FMath::Abs(Now / Was - 1.f) > 0.02f) ? 1 : 0;
+			// The sky (SlonkGameMode) draws a lowland haze between 0.2 km and 0.8 of the air's haze height, a quarter of
+			// its scale height: the style's is one it draws as it is, never deeper than the genome rolled.
+			const float HazeTopKm = FMath::Min(K.LowHazeKm, S.AtmosphereScaleHeightKm * 0.25f * 0.8f);
+			Bad += (S.SwellCm <= 0.f || S.Haze < 0.f || S.Haze > 1.f || S.CloudColor.A != Before.CloudColor.A || S.SkyScatterScale <= 0.f || S.SkyScatterScale > 1.5f
+				|| S.SkyShellScale <= 0.f || S.SkyShellScale > 1.5f
+				|| (K.LowHazeKm > 0.f && (S.HazeScaleHeightKm < 0.2f || S.HazeScaleHeightKm > HazeTopKm * 1.0001f))) ? 1 : 0;
+			Capped += (K.LowHazeKm > 0.f && S.HazeScaleHeightKm < K.LowHazeKm) ? 1 : 0;
+			// Every turned sky, the ones the brightening cap holds dimmer among them: no brighter than the archetype's,
+			// near or from afar, and as bright wherever the cap leaves it be. The shell's sky is weighed without the
+			// haze, which tints it whatever the sky's colour.
+			if (K.SkyHueShiftDeg != 0.f)
+			{
+				FPlanetStyle Clear = S; Clear.HazeColor = FLinearColor::White;
+				const float Was = Luma(SlonkGenome::RayleighOf(Before.AtmosphereColor)), Now = Luma(SlonkGenome::RayleighOf(S.AtmosphereColor)) * S.SkyScatterScale / Before.SkyScatterScale;
+				const float ShellWas = Luma(SlonkGenome::ShellSkyColor(Before)), ShellNow = Luma(SlonkGenome::ShellSkyColor(Clear));
+				Glare += Now > Was * 1.02f ? 1 : 0;
+				ShellGlare += ShellNow > ShellWas * 1.02f ? 1 : 0;
+				Unmatched += ((S.SkyScatterScale < 1.49f && FMath::Abs(Now / Was - 1.f) > 0.02f) || (S.SkyShellScale < 1.49f && FMath::Abs(ShellNow / ShellWas - 1.f) > 0.02f)) ? 1 : 0;
+				ScatterLo = FMath::Min(ScatterLo, S.SkyScatterScale); ShellLo = FMath::Min(ShellLo, S.SkyShellScale);
+				++Turned;
+			}
 		}
 		const FWorldGenome Lo = SlonkGenome::Roll(EPlanetArchetype::Terrestrial, 0.3f, Hash), Hi = SlonkGenome::Roll(EPlanetArchetype::Terrestrial, 0.9f, Hash);
 		FarAtLow += FMath::Abs(Lo.SkyHueShiftDeg) >= 30.f ? 1 : 0;
 		TurnLow += FMath::Abs(Lo.SkyHueShiftDeg); TurnHigh += FMath::Abs(Hi.SkyHueShiftDeg);
 		AlienLow += Lo.Solvent != ESolvent::Water ? 1 : 0; AlienHigh += Hi.Solvent != ESolvent::Water ? 1 : 0;
+		HazyLow += Lo.LowHazeKm > 0.f ? 1 : 0; HazyHigh += Hi.LowHazeKm > 0.f ? 1 : 0;
 	}
 	AddInfo(FString::Printf(TEXT("%d temperate worlds at strangeness 1: seas water %d, ammonia %d, acid %d, methane %d; %d skies turned past 60 deg; %d hazy"),
 		N, Seas.FindRef(ESolvent::Water), Seas.FindRef(ESolvent::Ammonia), Seas.FindRef(ESolvent::Acid), Seas.FindRef(ESolvent::Methane), BigTurns, Hazy));
-	AddInfo(FString::Printf(TEXT("Mean sky turn %.0f deg at strangeness 0.3, %.0f at 0.9; alien seas %d and %d"), TurnLow / N, TurnHigh / N, AlienLow, AlienHigh));
+	AddInfo(FString::Printf(TEXT("Mean sky turn %.0f deg at strangeness 0.3, %.0f at 0.9; alien seas %d and %d; hazy %d and %d"), TurnLow / N, TurnHigh / N, AlienLow, AlienHigh, HazyLow, HazyHigh));
+	AddInfo(FString::Printf(TEXT("%d turned skies: scattering scaled down to %.2f, the shell to %.2f; %d brighter near, %d from afar, %d off the archetype's brightness; %d lowland hazes kept under the air's"),
+		Turned, ScatterLo, ShellLo, Glare, ShellGlare, Unmatched, Capped));
 	TestEqual(TEXT("the same world rolls the same genome"), Unstable, 0);
 	TestTrue(TEXT("strange worlds' seas are of several solvents, water among them"), Seas.Num() >= 4 && Seas.FindRef(ESolvent::Water) > 0);
 	TestTrue(TEXT("most strange skies turn well away from blue"), BigTurns > N / 2);
 	AddInfo(FString::Printf(TEXT("%d of %d skies at strangeness 0.3 turned far"), FarAtLow, N));
 	TestTrue(TEXT("a sky turns far as often as the world is strange (0.3: about 30%)"), FarAtLow > N * 22 / 100 && FarAtLow < N * 38 / 100);
 	TestEqual(TEXT("a turned sky scatters no more light than the archetype's"), Glare, 0);
+	TestEqual(TEXT("and its far shell glows no brighter than the archetype's"), ShellGlare, 0);
+	TestEqual(TEXT("and both are as bright as the archetype's unless that takes brightening by more than half"), Unmatched, 0);
 	TestTrue(TEXT("some strange worlds are hazy and some clear"), Hazy > N / 4 && Hazy < N * 9 / 10);
 	TestTrue(TEXT("stranger worlds' skies turn further"), TurnHigh > TurnLow * 1.5);
+	TestTrue(TEXT("stranger worlds are more often hazy"), HazyHigh > HazyLow * 2);
 	TestTrue(TEXT("stranger worlds' seas are more often not water"), AlienHigh > AlienLow);
 	TestEqual(TEXT("every colour and setting the genome makes is one the sky and the sea can use"), Bad, 0);
 

@@ -19,7 +19,7 @@ UENUM(BlueprintType)
 enum class ESolvent : uint8
 {
 	Water,
-	/** Ink-blue with a bronze sheen, as ammonia with metals dissolved in it is, and a little calmer: a cold world's sea. */
+	/** Ink-blue, as ammonia with metals dissolved in it is, violet in the shallows, and a little calmer: a cold world's sea. */
 	Ammonia,
 	/** Near-black and mirror-calm, as liquid methane and ethane lie under a thick sky. */
 	Methane,
@@ -61,7 +61,8 @@ namespace SlonkGenome
 	 *  channel, raised to the 1.6 (the style's sky-blue becomes the real Rayleigh ratio) and kept above 0.08. The sky
 	 *  (SlonkGameMode) and the genome's brightness match both read it. */
 	SLONK_API FLinearColor RayleighOf(const FLinearColor& AtmosphereColor);
-	/** The solvent an archetype has on its Earth-like roll: water, molten rock on a lava world, none on the dry ones. */
+	/** The solvent an archetype has on its Earth-like roll: water, molten rock on a lava world, none on the dry ones.
+	 *  Mars counts among them, so its few low basins keep the archetype's blue water whatever the genome. */
 	SLONK_API ESolvent NaturalSolvent(EPlanetArchetype Type);
 	/** A world's genome from its hash: the same world always rolls the same one, and at strangeness 0 it is the
 	 *  archetype's own (its natural solvent, nothing shifted). Draws from a stream of its own, so nothing else a
@@ -77,4 +78,7 @@ namespace SlonkGenome
 	SLONK_API const TCHAR* SolventName(ESolvent S);
 	/** One line for the logs and the debug readout. */
 	SLONK_API FString Describe(const FWorldGenome& G);
+	/** The sky colour the far atmosphere shell takes from a style: its atmosphere colour at the shell's brightness
+	 *  (SkyShellScale), with a tinted haze blended in, since the shell has no haze colour of its own. */
+	SLONK_API FLinearColor ShellSkyColor(const FPlanetStyle& S);
 }

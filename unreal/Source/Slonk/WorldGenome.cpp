@@ -98,22 +98,27 @@ void SlonkGenome::Apply(const FWorldGenome& G, EPlanetArchetype Type, FPlanetSty
 	if (G.Strangeness <= 0.f || !AppliesTo(Type, S.bAtmosphere)) { return; }
 
 	// The sky, and the sunset with it: the sunset is the light the sky leaves behind, so it turns as the sky does.
-	// The air scatters as much light as before: turned, the brightest channel is no longer blue, and the eye takes
-	// green or amber for far brighter, so the scattering is scaled back to the archetype's sky's brightness.
+	// The air scatters no more light than before: turned, the brightest channel is no longer blue, and the eye takes
+	// green or amber for far brighter, so the scattering is scaled back to the archetype's sky's brightness, and the
+	// far shell's glow with it (the near sky scatters the colour's Rayleigh ratio, the shell shows the colour itself).
+	// A sky the turn leaves dimmer is brightened back, by half again at most.
 	if (G.SkyHueShiftDeg != 0.f)
 	{
 		const auto Luma = [](const FLinearColor& C) { return 0.2126f * C.R + 0.7152f * C.G + 0.0722f * C.B; };
-		const float Before = Luma(RayleighOf(S.AtmosphereColor));
+		const float Before = Luma(RayleighOf(S.AtmosphereColor)), ShellBefore = Luma(S.AtmosphereColor);
 		S.AtmosphereColor = TurnHue(S.AtmosphereColor, G.SkyHueShiftDeg, G.SkySaturation);
 		S.SunsetColor = TurnHue(S.SunsetColor, G.SkyHueShiftDeg, G.SkySaturation);
-		S.SkyScatterScale *= FMath::Clamp(Before / FMath::Max(Luma(RayleighOf(S.AtmosphereColor)), KINDA_SMALL_NUMBER), 0.4f, 1.5f);
+		S.SkyScatterScale *= FMath::Min(Before / FMath::Max(Luma(RayleighOf(S.AtmosphereColor)), KINDA_SMALL_NUMBER), 1.5f);
+		S.SkyShellScale *= FMath::Min(ShellBefore / FMath::Max(Luma(S.AtmosphereColor), KINDA_SMALL_NUMBER), 1.5f);
 	}
 	// The lowland haze; on a dry world it takes the dust's colour, and the clouds take a little of it.
 	if (G.LowHazeKm > 0.f)
 	{
 		FLinearColor Tint = G.HazeTint;
 		if (Type == EPlanetArchetype::Desert || Type == EPlanetArchetype::Mars) { Tint = FMath::Lerp(Tint, Normalised(S.LandColor2), 0.6f); }
-		S.HazeScaleHeightKm = G.LowHazeKm;
+		// It lies under the air's own haze, a quarter of the air's scale height, or it is no lowland haze: the sky draws
+		// it at most 0.8 of that deep, and over a shallow air the style holds it there too, so it says what is drawn.
+		S.HazeScaleHeightKm = S.AtmosphereScaleHeightKm > 0.f ? FMath::Min(G.LowHazeKm, S.AtmosphereScaleHeightKm * 0.25f * 0.8f) : G.LowHazeKm;
 		S.Haze = FMath::Clamp(S.Haze + G.LowHazeDensity, 0.f, 1.f);
 		S.HazeColor = Normalised(Tint);
 		const float CloudLevel = FMath::Max3(S.CloudColor.R, S.CloudColor.G, S.CloudColor.B);
@@ -144,6 +149,15 @@ void SlonkGenome::Apply(const FWorldGenome& G, EPlanetArchetype Type, FPlanetSty
 	default:
 		break;
 	}
+}
+
+FLinearColor SlonkGenome::ShellSkyColor(const FPlanetStyle& S)
+{
+	// The haze is blended in at the sky's own brightest channel, as the archetype had it: the shell's scale dims or
+	// brightens the turned sky, not the haze.
+	const FLinearColor Sky(S.AtmosphereColor.R * S.SkyShellScale, S.AtmosphereColor.G * S.SkyShellScale, S.AtmosphereColor.B * S.SkyShellScale, S.AtmosphereColor.A);
+	if (S.HazeColor.Equals(FLinearColor::White, 1.0e-3f)) { return Sky; }
+	return FMath::Lerp(Sky, S.HazeColor * S.AtmosphereColor.GetMax(), FMath::Clamp(S.Haze, 0.f, 0.6f));
 }
 
 float SlonkGenome::WorldStrangeness(float DistanceLy, uint32 WorldHash)
