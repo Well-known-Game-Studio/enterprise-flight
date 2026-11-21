@@ -100,6 +100,11 @@ void UPlanetTerrainComponent::Configure(const FPlanetTerrainParams& InParams, UM
 		MID->SetScalarParameterValue(TEXT("ReliefCm"), (float)Params.ReliefCm);
 		MID->SetScalarParameterValue(TEXT("OceanDepthCm"), (float)Params.OceanDepthCm);
 		MID->SetScalarParameterValue(TEXT("NoisePeriodCm"), (float)NoisePeriodCm);
+		// The material reads no temperature: the climate reaches the ground through each vertex's ice, wet and forest
+		// cover, which the field sets from it. The material only paints the ice over a locked world's frozen seas (its
+		// far side's, and the ring's cold edge); a spinning world's seas stay open as its strangeness-0 twin's do, so a
+		// faintly strange world looks as that twin does.
+		MID->SetScalarParameterValue(TEXT("SeaIce"), Params.Climate == EClimateModel::Locked ? 1.f : 0.f);
 		ApplyScatterToMaterial();
 	}
 	for (UDynamicMeshComponent* C : Pool)
@@ -949,11 +954,18 @@ bool UPlanetTerrainComponent::ChunkAt(const FVector& Dir, int32 Depth, int32& Ou
 }
 
 void UPlanetTerrainComponent::BuildChunkScatterForTest(const FPlanetTerrainParams& P, const FScatterSettings& S, int32 Face, int32 Depth, int64 X, int64 Y, int32 Steps,
-	TArray<FTransform> (&OutPlanetLocal)[SlonkScatter::NumMeshes], TArray<double> (&OutDrawnHeightCm)[SlonkScatter::NumMeshes], FVector* OutOrigin)
+	TArray<FTransform> (&OutPlanetLocal)[SlonkScatter::NumMeshes], TArray<double> (&OutDrawnHeightCm)[SlonkScatter::NumMeshes], FVector* OutOrigin, TArray<float>* OutTreeCover)
 {
 	FBuildResult R;
 	BuildChunk(P, S, Face, Depth, X, Y, Steps, R);
 	if (OutOrigin) { *OutOrigin = R.Origin; }
+	if (OutTreeCover && R.Mesh)
+	{
+		// The grid's vertices come first, one UV element each, before the skirt's.
+		const FDynamicMeshUVOverlay* UV3 = R.Mesh->Attributes()->GetUVLayer(3);
+		const int32 GridVerts = (R.Steps + 1) * (R.Steps + 1);
+		for (int32 i = 0; i < GridVerts && UV3->IsElement(i); ++i) { OutTreeCover->Add(UV3->GetElement(i).Y); }
+	}
 	for (int32 K = 0; K < SlonkScatter::NumMeshes; ++K)
 	{
 		for (const FTransform& T : R.Scatter.Transforms[K])
@@ -966,6 +978,47 @@ void UPlanetTerrainComponent::BuildChunkScatterForTest(const FPlanetTerrainParam
 			OutDrawnHeightCm[K].Add(GridHeightAt(R.Heights, R.Steps, Depth, X, Y, U, V));
 		}
 	}
+}
+
+uint32 UPlanetTerrainComponent::ChunkBuildCrcForTest(const FPlanetTerrainParams& P, const FScatterSettings& S, int32 Face, int32 Depth, int64 X, int64 Y, int32 Steps)
+{
+	FBuildResult R;
+	BuildChunk(P, S, Face, Depth, X, Y, Steps, R);
+	uint32 Crc = 0;
+	auto Add = [&Crc](const void* Data, int32 Bytes) { if (Bytes > 0) { Crc = FCrc::MemCrc32(Data, Bytes, Crc); } };
+	// Field by field, so no padding reaches the CRC.
+	auto AddVec = [&Add](const FVector& V) { const double D[3] = { V.X, V.Y, V.Z }; Add(D, sizeof(D)); };
+	AddVec(R.Origin);
+	Add(&R.EdgeCm, sizeof(R.EdgeCm));
+	Add(R.Heights.GetData(), R.Heights.Num() * sizeof(float));
+	if (R.Mesh)
+	{
+		const FDynamicMesh3& M = *R.Mesh;
+		for (const int32 V : M.VertexIndicesItr()) { AddVec(M.GetVertex(V)); }
+		for (const int32 T : M.TriangleIndicesItr()) { const FIndex3i Tri = M.GetTriangle(T); const int32 I[3] = { Tri.A, Tri.B, Tri.C }; Add(I, sizeof(I)); }
+		const FDynamicMeshAttributeSet* A = M.Attributes();
+		if (const FDynamicMeshNormalOverlay* NO = A->PrimaryNormals()) { for (const int32 E : NO->ElementIndicesItr()) { const FVector3f N = NO->GetElement(E); const float F[3] = { N.X, N.Y, N.Z }; Add(F, sizeof(F)); } }
+		for (int32 L = 0; L < A->NumUVLayers(); ++L)
+		{
+			const FDynamicMeshUVOverlay* UV = A->GetUVLayer(L);
+			for (const int32 E : UV->ElementIndicesItr()) { const FVector2f U = UV->GetElement(E); const float F[2] = { U.X, U.Y }; Add(F, sizeof(F)); }
+		}
+		if (const FDynamicMeshColorOverlay* CO = A->PrimaryColors()) { for (const int32 E : CO->ElementIndicesItr()) { const FVector4f C = CO->GetElement(E); const float F[4] = { C.X, C.Y, C.Z, C.W }; Add(F, sizeof(F)); } }
+	}
+	for (int32 K = 0; K < SlonkScatter::NumMeshes; ++K)
+	{
+		for (const FTransform& T : R.Scatter.Transforms[K])
+		{
+			AddVec(T.GetTranslation());
+			const FQuat Q = T.GetRotation();
+			const double D[4] = { Q.X, Q.Y, Q.Z, Q.W };
+			Add(D, sizeof(D));
+			AddVec(T.GetScale3D());
+		}
+		Add(R.Scatter.Custom[K].GetData(), R.Scatter.Custom[K].Num() * sizeof(float));
+		for (const FTransform& T : R.Scatter.Solids[K]) { AddVec(T.GetTranslation()); }
+	}
+	return Crc;
 }
 
 FPlanetTerrainSample UPlanetTerrainComponent::SampleAtWorld(const FVector& WorldPos, double MinWavelengthCm) const
@@ -1026,7 +1079,7 @@ bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& Ne
 				// Daylight preferred, not required.
 				const double Lit = SunDirLocal.IsNearlyZero() ? 0.0 : (FVector::DotProduct(T.Dir, SunDirLocal.GetSafeNormal()) < 0.26 ? -20.0 : 0.0);
 				// Cities first, then the big ones, near ones, lit ones, and the temperate latitudes over the snow.
-				const double Score = (T.bCity ? 6.0 : 0.0) + T.Strength * 10.0 - FVector::Dist(T.LocalCm, Centre) / 6.0e7 * 3.0 + Lit - FMath::Max(0.0, FMath::Abs(T.Dir.Z) - 0.5) * 12.0;
+				const double Score = (T.bCity ? 6.0 : 0.0) + T.Strength * 10.0 - FVector::Dist(T.LocalCm, Centre) / 6.0e7 * 3.0 + Lit - FMath::Max(0.0, SlonkTerrain::ClimateColdness(Params, T.Dir) - 0.5) * 12.0;
 				if (Score > BestScore) { BestScore = Score; Best = &T; }
 			}
 			if (!Best) { return false; }
@@ -1037,6 +1090,11 @@ bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& Ne
 		return false;
 	}
 	const FString K = Kind.ToLower();
+	// The landmarks of a world the tides hold, which only it has: the ground under the star, the temperate ring along
+	// the terminator, and the middle of the far side's cap. They are where the star stands, not where it lights, so
+	// the daylight gate does not apply to them.
+	const bool bClimateFeature = K == TEXT("ring") || K == TEXT("substellar") || K == TEXT("nightcap");
+	if (bClimateFeature && Params.Climate != EClimateModel::Locked) { return false; }
 	// Fibonacci sphere: even coverage; the coarse pass samples at ~30 km, the refine pass walks the best few.
 	const int32 N = 6000;
 	double BestScore = -1e30;
@@ -1045,11 +1103,23 @@ bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& Ne
 	auto Score = [&](const FVector& D, const FPlanetTerrainSample& S) -> double
 	{
 		const double Near = NearDir.IsNearlyZero() ? 0.0 : FVector::DotProduct(D, NearDir.GetSafeNormal());
+		if (bClimateFeature)
+		{
+			// The cosine of the star's angle from the zenith.
+			const double Mu = FVector::DotProduct(D, Params.ClimateAxis);
+			// Dry ground nearest the point under the star.
+			if (K == TEXT("substellar")) { return S.bWater ? -1e9 : Mu * 10.0 + Near * 0.5; }
+			// The far side's middle, land or frozen sea.
+			if (K == TEXT("nightcap")) { return -Mu * 10.0 + Near * 0.5; }
+			// The ring: land on the sunlit edge of the terminator, the star a degree or two up and grazing the ground,
+			// where the night's ice lies close beyond it; unfrozen lowland preferred, down by the seas.
+			return S.bWater ? -1e9 : -FMath::Abs(Mu - 0.03) * 20.0 - S.Ice * 2.0 - S.HeightCm / FMath::Max(Params.ReliefCm, 1.0) * 3.0 + Near * 0.5;
+		}
 		// With a sun given, only daylit ground qualifies (the sun at least 15 degrees up).
 		if (!SunDirLocal.IsNearlyZero() && FVector::DotProduct(D, SunDirLocal.GetSafeNormal()) < 0.26) { return -1e9; }
 		// Canyons and rims prefer temperate latitudes (no snow on the plateau) and sit away from the ice, and a
 		// sun 12 to 40 degrees up, which throws the walls into relief instead of lighting them flat from above.
-		double Temperate = -3.0 * FMath::Abs(D.Z) - 6.0 * S.Ice;
+		double Temperate = -3.0 * SlonkTerrain::ClimateColdness(Params, D) - 6.0 * S.Ice;
 		if (!SunDirLocal.IsNearlyZero())
 		{
 			const double SunUp = FVector::DotProduct(D, SunDirLocal.GetSafeNormal());
@@ -1067,7 +1137,7 @@ bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& Ne
 		// Badlands: the gullied soft beds below a dry world's scarps.
 		if (K == TEXT("badlands")) { return S.bWater ? -1e9 : S.Badland * 10.0 + Temperate + Near * 0.5; }
 		// Green: the wettest level lowland, where a living world grows its meadows and forests (TerrainScatter.h).
-		if (K == TEXT("green")) { return S.bWater ? -1e9 : S.Wet * 6.0 - S.Slope * 4.0 - S.Rock * 2.0 - S.Ice * 6.0 - S.HeightCm / FMath::Max(Params.ReliefCm, 1.0) * 6.0 - FMath::Abs(D.Z) * 2.0 + Near * 2.0; }
+		if (K == TEXT("green")) { return S.bWater ? -1e9 : S.Wet * 6.0 - S.Slope * 4.0 - S.Rock * 2.0 - S.Ice * 6.0 - S.HeightCm / FMath::Max(Params.ReliefCm, 1.0) * 6.0 - SlonkTerrain::ClimateColdness(Params, D) * 2.0 + Near * 2.0; }
 		if (K == TEXT("linea")) { return S.Linea * 10.0 + Near * 3.0; }
 		if (K == TEXT("coast"))
 		{
@@ -1140,7 +1210,7 @@ bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& Ne
 			}
 			const FPlanetTerrainSample S = SlonkTerrain::Sample(Params, D, CoarseWavelength);
 			if (S.bWater || S.Table < 0.3f) { continue; }
-			Cands.Add({ S.Table - 2.0 * FMath::Abs(D.Z) - 4.0 * S.Ice, D });
+			Cands.Add({ S.Table - 2.0 * SlonkTerrain::ClimateColdness(Params, D) - 4.0 * S.Ice, D });
 		}
 		Cands.Sort([](const FCand& A, const FCand& B) { return A.Score > B.Score; });
 		const double Spacing = 2.0e5 / Params.RadiusCm;

@@ -3,8 +3,10 @@
 // Earth-like version of that class: what its seas are of, what colour its sky scatters, whether a haze lies in its
 // lowlands. Its strangeness, 0 to 1, sets how often each trait departs and, for the sky, how far: at 0 the genome
 // changes nothing, so the home system and the charted neighbours look exactly as they did; the uncharted stars'
-// worlds get more of it the further out they lie.
-// Later phases add the climate axis and the biosphere here.
+// worlds get more of it the further out they lie. It sets the world's climate too: how much warmer or colder it runs
+// than the Earth-like version, or whether the tides hold one face to its star for ever, baked under it, frozen
+// behind it, with a temperate ring between.
+// Later phases add the biosphere here.
 
 #pragma once
 
@@ -13,6 +15,7 @@
 
 enum class EPlanetArchetype : uint8;
 struct FPlanetStyle;
+struct FPlanetTerrainParams;
 
 /** What a world's seas, lakes and rain are of. */
 UENUM(BlueprintType)
@@ -50,6 +53,18 @@ struct FWorldGenome
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Genome") float LowHazeKm = 0.f;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Genome") float LowHazeDensity = 0.f;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Genome") FLinearColor HazeTint = FLinearColor::White;
+	/** The tides hold one face to the star: the world does not turn, and its climate is laid about the star's bearing
+	 *  (EClimateModel::Locked) rather than its poles. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Genome") bool bTidallyLocked = false;
+	/** A spinning world's warmth over the Earth-like version's, as a share of its solvent's liquid range (+-0.12 at
+	 *  strangeness 1, about 1.8 km of snowline): unused while it is locked. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Genome") float WarmthN = 0.f;
+	/** A locked world's heat under the star and on its terminator, as multiples of the Earth-like version's equatorial
+	 *  sea temperature (the archetype's own snowline cooled to the sea, not an Earth's), and how far below freezing its
+	 *  far side lies, as a share of the liquid range. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Genome") float DayHeat = 0.f;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Genome") float TermHeat = 0.f;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Genome") float NightCold = 0.f;
 };
 
 namespace SlonkGenome
@@ -64,13 +79,27 @@ namespace SlonkGenome
 	/** The solvent an archetype has on its Earth-like roll: water, molten rock on a lava world, none on the dry ones.
 	 *  Mars counts among them, so its few low basins keep the archetype's blue water whatever the genome. */
 	SLONK_API ESolvent NaturalSolvent(EPlanetArchetype Type);
+	/** Whether a world of this kind has a climate the genome can move: a snowline and air to carry it (a temperate world,
+	 *  an ocean, a desert, an ice world). Only these warm, cool or lock. */
+	SLONK_API bool HasClimate(EPlanetArchetype Type);
 	/** A world's genome from its hash: the same world always rolls the same one, and at strangeness 0 it is the
-	 *  archetype's own (its natural solvent, nothing shifted). Draws from a stream of its own, so nothing else a
-	 *  world rolls moves. */
-	SLONK_API FWorldGenome Roll(EPlanetArchetype Type, float Strangeness, uint32 Hash);
+	 *  archetype's own (its natural solvent, nothing shifted, no climate of its own). Draws from a stream of its own,
+	 *  so nothing else a world rolls moves. TidalPull, 0..1, is how hard its star's tides pull on it (1 close in to the
+	 *  star, 0 from 0.6 AU out): a world with a climate is locked with a chance of strangeness x (0.15 + 0.7 x pull). */
+	SLONK_API FWorldGenome Roll(EPlanetArchetype Type, float Strangeness, uint32 Hash, float TidalPull = 0.f);
+	/** Settles the lock once the world's place is known: a world with no bearing to its star (one placed by hand) is
+	 *  never locked, and a forced lock (bForce, a debug spawn) holds any strange world that has a climate. */
+	SLONK_API void SettleLock(FWorldGenome& G, EPlanetArchetype Type, const FVector& StarBearing, bool bForce);
 	/** Applies the genome to a style the archetype resolved: the sky's colour, the haze, the seas. Strangeness 0, a giant
 	 *  or a world without air changes nothing. Leaves alone everything the terrain is built from. */
 	SLONK_API void Apply(const FWorldGenome& G, EPlanetArchetype Type, FPlanetStyle& S);
+	/** Applies the genome's climate to the terrain's parameters: a locked world's laid about StarBearing (planet-local,
+	 *  unit), a spinning one's warmth. Strangeness 0, or a world without a climate, changes nothing. */
+	SLONK_API void ApplyClimate(const FWorldGenome& G, EPlanetArchetype Type, const FVector& StarBearing, FPlanetTerrainParams& P);
+	/** A solvent's freezing point and its liquid range, K: the temperature a share of the range (TempN) reads as is
+	 *  FreezeK + RangeK x TempN. Water 273 and 100, ammonia 195 and 45, methane 91 and 21, sulphuric acid 283 and 327. */
+	SLONK_API float FreezeK(ESolvent S);
+	SLONK_API float RangeK(ESolvent S);
 	/** How strange a world of an uncharted star is: the further the star, the stranger its worlds may be (a cap of
 	 *  0.35 at 6 light-years rising to 1 at 30), each world 45-100% of that cap by its hash, and one in five of them
 	 *  only faintly strange (under a tenth of it) even far out. The home system and the charted neighbours stay at 0. */

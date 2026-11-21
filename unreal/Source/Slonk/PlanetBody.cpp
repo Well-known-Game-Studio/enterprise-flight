@@ -666,6 +666,11 @@ void APlanetBody::ResolveStyleFromArchetype()
 		S.IceCapStart = FMath::Min(S.IceCapStart, Rng.FRandRange(0.7f, 0.9f));
 	}
 	Style = S;
+	// The alien layer is rolled here, from a stream of its own so no draw below moves, for the terrain's parameters
+	// to see its climate from the first (the cloud lift below reads them); it is applied to the style last. At
+	// strangeness 0 (home, the charted neighbours) it is the archetype's own and changes nothing.
+	Genome = SlonkGenome::Roll(Type, SlonkGenome::AppliesTo(Type, Style.bAtmosphere) ? Strangeness : 0.f, Hash, TidalPull);
+	SlonkGenome::SettleLock(Genome, Type, StarBearing, bForceTidalLock);
 	// The layer was placed from sea level, but on a world with relief most land stands a kilometre or more above
 	// it, so over the plateaus people fly across and land on the cloud base sat on the ground. Lift the layer by
 	// the typical land height, read once from the height field at a coarse wavelength (a hundred-odd samples).
@@ -745,10 +750,18 @@ void APlanetBody::ResolveStyleFromArchetype()
 	Civ = SlonkCivs::Natives(Type, Hash, Style.NightLightIntensity > 0.f);
 	if (Civ.bInhabited) { Style.NightLightIntensity = Civ.GroundLights; Style.NightLightColor = Civ.LightColor; }
 
-	// The alien layer, last and from a stream of its own: at strangeness 0 (home, the charted neighbours) it leaves
-	// the style exactly as the archetype made it.
-	Genome = SlonkGenome::Roll(Type, SlonkGenome::AppliesTo(Type, Style.bAtmosphere) ? Strangeness : 0.f, Hash);
+	// The alien layer, last: at strangeness 0 (home, the charted neighbours) it leaves the style exactly as the
+	// archetype made it.
 	SlonkGenome::Apply(Genome, Type, Style);
+	// A world the tides hold does not turn, keeps no rings (the tides that stopped it would have pulled them down) and
+	// has no polar caps: its cap is the far side's, which the terrain's climate makes. The draws for the spin and the
+	// rings above are still taken, so nothing after them moves.
+	if (Genome.bTidallyLocked)
+	{
+		SpinDegPerSec = 0.f;
+		Style.bRings = false;
+		Style.IceCapStart = 2.f;
+	}
 	if (Genome.Strangeness > 0.f) { UE_LOG(LogTemp, Log, TEXT("%s: %s"), *GetDisplayName(), *SlonkGenome::Describe(Genome)); }
 }
 
@@ -1349,6 +1362,18 @@ void APlanetBody::ApplyAppearance()
 	Atmosphere->SetRelativeScale3D(FVector(1.0 + Style.AtmosphereDepth));
 
 	UpdateStarDirection();
+	// A locked world's climate is laid about the star it was spawned round; its light comes from the nearest. In a
+	// binary system the two could differ, and the terminator would not be where the climate put it: say so, once.
+	if (Genome.bTidallyLocked && !bLockBearingChecked && GetWorld() && GetWorld()->IsGameWorld())
+	{
+		bLockBearingChecked = true;
+		const FVector Lit = GetActorTransform().InverseTransformVectorNoScale(CachedStarDirection).GetSafeNormal();
+		if (FVector::Dist(Lit, StarBearing.GetSafeNormal()) > 1.0e-3)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("%s: tidally locked about a star bearing %.4f rad from the star that lights it"), *GetDisplayName(),
+				FMath::Acos(FMath::Clamp(FVector::DotProduct(Lit, StarBearing.GetSafeNormal()), -1.0, 1.0)));
+		}
+	}
 	BuildFarMeshes();
 	ApplyMaterials();
 	EnsureTerrain();
@@ -1415,6 +1440,9 @@ FPlanetTerrainParams APlanetBody::MakeTerrainParams() const
 	case EPlanetArchetype::Lava: case EPlanetArchetype::Mars: case EPlanetArchetype::Venus: case EPlanetArchetype::Moon: P.SnowlineCm = 0.0; break;
 	default:                       P.SnowlineCm = 5.0e5; break;
 	}
+	// The genome's climate: a strange world warmer or colder than its archetype, or one held to its star. The star's
+	// bearing is planet-local as it stands, since a world spawns unrotated and a locked one never turns.
+	SlonkGenome::ApplyClimate(Genome, ResolvedArchetype, StarBearing, P);
 	return P;
 }
 
@@ -1666,8 +1694,9 @@ void APlanetBody::BeginPlay()
 
 bool APlanetBody::ShouldHoldSpin() const
 {
-	// Only a world with ground drawn near the view carries anything worth holding still.
-	if (CVarHoldSpin.GetValueOnGameThread() == 0 || !bTerrainActive || bBeyondHorizon) { return false; }
+	// Only a world with ground drawn near the view carries anything worth holding still, and only one that turns: a
+	// world the tides hold has nothing to hold.
+	if (FMath::IsNearlyZero(SpinDegPerSec) || CVarHoldSpin.GetValueOnGameThread() == 0 || !bTerrainActive || bBeyondHorizon) { return false; }
 	const UWorld* World = GetWorld();
 	const APlayerController* PC = World && World->IsGameWorld() ? World->GetFirstPlayerController() : nullptr;
 	if (!PC) { return false; }

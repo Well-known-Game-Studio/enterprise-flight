@@ -371,8 +371,41 @@ namespace SlonkTerrain
 {
 	double SnowlineCm(const FPlanetTerrainParams& P, const FVector& Dir)
 	{
-		const double Cos2 = FMath::Max(1.0 - Dir.Z * Dir.Z / FMath::Max(Dir.SizeSquared(), 1e-12), 0.0);
-		return P.SnowlineCm * FMath::Pow(Cos2, 0.75);
+		if (P.Climate == EClimateModel::Classic)
+		{
+			const double Cos2 = FMath::Max(1.0 - Dir.Z * Dir.Z / FMath::Max(Dir.SizeSquared(), 1e-12), 0.0);
+			return P.SnowlineCm * FMath::Pow(Cos2, 0.75);
+		}
+		if (P.Climate == EClimateModel::Spin)
+		{
+			// The latitude's fall as on the home worlds, and the whole of it raised or lowered by the world's warmth.
+			const double Cos2 = FMath::Max(1.0 - Dir.Z * Dir.Z / FMath::Max(Dir.SizeSquared(), 1e-12), 0.0);
+			return P.SnowlineCm * FMath::Pow(Cos2, 0.75) + (double)P.WarmthN / LapseNPerCm;
+		}
+		// Locked: the sea's temperature by the star's height in the sky. On the day side it climbs from the terminator's
+		// to the substellar point's with the cosine; on the far side it falls from the terminator's to the night's over
+		// the first NightWidth of the cosine, and lies there over the cap. The snowline stands where the air above that
+		// sea has cooled to freezing, and below the sea where the sea's own surface is colder.
+		const double Mu = FVector::DotProduct(Dir, P.ClimateAxis) / FMath::Max(Dir.Size(), 1e-6);
+		const double TermN = P.TermN, DayN = P.DayN, NightN = P.NightN;
+		const double SeaN = Mu >= 0.0 ? TermN + (DayN - TermN) * Mu : FMath::Max(TermN + (TermN - NightN) * Mu / FMath::Max((double)P.NightWidth, 1e-3), NightN);
+		return SeaN / LapseNPerCm;
+	}
+
+	double SeaTempN(const FPlanetTerrainParams& P, const FVector& Dir)
+	{
+		return LapseNPerCm * SnowlineCm(P, Dir);
+	}
+
+	double TemperatureN(const FPlanetTerrainParams& P, const FVector& Dir, double HeightCm)
+	{
+		return LapseNPerCm * (SnowlineCm(P, Dir) - FMath::Max(HeightCm, 0.0));
+	}
+
+	double ClimateColdness(const FPlanetTerrainParams& P, const FVector& Dir)
+	{
+		if (P.Climate != EClimateModel::Locked) { return FMath::Abs(Dir.Z); }
+		return FMath::Abs(FVector::DotProduct(Dir, P.ClimateAxis) / FMath::Max(Dir.Size(), 1e-6));
 	}
 
 	double SnowBandCm(double LineCm)
@@ -867,14 +900,35 @@ namespace SlonkTerrain
 		const double Hr = FMath::Clamp(HeightCm / FMath::Max(P.ReliefCm, 1.0), 0.0, 1.0);
 		const double WetField = FbmN(Q * 2.5 + FVector(43.0, 0.0, 0.0), 3, 2.0, 0.5) * 0.5 + 0.5;
 		double Wet = FMath::Clamp(P.Moisture * 1.4 * (0.5 + WetField) - Hr * 0.6, 0.0, 1.0);
-		Wet = FMath::Max(Wet, Banks * 0.8);
-		if (P.bAirless) { Wet = 0.0; }
-		const double Lat = FMath::Abs(Dir.Z);
-		const double Polar = SmoothStep(P.IceCapStart - 0.06, P.IceCapStart + 0.04, Lat);
-		// Snow above the snowline for the latitude, a few hundred metres of patchy cover below it to deep snow above.
-		const double Line = SnowlineCm(P, Dir);
-		const double Band = SnowBandCm(Line);
-		const double Snow = P.bAirless || P.bLava || P.SnowlineCm <= 0.0 ? 0.0 : SmoothStep(Line - Band, Line + 2.0 * Band, HeightCm);
+		double Polar, Snow;
+		if (P.Climate == EClimateModel::Classic)
+		{
+			Wet = FMath::Max(Wet, Banks * 0.8);
+			if (P.bAirless) { Wet = 0.0; }
+			const double Lat = FMath::Abs(Dir.Z);
+			Polar = SmoothStep(P.IceCapStart - 0.06, P.IceCapStart + 0.04, Lat);
+			// Snow above the snowline for the latitude, a few hundred metres of patchy cover below it to deep snow above.
+			const double Line = SnowlineCm(P, Dir);
+			const double Band = SnowBandCm(Line);
+			Snow = P.bAirless || P.bLava || P.SnowlineCm <= 0.0 ? 0.0 : SmoothStep(Line - Band, Line + 2.0 * Band, HeightCm);
+		}
+		else
+		{
+			// A climate of its own: the heat bakes the ground dry where the air runs past half the solvent's liquid
+			// range (before the rivers' banks are wetted, so a river through a baked land is still an oasis), and the
+			// snow is measured from the surface the air meets, so where even the sea's surface lies below the freezing
+			// isotherm the sea is ice.
+			const double Line = SnowlineCm(P, Dir);
+			const double Hs = FMath::Max(HeightCm, 0.0);
+			const double TN = LapseNPerCm * (Line - Hs);
+			Wet *= 1.0 - SmoothStep(0.5, 0.85, TN);
+			Wet = FMath::Max(Wet, Banks * 0.8);
+			if (P.bAirless) { Wet = 0.0; }
+			// A locked world has no poles to its cold: its cap is the far side's, from the snowline alone.
+			Polar = P.Climate == EClimateModel::Spin ? SmoothStep(P.IceCapStart - 0.06, P.IceCapStart + 0.04, FMath::Abs(Dir.Z)) : 0.0;
+			const double Band = SnowBandCm(Line);
+			Snow = P.bAirless || P.bLava || P.SnowlineCm <= 0.0 ? 0.0 : SmoothStep(Line - Band, Line + 2.0 * Band, Hs);
+		}
 		Out.Ice = (float)FMath::Clamp(FMath::Max(Polar, Snow) * (P.bLava ? 0.0 : 1.0), 0.0, 1.0);
 		Out.Rock = (float)FMath::Clamp(FMath::Max(MtnMask * Mtn * 2.5 + Wall + CraterShade * 0.5, CapTop * 0.6), 0.0, 1.0);
 		Out.Wet = (float)Wet;

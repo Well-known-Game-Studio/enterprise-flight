@@ -105,9 +105,14 @@ public:
 	static bool ChunkAt(const FVector& Dir, int32 Depth, int32& OutFace, int64& OutX, int64& OutY);
 	/** The rocks and plants a chunk carries, built as a chunk build builds them, as planet-local transforms by mesh;
 	 *  the drawn height (cm above sea level) at each one's direction, from the chunk's own triangles; and the chunk's
-	 *  origin, planet-local. For tests. */
+	 *  origin, planet-local; and, if asked, the forest's cover at each grid vertex as the material reads it (UV3.y,
+	 *  SlonkScatter::TreeCover). For tests. */
 	static void BuildChunkScatterForTest(const FPlanetTerrainParams& P, const FScatterSettings& S, int32 Face, int32 Depth, int64 X, int64 Y, int32 Steps,
-		TArray<FTransform> (&OutPlanetLocal)[SlonkScatter::NumMeshes], TArray<double> (&OutDrawnHeightCm)[SlonkScatter::NumMeshes], FVector* OutOrigin = nullptr);
+		TArray<FTransform> (&OutPlanetLocal)[SlonkScatter::NumMeshes], TArray<double> (&OutDrawnHeightCm)[SlonkScatter::NumMeshes], FVector* OutOrigin = nullptr, TArray<float>* OutTreeCover = nullptr);
+	/** Everything a chunk build makes, as one CRC: the drawn vertices, their normals and every attribute the material
+	 *  reads (the forest's cover among them), the grid's heights, the triangles, and the rocks' and plants' transforms
+	 *  and custom data. Two builds agree bit for bit when their CRCs do. For the tests that hold a world's look fixed. */
+	static uint32 ChunkBuildCrcForTest(const FPlanetTerrainParams& P, const FScatterSettings& S, int32 Face, int32 Depth, int64 X, int64 Y, int32 Steps = 64);
 
 	/** Pick LOD for this view (world space), launch builds, swap finished meshes in. Call a few times a second. */
 	/** Refine for the camera and for the pawn (the ground it stands on matters a chase camera's length away). */
@@ -132,7 +137,9 @@ public:
 
 	/**
 	 * Searches the globe for a landmark: "canyon" (deepest canyon floor), "rim", "river", "mountain" (highest ground), "land" (any
-	 * ground above sea near the given direction), "coast". Returns the planet-local unit direction and the ground
+	 * ground above sea near the given direction), "coast"; and on a world the tides hold, "substellar" (the dry ground
+	 * nearest the point under the star), "ring" (the temperate ring's sunlit edge along the terminator) and "nightcap"
+	 * (the middle of the far side's ice). Returns the planet-local unit direction and the ground
 	 * height there; false if nothing qualifies. Coarse (a few thousand samples) and synchronous: debug use.
 	 */
 	bool FindFeature(const FString& Kind, const FVector& NearDir, FVector& OutDir, double& OutHeightCm, const FVector& SunDirLocal = FVector::ZeroVector) const;

@@ -4,7 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <algorithm>
-typedef int32_t int32; typedef int64_t int64; typedef uint32_t uint32; typedef uint64_t uint64;
+typedef int32_t int32; typedef int64_t int64; typedef uint8_t uint8; typedef uint32_t uint32; typedef uint64_t uint64;
 #define FORCEINLINE inline
 #define SLONK_API
 #define UE_DOUBLE_PI 3.14159265358979323846

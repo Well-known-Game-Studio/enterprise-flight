@@ -1,7 +1,8 @@
 """Builds M_PlanetTerrain, the surface material of the quadtree planet terrain (UPlanetTerrainComponent).
 
 The mesh carries the height field: positions, smooth normals and per-vertex biome data (UV0 = height/relief and
-slope, UV1 = moisture and rock, UV2 = ice and canyon, colour = crater, water, |latitude|). The material only
+slope, UV1 = moisture and rock, UV2 = ice and canyon, UV3 = lineae and forest cover, colour = crater, water, canyon
+wall, alpha the stratum). The material only
 shades: it picks layer colours from those, adds a periodic detail bump that stays continuous across chunks (the
 chunk origin modulo the noise period arrives through custom primitive data 0..2, the cell size in 3, the origin over
 the radius in 4..6 and its tile of the period in whole periods in 7..9), and fades each noise octave out once it is
@@ -282,7 +283,8 @@ float SlonkTexFuncsEnd2(FMaterialVertexParameters Parameters)
 WPO_CODE = r"""
 float3 p = LP + float3(OX, OY, OZ);
 float water = Col.g;
-float fade = (1.0 - smoothstep(80000.0, 250000.0, distance(Cam, WP))) * water;
+// Frozen sea (SeaIce, a tidally locked world's far side) lies still: the ice runs over the water at the vertex.
+float fade = (1.0 - smoothstep(80000.0, 250000.0, distance(Cam, WP))) * water * (1.0 - SeaIce * smoothstep(0.4, 0.7, UV2.x));
 if (fade <= 0.001) { return float3(0, 0, 0); }
 float3 U = normalize(float3(ORX, ORY, ORZ) + LP / PlanetRadiusCm);
 float3 aU = abs(U); float2 pu; float3 Tw, Bw;
@@ -651,17 +653,23 @@ float linea = UV3.x;
 land = lerp(land, land * float3(0.78, 0.5, 0.34), linea * 0.85);
 land *= texMod;
 float3 base = lerp(land, sea, water);
+// Sea ice: on a tidally locked world (SeaIce 1) the vertex ice runs out over the seas of the far side and the cold
+// edge of the ring, where the sea freezes at its surface. It takes the ice's colour, a little grey where it is thin,
+// with no water normal and no swell; every other world's seas (SeaIce 0) are as they were.
+float seaIce = SeaIce * smoothstep(0.4, 0.7, ice) * water;
+base = lerp(base, IceColor * lerp(0.82, 1.0, smoothstep(0.7, 1.0, ice)), seaIce);
 
 // Detail bump from the analytic gradient, scaled by a height that grows with rockiness, plus the texture normals.
 float bumpCm = (25.0 + 320.0 * rocky) * (1.0 - water) * (1.0 - snowy * 0.6);
 float dh1 = dot(gfb, T1) * bumpCm;
 float dh2 = dot(gfb, T2) * bumpCm;
-Nrm = normalize(Nn - T1 * dh1 - T2 * dh2 + texN * (1.0 - water) + waterN * water);
+Nrm = normalize(Nn - T1 * dh1 - T2 * dh2 + texN * (1.0 - water) + waterN * water * (1.0 - seaIce));
 float seaRough = lerp(OceanRoughness, 0.12, river);
 seaRough = lerp(lerp(seaRough, 0.09, 0.5 * (1.0 - smoothstep(300000.0, 2000000.0, dist))), 0.7, foam);
 Rough = lerp(lerp(LandRoughness * (0.8 + 0.2 * rocky), 0.35, snowy), seaRough, water);
 Rough = lerp(Rough, texOrm.g, 0.6 * nearFade * (1.0 - water) * (1.0 - snowy));
 Rough = lerp(Rough, 0.8, linea * 0.5);
+Rough = lerp(Rough, 0.35, seaIce);
 AO = lerp(1.0, texOrm.r, nearFade * (1.0 - water));
 
 float night = saturate(-dot(Nn, normalize(SunDirection)) * 6.0 + 0.1);
@@ -781,11 +789,11 @@ TEX_KINDS = ["BC", "NR"]
 TEX_FOLDER = "/Game/Slonk/Terrain"
 TEX_INPUTS = [f"{s}{k}" for s in TEX_SETS for k in TEX_KINDS]
 
-WPO_INPUTS = ["Fn", "LP", "Col", "OX", "OY", "OZ", "ORX", "ORY", "ORZ", "Cam", "WP", "PlanetRadiusCm", "NoisePeriodCm", "Time", "SwellCm"]
+WPO_INPUTS = ["Fn", "LP", "Col", "OX", "OY", "OZ", "ORX", "ORY", "ORZ", "Cam", "WP", "PlanetRadiusCm", "NoisePeriodCm", "Time", "SwellCm", "UV2", "SeaIce"]
 INPUTS = ["Fn", "N", "LP", "UV0", "UV1", "UV2", "UV3", "Col", "ColA", "OX", "OY", "OZ", "Cell", "ORX", "ORY", "ORZ", "Cam", "WP", "PlanetRadiusCm", "WaterNR", "Time", "SwellCm"] + TEX_INPUTS + [
           "OceanColor", "ShallowColor", "LandColor", "LandColor2", "MountainColor", "IceColor", "NightLightColor",
           "OceanRoughness", "LandRoughness", "NightLightIntensity", "LavaEmissive", "SunDirection",
-          "NoisePeriodCm", "ReliefCm", "OceanDepthCm", "TX", "TY", "TZ", "StreetGrid", "SettleWet", "SettleDensity", "WayStyle", "CliffAffinity", "CanopyShade", "CoverGain", "TreeLife", "Clearings"]
+          "NoisePeriodCm", "ReliefCm", "OceanDepthCm", "TX", "TY", "TZ", "StreetGrid", "SettleWet", "SettleDensity", "WayStyle", "CliffAffinity", "CanopyShade", "CoverGain", "TreeLife", "Clearings", "SeaIce"]
 
 
 def build():
@@ -807,7 +815,7 @@ def build():
         "OceanColor": (0.05, 0.17, 0.35), "ShallowColor": (0.1, 0.35, 0.5), "LandColor": (0.30, 0.36, 0.18), "LandColor2": (0.55, 0.45, 0.28),
         "MountainColor": (0.55, 0.52, 0.50), "IceColor": (0.90, 0.93, 0.97), "NightLightColor": (1.0, 0.8, 0.5), "SunDirection": (1.0, 0.0, 0.0),
     }
-    scal = {"OceanRoughness": 0.22, "LandRoughness": 0.9, "NightLightIntensity": 0.0, "LavaEmissive": 0.0, "NoisePeriodCm": 1048576.0, "ReliefCm": 3.8e6, "OceanDepthCm": 5.0e5, "PlanetRadiusCm": 6.371e8, "SwellCm": 120.0, "StreetGrid": 1.0, "SettleWet": 0.3, "SettleDensity": 1.0, "WayStyle": 0.0, "CliffAffinity": 0.0, "CanopyShade": 0.4, "CoverGain": 2.0, "TreeLife": 1.0, "Clearings": 1.0}
+    scal = {"OceanRoughness": 0.22, "LandRoughness": 0.9, "NightLightIntensity": 0.0, "LavaEmissive": 0.0, "NoisePeriodCm": 1048576.0, "ReliefCm": 3.8e6, "OceanDepthCm": 5.0e5, "PlanetRadiusCm": 6.371e8, "SwellCm": 120.0, "StreetGrid": 1.0, "SettleWet": 0.3, "SettleDensity": 1.0, "WayStyle": 0.0, "CliffAffinity": 0.0, "CanopyShade": 0.4, "CoverGain": 2.0, "TreeLife": 1.0, "Clearings": 1.0, "SeaIce": 0.0}
     e = g.custom(CODE, INPUTS, "CMOT_Float3", "terrain layers, textures, bump, lights", extra_outputs=(("Nrm", "CMOT_Float3"), ("Rough", "CMOT_Float1"), ("Emis", "CMOT_Float3"), ("AO", "CMOT_Float1")))
     for pin, src in [("Fn", fn), ("N", n), ("LP", vi), ("UV0", uv0), ("UV1", uv1), ("UV2", uv2), ("UV3", uv3), ("Col", col), ("OX", ox), ("OY", oy), ("OZ", oz), ("Cell", cell), ("ORX", orx), ("ORY", ory), ("ORZ", orz), ("Cam", cam), ("WP", wp), ("TX", tx), ("TY", ty), ("TZ", tz)]:
         g.c(src, e, pin)
@@ -831,7 +839,8 @@ def build():
     # It takes the functions node as an input so the Gerstner function is emitted before it.
     wpo = g.custom(WPO_CODE, WPO_INPUTS, "CMOT_Float3", "swell geometry")
     for pin, src in [("Fn", fn), ("LP", psp), ("Col", col), ("OX", ox), ("OY", oy), ("OZ", oz), ("ORX", orx), ("ORY", ory), ("ORZ", orz), ("Cam", cam), ("WP", wp),
-                     ("PlanetRadiusCm", scalnodes["PlanetRadiusCm"]), ("NoisePeriodCm", scalnodes["NoisePeriodCm"]), ("Time", tm), ("SwellCm", swell)]:
+                     ("PlanetRadiusCm", scalnodes["PlanetRadiusCm"]), ("NoisePeriodCm", scalnodes["NoisePeriodCm"]), ("Time", tm), ("SwellCm", swell),
+                     ("UV2", uv2), ("SeaIce", scalnodes["SeaIce"])]:
         g.c(src, wpo, pin)
     g.out(wpo, "MP_WorldPositionOffset")
     g.out(e, "MP_BaseColor")

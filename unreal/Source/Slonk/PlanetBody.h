@@ -254,6 +254,17 @@ public:
 	 *  system and the charted neighbours, which look as they always have; the uncharted stars' worlds get theirs
 	 *  from SlonkGenome::WorldStrangeness. Set before the appearance is resolved. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (ClampMin = "0", ClampMax = "1")) float Strangeness = 0.f;
+	/** The bearing of the star the world orbits, planet-local and unit, set by whatever spawns it (AStarSystem, the
+	 *  spawnplanet command) before its appearance is resolved: a world spawns unrotated, and a locked one never turns,
+	 *  so it is the climate's axis for good. Zero for a world placed by hand, which is never locked. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet") FVector StarBearing = FVector::ZeroVector;
+	/** How hard the star's tides pull on the world, 0..1 (1 close in, 0 from 0.6 AU out): how likely a strange world is
+	 *  to be held with one face to it (SlonkGenome::Roll). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (ClampMin = "0", ClampMax = "1")) float TidalPull = 0.f;
+	/** Debug: lock a strange world with a climate to its star whatever its roll (it still needs a StarBearing). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet") bool bForceTidalLock = false;
+	/** Whether the tides hold this world's face to its star: it does not turn, and its climate is laid about the star. */
+	bool IsTidallyLocked() const { return Genome.bTidallyLocked; }
 
 	/** When true, Style is (re)filled from the archetype on construction; set false to hand-tune Style. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
@@ -606,5 +617,8 @@ private:
 	int32 SettleTicks = 3;
 	float MeshUnitRadius = 50.f;
 	FVector CachedStarDirection = FVector::ForwardVector;
+	/** A locked world's star bearing has been checked against the star its light is taken from (in a binary system the
+	 *  nearest star may not be the one it was spawned round). */
+	bool bLockBearingChecked = false;
 	float StarSearchTimer = 0.f;
 };

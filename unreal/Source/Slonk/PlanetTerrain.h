@@ -6,6 +6,23 @@
 
 #include "CoreMinimal.h"
 
+/** How a world's temperature is laid over its globe. */
+enum class EClimateModel : uint8
+{
+	/** The home worlds' climate, as it always was: the snowline falls with the latitude to the sea at the poles. */
+	Classic,
+	/** A spinning world's, warmed or cooled as a whole by its genome (FPlanetTerrainParams::WarmthN): the snowline still
+	 *  falls with the latitude, moved up or down by the warmth. The field reads its temperature as a locked world's
+	 *  does: the heat dries the ground where the air runs past half the liquid range (a warm desert's equator), and
+	 *  the snow is measured from the sea's surface, so the field's ice runs over the seas wherever even their surface
+	 *  lies below freezing. The material still draws those seas open, as its strangeness-0 twin's polar seas are
+	 *  drawn: only a locked world's seas are painted frozen (the terrain material's SeaIce). */
+	Spin,
+	/** A world held to its star by the tides: hot under the star, cold on the far side for ever, with a temperate ring
+	 *  between, about ClimateAxis instead of the spin's. */
+	Locked
+};
+
 /** Everything the height function needs, derived from the planet's style once per planet. */
 struct FPlanetTerrainParams
 {
@@ -53,13 +70,28 @@ struct FPlanetTerrainParams
 	bool bLava = false;
 	/** Airless bodies get no erosion smoothing and no oceans. */
 	bool bAirless = false;
+	/** How the world's temperature is laid out (EClimateModel). Classic, the home worlds', reads none of the fields below. */
+	EClimateModel Climate = EClimateModel::Classic;
+	/** The climate's axis, planet-local and unit: on a locked world it points at the star. */
+	FVector ClimateAxis = FVector::ZAxisVector;
+	/** A spinning world's warmth over its strangeness-0 twin's, as a share of its solvent's liquid range
+	 *  (SlonkTerrain::LapseNPerCm): it raises or lowers the snowline everywhere by WarmthN / LapseNPerCm. */
+	float WarmthN = 0.f;
+	/** A locked world's temperature at sea level, as a share of its solvent's liquid range above freezing: under the star
+	 *  (DayN), on the terminator (TermN) and over the far side's cap (NightN, below 0). The night falls from TermN to NightN
+	 *  over the first NightWidth of the far hemisphere (in the cosine of the angle from the star) and stays there. */
+	float DayN = 0.f;
+	float TermN = 0.f;
+	float NightN = 0.f;
+	float NightWidth = 0.35f;
 
 	bool operator==(const FPlanetTerrainParams& O) const
 	{
 		return Seed == O.Seed && RadiusCm == O.RadiusCm && ReliefCm == O.ReliefCm && OceanDepthCm == O.OceanDepthCm && SeaLevel == O.SeaLevel
 			&& ContinentScale == O.ContinentScale && Mountains == O.Mountains && MountainHeight == O.MountainHeight && Canyons == O.Canyons && CanyonDepthCm == O.CanyonDepthCm
 			&& CanyonWidthCm == O.CanyonWidthCm && Strata == O.Strata && Craters == O.Craters && CraterScale == O.CraterScale && Maria == O.Maria && Lineae == O.Lineae
-			&& IceCapStart == O.IceCapStart && Moisture == O.Moisture && SnowlineCm == O.SnowlineCm && bLava == O.bLava && bAirless == O.bAirless;
+			&& IceCapStart == O.IceCapStart && Moisture == O.Moisture && SnowlineCm == O.SnowlineCm && bLava == O.bLava && bAirless == O.bAirless
+			&& Climate == O.Climate && ClimateAxis == O.ClimateAxis && WarmthN == O.WarmthN && DayN == O.DayN && TermN == O.TermN && NightN == O.NightN && NightWidth == O.NightWidth;
 	}
 	bool operator!=(const FPlanetTerrainParams& O) const { return !(*this == O); }
 };
@@ -138,8 +170,28 @@ namespace SlonkTerrain
 	SLONK_API double SurfaceHeightCm(const FPlanetTerrainParams& P, const FVector& Dir);
 
 	/** The permanent snowline at a direction, cm above the sea: P.SnowlineCm at the equator falling as cos(latitude)^1.5
-	 *  (an Earth's 5 km gives 3 km at 45 degrees, 1.8 km at 60, 1 km at 70), 0 at the poles. */
+	 *  (an Earth's 5 km gives 3 km at 45 degrees, 1.8 km at 60, 1 km at 70), 0 at the poles. It is the freezing
+	 *  isotherm: on a world with a climate of its own (P.Climate not Classic) it is where the air's temperature falls to
+	 *  the solvent's freezing point, and below the sea (negative) where even the sea's surface freezes. */
 	SLONK_API double SnowlineCm(const FPlanetTerrainParams& P, const FVector& Dir);
+
+	/**
+	 * How fast the air cools with height, as a share of the solvent's liquid range per cm: Earth's 6.5 K a kilometre
+	 * over water's 100 K is 6.5e-7, as is Titan's 1.3 K a kilometre over methane's 21. Temperatures in the climate are
+	 * kept in that share (TempN: 0 freezing, 1 boiling), so a world's habitats read the same whatever its seas are of;
+	 * kelvin are only a readout (SlonkGenome::FreezeK, RangeK). At an Earth's 5 km equatorial snowline the sea there
+	 * stands at 0.33 of the range, about 30 C.
+	 */
+	constexpr double LapseNPerCm = 6.5e-7;
+	/** The temperature at sea level at a direction, as a share of the solvent's liquid range (0 freezing, 1 boiling). */
+	SLONK_API double SeaTempN(const FPlanetTerrainParams& P, const FVector& Dir);
+	/** The temperature of the ground at a direction and height (cm above the sea; the sea's surface below it), as a
+	 *  share of the liquid range: the sea's, cooled by LapseNPerCm with the height. 0 at the snowline. */
+	SLONK_API double TemperatureN(const FPlanetTerrainParams& P, const FVector& Dir, double HeightCm);
+	/** How far a direction lies toward the climate's cold, 0..1, for the searches that look for temperate ground: the
+	 *  latitude (|z| of the unit direction) on a spinning world, the distance from the terminator (|cos| of the angle
+	 *  from the star) on a locked one. */
+	SLONK_API double ClimateColdness(const FPlanetTerrainParams& P, const FVector& Dir);
 
 	/** How far round a snowline LineCm high its snow thins out: patchy cover from this far below it, deep from twice
 	 *  this above it. A few hundred metres at an Earth's equator, never under 20 m. */

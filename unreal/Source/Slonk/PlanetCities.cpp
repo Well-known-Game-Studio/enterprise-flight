@@ -232,6 +232,14 @@ namespace
 		uint32 H = GetTypeHash(P.Seed);
 		for (const double X : { P.RadiusCm, P.ReliefCm, P.OceanDepthCm, P.CanyonDepthCm, P.CanyonWidthCm, P.SnowlineCm }) { H = HashCombineFast(H, GetTypeHash(X)); }
 		for (const float X : { P.SeaLevel, P.ContinentScale, P.Mountains, P.MountainHeight, P.Canyons, P.Strata, P.Craters, P.CraterScale, P.Maria, P.Lineae, P.IceCapStart, P.Moisture }) { H = HashCombineFast(H, GetTypeHash(X)); }
+		// The cache keys on the whole of the field's parameters, a climate of its own among them; the home worlds' hash
+		// (Classic, which reads none of the climate's fields) stays as it was.
+		if (P.Climate != EClimateModel::Classic)
+		{
+			H = HashCombineFast(H, GetTypeHash((uint8)P.Climate));
+			H = HashCombineFast(H, GetTypeHash(P.ClimateAxis));
+			for (const float X : { P.WarmthN, P.DayN, P.TermN, P.NightN, P.NightWidth }) { H = HashCombineFast(H, GetTypeHash(X)); }
+		}
 		return HashCombineFast(H, (P.bLava ? 2u : 0u) + (P.bAirless ? 1u : 0u));
 	}
 	bool FindCliff(const FPlanetTerrainParams& P, const FVector& Dir, double SearchCm, int32 Level, uint32 Seed, FVector& OutDir, FVector& OutFace)

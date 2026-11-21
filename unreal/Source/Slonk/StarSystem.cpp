@@ -197,6 +197,13 @@ void AStarSystem::SpawnPlanets(UWorld* World, FRandomStream& Rng, const FVector&
 			P->Archetype = Kind; P->RadiusKm = RadiusKm;
 			P->PlanetName = FString::Printf(TEXT("%s %s"), *Prefix, Numeral(i));
 			P->SeedLocation = PLoc + SeedShift; P->bSeedLocationSet = true;   // where it would be had nothing moved
+			// The star's bearing, planet-local since the world spawns unrotated (rounded, so the climate a locked world
+			// lays about it does not hang on the last bits of where it was spawned), and how hard its tides pull: fully
+			// inside 0.15 AU, not at all past 0.6.
+			const FVector Bearing = (Centre - PLoc).GetSafeNormal();
+			P->StarBearing = FVector(FMath::RoundToDouble(Bearing.X * 1.0e6), FMath::RoundToDouble(Bearing.Y * 1.0e6), FMath::RoundToDouble(Bearing.Z * 1.0e6)) / 1.0e6;
+			const double Far = FMath::Clamp((OrbitAu - 0.15) / 0.45, 0.0, 1.0);
+			P->TidalPull = (float)(1.0 - Far * Far * (3.0 - 2.0 * Far));
 			// An uncharted star's worlds are strange as far out as it lies (the charted neighbours' are not); from a
 			// hash of their own, so no draw above moves, and of what the world is (the system's seed, its place, the
 			// primary's or the companion's), not of its name, which follows the name the player gives the star.

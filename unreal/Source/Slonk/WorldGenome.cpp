@@ -1,5 +1,6 @@
 #include "WorldGenome.h"
 #include "PlanetBody.h"
+#include "PlanetTerrain.h"
 
 namespace
 {
@@ -50,25 +51,34 @@ bool SlonkGenome::AppliesTo(EPlanetArchetype Type, bool bAtmosphere)
 	return bAtmosphere && Type != EPlanetArchetype::GasGiant && Type != EPlanetArchetype::IceGiant && Type != EPlanetArchetype::Moon;
 }
 
+bool SlonkGenome::HasClimate(EPlanetArchetype Type)
+{
+	// The kinds APlanetBody::MakeTerrainParams gives a snowline and air: the lava worlds, Venus and Mars have neither
+	// to move.
+	return Type == EPlanetArchetype::Terrestrial || Type == EPlanetArchetype::Ocean || Type == EPlanetArchetype::Desert || Type == EPlanetArchetype::Ice;
+}
+
 FLinearColor SlonkGenome::RayleighOf(const FLinearColor& AtmosphereColor)
 {
 	const FLinearColor C0 = AtmosphereColor / FMath::Max(AtmosphereColor.GetMax(), KINDA_SMALL_NUMBER);
 	return FLinearColor(FMath::Max(FMath::Pow(C0.R, 1.6f), 0.08f), FMath::Max(FMath::Pow(C0.G, 1.6f), 0.08f), FMath::Max(FMath::Pow(C0.B, 1.6f), 0.08f));
 }
 
-FWorldGenome SlonkGenome::Roll(EPlanetArchetype Type, float Strangeness, uint32 Hash)
+FWorldGenome SlonkGenome::Roll(EPlanetArchetype Type, float Strangeness, uint32 Hash, float TidalPull)
 {
 	FWorldGenome G;
 	G.Strangeness = FMath::Clamp(Strangeness, 0.f, 1.f);
 	G.Solvent = NaturalSolvent(Type);
 	const float S = G.Strangeness;
 	if (S <= 0.f) { return G; }
-	// Every draw is taken whatever the earlier ones gave, so each field keeps its own draws as others change.
+	// Every draw is taken whatever the earlier ones gave, so each field keeps its own draws as others change; the
+	// climate's come after the seas', skies' and hazes', so those roll as they did before it.
 	FRandomStream R((int32)(Hash * 2654435761u + 0x5bd1e995u));
 	const float SeaDraw = R.FRand(), SeaKind = R.FRand();
 	const float SkyBig = R.FRand(), SkySign = R.FRand(), SkyFar = R.FRand(), SkyNear = R.FRand();
 	const float HazeDraw = R.FRand(), HazeKm = R.FRand(), HazeAmount = R.FRand(), HazeHue = R.FRand(), HazeSat = R.FRand();
 	const float SkyPale = R.FRand();
+	const float LockDraw = R.FRand(), DayDraw = R.FRand(), TermDraw = R.FRand(), NightDraw = R.FRand(), WarmDraw = R.FRand();
 
 	// The seas: a world with water swaps it for another solvent more often the stranger it is. An ice world's cold
 	// keeps methane and ammonia liquid; a temperate one's may be any of them.
@@ -90,7 +100,70 @@ FWorldGenome SlonkGenome::Roll(EPlanetArchetype Type, float Strangeness, uint32 
 		G.LowHazeDensity = FMath::Lerp(0.05f, 0.25f, HazeAmount) * (0.5f + 0.5f * S);
 		G.HazeTint = FLinearColor(360.f * HazeHue, FMath::Lerp(0.25f, 0.6f, HazeSat), 1.f).HSVToLinearRGB();
 	}
+	// The climate, on a world with one to move. The tides lock a world more often the closer it lies to its star, and
+	// some worlds far out were locked by what they formed from. A locked world's heats are rolled as a spinning one's
+	// warmth is, so a lock settled later (SettleLock) finds them there: under the star 2.25 to 2.8 times the Earth-like
+	// version's equatorial sea temperature, on the terminator 0.35 to 0.9 of it, the far side 0.2 to 0.6 of the liquid
+	// range below freezing. That scale is the archetype's own (ApplyClimate), not an Earth's: under the star a temperate
+	// world (a 5 km snowline) runs 0.73 to 0.91 of the liquid range, baked, its ground kept under 0.3 of its wet; an
+	// ocean world (4.6 km) 0.67 to 0.84, hot to baked; a desert (6.5 km) 0.95 to 1.18, past boiling; an ice world
+	// (1 km) only 0.15 to 0.18, never hot.
+	if (HasClimate(Type))
+	{
+		G.bTidallyLocked = LockDraw < S * (0.15f + 0.7f * FMath::Clamp(TidalPull, 0.f, 1.f));
+		G.DayHeat = FMath::Lerp(2.25f, 2.8f, DayDraw);
+		G.TermHeat = FMath::Lerp(0.35f, 0.9f, TermDraw);
+		G.NightCold = FMath::Lerp(0.2f, 0.6f, NightDraw);
+		G.WarmthN = S * FMath::Lerp(-0.12f, 0.12f, WarmDraw);
+	}
 	return G;
+}
+
+void SlonkGenome::SettleLock(FWorldGenome& G, EPlanetArchetype Type, const FVector& StarBearing, bool bForce)
+{
+	if (StarBearing.IsNearlyZero()) { G.bTidallyLocked = false; return; }
+	if (bForce && G.Strangeness > 0.f && HasClimate(Type)) { G.bTidallyLocked = true; }
+}
+
+void SlonkGenome::ApplyClimate(const FWorldGenome& G, EPlanetArchetype Type, const FVector& StarBearing, FPlanetTerrainParams& P)
+{
+	if (G.Strangeness <= 0.f || !HasClimate(Type) || P.SnowlineCm <= 0.0) { return; }
+	if (G.bTidallyLocked && !StarBearing.IsNearlyZero())
+	{
+		// The Earth-like version's equatorial sea temperature is the scale: the archetype's own snowline, cooled to sea
+		// level, so a locked desert's day side runs far hotter than a locked ice world's.
+		const double T0 = SlonkTerrain::LapseNPerCm * P.SnowlineCm;
+		P.Climate = EClimateModel::Locked;
+		P.ClimateAxis = StarBearing.GetSafeNormal();
+		P.DayN = (float)(T0 * G.DayHeat);
+		P.TermN = (float)(T0 * G.TermHeat);
+		P.NightN = -G.NightCold;
+		return;
+	}
+	P.Climate = EClimateModel::Spin;
+	P.WarmthN = G.WarmthN;
+}
+
+float SlonkGenome::FreezeK(ESolvent S)
+{
+	switch (S)
+	{
+	case ESolvent::Ammonia: return 195.f;
+	case ESolvent::Methane: return 91.f;
+	case ESolvent::Acid: return 283.f;
+	default: return 273.f;     // water, and the snow of the worlds without seas
+	}
+}
+
+float SlonkGenome::RangeK(ESolvent S)
+{
+	switch (S)
+	{
+	case ESolvent::Ammonia: return 45.f;
+	case ESolvent::Methane: return 21.f;
+	case ESolvent::Acid: return 327.f;
+	default: return 100.f;
+	}
 }
 
 void SlonkGenome::Apply(const FWorldGenome& G, EPlanetArchetype Type, FPlanetStyle& S)
@@ -185,5 +258,7 @@ FString SlonkGenome::Describe(const FWorldGenome& G)
 {
 	FString Out = FString::Printf(TEXT("strangeness %.2f, %s seas, sky turned %+.0f deg at %.0f%% saturation"), G.Strangeness, SolventName(G.Solvent), G.SkyHueShiftDeg, G.SkySaturation * 100.f);
 	if (G.LowHazeKm > 0.f) { Out += FString::Printf(TEXT(", lowland haze %.1f km (+%.2f, tint %.2f %.2f %.2f)"), G.LowHazeKm, G.LowHazeDensity, G.HazeTint.R, G.HazeTint.G, G.HazeTint.B); }
+	if (G.bTidallyLocked) { Out += FString::Printf(TEXT(", tidally locked (day x%.2f, terminator x%.2f, night %.2f below freezing)"), G.DayHeat, G.TermHeat, G.NightCold); }
+	else if (G.WarmthN != 0.f) { Out += FString::Printf(TEXT(", %s by %.3f of the liquid range"), G.WarmthN > 0.f ? TEXT("warmer") : TEXT("colder"), FMath::Abs(G.WarmthN)); }
 	return Out;
 }

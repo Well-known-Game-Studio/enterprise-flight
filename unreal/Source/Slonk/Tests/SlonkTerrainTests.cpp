@@ -8,8 +8,13 @@
 #include "../TerrainScatter.h"
 #include "../PlanetInstancesComponent.h"
 #include "../PlantMeshes.h"
+#include "../PlanetBody.h"
+#include "../WorldGenome.h"
+#include "../ScienceScannerComponent.h"
 #include "Engine/StaticMesh.h"
 #include "StaticMeshResources.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Async/ParallelFor.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -493,6 +498,623 @@ namespace
 		P.SnowlineCm = 6.5e5;
 		return P;
 	}
+
+	/** The other kinds of world, as APlanetBody::MakeTerrainParams gives them: an ocean, an ice world, a lava world and
+	 *  a Mars, so every branch of the field (the polar caps, the lava seas, no air) is held by the golden hashes. */
+	FPlanetTerrainParams OceanLike()
+	{
+		FPlanetTerrainParams P = EarthLike(6800.0);
+		P.SeaLevel = 0.7f; P.Mountains = 0.4f; P.Canyons = 0.3f; P.Strata = 0.3f; P.Moisture = 0.8f;
+		P.CanyonDepthCm = SlonkTerrain::ScaleWithWorld(1.2e5, P.RadiusCm);
+		P.CanyonWidthCm = SlonkTerrain::ScaleWithWorld(1.2e6, P.RadiusCm);
+		P.SnowlineCm = 4.6e5; P.IceCapStart = 0.75f;
+		return P;
+	}
+	FPlanetTerrainParams IceLike()
+	{
+		FPlanetTerrainParams P = EarthLike(5000.0);
+		P.Seed = FVector(41.3, 2.9, 66.1);
+		P.SeaLevel = 0.4f; P.Mountains = 0.35f; P.Canyons = 0.2f; P.Strata = 0.3f; P.Moisture = 0.5f; P.IceCapStart = 0.5f;
+		P.CanyonDepthCm = SlonkTerrain::ScaleWithWorld(1.0e5, P.RadiusCm);
+		P.CanyonWidthCm = SlonkTerrain::ScaleWithWorld(1.2e6, P.RadiusCm);
+		P.SnowlineCm = 1.0e5;
+		return P;
+	}
+	FPlanetTerrainParams LavaLike()
+	{
+		FPlanetTerrainParams P = EarthLike(7000.0);
+		P.Seed = FVector(12.7, 88.2, 5.5);
+		P.SeaLevel = 0.25f; P.Mountains = 0.5f; P.Canyons = 0.3f; P.Strata = 0.3f; P.Moisture = 0.f; P.bLava = true; P.IceCapStart = 2.f;
+		P.Craters = 0.4f; P.CraterScale = 1.2f;
+		P.CanyonDepthCm = SlonkTerrain::ScaleWithWorld(1.5e5, P.RadiusCm);
+		P.CanyonWidthCm = SlonkTerrain::ScaleWithWorld(1.4e6, P.RadiusCm);
+		P.SnowlineCm = 0.0;
+		return P;
+	}
+	FPlanetTerrainParams MarsLike()
+	{
+		FPlanetTerrainParams P = EarthLike(3390.0);
+		P.Seed = FVector(70.1, 33.3, 19.9);
+		P.ReliefCm = SlonkTerrain::ReliefForRadius(0.006, P.RadiusCm);
+		P.SeaLevel = 0.3f; P.Mountains = 0.7f; P.Canyons = 1.f; P.Strata = 0.8f; P.Moisture = 0.f; P.bAirless = true; P.IceCapStart = 0.86f;
+		P.Craters = 0.5f; P.Maria = 0.3f;
+		P.CanyonDepthCm = SlonkTerrain::ScaleWithWorld(8.3e5, P.RadiusCm);
+		P.CanyonWidthCm = SlonkTerrain::ScaleWithWorld(2.7e7, P.RadiusCm);
+		P.SnowlineCm = 0.0;
+		return P;
+	}
+
+	/** Every field of a sample, in turn, into a CRC (not the struct's bytes: its padding is not the field's). */
+	uint32 CrcSample(const FPlanetTerrainSample& S, uint32 Crc)
+	{
+		const double D[3] = { S.HeightCm, S.GroundCm, S.WaterCm };
+		const float F[14] = { S.River, S.Rock, S.Wet, S.Canyon, S.Wall, S.CutCm, S.Table, S.Ice, S.Crater, S.Linea, S.Slope, S.Stratum, S.Badland, S.bWater ? 1.f : 0.f };
+		Crc = FCrc::MemCrc32(D, sizeof(D), Crc);
+		return FCrc::MemCrc32(F, sizeof(F), Crc);
+	}
+
+	/** The CRC of every field of the samples over N directions spread over the globe, at one level of detail. */
+	uint32 CrcField(const FPlanetTerrainParams& P, int32 N, double MinWavelengthCm)
+	{
+		TArray<FPlanetTerrainSample> Samples;
+		Samples.SetNum(N);
+		ParallelFor(N, [&](int32 i) { Samples[i] = SlonkTerrain::Sample(P, Fibonacci(i, N), MinWavelengthCm); });
+		uint32 Crc = 0;
+		for (const FPlanetTerrainSample& S : Samples) { Crc = CrcSample(S, Crc); }
+		return Crc;
+	}
+
+	/** The chunks the golden hashes build: forest, scrub and meadow chunks over an Earth's green lowlands, a boulder
+	 *  chunk on its rocky slopes, one on its high latitudes, and a desert's rock and scrub. Each with the world and the
+	 *  settings it is built under. */
+	struct FGoldenChunk { FPlanetTerrainParams P; FScatterSettings S; int32 Face; int32 Depth; int64 X, Y; };
+	TArray<FGoldenChunk> GoldenChunks()
+	{
+		TArray<FGoldenChunk> Out;
+		const FPlanetTerrainParams Earth = EarthLike(6371.0), Desert = DesertLike(6371.0);
+		FScatterSettings Scrub; Scrub.Life = 0.2f;
+		auto Add = [&Out](const FPlanetTerrainParams& P, const FScatterSettings& S, const FVector& Dir, int32 Depth)
+		{
+			FGoldenChunk C{ P, S, 0, Depth, 0, 0 };
+			if (UPlanetTerrainComponent::ChunkAt(Dir.GetSafeNormal(), Depth, C.Face, C.X, C.Y)) { Out.Add(C); }
+		};
+		const TArray<FVector> Green = GreenSpots(Earth, 3);
+		for (int32 i = 0; i < Green.Num(); ++i) { Add(Earth, Living(), Green[i], DepthFor(Earth, i == 2 ? 1700.0 : 31000.0)); }
+		if (Green.Num() > 0) { Add(Earth, Living(), Green[0], DepthFor(Earth, 8000.0)); }
+		const TArray<FVector> Rocky = RockySpots(Earth, 1);
+		if (Rocky.Num() > 0) { Add(Earth, Living(), Rocky[0], BoulderDepth(Earth)); }
+		Add(Earth, Living(), FVector(0.31, 0.52, 0.79), DepthFor(Earth, 31000.0));
+		const TArray<FVector> Dry = RockySpots(Desert, 1);
+		if (Dry.Num() > 0) { Add(Desert, Scrub, Dry[0], BoulderDepth(Desert)); Add(Desert, Scrub, Dry[0], DepthFor(Desert, 8000.0)); }
+		return Out;
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkTerrainClimateNeutralTest, "Slonk.Terrain.ClimateNeutral", SLONK_TEST_FLAGS)
+bool FSlonkTerrainClimateNeutralTest::RunTest(const FString& Parameters)
+{
+	// A world with no climate of its own (strangeness 0: the home system, the charted neighbours) is the world it always
+	// was, bit for bit: every field of the samples of six kinds of world at three levels of detail, and everything a
+	// chunk build makes (the drawn ground, its attributes, the forest's cover, the rocks and plants), against hashes taken
+	// before the climate axis was added.
+	struct FWorld { const TCHAR* Name; FPlanetTerrainParams P; uint32 Golden[3]; };
+	const FWorld Worlds[] = {
+		{ TEXT("Earth-like"), EarthLike(6371.0), { 0xf58fa661u, 0xc880ab9eu, 0xd1ad6fbbu } },
+		{ TEXT("desert"), DesertLike(6371.0), { 0xdb6ff17eu, 0xa672dc69u, 0x0af11a45u } },
+		{ TEXT("ocean"), OceanLike(), { 0x702e32ccu, 0x49ce7b9cu, 0xf72ff131u } },
+		{ TEXT("ice"), IceLike(), { 0x0bfaa6d1u, 0x4afff9aeu, 0xdc231971u } },
+		{ TEXT("lava"), LavaLike(), { 0xb87a6896u, 0x25a3e4c0u, 0xb756a9d0u } },
+		{ TEXT("Mars"), MarsLike(), { 0x81055d1cu, 0x6786104du, 0x79007037u } },
+	};
+	const double Levels[3] = { 0.0, 2.0e4, 2.0e6 };
+	for (const FWorld& W : Worlds)
+	{
+		for (int32 L = 0; L < 3; ++L)
+		{
+			const uint32 Crc = CrcField(W.P, 4096, Levels[L]);
+			AddInfo(FString::Printf(TEXT("%s at %.0f cm: 0x%08xu"), W.Name, Levels[L], Crc));
+			TestEqual(FString::Printf(TEXT("the %s world's field at %.0f cm is as it was"), W.Name, Levels[L]), Crc, W.Golden[L]);
+		}
+	}
+	const uint32 GoldenChunks_[] = { 0x222ab2f2u, 0xe1ff6c7eu, 0x820c2b4bu, 0xcde25a2eu, 0xf7ef04abu, 0x10e116c0u, 0x2c68b675u, 0xec783430u };
+	const TArray<FGoldenChunk> Chunks = GoldenChunks();
+	TestEqual(TEXT("the golden chunks"), Chunks.Num(), (int32)UE_ARRAY_COUNT(GoldenChunks_));
+	for (int32 i = 0; i < Chunks.Num() && i < (int32)UE_ARRAY_COUNT(GoldenChunks_); ++i)
+	{
+		const FGoldenChunk& C = Chunks[i];
+		const uint32 Crc = UPlanetTerrainComponent::ChunkBuildCrcForTest(C.P, C.S, C.Face, C.Depth, C.X, C.Y);
+		AddInfo(FString::Printf(TEXT("chunk %d (f%d d%d %lld, %lld): 0x%08xu"), i, C.Face, C.Depth, C.X, C.Y, Crc));
+		TestEqual(FString::Printf(TEXT("chunk %d builds as it did"), i), Crc, GoldenChunks_[i]);
+	}
+	// The snowline is the old formula's, bit for bit, at any length of direction, and so is the latitude the searches
+	// steer by.
+	FRandomStream R(1234);
+	int32 Off = 0, ColdOff = 0;
+	for (int32 i = 0; i < 10000; ++i)
+	{
+		const FVector Dir = R.GetUnitVector() * FMath::Pow(10.0, R.FRandRange(-3.0, 9.0));
+		FPlanetTerrainParams P = EarthLike(6371.0);
+		P.SnowlineCm = R.FRandRange(0.0, 8.0e5);
+		const double Cos2 = FMath::Max(1.0 - Dir.Z * Dir.Z / FMath::Max(Dir.SizeSquared(), 1e-12), 0.0);
+		const double Old = P.SnowlineCm * FMath::Pow(Cos2, 0.75);
+		Off += SlonkTerrain::SnowlineCm(P, Dir) == Old ? 0 : 1;
+		ColdOff += SlonkTerrain::ClimateColdness(P, Dir) == FMath::Abs(Dir.Z) ? 0 : 1;
+	}
+	TestEqual(TEXT("the snowline is the old formula's, bit for bit"), Off, 0);
+	TestEqual(TEXT("the searches' coldness is the old latitude, bit for bit"), ColdOff, 0);
+	return true;
+}
+
+namespace
+{
+	/** An Earth-like world held to its star along +X: under the star the hottest a roll gives (2.8 times the Earth-like
+	 *  equator's heat), its terminator 0.6 of it, its far side 0.4 of the liquid range below freezing. */
+	FPlanetTerrainParams LockedEarth(const FVector& Axis = FVector::XAxisVector)
+	{
+		FPlanetTerrainParams P = EarthLike(6371.0);
+		const double T0 = SlonkTerrain::LapseNPerCm * P.SnowlineCm;
+		P.Climate = EClimateModel::Locked;
+		P.ClimateAxis = Axis.GetSafeNormal();
+		P.DayN = (float)(T0 * 2.8);
+		P.TermN = (float)(T0 * 0.6);
+		P.NightN = -0.4f;
+		P.IceCapStart = 2.f;
+		return P;
+	}
+	/** An Earth-like world that spins, a little warmer than an Earth. */
+	FPlanetTerrainParams SpinningEarth(float WarmthN = 0.06f)
+	{
+		FPlanetTerrainParams P = EarthLike(6371.0);
+		P.Climate = EClimateModel::Spin;
+		P.WarmthN = WarmthN;
+		return P;
+	}
+
+	/** Level land whose cosine to the climate's axis lies in [MuLo, MuHi], wettest first, for the forest. */
+	TArray<FVector> LockedGreenSpots(const FPlanetTerrainParams& P, int32 Count, double MuLo, double MuHi)
+	{
+		struct FSpot { FVector Dir; double Score; };
+		TArray<FSpot> Spots;
+		const int32 N = 20000;
+		for (int32 i = 0; i < N; ++i)
+		{
+			const FVector Dir = Fibonacci(i, N);
+			const double Mu = FVector::DotProduct(Dir, P.ClimateAxis);
+			if (Mu < MuLo || Mu > MuHi) { continue; }
+			const FPlanetTerrainSample S = SlonkTerrain::Sample(P, Dir, 200.0);
+			if (S.bWater || S.Slope > 0.2f || S.HeightCm > 2.0e5 || S.Rock > 0.3f) { continue; }
+			Spots.Add({ Dir, (double)S.Wet - S.Ice });
+		}
+		Spots.Sort([](const FSpot& A, const FSpot& B) { return A.Score > B.Score; });
+		TArray<FVector> Out;
+		for (int32 i = 0; i < Spots.Num() && Out.Num() < Count; ++i) { Out.Add(Spots[i].Dir); }
+		return Out;
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkTerrainLockedProfileTest, "Slonk.Terrain.LockedProfile", SLONK_TEST_FLAGS)
+bool FSlonkTerrainLockedProfileTest::RunTest(const FString& Parameters)
+{
+	// A locked world's sea-level temperature, pinned where it is defined: DayN under the star, TermN on the terminator,
+	// a straight run between them on the day side; on the night side it falls to NightN over the first NightWidth of
+	// the cosine and stays there to the far pole. Then the coolest locked temperate world the genome rolls (not the
+	// hottest, which the Climate.Locked fixture takes), its climate laid on its terrain by SlonkGenome::ApplyClimate:
+	// its ground still bakes toward the star, nothing on its day side freezes, and the scanner calls it baked. That
+	// holds for a temperate world's 5 km snowline: the genome scales a locked world's heat by its archetype's own, so an
+	// ocean world's coolest roll is only hot, a desert's day side runs past boiling and an ice world's is never hot,
+	// which is reported here, not held.
+	const FPlanetTerrainParams P = LockedEarth();
+	const double D = P.DayN, T = P.TermN, N = P.NightN, W = P.NightWidth;
+	struct FPin { double Mu, Want; const TCHAR* Where; };
+	const FPin Pins[] = {
+		{ 1.0, D, TEXT("under the star") }, { 0.5, T + 0.5 * (D - T), TEXT("half way up the day side") }, { 0.0, T, TEXT("on the terminator") },
+		{ -0.5 * W, T - 0.5 * (T - N), TEXT("half way into the night's fall") }, { -W, N, TEXT("where the night's fall ends") }, { -1.0, N, TEXT("at the far pole") } };
+	for (const FPin& Pin : Pins)
+	{
+		const FVector Dir(Pin.Mu, FMath::Sqrt(FMath::Max(0.0, 1.0 - Pin.Mu * Pin.Mu)), 0.0);
+		TestNearlyEqual(FString::Printf(TEXT("sea-level temperature %s"), Pin.Where), SlonkTerrain::SeaTempN(P, Dir), Pin.Want, 1.0e-5);
+	}
+
+	// The coolest and the hottest under the star of many strange temperate worlds close in to their stars.
+	FWorldGenome Coolest, Hottest;
+	int32 Locks = 0;
+	for (uint32 i = 1; i <= 2000; ++i)
+	{
+		const FWorldGenome G = SlonkGenome::Roll(EPlanetArchetype::Terrestrial, 1.f, 2246822519u * i + 7u, 1.f);
+		if (!G.bTidallyLocked) { continue; }
+		if (Locks == 0 || G.DayHeat < Coolest.DayHeat) { Coolest = G; }
+		if (Locks == 0 || G.DayHeat > Hottest.DayHeat) { Hottest = G; }
+		++Locks;
+	}
+	auto LockedAs = [](const FWorldGenome& G, EPlanetArchetype Kind, FPlanetTerrainParams Q)
+	{
+		// A locked world has no polar caps (APlanetBody::ResolveStyleFromArchetype).
+		Q.IceCapStart = 2.f;
+		SlonkGenome::ApplyClimate(G, Kind, FVector::XAxisVector, Q);
+		return Q;
+	};
+	auto Says = [](const FPlanetTerrainParams& Q)
+	{
+		TArray<FString> Words;
+		UScienceScannerComponent::ClimateSurfaceFacts(Q, Words);
+		return Words.Contains(TEXT("a baked day side")) ? TEXT("baked") : Words.Contains(TEXT("a hot day side")) ? TEXT("hot") : TEXT("neither hot nor baked");
+	};
+	const FPlanetTerrainParams Cool = LockedAs(Coolest, EPlanetArchetype::Terrestrial, EarthLike(6371.0));
+	TestTrue(TEXT("strange temperate worlds close in lock"), Locks > 1000);
+	TestTrue(TEXT("the coolest roll's climate is laid about its star"), Cool.Climate == EClimateModel::Locked && Cool.ClimateAxis == FVector::XAxisVector);
+	struct FKind { const TCHAR* Name; EPlanetArchetype Kind; FPlanetTerrainParams Q; };
+	for (const FKind& K : { FKind{ TEXT("temperate"), EPlanetArchetype::Terrestrial, EarthLike(6371.0) }, FKind{ TEXT("ocean"), EPlanetArchetype::Ocean, OceanLike() },
+		FKind{ TEXT("desert"), EPlanetArchetype::Desert, DesertLike(6371.0) }, FKind{ TEXT("ice"), EPlanetArchetype::Ice, IceLike() } })
+	{
+		const FPlanetTerrainParams Lo = LockedAs(Coolest, K.Kind, K.Q), Hi = LockedAs(Hottest, K.Kind, K.Q);
+		AddInfo(FString::Printf(TEXT("A locked %s world (%.1f km snowline): day side %.3f to %.3f of the liquid range, the scanner says %s to %s"),
+			K.Name, K.Q.SnowlineCm / 1.0e5, Lo.DayN, Hi.DayN, Says(Lo), Says(Hi)));
+	}
+	double WetHigh = 0.0, WetMid = 0.0; int32 NHigh = 0, NMid = 0, IcyDay = 0;
+	for (int32 i = 0; i < 8192; ++i)
+	{
+		const FVector Dir = Fibonacci(i, 8192);
+		const double Mu = FVector::DotProduct(Dir, Cool.ClimateAxis);
+		if (Mu < 0.1) { continue; }
+		const FPlanetTerrainSample S = SlonkTerrain::Sample(Cool, Dir, 2000.0);
+		if (S.bWater || S.HeightCm > 5.0e4 || S.Canyon > 0.1f || S.River > 0.05f) { continue; }
+		IcyDay += (Mu > 0.2 && S.Ice > 0.05f) ? 1 : 0;
+		if (Mu > 0.8) { WetHigh += S.Wet; ++NHigh; }
+		else if (Mu < 0.3) { WetMid += S.Wet; ++NMid; }
+	}
+	AddInfo(FString::Printf(TEXT("Coolest of %d locked temperate rolls (x%.3f): day side %.3f of the liquid range; lowland wet %.2f under the star (%d samples), %.2f near the terminator (%d); %d icy samples on the day side"),
+		Locks, Coolest.DayHeat, Cool.DayN, NHigh ? WetHigh / NHigh : 0.0, NHigh, NMid ? WetMid / NMid : 0.0, NMid, IcyDay));
+	TestTrue(TEXT("found lowland on both parts of the day side"), NHigh > 20 && NMid > 20);
+	TestTrue(TEXT("the coolest locked temperate world's ground bakes toward the star"), NHigh > 0 && NMid > 0 && WetHigh / NHigh < 0.75 * (WetMid / NMid));
+	TestEqual(TEXT("nothing on the coolest locked temperate world's day side freezes"), IcyDay, 0);
+	TestEqual(TEXT("the scanner calls the coolest locked temperate world's day side baked"), FString(Says(Cool)), FString(TEXT("baked")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkTerrainSnowlineIsFreezingTest, "Slonk.Terrain.SnowlineIsFreezing", SLONK_TEST_FLAGS)
+bool FSlonkTerrainSnowlineIsFreezingTest::RunTest(const FString& Parameters)
+{
+	// On a world with a climate of its own the snowline is the freezing isotherm of the temperature the plants read
+	// (SlonkTerrain::TemperatureN), and the ground's field reads the same one: a spinning world's warmth warms it by
+	// WarmthN everywhere, at every height, over its strangeness-0 twin; the same north and south; the field dries the
+	// ground by the temperature TemperatureN gives at the ground's own height (none of the twin's wet taken below half
+	// the liquid range, all of it past 0.85, some between), on a locked world and on a spinning one hot enough to dry;
+	// and the snow lies above the snowline and not below.
+	FRandomStream R(77);
+	int32 Unwarmed = 0, Asym = 0, Tried = 0;
+	for (const FPlanetTerrainParams& P : { SpinningEarth(0.06f), SpinningEarth(-0.1f) })
+	{
+		FPlanetTerrainParams Twin = P;
+		Twin.Climate = EClimateModel::Classic;
+		Twin.WarmthN = 0.f;
+		for (int32 i = 0; i < 5000; ++i)
+		{
+			const FVector Dir = R.GetUnitVector();
+			const double H = R.FRandRange(-2.0e5, 1.0e6);
+			++Tried;
+			if (FMath::Abs(SlonkTerrain::TemperatureN(P, Dir, H) - SlonkTerrain::TemperatureN(Twin, Dir, H) - P.WarmthN) > 1e-9) { ++Unwarmed; }
+			if (SlonkTerrain::SnowlineCm(P, FVector(Dir.X, Dir.Y, -Dir.Z)) != SlonkTerrain::SnowlineCm(P, Dir)) { ++Asym; }
+		}
+	}
+	TestEqual(TEXT("a spinning world's warmth warms it by WarmthN everywhere, at every height"), Unwarmed, 0);
+	TestEqual(TEXT("a spinning world's climate is the same north and south"), Asym, 0);
+	// The drying, with no canyons, so no river's banks are wetted after it.
+	int32 Kept = 0, KeptOff = 0, Baked = 0, BakedOff = 0, Drying = 0, DryingOff = 0;
+	for (FPlanetTerrainParams P : { LockedEarth(), SpinningEarth(0.3f) })
+	{
+		P.Canyons = 0.f;
+		FPlanetTerrainParams Twin = P;
+		Twin.Climate = EClimateModel::Classic;
+		const int32 N = 8000;
+		for (int32 i = 0; i < N; ++i)
+		{
+			const FVector Dir = Fibonacci(i, N);
+			const FPlanetTerrainSample S = SlonkTerrain::SampleStructure(P, Dir, 2.0e4);
+			if (S.bWater) { continue; }
+			const FPlanetTerrainSample T = SlonkTerrain::SampleStructure(Twin, Dir, 2.0e4);
+			const double TN = SlonkTerrain::TemperatureN(P, Dir, S.HeightCm);
+			if (TN < 0.5 - 1e-9) { ++Kept; KeptOff += S.Wet == T.Wet ? 0 : 1; }
+			else if (TN > 0.85 + 1e-9) { ++Baked; BakedOff += S.Wet == 0.f ? 0 : 1; }
+			else if (TN > 0.55 && TN < 0.8 && T.Wet > 0.01f) { ++Drying; DryingOff += S.Wet > 0.f && S.Wet < T.Wet ? 0 : 1; }
+		}
+	}
+	AddInfo(FString::Printf(TEXT("land by its temperature: %d under half the liquid range (%d not the twin's wet), %d past 0.85 (%d not dry), %d drying between (%d not)"),
+		Kept, KeptOff, Baked, BakedOff, Drying, DryingOff));
+	TestTrue(TEXT("there is land at every temperature"), Kept > 100 && Baked > 20 && Drying > 20);
+	TestEqual(TEXT("ground under half the liquid range keeps its wet"), KeptOff, 0);
+	TestEqual(TEXT("ground past 0.85 of it is baked dry"), BakedOff, 0);
+	TestEqual(TEXT("ground between dries partly"), DryingOff, 0);
+	// The snow on the ground follows it, away from the spinning world's polar caps.
+	int32 Above = 0, AboveBare = 0, Below = 0, BelowSnowy = 0;
+	for (const FPlanetTerrainParams& P : { SpinningEarth(0.06f), LockedEarth() })
+	{
+		const int32 N = 8000;
+		for (int32 i = 0; i < N; ++i)
+		{
+			const FVector Dir = Fibonacci(i, N);
+			if (P.Climate == EClimateModel::Spin && FMath::Abs(Dir.Z) > P.IceCapStart - 0.1f) { continue; }
+			const FPlanetTerrainSample S = SlonkTerrain::SampleStructure(P, Dir, 2.0e4);
+			if (S.bWater) { continue; }
+			const double Line = SlonkTerrain::SnowlineCm(P, Dir);
+			const double Band = SlonkTerrain::SnowBandCm(Line);
+			if (S.HeightCm > Line + 2.5 * Band) { ++Above; AboveBare += S.Ice < 0.95f ? 1 : 0; }
+			else if (S.HeightCm < Line - 1.2 * Band) { ++Below; BelowSnowy += S.Ice > 0.01f ? 1 : 0; }
+		}
+	}
+	AddInfo(FString::Printf(TEXT("%d direction checks; %d land samples well above the freezing isotherm (%d bare), %d below it (%d snowy)"), Tried, Above, AboveBare, Below, BelowSnowy));
+	TestTrue(TEXT("some ground stands above it"), Above >= 5);
+	TestEqual(TEXT("ground well above it is snow"), AboveBare, 0);
+	TestEqual(TEXT("ground below it is not"), BelowSnowy, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkTerrainClimateLockedTest, "Slonk.Terrain.Climate.Locked", SLONK_TEST_FLAGS)
+bool FSlonkTerrainClimateLockedTest::RunTest(const FString& Parameters)
+{
+	// A world the tides hold, along +X with an Earth's numbers: the lowlands under the star baked dry, away from the
+	// rivers that keep their banks green, and bare of snow; everything colder than freezing at the sea's surface ice,
+	// the sea too; a temperate ring along the terminator with open lowlands, its forest in colour and in trees, conifers
+	// on its cold side and broadleaves on its warm one; and no tree where the air is frozen or past three quarters of the
+	// liquid range.
+	const FPlanetTerrainParams P = LockedEarth();
+	FPlanetTerrainParams Twin = P;
+	Twin.Climate = EClimateModel::Classic;
+	Twin.IceCapStart = EarthLike(6371.0).IceCapStart;
+	const int32 N = 20000;
+	int32 HotLow = 0, HotWetBad = 0, HotLand = 0, HotIce = 0, Frozen = 0, FrozenOpen = 0, RingLow = 0, RingIcy = 0;
+	double WorstRatio = 0.0, LeastFrozenIce = 1.0;
+	for (int32 i = 0; i < N; ++i)
+	{
+		const FVector Dir = Fibonacci(i, N);
+		const double Mu = FVector::DotProduct(Dir, P.ClimateAxis);
+		const FPlanetTerrainSample S = SlonkTerrain::SampleStructure(P, Dir, 2.0e4);
+		if (Mu > 0.8 && !S.bWater)
+		{
+			++HotLand;
+			HotIce += S.Ice > 0.f ? 1 : 0;
+			const FPlanetTerrainSample T = SlonkTerrain::SampleStructure(Twin, Dir, 2.0e4);
+			// Lowland, off the canyon floors where a river's banks are wetted after the heat is laid on.
+			if (S.HeightCm < 5.0e4 && S.Canyon < 0.02f && T.Wet > 0.1f)
+			{
+				++HotLow;
+				const double Ratio = S.Wet / T.Wet;
+				WorstRatio = FMath::Max(WorstRatio, Ratio);
+				HotWetBad += Ratio < 0.3 ? 0 : 1;
+			}
+		}
+		if (SlonkTerrain::SeaTempN(P, Dir) < -0.02)
+		{
+			++Frozen;
+			LeastFrozenIce = FMath::Min(LeastFrozenIce, (double)S.Ice);
+			FrozenOpen += S.Ice > 0.95f ? 0 : 1;
+		}
+		if (FMath::Abs(Mu) < 0.1 && (S.bWater || S.HeightCm < 3.0e4))
+		{
+			++RingLow;
+			RingIcy += S.Ice < 0.2f ? 0 : 1;
+		}
+	}
+	AddInfo(FString::Printf(TEXT("under the star: %d land samples (%d icy), %d lowland, wet at most %.2f of the spinning twin's (%d at 0.3 or more)"), HotLand, HotIce, HotLow, WorstRatio, HotWetBad));
+	AddInfo(FString::Printf(TEXT("%d samples below freezing at the sea's surface, %d not ice (the least %.2f); %d ring lowland and sea samples, %d icy"), Frozen, FrozenOpen, LeastFrozenIce, RingLow, RingIcy));
+	TestTrue(TEXT("there is land under the star to look at"), HotLow > 20);
+	TestEqual(TEXT("the lowlands under the star are baked dry"), HotWetBad, 0);
+	TestEqual(TEXT("and bare of snow"), HotIce, 0);
+	TestTrue(TEXT("there is a far side below freezing"), Frozen > 1000);
+	TestEqual(TEXT("everything below freezing at the sea's surface is ice, land and sea"), FrozenOpen, 0);
+	TestTrue(TEXT("the ring has lowlands and seas"), RingLow > 100);
+	TestEqual(TEXT("the ring's lowlands and seas are open"), RingIcy, 0);
+
+	// The forest: on the ring, and across the day side up to where the heat stops it.
+	const int32 D = DepthFor(P, 31000.0);
+	int32 RingChunks = 0, CoverOn = 0, Broadleaves = 0, Conifers = 0, Trees = 0, OutOfRange = 0;
+	double ColdestTree = 1.0, HottestTree = 0.0;
+	auto Grow = [&](const FVector& Dir, bool bRing)
+	{
+		int32 Face; int64 X, Y;
+		if (!UPlanetTerrainComponent::ChunkAt(Dir, D, Face, X, Y)) { return; }
+		FRocks Rk;
+		TArray<float> Cover;
+		UPlanetTerrainComponent::BuildChunkScatterForTest(P, Living(), Face, D, X, Y, 64, Rk.Xf, Rk.Drawn, &Rk.Origin, &Cover);
+		if (bRing)
+		{
+			++RingChunks;
+			float Most = 0.f;
+			for (const float C : Cover) { Most = FMath::Max(Most, C); }
+			CoverOn += Most > 0.f ? 1 : 0;
+			Broadleaves += Rk.Xf[TreeMeshes[0]].Num();
+			Conifers += Rk.Xf[TreeMeshes[1]].Num();
+		}
+		for (const int32 M : TreeMeshes)
+		{
+			for (int32 i = 0; i < Rk.Xf[M].Num(); ++i)
+			{
+				const double TN = SlonkTerrain::TemperatureN(P, Rk.Xf[M][i].GetLocation().GetSafeNormal(), Rk.Drawn[M][i]);
+				++Trees;
+				ColdestTree = FMath::Min(ColdestTree, TN);
+				HottestTree = FMath::Max(HottestTree, TN);
+				// A few metres of grace either side: the tree's spot is read off the chunk's grid, its height here off its triangles.
+				OutOfRange += TN >= -0.005 && TN < 0.755 ? 0 : 1;
+			}
+		}
+	};
+	// The ring's cold side and warm side, and the day side toward the heat's limit.
+	for (const FVector& Dir : LockedGreenSpots(P, 3, -0.1, -0.02)) { Grow(Dir, true); }
+	for (const FVector& Dir : LockedGreenSpots(P, 3, 0.02, 0.1)) { Grow(Dir, true); }
+	for (const FVector& Dir : LockedGreenSpots(P, 4, 0.3, 0.75)) { Grow(Dir, false); }
+	for (const FVector& Dir : LockedGreenSpots(P, 2, 0.75, 1.0)) { Grow(Dir, false); }
+	for (const FVector& Dir : LockedGreenSpots(P, 2, -0.3, -0.12)) { Grow(Dir, false); }
+	AddInfo(FString::Printf(TEXT("%d ring chunks, %d with forest cover: %d broadleaves, %d conifers; %d trees in all, from %.3f to %.3f of the liquid range (%d out of 0..0.75)"),
+		RingChunks, CoverOn, Broadleaves, Conifers, Trees, ColdestTree, HottestTree, OutOfRange));
+	TestTrue(TEXT("found the ring's lowlands"), RingChunks >= 4);
+	TestTrue(TEXT("the ring's forest is in the ground's colour"), CoverOn > 0);
+	TestTrue(TEXT("the ring grows broadleaves"), Broadleaves > 0);
+	TestTrue(TEXT("and conifers"), Conifers > 0);
+	TestEqual(TEXT("no tree stands where the air is frozen or past three quarters of the liquid range"), OutOfRange, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkTerrainClimateLandmarksTest, "Slonk.Terrain.Climate.Landmarks", SLONK_TEST_FLAGS)
+bool FSlonkTerrainClimateLandmarksTest::RunTest(const FString& Parameters)
+{
+	// `ship terrain goto substellar|ring|nightcap` finds a locked world's own landmarks whatever the sun's direction
+	// (they are where the star stands, not where it lights): dry ground near the point under the star, the ring's land
+	// on the sunlit edge of the terminator, the middle of the far side; and a world that spins has none of them.
+	const FPlanetTerrainParams P = LockedEarth(FVector(0.3, -0.9, 0.3));
+	UPlanetTerrainComponent* T = NewObject<UPlanetTerrainComponent>();
+	T->Configure(P, nullptr);
+	const FVector Sun = P.ClimateAxis;
+	FVector Dir; double H = 0.0;
+	if (TestTrue(TEXT("the substellar point is found"), T->FindFeature(TEXT("substellar"), FVector::ZeroVector, Dir, H, Sun)))
+	{
+		const FPlanetTerrainSample S = SlonkTerrain::Sample(P, Dir, 1.0e4);
+		AddInfo(FString::Printf(TEXT("substellar: the star %.1f deg from the zenith, ground %.0f m, wet %.2f"), FMath::RadiansToDegrees(FMath::Acos(FVector::DotProduct(Dir, Sun))), H / 100.0, S.Wet));
+		TestTrue(TEXT("the substellar ground is near the point under the star"), FVector::DotProduct(Dir, Sun) > 0.9);
+		TestFalse(TEXT("and is land"), S.bWater);
+	}
+	if (TestTrue(TEXT("the ring is found, with the sun given"), T->FindFeature(TEXT("ring"), FVector::ZeroVector, Dir, H, Sun)))
+	{
+		const double Mu = FVector::DotProduct(Dir, Sun);
+		AddInfo(FString::Printf(TEXT("ring: the star %.2f deg up, ground %.0f m, sea-level temperature %.3f of the liquid range"), FMath::RadiansToDegrees(FMath::Asin(Mu)), H / 100.0, SlonkTerrain::SeaTempN(P, Dir)));
+		TestTrue(TEXT("the ring lies on the terminator's sunlit edge"), Mu > 0.0 && Mu < 0.08);
+		TestTrue(TEXT("on unfrozen ground"), SlonkTerrain::SeaTempN(P, Dir) > 0.0);
+	}
+	if (TestTrue(TEXT("the night cap is found, the search turned to the night"), T->FindFeature(TEXT("nightcap"), -Sun, Dir, H, -Sun)))
+	{
+		AddInfo(FString::Printf(TEXT("nightcap: the star %.1f deg below the horizon, ice %.2f"), FMath::RadiansToDegrees(-FMath::Asin(FVector::DotProduct(Dir, Sun))), SlonkTerrain::Sample(P, Dir, 1.0e4).Ice));
+		TestTrue(TEXT("the night cap is the far side's middle"), FVector::DotProduct(Dir, Sun) < -0.95);
+	}
+	T->Configure(SpinningEarth(), nullptr);
+	TestFalse(TEXT("a spinning world has no substellar point to find"), T->FindFeature(TEXT("substellar"), FVector::ZeroVector, Dir, H, Sun));
+	T->Configure(EarthLike(6371.0), nullptr);
+	TestFalse(TEXT("nor a home world a ring"), T->FindFeature(TEXT("ring"), FVector::ZeroVector, Dir, H, Sun));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkTerrainClimateMaterialTest, "Slonk.Terrain.Climate.Material", SLONK_TEST_FLAGS)
+bool FSlonkTerrainClimateMaterialTest::RunTest(const FString& Parameters)
+{
+	// The ground's material is told only what it reads: every parameter the terrain sets on it is one M_PlanetTerrain
+	// has, on a home world, a spinning one and a locked one; and it paints frozen seas (SeaIce) on the locked one alone.
+	UMaterialInterface* Mat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Slonk/Materials/M_PlanetTerrain.M_PlanetTerrain"));
+	if (!TestNotNull(TEXT("the terrain material loads"), Mat)) { return true; }
+	TArray<FMaterialParameterInfo> ScalarInfo, VectorInfo;
+	TArray<FGuid> Ids;
+	Mat->GetAllScalarParameterInfo(ScalarInfo, Ids);
+	Mat->GetAllVectorParameterInfo(VectorInfo, Ids);
+	TSet<FName> Scalars, Vectors;
+	for (const FMaterialParameterInfo& I : ScalarInfo) { Scalars.Add(I.Name); }
+	for (const FMaterialParameterInfo& I : VectorInfo) { Vectors.Add(I.Name); }
+	// The component keeps its material instance to itself; it is read here through its reflected property.
+	const FObjectProperty* MIDProp = FindFProperty<FObjectProperty>(UPlanetTerrainComponent::StaticClass(), TEXT("MID"));
+	if (!TestNotNull(TEXT("the terrain's material instance is a property"), MIDProp)) { return true; }
+	TArray<FString> Unread;
+	struct FWorld { const TCHAR* Name; FPlanetTerrainParams P; float SeaIce; };
+	for (const FWorld& W : { FWorld{ TEXT("home"), EarthLike(6371.0), 0.f }, FWorld{ TEXT("spinning"), SpinningEarth(-0.1f), 0.f }, FWorld{ TEXT("locked"), LockedEarth(), 1.f } })
+	{
+		UPlanetTerrainComponent* T = NewObject<UPlanetTerrainComponent>();
+		T->Configure(W.P, Mat);
+		const UMaterialInstanceDynamic* MID = Cast<UMaterialInstanceDynamic>(MIDProp->GetObjectPropertyValue_InContainer(T));
+		if (!TestNotNull(FString::Printf(TEXT("the %s world's ground has a material instance"), W.Name), MID)) { continue; }
+		float SeaIce = -1.f;
+		for (const FScalarParameterValue& V : MID->ScalarParameterValues)
+		{
+			if (!Scalars.Contains(V.ParameterInfo.Name)) { Unread.AddUnique(V.ParameterInfo.Name.ToString()); }
+			if (V.ParameterInfo.Name == FName(TEXT("SeaIce"))) { SeaIce = V.ParameterValue; }
+		}
+		for (const FVectorParameterValue& V : MID->VectorParameterValues)
+		{
+			if (!Vectors.Contains(V.ParameterInfo.Name)) { Unread.AddUnique(V.ParameterInfo.Name.ToString()); }
+		}
+		TestEqual(FString::Printf(TEXT("the %s world's seas are painted %s"), W.Name, W.SeaIce > 0.f ? TEXT("frozen") : TEXT("open")), SeaIce, W.SeaIce);
+	}
+	AddInfo(FString::Printf(TEXT("M_PlanetTerrain has %d scalar and %d vector parameters; the terrain sets %d it does not have%s%s"),
+		Scalars.Num(), Vectors.Num(), Unread.Num(), Unread.Num() ? TEXT(": ") : TEXT(""), *FString::Join(Unread, TEXT(", "))));
+	TestEqual(TEXT("every parameter the terrain sets is one its material reads"), Unread.Num(), 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkTerrainClimateAxisTest, "Slonk.Terrain.Climate.Axis", SLONK_TEST_FLAGS)
+bool FSlonkTerrainClimateAxisTest::RunTest(const FString& Parameters)
+{
+	// A locked world's climate is laid about its axis alone: turning the axis and the direction together leaves the
+	// snowline and the coldness the searches steer by where they were (to a billionth of their size).
+	FRandomStream R(4242);
+	int32 Off = 0;
+	double Worst = 0.0;
+	for (int32 i = 0; i < 10000; ++i)
+	{
+		const FQuat Q = FQuat(R.GetUnitVector(), R.FRandRange(0.0, UE_DOUBLE_TWO_PI));
+		const FVector Axis = R.GetUnitVector();
+		const FPlanetTerrainParams A = LockedEarth(Axis), B = LockedEarth(Q.RotateVector(Axis));
+		const FVector Dir = R.GetUnitVector() * R.FRandRange(0.5, 2.0);
+		const double La = SlonkTerrain::SnowlineCm(A, Dir), Lb = SlonkTerrain::SnowlineCm(B, Q.RotateVector(Dir));
+		const double Err = FMath::Abs(La - Lb) / FMath::Max(FMath::Abs(La), 1.0);
+		Worst = FMath::Max(Worst, Err);
+		Off += Err <= 1e-9 && FMath::Abs(SlonkTerrain::ClimateColdness(A, Dir) - SlonkTerrain::ClimateColdness(B, Q.RotateVector(Dir))) <= 1e-9 ? 0 : 1;
+	}
+	AddInfo(FString::Printf(TEXT("worst snowline change with the axis turned: %.2e of its size"), Worst));
+	TestEqual(TEXT("turning the axis and the direction together changes nothing"), Off, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkTerrainClimateDeterministicTest, "Slonk.Terrain.Climate.Deterministic", SLONK_TEST_FLAGS)
+bool FSlonkTerrainClimateDeterministicTest::RunTest(const FString& Parameters)
+{
+	// A world with a climate of its own samples and builds the same on any thread as on one, bit for bit: the samples of
+	// a locked and a spinning world in a parallel loop against a serial one, and their chunks built side by side.
+	int32 SampleOff = 0, ChunkOff = 0, Chunks = 0;
+	for (const FPlanetTerrainParams& P : { LockedEarth(), SpinningEarth(-0.08f) })
+	{
+		const int32 N = 4096;
+		TArray<FPlanetTerrainSample> Par;
+		Par.SetNum(N);
+		ParallelFor(N, [&](int32 i) { Par[i] = SlonkTerrain::Sample(P, Fibonacci(i, N), 0.0); });
+		for (int32 i = 0; i < N; ++i) { SampleOff += CrcSample(SlonkTerrain::Sample(P, Fibonacci(i, N), 0.0), 0) == CrcSample(Par[i], 0) ? 0 : 1; }
+		struct FChunk { int32 Face, Depth; int64 X, Y; };
+		TArray<FChunk> List;
+		const TArray<FVector> Spots = P.Climate == EClimateModel::Locked ? LockedGreenSpots(P, 4, -0.1, 0.6) : GreenSpots(P, 4);
+		for (int32 i = 0; i < Spots.Num(); ++i)
+		{
+			FChunk C; C.Depth = DepthFor(P, i % 2 ? 8000.0 : 31000.0);
+			if (UPlanetTerrainComponent::ChunkAt(Spots[i], C.Depth, C.Face, C.X, C.Y)) { List.Add(C); }
+		}
+		TArray<uint32> Crcs;
+		Crcs.SetNumZeroed(List.Num());
+		ParallelFor(List.Num(), [&](int32 i) { Crcs[i] = UPlanetTerrainComponent::ChunkBuildCrcForTest(P, Living(), List[i].Face, List[i].Depth, List[i].X, List[i].Y); });
+		for (int32 i = 0; i < List.Num(); ++i)
+		{
+			++Chunks;
+			ChunkOff += UPlanetTerrainComponent::ChunkBuildCrcForTest(P, Living(), List[i].Face, List[i].Depth, List[i].X, List[i].Y) == Crcs[i] ? 0 : 1;
+		}
+	}
+	AddInfo(FString::Printf(TEXT("8192 samples and %d chunks: %d samples and %d chunks differ between threads"), Chunks, SampleOff, ChunkOff));
+	TestTrue(TEXT("chunks were built"), Chunks >= 6);
+	TestEqual(TEXT("the samples are the same on any thread"), SampleOff, 0);
+	TestEqual(TEXT("and the chunks"), ChunkOff, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkTerrainClimatePerfTest, "Slonk.Terrain.Climate.Perf", SLONK_TEST_FLAGS)
+bool FSlonkTerrainClimatePerfTest::RunTest(const FString& Parameters)
+{
+	// What a locked world's climate costs a sample over the home worlds' (the plan is under 2%): 100,000 samples at the
+	// structure's finest level, where the biome is the largest share of the work, timed in turn on one thread, the best
+	// of two. Reported, not held to: a timing on a shared machine is no pass or fail.
+	const FPlanetTerrainParams Locked = LockedEarth();
+	FPlanetTerrainParams Classic = Locked;
+	Classic.Climate = EClimateModel::Classic;
+	const int32 N = 100000;
+	double Sink = 0.0;
+	auto Time = [&](const FPlanetTerrainParams& P)
+	{
+		const double T0 = FPlatformTime::Seconds();
+		for (int32 i = 0; i < N; ++i) { Sink += SlonkTerrain::Sample(P, Fibonacci(i, N), 2.0e4).Ice; }
+		return FPlatformTime::Seconds() - T0;
+	};
+	double BestClassic = 1e30, BestLocked = 1e30;
+	for (int32 k = 0; k < 2; ++k) { BestClassic = FMath::Min(BestClassic, Time(Classic)); BestLocked = FMath::Min(BestLocked, Time(Locked)); }
+	AddInfo(FString::Printf(TEXT("100,000 samples: Classic %.3f s, Locked %.3f s (%+.1f%%; checksum %.0f)"), BestClassic, BestLocked, (BestLocked / BestClassic - 1.0) * 100.0, Sink));
+	return true;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkTerrainMountainsReliefTest, "Slonk.Terrain.MountainsRelief", SLONK_TEST_FLAGS)
