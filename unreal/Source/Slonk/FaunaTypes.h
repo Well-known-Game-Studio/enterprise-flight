@@ -21,7 +21,7 @@ enum class EFaunaKind : uint8
 	Mote,
 	/** Fish that jump out of the painted shoals. */
 	Leaper,
-	/** Things that drift through a dense sky. */
+	/** Sky-jellies drifting through a strange world's thick air, high over its ground. */
 	Floater,
 	Count
 };
@@ -118,13 +118,15 @@ namespace SlonkFauna
 	struct FFaunaKindDesc
 	{
 		EFaunaKind Kind = EFaunaKind::Flier;
-		/** Whether this build spawns it (the fliers, the herds and the leapers so far; the floaters are a later phase's). */
+		/** Whether this build spawns it (every kind but the motes, which the terrain's chunks carry). */
 		bool bLive = false;
 		/** The side of its habitat cells on the cube's faces, cm: at most one group to a cell. */
 		double CellCm = 1.0e5;
 		/** Its groups are spawned within this of the camera's ground point (the middle of their path), cm. */
 		double ReachCm = 3.0e5;
-		/** None are kept while the camera stands higher than this above the ground, cm. */
+		/** None are spawned while the camera stands higher than this above the ground, cm, nor kept while it stands higher
+		 *  than SpawnHysteresis times this (a jelly's ground the higher of the ground under the scan's middle and its loop's
+		 *  highest: FFaunaField::Select). */
 		double MaxAltitudeCm = 2.5e5;
 		/** Members of a group, fewest and most. */
 		int32 GroupMin = 1;
@@ -133,15 +135,18 @@ namespace SlonkFauna
 		int32 MaxGroups = 0;
 		int32 MaxMembers = 0;
 		/** A craft in the air lower than ScareAltitudeCm over the ground and within ScareRadiusCm of a group startles
-		 *  it; so does someone on foot within CrewScareCm. A startled group flees this far, cm, before it drifts back. */
+		 *  it; so does someone on foot within CrewScareCm (0: nobody on foot ever does). A startled group flees this far,
+		 *  cm, before it drifts back. */
 		double ScareRadiusCm = 0.0;
 		double ScareAltitudeCm = 0.0;
 		double CrewScareCm = 0.0;
 		double FleeCm = 0.0;
 		/** How its flight off its path comes on, s: a bird is away at once, its flight closing on FleeCm by this time
 		 *  constant from its fastest at the start; a walker (bGallop) breaks into a gallop from a stand, at its fastest this
-		 *  long in, and a second fright carries the gallop it was in rather than stopping it dead. How far up off the ground
-		 *  it flees, as a share of the way away (a bird climbs, a walker keeps to the ground). A walker's gallop comes in
+		 *  long in, and a second fright carries the gallop it was in rather than stopping it dead; a floater squeezes itself
+		 *  away from a drift, at its fastest this long in, a second fright carrying on the drift it had. How far up off the
+		 *  ground it flees, as a share of the way away (a bird climbs, a walker keeps to the ground, a jelly sinks: below 0).
+		 *  A walker's gallop comes in
 		 *  FleeTurnSec after its members have stopped and turned to flee where they stand (at once from grazing; on the move
 		 *  they first turn back to their grazing: SlonkFauna::StartleHerd). */
 		double FleeRiseSec = 8.0;
@@ -173,7 +178,7 @@ namespace SlonkFauna
 	};
 	SLONK_API const FFaunaKindDesc& KindDesc(EFaunaKind K);
 	SLONK_API const TCHAR* KindName(EFaunaKind K);
-	/** "flier", "herd", "mote", "leaper", "floater" (or their plurals): false for anything else. */
+	/** "flier", "herd", "mote", "leaper", "floater" (or their plurals, or "jelly"): false for anything else. */
 	SLONK_API bool KindFromName(const FString& Name, EFaunaKind& Out);
 	SLONK_API const TCHAR* HabitatName(EFlierHabitat H);
 	/** The Earth's body plan for a kind: what a world at strangeness 0 has. */
@@ -394,6 +399,87 @@ namespace SlonkFauna
 		enum : int32 { Night = 0, DiveT0 = 1, Diving = 6, DiveLen = 7, Surface0 = 14, Num = 24 };
 	}
 	/**
+	 * A sky-jelly (a floater): a translucent bell 20 to 80 m across, a dome lathed round its axis with a scalloped rim, its
+	 * ribs (its body plan's Symmetry: 6, 8 or 12) running from its crown to its rim, and 6 to 12 tentacles (twice its
+	 * LimbPairs) hanging from just inside its rim 1 to 3 times its bell's height (its plan's Length, the bell's height, and
+	 * Tail, the tentacles' length, as shares of its span). Only on a living world at least MinStrangeness strange whose air
+	 * is thick (SlonkFauna::FloatersLive): one jelly in a 3 km cell, in the share of the cells its world rolls
+	 * (FFaunaProfile::FloaterShare), drifting a few metres a second round a closed loop its middle MinCruiseCm to
+	 * MaxCruiseCm over the highest ground within GroundReachCm of it (the sea's surface over water), rising and sinking a
+	 * few dozen metres round it; however it is startled and drawn its lowest point stays ClearCm and more over that ground.
+	 *
+	 * Its unit mesh is its span across (the rim's lobes RimCm out from its axis), its middle the origin: its crown at z H
+	 * and its tentacles' tips at -H, H = 50 (Length + Tail); its rim at H - 100 Length; its tentacles' roots RootCm out
+	 * from the axis. Its custom floats (SlonkFauna::MembersOf writes them): its pigment RGB (pale, the world's own hue:
+	 * FloaterPigment); how brightly its ribs and tentacles glow at night; a seed; its span, m (its scale); its pulse's phase,
+	 * a share of a pulse; its pulse, Hz (a whole number of pulses an hour, PulseLoSec to PulseHiSec apart); its ribs' count
+	 * (PerKind); and the distance from the camera it fades out by, cm.
+	 *
+	 * The material moves it in closed form on its clock (SlonkFauna::FloaterMotion mirrors it): its bell contracts quickly
+	 * and relaxes slowly once a pulse, its margin pulled in by up to PulseCalm of its radius (twice as fast and PulseFast
+	 * while frightened, squeezed hard to Squeeze by a startle) and down PullDownCm at full contraction, the whole of it
+	 * rising SurgeCm with each, felt PulseLag of a pulse later down at the rim and on along the tentacles; its tentacles
+	 * undulate (waves running down them, WaveAcross and WaveOut of their length at their tips) and trail back from the way
+	 * it drifts through the air (TrailMax of their length at TrailFullMS and faster, kept their length); a speck floor draws
+	 * one far off no smaller than SpeckPx across, at most SpeckMax times its size (its motion fading as it grows). At night
+	 * a pulse of light runs down its ribs, its ring canal and its tentacles at each contraction, LightLag of a pulse from
+	 * its crown to its rim.
+	 */
+	namespace Floater
+	{
+		constexpr float MinStrangeness = 0.3f;
+		constexpr double MinSpanM = 20.0, MaxSpanM = 80.0;
+		/** Its bell's height, a share of its span, and its tentacles' length, as many times its bell's height. */
+		constexpr float MinBell = 0.4f, MaxBell = 0.6f, MinTentacles = 1.f, MaxTentacles = 3.f;
+		constexpr double MinCruiseCm = 3.0e4, MaxCruiseCm = 3.0e5;
+		constexpr double ClearCm = 5.0e3;
+		/** How far round its loop the ground is read for it: its flight off its loop (a startle, and others after it), its
+		 *  trailing tentacles and its bell. The ground along its loop is laid under an envelope rising and falling no steeper
+		 *  than GroundSlope along it, so it climbs ahead of a ridge and sinks after it at under a metre a second. */
+		constexpr double GroundReachCm = 4.5e4;
+		constexpr double GroundSlope = 0.25;
+		/** How far a startled jelly sinks at most, cm, however often it is startled again (Slonk.Fauna.FloaterStartle holds
+		 *  it to that): its loop's height over the ground allows for it. */
+		constexpr double SinkAllowCm = 1.6e4;
+		/** How long the drift a second fright carries on with takes to die away, s. */
+		constexpr double CoastSec = 3.0;
+		constexpr double PulseLoSec = 3.0, PulseHiSec = 6.0;
+		constexpr float PulseCalm = 0.16f, PulseFast = 0.24f, Squeeze = 0.34f;
+		constexpr float PulseLag = 0.12f, LightLag = 0.3f;
+		constexpr float PullDownCm = 20.f, SurgeCm = 4.f;
+		constexpr float WaveAcross = 0.07f, WaveOut = 0.035f;
+		constexpr float TrailMax = 0.4f, TrailFullMS = 6.f;
+		constexpr float SpeckPx = 4.f, SpeckMax = 2.f;
+		constexpr double RimCm = 50.0, RootCm = 44.0;
+		/** The share of a world's floater cells holding a jelly: MinShare to MinShare + ShareSpan by its genome (the
+		 *  floaters' own draw, squared, so most strange worlds have few and some teem with them), at full life and density,
+		 *  three fifths of that under the thinnest haze and all of it under one of HazeFull. */
+		constexpr float MinShare = 0.05f, ShareSpan = 0.55f, HazeFull = 0.2f;
+		/** The bell's pores: rows of cells down it from its crown, each pierced by a pore (none on its ribs, its ring canal or
+		 *  its crown, above CrownV) leaving it CoverLo at its rim to CoverHi below its crown: the material's fixed lattice. */
+		constexpr int32 PoreRows = 16;
+		constexpr float CrownV = 0.28f, CoverHi = 0.6f, CoverLo = 0.38f, RingV = 0.93f;
+		/** A plan's bell's height and its tentacles' length, shares of its span, as its mesh is built (held to their
+		 *  ranges), and the mesh's half-height H, unit-mesh cm. */
+		inline float BellOf(const FFaunaBodyPlan& P) { return FMath::Clamp(P.Length, MinBell, MaxBell); }
+		inline float TentaclesOf(const FFaunaBodyPlan& P) { const float B = BellOf(P); return FMath::Clamp(P.Tail, B * MinTentacles, B * MaxTentacles); }
+		inline double HalfHeightCm(const FFaunaBodyPlan& P) { return 50.0 * ((double)BellOf(P) + (double)TentaclesOf(P)); }
+		/** A plan's tentacles (twice its pairs, 2 to 16). */
+		inline int32 TentacleCount(const FFaunaBodyPlan& P) { return FMath::Clamp(2 * (int32)P.LimbPairs, 2, 16); }
+	}
+	/**
+	 * A jelly's custom primitive data, set each frame (UPlanetFaunaComponent): 0 the night; its fright as a flock's
+	 * (SlonkFauna::FrightData): 1 when a startle last squeezed it (a startle while that is still in its forty seconds keeps
+	 * it), 6 whether a startle is live, 8 when it was last startled and 9 when its frightened pulse began to come in, each on
+	 * the material's clock; 2 and 3 the way it drifts through the air in its own frame, m/s, as of 12 (a moment on the
+	 * material's clock), and 10 and 11 how fast that changes, m/s/s, so the material runs the way its tentacles trail on
+	 * from it in closed form and the velocity pass sees them trail.
+	 */
+	namespace FloaterData
+	{
+		enum : int32 { Night = 0, SqueezeT0 = 1, TrailX = 2, TrailY = 3, Startled = 6, PanicT0 = 8, OnsetT0 = 9, TrailRateX = 10, TrailRateY = 11, ClockT0 = 12, Num = 13 };
+	}
+	/**
 	 * A fauna mesh's vertex colour: R the surface (0 body, 0.25 a bill or a beak, 0.5 a tail, 0.75 a mote's card, 1 a
 	 * wing), G how far it flexes (0 at its joint, rising to 1 at the tip), B its side (0 left, 0.5 the middle, 1 right) and
 	 * A the kind of joint the material moves it by (0 rigid, 0.25 a tail, 0.375 a neck, 0.5 a wing hinged along the body,
@@ -409,6 +495,14 @@ namespace SlonkFauna
 	 * at its tail's tip), B its side, A JointUndulate; its UV its place along it (U 0 at the tail's tip, 1 at its nose) and
 	 * up it (V 0 at its belly, 1 at its back), for its countershading. Its nose is along +x at 50, its middle the mesh's
 	 * origin.
+	 * A jelly is drawn by its floater branch alone (its Floaters parameter, which the jellies' sets set): R its surface (0
+	 * its bell, 0.5 a tentacle), G how far down it a vertex is (the bell's from 0 at its crown to 1 at its rim, a
+	 * tentacle's from 0 at its root to 1 at its tip), B its place round the bell, a share of a turn (a tentacle's root's),
+	 * A rigid on the bell and JointUndulate on a tentacle; its UV its place round (U, a share of a turn: the bell's seam is
+	 * drawn at 0 and again at 1) and down it (V: the bell's G; a tentacle's 1 and how far along it from its root, in the
+	 * unit mesh's metres). Its speck (LOD 2) has its bell drawn whole: its bell's V runs from 0.1 at its crown to 0.27 over
+	 * the strip of its ring canal at its rim (under Floater::CrownV, so no pore, and its ribs lit), the strip's within 0.01
+	 * of Floater::RingV (whole, and lit as its ring canal is), its G still how far down it a vertex is.
 	 */
 	namespace Vc
 	{

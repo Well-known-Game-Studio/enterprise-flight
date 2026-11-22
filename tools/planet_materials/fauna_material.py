@@ -157,6 +157,54 @@ which must change with it: the test holds the CRCs of the branch's lines in both
 copy was made, and fails when they change). Its normals are pitched and turned as its body is (the Normal output, in
 tangent space).
 
+The floater branch (Floaters 1, which only the jellies' instance of this material sets, UPlanetFaunaComponent: a material
+built before the branch has no Floaters parameter, and the game then keeps no sky-jellies). A jelly is one instanced set
+of one whose frame the game moves each frame along its loop high over the ground (and off it while a startle has it
+squeezing away and down), never turned: its loop's own east and north laid level. Its mesh (SlonkFaunaMeshes' jelly: 308
+to 312, 56 to 68 and 16 triangles) is its span across, its middle at the origin, its crown up: a bell lathed round its
+axis (24 sides, its seam drawn at U 0 and again at 1), its rim's lobes scalloped between its ribs, and its tentacles
+ribbons hanging from just inside its rim. Its vertex colours: R its surface (0 bell, 0.5 tentacle), G how far down it a
+vertex is (the bell's from 0 at its crown to 1 at its rim, a tentacle's from 0 at its root to 1 at its tip), B its place
+round the bell, a share of a turn (a tentacle's root's), A 0 on the bell and 1 on a tentacle; UV its place round (U) and
+down it (V: the bell's G, a tentacle's 1 and how far along it from its root in the unit mesh's metres; its speck's bell
+drawn whole, its V 0.1 to 0.27, under the crown's, and its ring canal's strip at its rim on the canal's). Per-instance
+custom data in the same slots:
+    0-2 its pigment, pale (the world's look's jelly colour, turned with its sky)
+    3   how brightly its ribs and tentacles glow at night
+    4   seed
+    5   its span, m (its scale)
+    6   its pulse's phase, a share of a pulse
+    7   its pulse, Hz (a whole number of pulses an hour, 3 to 6 s apart)
+    8   its ribs' count (6, 8 or 12)
+    9   the distance it fades out by, cm (a jelly at a time, by a number of its own, over the last fifth of it)
+Per-jelly custom primitive data (SlonkFauna::FloaterData, slots 0 to 12, set each frame):
+    0   night
+    1   when a startle last squeezed it, on this material's clock (a startle while that is in its forty seconds keeps it)
+    6, 8 and 9 its fright as a flock's (live, when last startled, when its frightened pulse began to come in)
+    2, 3 the way it drifts through the air in its own frame, m/s, as of 12 (a moment on this material's clock), and 10, 11
+        how fast that changes, m/s/s: run on from there, so its tentacles' trail is a closed form of the clock
+Each jelly: its bell contracts quickly and relaxes slowly once a pulse (a whole number an hour), its margin pulled in by
+up to 0.16 of its radius and down 20 cm of the unit mesh, the whole of it rising 4 with each, felt 0.12 of a pulse later at
+the rim and the later on down its tentacles; frightened it pulses twice as fast and pulls in 0.24, the fast pulse coming
+in over 0.3 s from its onset as a flock's wingbeat does, and a startle squeezes it hard to 0.34 for a few seconds; its
+tentacles carried with their roots at the rim, two waves running down each (a whole number of times an hour, up to 0.07
+of its length across and 0.035 in and out at its tip), trailing back from the way it drifts through the air (up to 0.4 of
+their length at 6 m/s and faster, bent from the root and lifted to keep their length); a speck floor, one far off drawn no
+smaller than 4 pixels across, at most twice its size about its middle, its motion fading as it grows. Every vertex stays
+within 110 unit-mesh cm of the mesh's box, which the instances' boxes are padded by (FFaunaKindDesc::CullPaddingUnits:
+across, a tentacle's tip at most 44 out plus 0.505 of its length, 180 at the most, is 135, against the box's half-width of
+at least 43 padded by 0.15 of it, 20 and 110; along, the speck floor doubles a half-height H of at most 120 and the pulse
+moves it 14 more, H + 14 past the box against 0.15 H + 130), and Slonk.Fauna.Jelly checks a float copy of this branch
+against it (SlonkFauna::FloaterMotion; FloaterCover and FloaterLight copy its pixel shader's: the test holds the CRCs of
+the branch's lines in both shaders, their comments aside, as the copies were made, and fails when they change). By day it
+is pale and translucent: its bell a membrane pierced by a fixed lattice of pores, one in each cell of its own surface (16
+rows down it, 16 to 64 cells round each), leaving 0.6 of it below its crown to 0.38 at its rim, none on its ribs, its ring
+canal or its crown; no pore moves from frame to frame but with the jelly, so the pores of one near read as lace and those of
+one far off are resolved by the temporal upscaler into its translucency (and its shadow on the ground is dappled). At night
+a pulse of light runs down its ribs, its ring canal and its tentacles in the world's own colour (GlowColor, set on the
+jellies' instance: the world's look's glow) at each contraction, 0.3 of a pulse from its crown to its rim, brighter as a
+startle squeezes it; a little light always.
+
 The motion (WPO_CODE): bursts of wingbeats on a cycle of 3 to 7 s of each bird's own, gliding with the wings a little
 raised between, beating all the time and faster while startled; the body banked into the turn; a ripple through the
 flock; a startle's scatter, out from the flock's middle and mostly away from what startled it, opening in a second and
@@ -375,6 +423,59 @@ Nrm = float3(0.0, 0.0, 1.0);
     float core = saturate(1.0 - 0.7 * r2);
     Emis = GlowColor * (Glow * 40.0 * fly * flash * core * rsqrt(k));
     return mcol;
+}
+[branch] if (Floaters > 0.5)
+{
+    // A sky-jelly (SlonkFauna::Floater; SlonkFauna::FloaterCover and FloaterLight copy this: change both). By day pale and
+    // translucent: its bell a membrane pierced by a fixed lattice of pores, one in each cell of its own surface (rows down it
+    // from its crown, fewer cells round the narrower rows, each pore a little off its cell's middle by the cell's own hash),
+    // none on its ribs, its ring canal or its crown; nothing in it moves from frame to frame but with the jelly, so the
+    // temporal upscaler resolves the pores of one far off into its translucency. Its tentacles solid.
+    float jsym = clamp(round(PerKind), 3.0, 16.0);
+    float jbell = VC.r < 0.25 ? 1.0 : 0.0;
+    float jv = saturate(UV.y);
+    float jrib = 1.0 - smoothstep(0.035, 0.06, abs(frac(UV.x * jsym + 0.5) - 0.5));
+    float jring = 1.0 - smoothstep(0.012, 0.025, abs(jv - 0.93));
+    float jvr = min(jv, 0.9999);
+    float jrow = floor(jvr * 16.0);
+    float jnu = 16.0 * max(round(4.0 * sin((jrow + 0.5) / 16.0 * 1.5707963)), 1.0);
+    float2 jcl = float2(frac(UV.x) * jnu, jvr * 16.0);
+    float2 jcf = floor(jcl);
+    uint jh = ((uint)jcf.x * 73856093u) ^ ((uint)jcf.y * 19349663u) ^ ((uint)(Seed * 65536.0) * 83492791u);
+    jh = (jh ^ (jh >> 13)) * 0x5bd1e995u;
+    jh ^= jh >> 15;
+    float2 jctr = 0.5 + (float2((float)(jh & 0xffu), (float)((jh >> 8) & 0xffu)) / 255.0 - 0.5) * 0.2;
+    float jcover = jv < 0.28 ? 1.0 : lerp(0.6, 0.38, saturate((jv - 0.28) / 0.62));
+    jcover = max(jcover, max(jrib, jring));
+    float jopen = sqrt(saturate(1.0 - jcover) / 3.14159265);
+    bool jpore = jbell > 0.5 && length(jcl - jcf - jctr) < jopen;
+    // Fading out over the last fifth of its fade, a jelly at a time by a number of its own that holds from frame to frame.
+    float jfade = FadeFar > 0.0 ? saturate((FadeFar - length(WP - ViewPos)) / (0.2 * FadeFar)) : 1.0;
+    Mask = (!jpore && jfade > frac(Seed * 91.37 + 0.13)) ? 1.0 : 0.0;
+    // At night a pulse of light running down its ribs, its ring canal and its tentacles from its crown at each contraction
+    // of its bell (the vertex shader's pulse: twice as often while it is frightened), brightest while a startle squeezes it,
+    // and a little light always.
+    float jpa = fmod(T - PanicT0 + 7201.0, 3600.0) - 1.0;
+    float joa = fmod(T - OnsetT0 + 7201.0, 3600.0) - 1.0;
+    float jsa = fmod(T - ScatterT0 + 7201.0, 3600.0) - 1.0;
+    float jlive = Startled > 0.5 ? 1.0 : 0.0;
+    float jurge = saturate(jlive * (1.0 - smoothstep(20.0, 120.0, jpa)) * 3.0) * smoothstep(0.0, 0.3, joa);
+    float jsq = jlive * smoothstep(0.0, 0.4, jsa) * (1.0 - smoothstep(3.0, 7.0, jsa));
+    float jdown = jbell > 0.5 ? jv : 1.0 + VC.g;
+    float jxc = frac(T * Rate + Phase - 0.3 * jdown);
+    float jxf = frac(T * Rate * 2.0 + Phase - 0.3 * jdown);
+    float jwave = lerp(smoothstep(0.0, 0.05, jxc) * (1.0 - smoothstep(0.08, 0.3, jxc)), smoothstep(0.0, 0.05, jxf) * (1.0 - smoothstep(0.08, 0.3, jxf)), jurge);
+    float jlines = jbell > 0.5 ? max(jrib * step(0.1, jv), jring) : 1.0;
+    float jlit = jlines * (0.2 + 1.8 * jwave + 1.5 * jsq);
+    // Pale by day, its ribs and ring canal a little whiter, its tentacles a deeper shade; the sun let through it as through
+    // a leaf.
+    float3 jbase = Pigment * (0.9 + 0.2 * frac(Seed * 11.3));
+    float3 jcol = jbell > 0.5 ? jbase * lerp(1.1, 0.85, jv) : jbase * 0.8;
+    jcol = lerp(jcol, min(jbase * 1.35 + 0.05, 1.0), max(jrib, jring) * jbell * 0.6);
+    Rough = 0.35;
+    Sub = jbase * 0.9;
+    Emis = GlowColor * (Glow * Night * jlit);
+    return jcol;
 }
 float surf = VC.r; float flex = VC.g;
 float3 base = Pigment * (0.85 + 0.3 * frac(Seed * 11.3));
@@ -758,6 +859,73 @@ WPO_CODE = r"""
     // 150 cm, 0.6 of its length and its body (600 at most).
     return lp + float3(lpx, lpy, lpz) / ls - LP;
 }
+[branch] if (Floaters > 0.5)
+{
+    // A sky-jelly (SlonkFauna::Floater; SlonkFauna::FloaterMotion is a float copy of this: change both). Its group's slots it
+    // reads by the flock's pins and the herd's: ScatterT0 when a startle last squeezed it (slot 1), SDX and SDY the way it
+    // drifts through the air in its frame, m/s (2 and 3), as of ClockT0 (12), and Dist and Graze how fast that changes
+    // (10 and 11), Startled, PanicT0 and OnsetT0 its fright as a flock's; its own: Rate its pulse (Hz, a whole number of
+    // pulses an hour), Phase its pulse's phase. Offsets in the unit mesh's cm, in the instance's frame (its group's,
+    // unturned, scaled by its span), its middle the mesh's origin.
+    float jpa = fmod(T - PanicT0 + 7201.0, 3600.0) - 1.0;
+    float joa = fmod(T - OnsetT0 + 7201.0, 3600.0) - 1.0;
+    float jsa = fmod(T - ScatterT0 + 7201.0, 3600.0) - 1.0;
+    float jlive = Startled > 0.5 ? 1.0 : 0.0;
+    float jurge = saturate(jlive * (1.0 - smoothstep(20.0, 120.0, jpa)) * 3.0) * smoothstep(0.0, 0.3, joa);
+    float jsq = jlive * smoothstep(0.0, 0.4, jsa) * (1.0 - smoothstep(3.0, 7.0, jsa));
+    // Its pulse: a quick contraction and a slow relaxing, a whole number an hour; twice as fast and deeper while it is
+    // frightened, hard while a startle squeezes it; felt 0.12 of a pulse later at its rim, and the later on down its
+    // tentacles (and at its rim, where its tentacles hang from).
+    float jtent = VC.r > 0.25 ? 1.0 : 0.0;
+    float jdown = jtent > 0.5 ? 1.0 + VC.g : VC.g;
+    float jpc = frac(T * Rate + Phase - 0.12 * jdown);
+    float jpf = frac(T * Rate * 2.0 + Phase - 0.12 * jdown);
+    float jc = max(lerp(0.16 * smoothstep(0.0, 0.3, jpc) * (1.0 - smoothstep(0.35, 1.0, jpc)), 0.24 * smoothstep(0.0, 0.3, jpf) * (1.0 - smoothstep(0.35, 1.0, jpf)), jurge), 0.34 * jsq);
+    float jrc = frac(T * Rate + Phase - 0.12);
+    float jrf = frac(T * Rate * 2.0 + Phase - 0.12);
+    float jr = max(lerp(0.16 * smoothstep(0.0, 0.3, jrc) * (1.0 - smoothstep(0.35, 1.0, jrc)), 0.24 * smoothstep(0.0, 0.3, jrf) * (1.0 - smoothstep(0.35, 1.0, jrf)), jurge), 0.34 * jsq);
+    // The bell's margin pulled in and down as it contracts, its crown barely; a tentacle carried with its root at the rim,
+    // the less the further down it.
+    float3 jp = LP;
+    if (jtent > 0.5)
+    {
+        jp.xy *= 1.0 - jr * (1.0 - 0.5 * VC.g);
+        jp.z -= 20.0 * jr;
+    }
+    else
+    {
+        float jg2 = VC.g * VC.g;
+        jp.xy *= 1.0 - jc * jg2;
+        jp.z -= 20.0 * jc * jg2;
+    }
+    // A tentacle's two waves running down it, each a whole number of times an hour, and its trail back from the way the
+    // jelly drifts through the air (run on from when the game gave it, at the rate it gave), up to 0.4 of its length at 6
+    // m/s and faster, bent from its root and its tip lifted to keep its length.
+    float jal = max(UV.y - 1.0, 0.0) * 100.0;
+    float jamp = jal * VC.g * jtent;
+    float jrl = length(LP.xy);
+    float2 jout = jrl > 0.001 ? LP.xy / jrl : float2(1.0, 0.0);
+    float2 jacr = float2(-jout.y, jout.x);
+    float jw1 = 540.0 + floor(frac(Seed * 4.37 + VC.b * 7.13) * 360.0);
+    float jw2 = 420.0 + floor(frac(Seed * 2.91 + VC.b * 5.77) * 300.0);
+    float js1 = sin(6.2831853 * (frac(T * (jw1 / 3600.0) + VC.b * 3.7 + Seed) - 1.5 * VC.g));
+    float js2 = sin(6.2831853 * (frac(T * (jw2 / 3600.0) + VC.b * 1.9 + Seed * 3.0) - 1.1 * VC.g));
+    float2 jwave = (jacr * (0.07 * js1) + jout * (0.035 * js2)) * jamp;
+    float jta = clamp(fmod(T - ClockT0 + 7201.0, 3600.0) - 1.0, -1.0, 1.0);
+    float2 jvel = float2(SDX, SDY) + float2(Dist, Graze) * jta;
+    float jspd = length(jvel);
+    float2 jbend = jspd > 0.001 ? jvel * (-0.4 * min(jspd / 6.0, 1.0) / jspd) * jamp : float2(0.0, 0.0);
+    float jlift = 0.6667 * dot(jbend, jbend) / max(jal, 1.0);
+    // The whole of it rising with each contraction.
+    float3 jm = float3(jwave + jbend, jlift + 4.0 * jc);
+    // The speck floor: no smaller than 4 pixels across far off, at most twice its size about its middle, its motion fading
+    // as it grows. Every vertex stays within 110 unit-mesh cm of the mesh's box (FFaunaKindDesc::CullPaddingUnits): across,
+    // a tentacle's tip at most 44 + 0.505 of its length (180 at most) out, 135; along, twice its half-height (at most 120)
+    // and 14 more.
+    float jpx = max(Size, 1.0) * 100.0 * PxPerRad / max(length(WP - ViewPos), 1.0);
+    float jk = clamp(4.0 / max(jpx, 0.001), 1.0, 2.0);
+    return jp * jk + jm * (2.0 - jk) - LP;
+}
 // Every cycle here is a whole number of cycles an hour (T is the world's time wrapped to 3600 s), so the hour's wrap
 // shows no seam. Offsets are in the unit mesh's centimetres, in the instance's frame (a span is 100); the transform
 // after this node turns them into the world's. SlonkFauna::FlierMotion is a float copy of this: change both.
@@ -824,10 +992,10 @@ LEAPER_SURFACE = HERD_GROUND[:10]
 INPUTS = ["VC", "N", "BodyUp", "Pigment", "Glow", "Seed", "FadeFar", "WP", "ViewPos", "Night", "GlowColor",
           "Motes", "UV", "SunDir", "T", "Phase", "PerKind", "PxPerRad",
           "Walkers", "Rate", "Heading", "Graze", "ClockT0", "Travel", "VCA", "HerdGait", "PivotRef", "WalkKap", "TurnPack",
-          "Leapers", "Size", "ScatterT0", "Startled", "Spread", "AxY"] + LEAPER_SURFACE
+          "Leapers", "Size", "ScatterT0", "Startled", "Spread", "AxY"] + LEAPER_SURFACE + ["Floaters", "PanicT0", "OnsetT0"]
 WPO_INPUTS = ["LP", "VC", "VCA", "T", "Size", "Seed", "Phase", "Rate", "Bearing", "ScatterT0", "SDX", "SDY", "SDZ", "Bank", "Startled", "Spread",
               "PanicT0", "OnsetT0", "WP", "ViewPos", "PxPerRad", "Motes", "UV", "SunDir", "BodyUp", "AxX", "AxY",
-              "Walkers", "LPP", "Dist", "Graze", "ClockT0", "Travel", "GroundHalf", "Leapers"] + HERD_GROUND
+              "Walkers", "LPP", "Dist", "Graze", "ClockT0", "Travel", "GroundHalf", "Leapers"] + HERD_GROUND + ["Floaters"]
 
 
 def build():
@@ -882,6 +1050,10 @@ def build():
     # The leaper branch: on in the leapers' instance alone. Their group's slots are read by the flock's and the herd's pins
     # (SlonkFauna::LeaperData: its dive in 1, 6 and 7, the sea's surface its fish's leaps cross in 14 to 23).
     leapers = g.scalar("Leapers", 0.0)
+    # The floater branch: on in the jellies' instance alone. Their slots are read by the flock's and the herd's pins
+    # (SlonkFauna::FloaterData: the squeeze and the fright in 1, 6, 8 and 9, their drift through the air in 2, 3, 10, 11 and
+    # 12).
+    floaters = g.scalar("Floaters", 0.0)
     # Where a vertex is in its herd's frame (its instance's place in it), for the ground under it.
     lpp = g.node("LocalPosition", {"IncludedOffsets": "ExcludeOffsets", "LocalOrigin": "Primitive"})
     uv = g.texcoord(0)
@@ -899,7 +1071,7 @@ def build():
                      ("Walkers", walkers), ("Rate", rate), ("Heading", bank), ("Graze", herd_graze), ("ClockT0", herd_clock), ("Travel", herd_travel),
                      ("HerdGait", spread), ("PivotRef", scatter_t0), ("WalkKap", sdy), ("TurnPack", sdz),
                      ("Leapers", leapers), ("Size", size), ("ScatterT0", scatter_t0), ("Startled", startled), ("Spread", spread), ("AxY", axy)] \
-            + list(zip(LEAPER_SURFACE, herd_ground[:10])):
+            + list(zip(LEAPER_SURFACE, herd_ground[:10])) + [("Floaters", floaters), ("PanicT0", panic_t0), ("OnsetT0", onset_t0)]:
         g.c(src, e, pin)
     # A walker's joint kind, the colour node's alpha pin.
     g.c(vc, e, "VCA", "A")
@@ -910,7 +1082,7 @@ def build():
                      ("PanicT0", panic_t0), ("OnsetT0", onset_t0), ("WP", wp), ("ViewPos", view_pos), ("PxPerRad", px_per_rad),
                      ("Motes", motes), ("UV", uv), ("SunDir", sun_dir), ("BodyUp", up), ("AxX", axx), ("AxY", axy),
                      ("Walkers", walkers), ("LPP", lpp), ("Dist", herd_dist), ("Graze", herd_graze), ("ClockT0", herd_clock), ("Travel", herd_travel),
-                     ("GroundHalf", herd_half), ("Leapers", leapers)] + list(zip(HERD_GROUND, herd_ground)):
+                     ("GroundHalf", herd_half), ("Leapers", leapers)] + list(zip(HERD_GROUND, herd_ground)) + [("Floaters", floaters)]:
         g.c(src, w, pin)
     # The colour node's main output is RGB; the joint kind is its alpha pin.
     g.c(vc, w, "VCA", "A")

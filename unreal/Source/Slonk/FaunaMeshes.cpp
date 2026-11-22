@@ -455,14 +455,181 @@ namespace
 	}
 }
 
+namespace
+{
+	/** A jelly's colour at a point of it: its bell (rigid, how far down it from its crown) or a tentacle (undulating, how
+	 *  far along it from its root), and its place round the bell. */
+	FVector4f JellyCol(bool bTentacle, float Down, float Round)
+	{
+		return FVector4f(bTentacle ? Vc::SurfaceTail : Vc::SurfaceBody, Down, Round, bTentacle ? Vc::JointUndulate : Vc::JointRigid);
+	}
+
+	/**
+	 * A sky-jelly of the plan (SlonkFauna::Floater), at a LOD: about 300, 60 or 16 triangles, its span across, its middle
+	 * at the origin, its crown up. LOD 0: its bell lathed in 24 sides (a fan at its crown and three bands down to its rim,
+	 * its seam drawn twice, at U 0 and 1), its rim's lobes scalloped between its ribs and drooping a little; its tentacles
+	 * ribbons hanging from just inside its rim, tapering to their tips, 72 quads among them (12 each of 6, 9 of 8, 7 of 10,
+	 * 6 of 12). LOD 1: its bell in 12 sides of two bands, its rim round; its tentacles 12 quads among them (at least one
+	 * each). LOD 2: two shapes crossed on its axis, each its bell's dome as a pentagon over a strip of its ring canal at its
+	 * rim, over its tentacles' sheet as a quad (as wide as its ribbons laid side by side, shared between the two), and a
+	 * level diamond at its rim; its bell drawn whole. Its normals out of its bell's dome and its tentacles' sheets (the
+	 * diamond's up), each face wound to show the side they point to.
+	 */
+	void BuildJelly(FBuild& B, const FFaunaBodyPlan& Plan, int32 Lod)
+	{
+		namespace Fl = SlonkFauna::Floater;
+		const double Bell = Fl::BellOf(Plan), Lt = Fl::TentaclesOf(Plan);
+		const double H = Fl::HalfHeightCm(Plan);
+		const double Zr = H - 100.0 * Bell;
+		const double A = Fl::RimCm, Bz = 100.0 * Bell;
+		const int32 Sym = FMath::Max((int32)Plan.Symmetry, 3);
+		const int32 Tents = Fl::TentacleCount(Plan);
+		const double Cut = FMath::Clamp((double)Plan.Chord, 0.0, 0.2);
+		if (Lod >= 2)
+		{
+			// A speck, its bell drawn whole: its pores are far under a pixel by now, and two layers of its bell deep (seen from
+			// the side) they leave most of it covered. In each of two planes crossed on its axis, its dome as a pentagon (its
+			// crown, its shoulders half way down it, and a tenth of its height over its rim) over a strip of its ring canal
+			// down to its rim, over its tentacles' sheet; and a level diamond at its rim, so it shows from above and below as
+			// its bell does. Its bell's V runs from 0.1 at its crown to 0.27 over its strip (under Floater::CrownV: no pore,
+			// its ribs lit), its strip's about Floater::RingV (whole, lit as its ring canal is); its G is how far down it a
+			// vertex is, so it pulses as its bell does.
+			const double Ps = UE_DOUBLE_HALF_PI * 0.5;
+			const double Rs = A * FMath::Pow(FMath::Sin(Ps), 0.85), Zs = Zr + Bz * FMath::Cos(Ps);
+			const double Zq = Zr + 0.1 * Bz;
+			const float Gq = (float)(FMath::Acos(0.1) / UE_DOUBLE_HALF_PI);
+			auto SpeckV = [](float Down) { return 0.1f + 0.17f * Down; };
+			// Its tentacles' sheet as wide as its ribbons laid side by side (3.2 cm of the unit mesh at their roots, 0.8 at
+			// their tips), shared between the two planes, so it covers and glows about as they do.
+			const double Wr = FMath::Min(0.8 * Tents, 0.8 * A), Wt = FMath::Min(0.2 * Tents, 0.55 * A);
+			for (int32 Pl = 0; Pl < 2; ++Pl)
+			{
+				const FVector Ax = Pl == 0 ? FVector::XAxisVector : FVector::YAxisVector;
+				const FVector Nrm = Pl == 0 ? FVector::YAxisVector : -FVector::XAxisVector;
+				const float U0 = Pl == 0 ? 0.f : 0.25f;
+				auto V = [&](double Across, double Z, bool bTentacle, float Down, float VTex)
+				{
+					const float Round = FMath::Frac(U0 + (Across < 0.0 ? 0.5f : 0.f));
+					return B.Vert(Ax * Across + FVector(0.0, 0.0, Z), Nrm, FVector2f(Round, VTex), JellyCol(bTentacle, Down, Round));
+				};
+				const int32 Crown = V(0.0, H, false, 0.f, SpeckV(0.f));
+				const int32 SL = V(-Rs, Zs, false, 0.5f, SpeckV(0.5f)), SR = V(Rs, Zs, false, 0.5f, SpeckV(0.5f));
+				const int32 QL = V(-0.92 * A, Zq, false, Gq, SpeckV(1.f)), QR = V(0.92 * A, Zq, false, Gq, SpeckV(1.f));
+				TriFacing(B, Crown, SL, SR, Nrm);
+				TriFacing(B, SL, QL, QR, Nrm);
+				TriFacing(B, SL, QR, SR, Nrm);
+				const int32 RingL = V(-0.92 * A, Zq, false, Gq, Fl::RingV + 0.004f), RingR = V(0.92 * A, Zq, false, Gq, Fl::RingV + 0.004f);
+				const int32 L = V(-0.92 * A, Zr, false, 1.f, Fl::RingV - 0.004f), R = V(0.92 * A, Zr, false, 1.f, Fl::RingV - 0.004f);
+				TriFacing(B, RingL, L, R, Nrm);
+				TriFacing(B, RingL, R, RingR, Nrm);
+				const int32 TL = V(-Wr, Zr, true, 0.f, 1.f), TR = V(Wr, Zr, true, 0.f, 1.f);
+				const int32 BL = V(-Wt, -H, true, 1.f, 1.f + (float)Lt), BR = V(Wt, -H, true, 1.f, 1.f + (float)Lt);
+				TriFacing(B, TL, TR, BR, Nrm);
+				TriFacing(B, TL, BR, BL, Nrm);
+			}
+			// The diamond, its corners on the two planes on its rim, pulsing with it (its V a little different at alternate
+			// corners, so its UV has an area for its tangents): it covers about as much as its bell's porous dome does seen
+			// from above or below, and its ribs light about as much of it.
+			{
+				auto Lv = [&](double X, double Y, float Round, float VTex)
+				{
+					return B.Vert(FVector(X, Y, Zr), FVector::ZAxisVector, FVector2f(Round, VTex), JellyCol(false, 1.f, Round));
+				};
+				const int32 E = Lv(A, 0.0, 0.f, SpeckV(1.f)), N = Lv(0.0, A, 0.25f, SpeckV(0.5f));
+				const int32 W = Lv(-A, 0.0, 0.5f, SpeckV(1.f)), S = Lv(0.0, -A, 0.75f, SpeckV(0.5f));
+				// Its southern half shares the east corner (U 0), so its U runs back through the round rather than on to 1: at a
+				// speck a few pixels across that cannot be seen, and its ribs then light as much of it as the bell's do.
+				TriFacing(B, E, N, W, FVector::ZAxisVector);
+				TriFacing(B, E, W, S, FVector::ZAxisVector);
+			}
+			return;
+		}
+		const bool bFine = Lod == 0;
+		// The bell: a dome lathed round its axis, from its crown (v 0) to its rim (v 1); at LOD 0 its rim scalloped between
+		// its ribs (its lobes' tips on them, at whole sides), each lobe drooping a little.
+		{
+			const int32 Sides = bFine ? 24 : 12;
+			const TArray<double> Vs = bFine ? TArray<double>{ 0.25, 0.5, 0.75, 1.0 } : TArray<double>{ 0.5, 1.0 };
+			auto Ring = [&](double Vv)
+			{
+				TArray<int32> R;
+				const double Phi = Vv * UE_DOUBLE_HALF_PI;
+				for (int32 k = 0; k <= Sides; ++k)
+				{
+					const double Th = UE_DOUBLE_TWO_PI * k / Sides;
+					const double Lobe = 0.5 + 0.5 * FMath::Cos(Sym * Th);
+					const double Edge = FMath::Pow(Vv, 4.0);
+					const double Rr = A * FMath::Pow(FMath::Sin(Phi), 0.85) * (bFine ? 1.0 - Cut * Edge * (1.0 - Lobe) : 1.0);
+					const double Z = Zr + Bz * FMath::Cos(Phi) - (bFine ? 3.0 * Edge * Lobe : 0.0);
+					const FVector Nrm(Bz * FMath::Sin(Phi) * FMath::Cos(Th), Bz * FMath::Sin(Phi) * FMath::Sin(Th), A * FMath::Cos(Phi));
+					const float U = (float)k / Sides;
+					R.Add(B.Vert(FVector(Rr * FMath::Cos(Th), Rr * FMath::Sin(Th), Z), Nrm, FVector2f(U, (float)Vv), JellyCol(false, (float)Vv, U)));
+				}
+				return R;
+			};
+			TArray<TArray<int32>> Rings;
+			for (const double Vv : Vs) { Rings.Add(Ring(Vv)); }
+			// The crown: a vertex of its own for each side (its U that side's middle), all at the crown, facing up.
+			for (int32 k = 0; k < Sides; ++k)
+			{
+				const float U = (k + 0.5f) / Sides;
+				const int32 C = B.Vert(FVector(0.0, 0.0, H), FVector::ZAxisVector, FVector2f(U, 0.f), JellyCol(false, 0.f, U));
+				const FVector Mid = ((FVector)B.Mesh.GetVertex(Rings[0][k]) + (FVector)B.Mesh.GetVertex(Rings[0][k + 1])) * 0.5;
+				TriFacing(B, C, Rings[0][k], Rings[0][k + 1], FVector(Mid.X, Mid.Y, 0.0) * (Bz / A) + FVector(0.0, 0.0, A));
+			}
+			for (int32 r = 0; r + 1 < Rings.Num(); ++r)
+			{
+				for (int32 k = 0; k < Sides; ++k)
+				{
+					const int32 V0 = Rings[r][k], V1 = Rings[r][k + 1], V2 = Rings[r + 1][k + 1], V3 = Rings[r + 1][k];
+					// Out of the dome, as its normals point there.
+					const FVector Out = FVector(B.N->GetElement(V0) + B.N->GetElement(V1) + B.N->GetElement(V2) + B.N->GetElement(V3));
+					TriFacing(B, V0, V1, V2, Out);
+					TriFacing(B, V0, V2, V3, Out);
+				}
+			}
+		}
+		// The tentacles: ribbons hanging from just inside the rim, between the ribs, across the way round the bell, facing
+		// out from its axis, tapering from 3.2 cm of the unit mesh wide at their roots to 0.8 at their tips.
+		{
+			const int32 Quads = bFine ? FMath::Max(FMath::RoundToInt32(72.0 / Tents), 1) : FMath::Max(FMath::RoundToInt32(12.0 / Tents), 1);
+			for (int32 t = 0; t < Tents; ++t)
+			{
+				const float Round = (t + 0.5f) / Tents;
+				const double Th = UE_DOUBLE_TWO_PI * Round;
+				const FVector Out(FMath::Cos(Th), FMath::Sin(Th), 0.0);
+				const FVector Across(-FMath::Sin(Th), FMath::Cos(Th), 0.0);
+				TArray<int32> Prev;
+				for (int32 s = 0; s <= Quads; ++s)
+				{
+					const double F = (double)s / Quads;
+					const double Along = 100.0 * Lt * F;
+					const FVector C = Out * Fl::RootCm + FVector(0.0, 0.0, Zr - Along);
+					const double W = FMath::Lerp(1.6, 0.4, F);
+					const FVector2f Tex(Round, 1.f + (float)(Along / 100.0));
+					TArray<int32> Row = { B.Vert(C - Across * W, Out, Tex, JellyCol(true, (float)F, Round)), B.Vert(C + Across * W, Out, Tex, JellyCol(true, (float)F, Round)) };
+					if (Prev.Num() > 0)
+					{
+						TriFacing(B, Prev[0], Prev[1], Row[1], Out);
+						TriFacing(B, Prev[0], Row[1], Row[0], Out);
+					}
+					Prev = MoveTemp(Row);
+				}
+			}
+		}
+	}
+}
+
 bool SlonkFaunaMeshes::BuildLod(const FFaunaBodyPlan& Plan, int32 Lod, FDynamicMesh3& Out)
 {
 	const bool bWalker = Plan.Wings == EFaunaWings::None && Plan.Limbs == EFaunaLimbs::Legs && Plan.LimbPairs == 2;
 	const bool bFish = Plan.Wings == EFaunaWings::None && Plan.Limbs == EFaunaLimbs::Fins;
-	if (Plan.Wings == EFaunaWings::None && !bWalker && !bFish) { return false; }
+	const bool bJelly = Plan.Wings == EFaunaWings::None && Plan.Limbs == EFaunaLimbs::Tentacles && Plan.Symmetry >= 3 && Plan.LimbPairs >= 1;
+	if (Plan.Wings == EFaunaWings::None && !bWalker && !bFish && !bJelly) { return false; }
 	FBuild B;
 	if (bWalker) { BuildWalker(B, Plan, FMath::Clamp(Lod, 0, NumLods - 1)); }
 	else if (bFish) { BuildFish(B, Plan, FMath::Clamp(Lod, 0, NumLods - 1)); }
+	else if (bJelly) { BuildJelly(B, Plan, FMath::Clamp(Lod, 0, NumLods - 1)); }
 	else { BuildBird(B, Plan, FMath::Clamp(Lod, 0, NumLods - 1)); }
 	Out = MoveTemp(B.Mesh);
 	return true;
@@ -483,11 +650,11 @@ UStaticMesh* SlonkFaunaMeshes::GetMesh(const FFaunaBodyPlan& Plan, EFaunaKind Ki
 	// The material moves the vertices past the mesh's box by up to the kind's padding, which the instances' boxes take in
 	// (UPlanetInstancesComponent::SetCullPadding): the mesh's own bounds stay its own, and its LOD screen sizes are the
 	// kind's, set for the padded box the GPU picks them by. A walker's mesh and a fish's have a tangent basis, as the
-	// material turns their normals the way they face in tangent space; the birds' normals are the mesh's own, whatever
-	// their tangents.
+	// material turns their normals the way they face in tangent space, and a jelly's (its normals its own, but lit through
+	// its membrane as a leaf is); the birds' normals are the mesh's own, whatever their tangents.
 	const SlonkFauna::FFaunaKindDesc& D = SlonkFauna::KindDesc(Kind);
 	UStaticMesh* Mesh = SlonkProcMesh::MakeStaticMesh(*FString::Printf(TEXT("SlonkFauna_%s_%08x"), SlonkFauna::KindName(Kind), Key), TEXT("Fauna"),
-		TArrayView<const FDynamicMesh3>(Lods, NumLods), TArrayView<const float>(D.LodScreenSize, NumLods), FVector::ZeroVector, Kind == EFaunaKind::Herd || Kind == EFaunaKind::Leaper);
+		TArrayView<const FDynamicMesh3>(Lods, NumLods), TArrayView<const float>(D.LodScreenSize, NumLods), FVector::ZeroVector, Kind == EFaunaKind::Herd || Kind == EFaunaKind::Leaper || Kind == EFaunaKind::Floater);
 	GFaunaMeshes.Add(Key, Mesh);
 	return Mesh;
 }

@@ -1243,14 +1243,14 @@ bool FSlonkFaunaFlightTest::RunTest(const FString& Parameters)
 namespace
 {
 	/** The parts of fauna_material.py's WPO_CODE a float copy is held to: the fliers' motion (all of it but its
-	 *  branches), its mote branch, its walker branch and its leaper branch. */
-	enum class EMotionBlock : uint8 { Fliers, Motes, Walkers, Leapers };
+	 *  branches), its mote branch, its walker branch, its leaper branch and its floater branch. */
+	enum class EMotionBlock : uint8 { Fliers, Motes, Walkers, Leapers, Floaters };
 	/** fauna_material.py's WPO_CODE (or with bPixel its CODE), its lines trimmed, the blank ones and the comments left out:
 	 *  the fliers' motion, which SlonkFauna::FlierMotion copies; its mote branch (from its test of Motes to the brace that
 	 *  closes it), whose turn to the camera Slonk.Fauna.MoteCloud copies; its walker branch (from its test of Walkers to
-	 *  the brace that closes it), which SlonkFauna::WalkerMotion copies; or its leaper branch, which SlonkFauna::LeaperMotion
-	 *  copies (and in CODE, LeaperShown and LeaperTurn). Each leaves the others out. Empty if the script or the block is
-	 *  not found. */
+	 *  the brace that closes it), which SlonkFauna::WalkerMotion copies; its leaper branch, which SlonkFauna::LeaperMotion
+	 *  copies (and in CODE, LeaperShown and LeaperTurn); or its floater branch, which SlonkFauna::FloaterMotion copies (and
+	 *  in CODE, FloaterCover and FloaterLight). Each leaves the others out. Empty if the script or the block is not found. */
 	FString MaterialMotionBlock(EMotionBlock Which = EMotionBlock::Fliers, bool bPixel = false)
 	{
 		FString Py;
@@ -1272,6 +1272,7 @@ namespace
 				if (L.StartsWith(TEXT("[branch] if (Motes"))) { In = EMotionBlock::Motes; Depth = 0; }
 				else if (L.StartsWith(TEXT("[branch] if (Walkers"))) { In = EMotionBlock::Walkers; Depth = 0; }
 				else if (L.StartsWith(TEXT("[branch] if (Leapers"))) { In = EMotionBlock::Leapers; Depth = 0; }
+				else if (L.StartsWith(TEXT("[branch] if (Floaters"))) { In = EMotionBlock::Floaters; Depth = 0; }
 			}
 			const EMotionBlock Line = In;
 			if (In != EMotionBlock::Fliers)
@@ -1293,6 +1294,10 @@ namespace
 	 *  last brought in line with them. */
 	constexpr uint32 MaterialLeaperBlockCrc = 0x706d3a3cu;
 	constexpr uint32 MaterialLeaperPixelBlockCrc = 0xff013bddu;
+	/** The floater branch's CRCs, in WPO_CODE and in CODE, when SlonkFauna::FloaterMotion, FloaterCover and FloaterLight were
+	 *  last brought in line with them. */
+	constexpr uint32 MaterialFloaterBlockCrc = 0x35f5c6a5u;
+	constexpr uint32 MaterialFloaterPixelBlockCrc = 0x0cc1e980u;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaMeshesTest, "Slonk.Fauna.Meshes", SLONK_TEST_FLAGS)
@@ -1354,7 +1359,7 @@ bool FSlonkFaunaMeshesTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("wings hinged at the root, flexing to the tip"), Hinges > 0 && Tips > 0);
 	TestTrue(TEXT("a unit mesh a metre across"), FMath::IsNearlyEqual(Box0.Min.Y, -50.0, 0.5) && FMath::IsNearlyEqual(Box0.Max.Y, 50.0, 0.5));
 	FDynamicMesh3 Nothing;
-	TestFalse(TEXT("nothing built yet for a plan without wings, legs or fins (a floater)"), SlonkFaunaMeshes::BuildLod(SlonkFauna::EarthPlan(EFaunaKind::Floater), 0, Nothing));
+	TestFalse(TEXT("nothing built for a plan without wings, legs, fins or tentacles (a mote's)"), SlonkFaunaMeshes::BuildLod(SlonkFauna::EarthPlan(EFaunaKind::Mote), 0, Nothing));
 
 	// The material's motion over LOD 0's vertices, every seed, time, bank, startle and speck size, inside the box each
 	// instance is culled by (UPlanetInstancesComponent::InstanceBox with the kind's padding).
@@ -1425,7 +1430,7 @@ bool FSlonkFaunaMeshesTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("the bird's mesh is made"), Mesh != nullptr);
 	TestTrue(TEXT("and kept"), Mesh == SlonkFaunaMeshes::GetMesh(Plan, EFaunaKind::Flier));
 	if (Mesh) { TestEqual(TEXT("with three LODs"), Mesh->GetNumLODs(), SlonkFaunaMeshes::NumLods); }
-	TestTrue(TEXT("no mesh for a plan with nothing built"), SlonkFaunaMeshes::GetMesh(SlonkFauna::EarthPlan(EFaunaKind::Floater), EFaunaKind::Floater) == nullptr);
+	TestTrue(TEXT("no mesh for a plan with nothing built"), SlonkFaunaMeshes::GetMesh(SlonkFauna::EarthPlan(EFaunaKind::Mote), EFaunaKind::Mote) == nullptr);
 	return true;
 }
 
@@ -3946,7 +3951,7 @@ bool FSlonkFaunaWalkerTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("every vertex has a tangent basis"), Vertices > 0 && NoTangent == 0);
 	}
 	FDynamicMesh3 Nothing;
-	TestFalse(TEXT("nothing built yet for a floater"), SlonkFaunaMeshes::BuildLod(SlonkFauna::EarthPlan(EFaunaKind::Floater), 0, Nothing));
+	TestFalse(TEXT("nothing built for a mote's plan"), SlonkFaunaMeshes::BuildLod(SlonkFauna::EarthPlan(EFaunaKind::Mote), 0, Nothing));
 	return true;
 }
 
@@ -5712,6 +5717,1518 @@ bool FSlonkFaunaLeaperBudgetTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("under 1,700 triangles of fish at LOD 0"), MaxFish * 55 <= 1700);
 	TestTrue(TEXT("splashes thrown in the frames timed"), Splashes > 0 && FMath::IsFinite(Sink));
 	TestTrue(TEXT("a frame's math far under 0.15 ms"), FrameMs < 0.15);
+	return true;
+}
+
+namespace
+{
+	/** Where "spawnplanet terrestrial [strange s] seed N" puts a world from the game's start (the ship's own place puts seed
+	 *  0's there; each seed moves the place its seed is drawn from on by 1e9 cm along x, so SpawnedEarthParams is seed 1's),
+	 *  and the hash its style, its genome and its animals are rolled from (APlanetBody's, of that place). */
+	FVector SpawnedPlace(int32 SeedPick) { return FVector(-2125199545.789, -1406367466.411, 0.0) + FVector(1.0e9 * SeedPick, 0.0, 0.0); }
+	uint32 PlaceHash(const FVector& L)
+	{
+		return HashCombine(HashCombine(GetTypeHash(FMath::RoundToInt64(L.X / 1000.0)), GetTypeHash(FMath::RoundToInt64(L.Y / 1000.0))), GetTypeHash(FMath::RoundToInt64(L.Z / 1000.0)));
+	}
+	/** That world's field, as SpawnedEarthParams makes seed 1's. */
+	FPlanetTerrainParams SpawnedParams(int32 SeedPick)
+	{
+		const FVector L = SpawnedPlace(SeedPick);
+		FRandomStream Rng(static_cast<int32>(PlaceHash(L)));
+		const float SeaLevel = Rng.FRandRange(0.45f, 0.6f);
+		for (int32 i = 0; i < 4; ++i) { Rng.FRandRange(0.f, 1.f); }
+		const float IceCapStart = Rng.FRandRange(0.72f, 0.8f);
+		FPlanetTerrainParams P = FaunaEarthParams(6371.0);
+		P.Seed = FVector(FMath::Frac(L.X / 7.3e9) * 100.0, FMath::Frac(L.Y / 5.1e9) * 100.0, FMath::Frac(L.Z / 3.7e9) * 100.0);
+		P.SeaLevel = SeaLevel;
+		P.IceCapStart = IceCapStart;
+		P.Craters = 0.1f;
+		P.Canyons = 0.5f;
+		return P;
+	}
+	/** That world's jellies at strangeness S, full of life (its genome rolled as the spawn rolls it: no star's bearing, so it
+	 *  spins). */
+	SlonkFauna::FFaunaWorld SpawnedJellies(int32 SeedPick, float S)
+	{
+		const uint32 Hash = PlaceHash(SpawnedPlace(SeedPick));
+		FWorldGenome G = SlonkGenome::Roll(EPlanetArchetype::Terrestrial, S, Hash);
+		SlonkGenome::SettleLock(G, EPlanetArchetype::Terrestrial, FVector::ZeroVector, false);
+		SlonkFauna::FFaunaWorld W;
+		W.P = SpawnedParams(SeedPick);
+		W.Profile = SlonkFauna::Roll(G, EPlanetArchetype::Terrestrial, Hash);
+		W.Life = 1.f;
+		W.KindMask = SlonkFauna::KindBit(EFaunaKind::Floater);
+		return W;
+	}
+	/** The Earth-like world's jellies alone at strangeness S, its genome and its animals rolled from Hash, full of life. */
+	SlonkFauna::FFaunaWorld StrangeJellies(float S, uint32 Hash)
+	{
+		SlonkFauna::FFaunaWorld W;
+		W.P = FaunaEarthParams(6371.0);
+		W.Profile = SlonkFauna::Roll(SlonkGenome::Roll(EPlanetArchetype::Terrestrial, S, Hash), EPlanetArchetype::Terrestrial, Hash);
+		W.Life = 1.f;
+		W.KindMask = SlonkFauna::KindBit(EFaunaKind::Floater);
+		return W;
+	}
+	/** The first of those (hashes 7919 apart) whose jellies are in MinShare to MaxShare of its cells. */
+	bool JellyWorld(float S, float MinShare, float MaxShare, SlonkFauna::FFaunaWorld& Out)
+	{
+		for (uint32 k = 1; k < 20000; ++k)
+		{
+			const FWorldGenome G = SlonkGenome::Roll(EPlanetArchetype::Terrestrial, S, k * 7919u);
+			if (!SlonkFauna::FloatersLive(G)) { continue; }
+			SlonkFauna::FFaunaWorld W = StrangeJellies(S, k * 7919u);
+			if (W.Profile.FloaterShare < MinShare || W.Profile.FloaterShare > MaxShare) { continue; }
+			Out = MoveTemp(W);
+			return true;
+		}
+		return false;
+	}
+	/** A kind's groups in the cells under N directions spread evenly over the globe. */
+	void KindOverGlobe(const SlonkFauna::FFaunaWorld& W, EFaunaKind Kind, int32 N, TArray<SlonkFauna::FFaunaGroup>& Out, int32* OutCells = nullptr)
+	{
+		Out.Reset();
+		TSet<uint64> Seen;
+		for (int32 i = 0; i < N; ++i)
+		{
+			const SlonkFauna::FFaunaCell C = SlonkFauna::CellOf(W.P, Kind, Spread(i, N));
+			bool bAlready = false;
+			Seen.Add(C.Id(), &bAlready);
+			if (bAlready) { continue; }
+			SlonkFauna::FFaunaGroup G;
+			if (SlonkFauna::GroupInCell(W, C, G)) { Out.Add(MoveTemp(G)); }
+		}
+		if (OutCells) { *OutCells = Seen.Num(); }
+	}
+	/** A jelly to test with: the nearest to a fixed direction. */
+	bool TestJelly(const SlonkFauna::FFaunaWorld& W, SlonkFauna::FFaunaGroup& Out)
+	{
+		return SlonkFauna::FindGroupNear(W, EFaunaKind::Floater, FVector(0.3, 0.8, 0.5).GetSafeNormal(), 4.0e7, 20000, Out);
+	}
+	/** A mesh's UV at each vertex. */
+	TArray<FVector2f> VertexUVs(const UE::Geometry::FDynamicMesh3& M)
+	{
+		TArray<FVector2f> Out;
+		Out.Init(FVector2f::ZeroVector, M.MaxVertexID());
+		const UE::Geometry::FDynamicMeshUVOverlay* U = M.Attributes()->PrimaryUV();
+		for (const int32 El : U->ElementIndicesItr())
+		{
+			const int32 V = U->GetParentVertex(El);
+			if (V >= 0) { Out[V] = U->GetElement(El); }
+		}
+		return Out;
+	}
+	/** The ground under a jelly whose middle is at a planet-local place, cm over the sea-level sphere: the highest, from At
+	 *  (a unit direction's ground, the sea's surface over water), under its middle and at six points round it as far out as
+	 *  its rim and its trailing tentacles reach (half its span and its hang: its tentacles are at most twice its hang long,
+	 *  and trail and wave at most half their length). */
+	double JellyGroundCm(const SlonkFauna::FFaunaGroup& G, double RadiusCm, const FVector& PosCm, TFunctionRef<double(const FVector&)> At)
+	{
+		const FVector Up = PosCm.GetSafeNormal();
+		const FVector E = FVector::CrossProduct(FMath::Abs(Up.Z) < 0.95 ? FVector::ZAxisVector : FVector::XAxisVector, Up).GetSafeNormal();
+		const FVector N = FVector::CrossProduct(Up, E);
+		const double Reach = 50.0 * G.SpanM + G.HangCm;
+		double H = At(Up);
+		for (int32 k = 0; k < 6; ++k)
+		{
+			const double A = UE_DOUBLE_TWO_PI * k / 6.0;
+			H = FMath::Max(H, At((Up + (E * FMath::Cos(A) + N * FMath::Sin(A)) * (Reach / RadiusCm)).GetSafeNormal()));
+		}
+		return H;
+	}
+	/** How far a jelly's lowest point (its tentacles' tips, drawn at twice its size far off) clears the ground under it, cm,
+	 *  with its middle at a planet-local place. */
+	double JellyClearanceCm(const SlonkFauna::FFaunaGroup& G, double RadiusCm, const FVector& PosCm, TFunctionRef<double(const FVector&)> At)
+	{
+		return PosCm.Size() - RadiusCm - 2.0 * G.HangCm - JellyGroundCm(G, RadiusCm, PosCm, At);
+	}
+	/** Every plan of jelly a world may roll at the ends of its ranges: 6, 8 or 12 ribs, 6 to 12 tentacles, the lowest and the
+	 *  tallest bell, the shortest and the longest tentacles, its rim cut deepest; and a few rolled. */
+	TArray<FFaunaBodyPlan> JellyPlans()
+	{
+		namespace Fl = SlonkFauna::Floater;
+		TArray<FFaunaBodyPlan> Plans;
+		for (const uint8 Sym : { (uint8)6, (uint8)8, (uint8)12 })
+		{
+			for (uint8 Pairs = 3; Pairs <= 6; ++Pairs)
+			{
+				for (const float Bell : { Fl::MinBell, Fl::MaxBell })
+				{
+					for (const float Tent : { Fl::MinTentacles, Fl::MaxTentacles })
+					{
+						FFaunaBodyPlan P = SlonkFauna::EarthPlan(EFaunaKind::Floater);
+						P.Symmetry = Sym;
+						P.LimbPairs = Pairs;
+						P.Length = Bell;
+						P.Tail = Bell * Tent;
+						P.Girth = 1.f;
+						P.Chord = 0.1f;
+						P.GlowOrgans = Sym;
+						Plans.Add(P);
+					}
+				}
+			}
+		}
+		for (uint32 Hash = 1; Hash <= 8; ++Hash) { Plans.Add(SlonkFauna::FloaterPlan(Hash * 7919u)); }
+		return Plans;
+	}
+	/** A jelly's triangles at a LOD by its tentacles' count, as built: its bell's 168 or 36, its tentacles' 72 or 12 quads
+	 *  among them (each at least one), or 16. */
+	int32 WantJellyTris(int32 Tentacles, int32 Lod)
+	{
+		if (Lod >= 2) { return 16; }
+		switch (Tentacles)
+		{
+		case 6: return Lod == 0 ? 312 : 60;
+		case 8: return Lod == 0 ? 312 : 68;
+		case 10: return Lod == 0 ? 308 : 56;
+		case 12: return Lod == 0 ? 312 : 60;
+		default: return -1;
+		}
+	}
+	/** How a jelly's LOD covers the sky seen from far off straight along a view direction (its rest pose, the view square
+	 *  to it): on a grid of samples Cell unit-mesh cm apart over the plane square to the view, the area of those a drawn
+	 *  point of it covers (its membrane's pores left out: SlonkFauna::FloaterCover), and the glow at night of the nearest
+	 *  drawn point at each (SlonkFauna::FloaterLight at the dimmest moment of its pulse, over the light it always has: 1
+	 *  on a tentacle, its ribs and ring canal on its bell), all of it and its tentacles' alone; unit-mesh cm squared. */
+	struct FJellySight
+	{
+		double Covered = 0.0, Glow = 0.0, TentacleGlow = 0.0;
+	};
+	FJellySight SeeJelly(const UE::Geometry::FDynamicMesh3& M, const FVector& View, const float* Cu, double Cell = 0.5)
+	{
+		const FVector Fwd = View.GetSafeNormal();
+		const FVector Right = FVector::CrossProduct(FMath::Abs(Fwd.Z) < 0.9 ? FVector::ZAxisVector : FVector::XAxisVector, Fwd).GetSafeNormal();
+		const FVector Up = FVector::CrossProduct(Fwd, Right);
+		constexpr double Half = 135.0;
+		const int32 N = FMath::CeilToInt32(2.0 * Half / Cell);
+		TArray<float> Depth, Light;
+		TArray<uint8> Tentacle;
+		Depth.Init(TNumericLimits<float>::Max(), N * N);
+		Light.Init(0.f, N * N);
+		Tentacle.Init(0, N * N);
+		const TArray<FLinearColor> Vcs = VertexColours(M);
+		const TArray<FVector2f> Uvs = VertexUVs(M);
+		// The dimmest moment of its pulse: its flash runs from 0 to 0.3 of a pulse, 0.6 of one later at its tentacles' tips
+		// than at its crown, so 0.95 of the way through one from its phase none of it is flashing.
+		const float Gd[SlonkFauna::FloaterData::Num] = {};
+		const float Dim = FMath::Max(FMath::Frac(0.95f - Cu[SlonkFauna::Custom::Phase]), 0.f) / FMath::Max(Cu[SlonkFauna::Custom::RateHz], 1e-3f);
+		for (const int32 T : M.TriangleIndicesItr())
+		{
+			const UE::Geometry::FIndex3i Tri = M.GetTriangle(T);
+			FVector2D S[3];
+			double Z[3];
+			for (int32 k = 0; k < 3; ++k)
+			{
+				const FVector P = (FVector)M.GetVertex(Tri[k]);
+				S[k] = FVector2D(FVector::DotProduct(P, Right), FVector::DotProduct(P, Up));
+				Z[k] = FVector::DotProduct(P, Fwd);
+			}
+			const double Area2 = (S[1].X - S[0].X) * (S[2].Y - S[0].Y) - (S[2].X - S[0].X) * (S[1].Y - S[0].Y);
+			if (FMath::Abs(Area2) < 1e-9) { continue; }
+			const int32 X0 = FMath::Clamp(FMath::FloorToInt32((FMath::Min3(S[0].X, S[1].X, S[2].X) + Half) / Cell), 0, N - 1);
+			const int32 X1 = FMath::Clamp(FMath::FloorToInt32((FMath::Max3(S[0].X, S[1].X, S[2].X) + Half) / Cell), 0, N - 1);
+			const int32 Y0 = FMath::Clamp(FMath::FloorToInt32((FMath::Min3(S[0].Y, S[1].Y, S[2].Y) + Half) / Cell), 0, N - 1);
+			const int32 Y1 = FMath::Clamp(FMath::FloorToInt32((FMath::Max3(S[0].Y, S[1].Y, S[2].Y) + Half) / Cell), 0, N - 1);
+			for (int32 y = Y0; y <= Y1; ++y)
+			{
+				for (int32 x = X0; x <= X1; ++x)
+				{
+					const FVector2D Q(-Half + (x + 0.5) * Cell, -Half + (y + 0.5) * Cell);
+					const double W0 = ((S[1].X - Q.X) * (S[2].Y - Q.Y) - (S[2].X - Q.X) * (S[1].Y - Q.Y)) / Area2;
+					const double W1 = ((S[2].X - Q.X) * (S[0].Y - Q.Y) - (S[0].X - Q.X) * (S[2].Y - Q.Y)) / Area2;
+					const double W2 = 1.0 - W0 - W1;
+					if (W0 < 0.0 || W1 < 0.0 || W2 < 0.0) { continue; }
+					const int32 I = y * N + x;
+					const float D = (float)(W0 * Z[0] + W1 * Z[1] + W2 * Z[2]);
+					if (D >= Depth[I]) { continue; }
+					const FVector2f Uv = Uvs[Tri.A] * (float)W0 + Uvs[Tri.B] * (float)W1 + Uvs[Tri.C] * (float)W2;
+					const FLinearColor Vc = Vcs[Tri.A] * (float)W0 + Vcs[Tri.B] * (float)W1 + Vcs[Tri.C] * (float)W2;
+					if (!SlonkFauna::FloaterCover(Uv, Vc, Cu)) { continue; }
+					Depth[I] = D;
+					Light[I] = SlonkFauna::FloaterLight(Uv, Vc, Dim, Cu, Gd) / 0.2f;
+					Tentacle[I] = Vc.R > 0.25f ? 1 : 0;
+				}
+			}
+		}
+		FJellySight Out;
+		const double A = Cell * Cell;
+		for (int32 I = 0; I < N * N; ++I)
+		{
+			if (Depth[I] == TNumericLimits<float>::Max()) { continue; }
+			Out.Covered += A;
+			Out.Glow += A * Light[I];
+			Out.TentacleGlow += Tentacle[I] ? A * Light[I] : 0.0;
+		}
+		return Out;
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaFloaterWorldsTest, "Slonk.Fauna.FloaterWorlds", SLONK_TEST_FLAGS)
+bool FSlonkFaunaFloaterWorldsTest::RunTest(const FString& Parameters)
+{
+	// The sky-jellies drift only on a living world at least 0.3 strange whose air is thick (a haze in its lowlands): none at
+	// strangeness 0 on any archetype (so none on the Earth-like home worlds), none just short of 0.3 however hazy, none on a
+	// strange world of thin air, none on a dead or airless one; on the thick-aired strange ones a share of their cells hold
+	// one, as their genome rolls it (most with few, some teeming), and the cells bear it out. The worlds "spawnplanet
+	// terrestrial strange s seed n" makes from the game's start with jellies at every strangeness from 0.6 to 0.9, for the
+	// captures.
+	using namespace SlonkFauna;
+	int32 Tame = 0, TameWith = 0, TamePlansOff = 0;
+	for (const EPlanetArchetype Kind : FaunaKinds)
+	{
+		for (uint32 Hash = 1; Hash <= 64; ++Hash)
+		{
+			const FFaunaProfile F = Roll(SlonkGenome::Roll(Kind, 0.f, Hash * 7919u), Kind, Hash * 7919u);
+			FFaunaWorld W;
+			W.P = FaunaEarthParams(6371.0);
+			W.Profile = F;
+			W.Life = 1.f;
+			++Tame;
+			TameWith += F.FloaterShare > 0.f || F.bThickAir || W.Spawns(EFaunaKind::Floater) ? 1 : 0;
+			TamePlansOff += F.Plans[(int32)EFaunaKind::Floater] == EarthPlan(EFaunaKind::Floater) ? 0 : 1;
+		}
+	}
+	// Just short of the strangeness (hazy or not), and from it up: thin-aired and thick-aired.
+	int32 Short = 0, ShortHazed = 0, ShortWith = 0, Thin = 0, ThinWith = 0, Thick = 0, ThickWithout = 0, OffShare = 0, Teeming = 0, Few = 0;
+	TArray<float> Shares;
+	for (const EPlanetArchetype Kind : { EPlanetArchetype::Terrestrial, EPlanetArchetype::Ocean, EPlanetArchetype::Desert })
+	{
+		for (uint32 Hash = 1; Hash <= 400; ++Hash)
+		{
+			const FWorldGenome Gs = SlonkGenome::Roll(Kind, 0.29f, Hash * 7919u);
+			++Short;
+			ShortHazed += Gs.LowHazeDensity > 0.f ? 1 : 0;
+			ShortWith += Roll(Gs, Kind, Hash * 7919u).FloaterShare > 0.f ? 1 : 0;
+			const float S = 0.3f + 0.7f * (float)((Hash * 37u) % 100u) / 99.f;
+			const FWorldGenome G = SlonkGenome::Roll(Kind, S, Hash * 7919u);
+			const FFaunaProfile F = Roll(G, Kind, Hash * 7919u);
+			if (G.LowHazeDensity <= 0.f)
+			{
+				++Thin;
+				ThinWith += F.FloaterShare > 0.f || F.bThickAir ? 1 : 0;
+				continue;
+			}
+			++Thick;
+			ThickWithout += F.FloaterShare > 0.f && F.bThickAir ? 0 : 1;
+			OffShare += F.FloaterShare >= 0.6f * Floater::MinShare && F.FloaterShare <= Floater::MinShare + Floater::ShareSpan + 1e-6f ? 0 : 1;
+			Shares.Add(F.FloaterShare);
+			Teeming += F.FloaterShare > 0.3f ? 1 : 0;
+			Few += F.FloaterShare < 0.1f ? 1 : 0;
+		}
+	}
+	Shares.Sort();
+	const float Median = Shares.Num() > 0 ? Shares[Shares.Num() / 2] : 0.f;
+	AddInfo(FString::Printf(TEXT("%d worlds at strangeness 0, every archetype: %d with jellies or thick air, %d with a floater plan off the Earth's"), Tame, TameWith, TamePlansOff));
+	AddInfo(FString::Printf(TEXT("%d living worlds at 0.29: %d hazy, %d with jellies; %d at 0.3 to 1: %d thin-aired (%d with jellies), %d thick-aired (%d without); their shares %.3f to %.3f, median %.3f (%d off the range), %d teeming (over 30%% of their cells), %d with few (under 10%%)"),
+		Short, ShortHazed, ShortWith, Thin + Thick, Thin, ThinWith, Thick, ThickWithout, Shares.Num() ? Shares[0] : 0.f, Shares.Num() ? Shares.Last() : 0.f, Median, OffShare, Teeming, Few));
+	TestEqual(TEXT("no jellies at strangeness 0 on any world"), TameWith, 0);
+	TestEqual(TEXT("and the Earth's plan for them, which they would start from"), TamePlansOff, 0);
+	TestTrue(TEXT("hazy worlds just short of 0.3 to try"), ShortHazed > 20);
+	TestEqual(TEXT("none just short of 0.3, however hazy"), ShortWith, 0);
+	TestTrue(TEXT("thin-aired and thick-aired strange worlds to try"), Thin > 100 && Thick > 100);
+	TestEqual(TEXT("none on a strange world of thin air"), ThinWith, 0);
+	TestEqual(TEXT("jellies on every thick-aired strange one"), ThickWithout, 0);
+	TestEqual(TEXT("in a share of its cells within the range"), OffShare, 0);
+	TestTrue(TEXT("most with few, some teeming"), Few > Thick / 4 && Teeming > Thick / 20 && Median < 0.25f);
+
+	// The cells: of those under 700 directions over a thick-aired world's globe, about its share hold a jelly (within three
+	// of the binomial's standard deviations); of a thin-aired world's, a dead one's or an airless one's, none; on the
+	// Earth-like world at strangeness 0, none to be found.
+	FFaunaWorld Rich;
+	TestTrue(TEXT("a thick-aired world with jellies in a quarter to a half of its cells"), JellyWorld(0.8f, 0.25f, 0.5f, Rich));
+	TArray<FFaunaGroup> Jellies;
+	int32 Cells = 0;
+	KindOverGlobe(Rich, EFaunaKind::Floater, 700, Jellies, &Cells);
+	const double Measured = Cells > 0 ? (double)Jellies.Num() / Cells : 0.0;
+	const double Sigma = FMath::Sqrt(Rich.Profile.FloaterShare * (1.0 - Rich.Profile.FloaterShare) / FMath::Max(Cells, 1));
+	FFaunaWorld ThinAir = Rich, Dead = Rich, Airless = Rich;
+	ThinAir.Profile.FloaterShare = 0.f;
+	for (uint32 k = 1; k < 2000; ++k)
+	{
+		const FWorldGenome G = SlonkGenome::Roll(EPlanetArchetype::Terrestrial, 0.8f, k * 7919u);
+		if (!ThickAir(G)) { ThinAir = StrangeJellies(0.8f, k * 7919u); break; }
+	}
+	Dead.Life = 0.f;
+	Airless.P.bAirless = true;
+	int32 ThinCells = 0, DeadCells = 0, AirlessCells = 0;
+	TArray<FFaunaGroup> ThinJellies, DeadJellies, AirlessJellies;
+	KindOverGlobe(ThinAir, EFaunaKind::Floater, 300, ThinJellies, &ThinCells);
+	KindOverGlobe(Dead, EFaunaKind::Floater, 300, DeadJellies, &DeadCells);
+	KindOverGlobe(Airless, EFaunaKind::Floater, 300, AirlessJellies, &AirlessCells);
+	FFaunaGroup Found;
+	FGroupSearch Search;
+	const bool bEarthHas = FindGroupNear(EarthFauna(), EFaunaKind::Floater, FVector(0.3, 0.8, 0.5).GetSafeNormal(), 4.0e7, 20000, Found, &Search);
+	AddInfo(FString::Printf(TEXT("a thick-aired world rolling jellies into %.1f%% of its cells: %d of %d cells hold one (%.1f%%, sigma %.1f%%); a thin-aired one %d of %d, a dead one %d of %d, an airless one %d of %d; the Earth-like world at strangeness 0: %s (%s)"),
+		100.0 * Rich.Profile.FloaterShare, Jellies.Num(), Cells, 100.0 * Measured, 100.0 * Sigma, ThinJellies.Num(), ThinCells, DeadJellies.Num(), DeadCells, AirlessJellies.Num(), AirlessCells,
+		bEarthHas ? TEXT("one found") : TEXT("none"), *FloaterAbsence(EarthFauna())));
+	TestTrue(TEXT("about its share of a thick-aired world's cells hold one"), Cells > 500 && FMath::Abs(Measured - Rich.Profile.FloaterShare) < 3.0 * Sigma + 0.01);
+	TestTrue(TEXT("none in a thin-aired world's cells, a dead one's or an airless one's"), ThinCells > 200 && ThinJellies.Num() == 0 && DeadJellies.Num() == 0 && AirlessJellies.Num() == 0);
+	TestFalse(TEXT("none on the Earth-like world at strangeness 0"), bEarthHas);
+	TestTrue(TEXT("and the debug readout says why"), FloaterAbsence(EarthFauna()).Contains(TEXT("strangeness")) && FloaterAbsence(ThinAir).Contains(TEXT("thin"))
+		&& FloaterAbsence(Dead).Contains(TEXT("lives")) && FloaterAbsence(Rich).IsEmpty());
+
+	// The captures' worlds: of the seeds "spawnplanet terrestrial strange s seed n" rolls from the game's start, those with
+	// jellies at every strangeness from 0.6 to 0.9; and the first's nearest jelly to the middle of its day side's start.
+	TArray<FString> Picks;
+	int32 FirstSeed = -1;
+	for (int32 Seed = 0; Seed <= 60 && Picks.Num() < 6; ++Seed)
+	{
+		float Lo = 1.f, Hi = 0.f;
+		bool bAll = true;
+		for (const float S : { 0.6f, 0.7f, 0.8f, 0.9f })
+		{
+			const float Share = SpawnedJellies(Seed, S).Profile.FloaterShare;
+			bAll &= Share > 0.f;
+			Lo = FMath::Min(Lo, Share);
+			Hi = FMath::Max(Hi, Share);
+		}
+		if (!bAll) { continue; }
+		if (FirstSeed < 0) { FirstSeed = Seed; }
+		Picks.Add(FString::Printf(TEXT("seed %d (%.0f%% to %.0f%% of its cells)"), Seed, 100.f * Lo, 100.f * Hi));
+	}
+	bool bSpawnedJelly = false;
+	if (FirstSeed >= 0)
+	{
+		const FFaunaWorld Spawned = SpawnedJellies(FirstSeed, 0.8f);
+		FFaunaGroup J;
+		FGroupSearch Js;
+		bSpawnedJelly = FindGroupNear(Spawned, EFaunaKind::Floater, FVector(0.3, 0.8, 0.5).GetSafeNormal(), 4.0e7, 20000, J, &Js);
+		AddInfo(FString::Printf(TEXT("spawnplanet terrestrial strange 0.8 seed %d: %s; its nearest jelly to (0.3, 0.8, 0.5) %.1f km off (%d cells read), %.0f m across, %.0f m over the ground near its loop"),
+			FirstSeed, *SlonkGenome::Describe(SlonkGenome::Roll(EPlanetArchetype::Terrestrial, 0.8f, PlaceHash(SpawnedPlace(FirstSeed)))), bSpawnedJelly ? FVector::Dist(J.Centre, FVector(0.3, 0.8, 0.5).GetSafeNormal()) * Spawned.P.RadiusCm / 1e5 : -1.0,
+			Js.Cells, J.SpanM, J.CruiseCm / 100.0));
+	}
+	AddInfo(FString::Printf(TEXT("spawnplanet terrestrial seeds with jellies at strangeness 0.6 to 0.9 (from the game's start): %s"), *FString::Join(Picks, TEXT(", "))));
+	TestTrue(TEXT("seeds for the captures"), Picks.Num() >= 3 && bSpawnedJelly);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaFloaterLoopsTest, "Slonk.Fauna.FloaterLoops", SLONK_TEST_FLAGS)
+bool FSlonkFaunaFloaterLoopsTest::RunTest(const FString& Parameters)
+{
+	// Every jelly drifts a few metres a second round a closed loop whose period divides the hour (where it was an hour ago,
+	// no seam at the clock's wrap), its middle 300 m to 3 km over the highest ground near its loop, rising and sinking
+	// gently (under a metre and a half a second), its pulse a whole number of times an hour 3 to 6 s apart, 20 to 80 m
+	// across, its loop within 1.2 km of its middle (so one comes and goes unseen past its fade). Its lowest point (its
+	// tentacles' tips, drawn at twice its size far off) stays Floater::ClearCm over the ground under it all round its loop:
+	// the field at its finest, and the drawn ground of chunks 1.2 km and 9.8 km across. The jellies are pure functions of
+	// the world and the place: a cell holds the same whatever order the cells are read in; one revisited is where one never
+	// left would be; one a little past its reach stays, a quarter past it goes; none under a camera too high.
+	using namespace SlonkFauna;
+	FFaunaWorld W;
+	if (!JellyWorld(0.8f, 0.3f, 0.6f, W)) { AddError(TEXT("no teeming jelly world found")); return false; }
+	const double R = W.P.RadiusCm;
+	TArray<FFaunaGroup> Jellies;
+	KindOverGlobe(W, EFaunaKind::Floater, 800, Jellies);
+	int32 NotDividing = 0, Unclosed = 0, Seams = 0, Speeds = 0, Sizes = 0, Pulses = 0, Cruises = 0, Extents = 0, Climbs = 0;
+	double MinSpeed = 1e9, MaxSpeed = 0.0, MaxClimb = 0.0, MinUp = 1e9, MaxUp = 0.0, MaxExtent = 0.0;
+	for (const FFaunaGroup& G : Jellies)
+	{
+		const double Cycles = ClockPeriodSec / G.PeriodSec;
+		NotDividing += FMath::Abs(Cycles - FMath::RoundToDouble(Cycles)) < 1e-9 ? 0 : 1;
+		for (const double T : { 0.0, 777.7, 2345.6 })
+		{
+			Unclosed += FVector::Dist(PathAt(G, R, T).PosCm, PathAt(G, R, T + 3600.0).PosCm) < 1.0 && FVector::Dist(PathAt(G, R, T).PosCm, PathAt(G, R, T + G.PeriodSec).PosCm) < 1.0 ? 0 : 1;
+		}
+		Seams += FVector::Dist(PathAt(G, R, 3599.999).PosCm, PathAt(G, R, 3600.0).PosCm) < G.SpeedCmS * 0.002 + 1.0 ? 0 : 1;
+		MinSpeed = FMath::Min(MinSpeed, G.SpeedCmS / 100.0);
+		MaxSpeed = FMath::Max(MaxSpeed, G.SpeedCmS / 100.0);
+		Speeds += G.SpeedCmS >= 100.0 && G.SpeedCmS <= 500.0 ? 0 : 1;
+		Sizes += G.SpanM >= Floater::MinSpanM && G.SpanM <= Floater::MaxSpanM && G.Members == 1 ? 0 : 1;
+		const double Pulse = 1.0 / FMath::Max((double)G.FlapHz, 1e-6), PerHour = (double)G.FlapHz * ClockPeriodSec;
+		Pulses += FMath::Abs(PerHour - FMath::RoundToDouble(PerHour)) < 2e-3 && Pulse >= Floater::PulseLoSec - 0.01 && Pulse <= Floater::PulseHiSec + 0.01 ? 0 : 1;
+		const double Least = 2.0 * G.HangCm + Floater::SinkAllowCm + Floater::ClearCm;
+		Cruises += G.CruiseCm >= FMath::Max(Floater::MinCruiseCm, Least) - 1e-6 && G.CruiseCm <= FMath::Max(Floater::MaxCruiseCm, Least) + 1e-6 ? 0 : 1;
+		MaxExtent = FMath::Max(MaxExtent, G.ExtentCm());
+		Extents += KindDesc(EFaunaKind::Floater).ReachCm - G.ExtentCm() > KindDesc(EFaunaKind::Floater).FadeCm ? 0 : 1;
+		// Its climb and sink over its loop, m/s, from its frame a second apart; its middle's height over the field under it.
+		for (double T = 0.0; T < G.PeriodSec; T += G.PeriodSec / 120.0)
+		{
+			const FVector A = PathAt(G, R, T).PosCm, B = PathAt(G, R, T + 1.0).PosCm;
+			const double Climb = FMath::Abs(B.Size() - A.Size()) / 100.0;
+			MaxClimb = FMath::Max(MaxClimb, Climb);
+			Climbs += Climb < 1.5 ? 0 : 1;
+			const double Up = (A.Size() - R - FMath::Max(SlonkTerrain::SurfaceHeightCm(W.P, A.GetSafeNormal()), 0.0)) / 100.0;
+			MinUp = FMath::Min(MinUp, Up);
+			MaxUp = FMath::Max(MaxUp, Up);
+		}
+	}
+	AddInfo(FString::Printf(TEXT("%d jellies over a world rolling them into %.0f%% of its cells: %d periods not dividing the hour, %d loops not closed, %d seams; drifting %.1f to %.1f m/s (%d off), %d off their sizes, %d pulses off, %d cruises off, loops within %.0f m of their middles (%d too wide to come unseen); climbing at most %.2f m/s (%d over 1.5); their middles %.0f to %.0f m over the ground under them"),
+		Jellies.Num(), 100.0 * W.Profile.FloaterShare, NotDividing, Unclosed, Seams, MinSpeed, MaxSpeed, Speeds, Sizes, Pulses, Cruises, MaxExtent / 100.0, Extents, MaxClimb, Climbs, MinUp, MaxUp));
+	TestTrue(TEXT("jellies to test"), Jellies.Num() >= 150);
+	TestEqual(TEXT("every period divides the hour"), NotDividing, 0);
+	TestEqual(TEXT("every loop closes, an hour and a period on"), Unclosed, 0);
+	TestEqual(TEXT("no seam where the clock wraps"), Seams, 0);
+	TestEqual(TEXT("drifting a few metres a second"), Speeds, 0);
+	TestEqual(TEXT("20 to 80 m across, alone"), Sizes, 0);
+	TestEqual(TEXT("pulsing a whole number of times an hour, 3 to 6 s apart"), Pulses, 0);
+	TestEqual(TEXT("300 m to 3 km over the highest ground near, and never too low to clear it"), Cruises, 0);
+	TestEqual(TEXT("each loop small enough to come and go past its fade"), Extents, 0);
+	TestEqual(TEXT("rising and sinking gently"), Climbs, 0);
+	TestTrue(TEXT("its middle about 300 m or more over the ground under it"), MinUp >= 280.0 && MaxUp > 1500.0);
+
+	// Its lowest point over the ground all round its loop: the field at its finest under the first 40, and the drawn ground
+	// (chunks 1.2 km and 9.8 km across) under the first 6.
+	auto Field = [&W](const FVector& Dir) { return FMath::Max(SlonkTerrain::SurfaceHeightCm(W.P, Dir), 0.0); };
+	FDrawnGround Fine, Coarse;
+	Fine.P = W.P;
+	Fine.Depth = 13;
+	Coarse.P = W.P;
+	Coarse.Depth = 10;
+	auto FineAt = [&Fine](const FVector& Dir) { return FMath::Max(Fine.At(Dir), 0.0); };
+	auto CoarseAt = [&Coarse](const FVector& Dir) { return FMath::Max(Coarse.At(Dir), 0.0); };
+	double WorstField = 1e30, WorstFine = 1e30, WorstCoarse = 1e30;
+	int32 Low = 0, Read = 0;
+	for (int32 j = 0; j < FMath::Min(Jellies.Num(), 40); ++j)
+	{
+		const FFaunaGroup& G = Jellies[j];
+		for (int32 k = 0; k < 240; ++k)
+		{
+			const FVector Pos = PathAt(G, R, G.PeriodSec * k / 240.0).PosCm;
+			const double C = JellyClearanceCm(G, R, Pos, Field);
+			WorstField = FMath::Min(WorstField, C);
+			Low += C >= Floater::ClearCm ? 0 : 1;
+			++Read;
+			if (j < 6 && k % 4 == 0)
+			{
+				const double Cf = JellyClearanceCm(G, R, Pos, FineAt), Cc = JellyClearanceCm(G, R, Pos, CoarseAt);
+				WorstFine = FMath::Min(WorstFine, Cf);
+				WorstCoarse = FMath::Min(WorstCoarse, Cc);
+				Low += Cf >= Floater::ClearCm && Cc >= Floater::ClearCm ? 0 : 1;
+			}
+		}
+	}
+	AddInfo(FString::Printf(TEXT("round their loops (%d places), their lowest points drawn at twice their size clear the ground under them by %.0f m at the least over the field at its finest, %.0f m over chunks 1.2 km across and %.0f m over chunks 9.8 km across (%d under %.0f m); %d and %d chunks built"),
+		Read, WorstField / 100.0, WorstFine / 100.0, WorstCoarse / 100.0, Low, Floater::ClearCm / 100.0, Fine.Chunks.Num(), Coarse.Chunks.Num()));
+	TestEqual(TEXT("always clear of the ground under them by the margin"), Low, 0);
+
+	// Pure functions of the world and the place.
+	FFaunaGroup G0;
+	if (!TestJelly(W, G0)) { AddError(TEXT("no jelly found")); return false; }
+	TArray<FFaunaCell> Near;
+	CellsNear(W.P, EFaunaKind::Floater, G0.Centre, 1.5e6, Near);
+	TArray<TOptional<FFaunaGroup>> Forward, Backward;
+	Forward.SetNum(Near.Num());
+	Backward.SetNum(Near.Num());
+	for (int32 i = 0; i < Near.Num(); ++i) { FFaunaGroup G; if (GroupInCell(W, Near[i], G)) { Forward[i] = G; } }
+	for (int32 i = Near.Num() - 1; i >= 0; --i) { FFaunaGroup G; if (GroupInCell(W, Near[i], G)) { Backward[i] = G; } }
+	int32 Held = 0, Mismatch = 0;
+	for (int32 i = 0; i < Near.Num(); ++i)
+	{
+		Held += Forward[i].IsSet() ? 1 : 0;
+		Mismatch += Forward[i].IsSet() == Backward[i].IsSet() && (!Forward[i].IsSet() || Forward[i].GetValue() == Backward[i].GetValue()) ? 0 : 1;
+	}
+	TArray<FTransform> Xa, Xb;
+	TArray<float> Ca, Cb;
+	MembersOf(G0, Xa, Ca);
+	MembersOf(G0, Xb, Cb);
+	const bool bMembersSame = Xa.Num() == 1 && Xb.Num() == 1 && Ca == Cb && Xa[0].Equals(Xb[0], 0.0) && Ca.Num() == Custom::Num && Ca[Custom::SizeM] == G0.SpanM
+		&& Ca[Custom::PerKind] == (float)G0.Ribs && Ca[Custom::RateHz] == G0.FlapHz;
+	const FVector CamA = CameraOver(W, G0.Centre);
+	const FVector CamB = CameraOver(W, AlongGround(G0.Centre, 6.0e6, R, 2.0));
+	FFaunaField F, Stayed;
+	F.SetWorld(W);
+	Stayed.SetWorld(W);
+	TArray<uint64> A1, B1, A2, Kept;
+	ScanAndSelect(F, CamA, A1);
+	ScanAndSelect(Stayed, CamA, Kept);
+	TMap<uint64, FFaunaGroup> First;
+	for (const TPair<uint64, FFaunaField::FGroupRef>& A : F.GetActive()) { First.Add(A.Key, *A.Value); }
+	ScanAndSelect(F, CamB, B1);
+	int32 Overlap = 0;
+	for (const uint64 Id : B1) { Overlap += A1.Contains(Id) ? 1 : 0; }
+	ScanAndSelect(F, CamA, A2);
+	ScanAndSelect(Stayed, CamA, Kept);
+	int32 Changed = 0, Moved = 0;
+	for (const TPair<uint64, FFaunaField::FGroupRef>& A : F.GetActive())
+	{
+		const FFaunaGroup* Was = First.Find(A.Key);
+		const FFaunaField::FGroupRef* Never = Stayed.GetActive().Find(A.Key);
+		Changed += Was && *Was == *A.Value && Never && **Never == *A.Value ? 0 : 1;
+		if (Never) { Moved += PathAt(*A.Value, R, 1234.5).PosCm.Equals(PathAt(**Never, R, 1234.5).PosCm, 0.0) ? 0 : 1; }
+	}
+	// The hysteresis, on a world of few jellies (the caps leaving room).
+	FFaunaWorld Sparse;
+	const bool bSparse = JellyWorld(0.8f, 0.0f, 0.06f, Sparse);
+	FFaunaGroup G1;
+	const bool bG1 = bSparse && TestJelly(Sparse, G1);
+	const double Reach = KindDesc(EFaunaKind::Floater).ReachCm;
+	TArray<uint64> AtG1, NearIds, FarIds, Fresh, High;
+	int32 NearGroups = 0;
+	if (bG1)
+	{
+		FFaunaField SparseField;
+		SparseField.SetWorld(Sparse);
+		ScanAndSelect(SparseField, CameraOver(Sparse, G1.Centre), AtG1);
+		ScanAndSelect(SparseField, CameraOver(Sparse, AlongGround(G1.Centre, 1.1 * Reach, R, 0.7)), NearIds);
+		NearGroups = SparseField.ActiveGroups(EFaunaKind::Floater);
+		ScanAndSelect(SparseField, CameraOver(Sparse, AlongGround(G1.Centre, 1.3 * Reach, R, 0.7)), FarIds);
+		FFaunaField Come;
+		Come.SetWorld(Sparse);
+		ScanAndSelect(Come, CameraOver(Sparse, AlongGround(G1.Centre, 1.1 * Reach, R, 0.7)), Fresh);
+	}
+	ScanAndSelect(F, G0.Centre * (R + KindDesc(EFaunaKind::Floater).MaxAltitudeCm * 1.4 + FMath::Max(SlonkTerrain::SurfaceHeightCm(W.P, G0.Centre), 0.0)), High);
+	AddInfo(FString::Printf(TEXT("%d cells round a jelly of %.0f m: %d hold one, %d read otherwise backward; its member the same made twice %s; about A %d jellies, about B 60 km off %d (%d of A's), back at A %d, %d of them changed, %d off where they would be had the camera never left; on a sparse world (%.1f%% of its cells) %d about a camera 1.1 reaches from one; %d about a camera too high"),
+		Near.Num(), G0.SpanM, Held, Mismatch, bMembersSame ? TEXT("yes") : TEXT("no"), A1.Num(), B1.Num(), Overlap, A2.Num(), Changed, Moved, bSparse ? 100.0 * Sparse.Profile.FloaterShare : 0.0, NearGroups, High.Num()));
+	TestEqual(TEXT("a cell holds the same jelly whatever order the cells are read in"), Mismatch, 0);
+	TestTrue(TEXT("a jelly's member the same every time"), bMembersSame);
+	TestTrue(TEXT("jellies about A, the test's among them"), A1.Num() > 0 && A1.Contains(G0.Id));
+	TestEqual(TEXT("none of A's about B"), Overlap, 0);
+	TestTrue(TEXT("back at A, the same jellies, as about a camera that never left"), A2 == A1 && Kept == A1);
+	TestEqual(TEXT("each the same jelly as before and as one never left"), Changed, 0);
+	TestEqual(TEXT("where one never left would be"), Moved, 0);
+	TestTrue(TEXT("on the sparse world, its jelly about its middle, and room under the caps past it"), bG1 && AtG1.Contains(G1.Id) && NearGroups < KindDesc(EFaunaKind::Floater).MaxGroups);
+	TestTrue(TEXT("a jelly just past its reach stays"), NearIds.Contains(G1.Id));
+	TestFalse(TEXT("a jelly a quarter past its reach goes"), FarIds.Contains(G1.Id));
+	TestFalse(TEXT("a jelly just past its reach does not come"), Fresh.Contains(G1.Id));
+	TestEqual(TEXT("none under a camera too high"), High.Num(), 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaFloaterStartleTest, "Slonk.Fauna.FloaterStartle", SLONK_TEST_FLAGS)
+bool FSlonkFaunaFloaterStartleTest::RunTest(const FString& Parameters)
+{
+	// A craft passing within 150 m of a jelly's middle startles it, at any height it drifts at; one passing 400 m off does
+	// not, nor one set down by it, nor someone on foot under it. Startled, it squeezes itself hard and away from the craft
+	// and down, at a jelly's pace (never a jump: its frame's velocity is continuous at the startle and at every startle after
+	// it), holds a while and is back exactly on its loop by its fright's end; the material squeezes its bell in the
+	// seconds after, and a second fright moves no vertex more than a frame's motion does. Chased by a craft circling it for
+	// as long as it can be startled again, it sinks no further than its loop allows for (Floater::SinkAllowCm), drifts off
+	// its loop no further than the ground was read for, and its lowest point stays clear of the ground.
+	using namespace SlonkFauna;
+	FFaunaWorld W;
+	if (!JellyWorld(0.8f, 0.2f, 0.6f, W)) { AddError(TEXT("no jelly world found")); return false; }
+	FFaunaGroup G;
+	if (!TestJelly(W, G)) { AddError(TEXT("no jelly found")); return false; }
+	const double R = W.P.RadiusCm;
+	const FFaunaKindDesc& D = KindDesc(EFaunaKind::Floater);
+	auto Ground = [&W](const FVector& Dir) { return FMath::Max(SlonkTerrain::SurfaceHeightCm(W.P, Dir), 0.0); };
+	auto Pass = [&](double MissCm, double Start, FPanic& Panic, double AltitudeOverride)
+	{
+		// Straight past the jelly's place at 60 m/s from 600 m before to 600 m after, MissCm to its side at its height.
+		const FFaunaPose At = PathAt(G, R, Start + 10.0);
+		const FVector Across = At.Rot.GetAxisX(), Side = At.Rot.GetAxisY();
+		const FVector Mid = At.PosCm + Side * MissCm;
+		int32 Startles = 0;
+		for (double T = Start; T <= Start + 20.0; T += 0.1)
+		{
+			FFaunaThreat Craft;
+			Craft.PosCm = Mid + Across * (6000.0 * (T - Start - 10.0));
+			Craft.VelCmS = Across * 6000.0;
+			Craft.AltitudeCm = AltitudeOverride >= 0.0 ? AltitudeOverride : Craft.PosCm.Size() - R - Ground(Craft.PosCm.GetSafeNormal());
+			Startles += StartleGroup(Panic, D, FlightAt(G, D, Panic, R, T, FFaunaPose(), 0.0).PosCm, Craft, T) ? 1 : 0;
+		}
+		return Startles;
+	};
+	FPanic Close, Wide, High;
+	const double T0 = 1000.0;
+	const int32 CloseStartles = Pass(8000.0, T0, Close, -1.0);
+	const int32 WideStartles = Pass(4.0e4, T0, Wide, -1.0);
+	const int32 HighStartles = Pass(8000.0, T0, High, 6.0e5);
+	// Someone on foot right under it, a craft set down by it.
+	const FVector Here = PathAt(G, R, 2000.0).PosCm;
+	FFaunaThreat Walker;
+	Walker.bCraft = false;
+	Walker.PosCm = Here - Here.GetSafeNormal() * 2.0e4;
+	FFaunaThreat Parked;
+	Parked.PosCm = Here + FVector::CrossProduct(Here.GetSafeNormal(), FVector::ZAxisVector).GetSafeNormal() * 5000.0;
+	Parked.AltitudeCm = 200.0;
+	Parked.bLanded = true;
+	FPanic ByWalker, ByParked;
+	const bool bWalker = StartleGroup(ByWalker, D, Here, Walker, 2000.0);
+	const bool bParked = StartleGroup(ByParked, D, Here, Parked, 2000.0);
+	// Its flight: away and down, at its pace, back exactly by its fright's end.
+	const FVector Off20 = PanicOffset(Close, D, Close.T0 + 20.0);
+	const FVector Up0 = PathAt(G, R, Close.T0).PosCm.GetSafeNormal();
+	const double Sink20 = -FVector::DotProduct(Off20, Up0) / 100.0, Away20 = (Off20 - Up0 * FVector::DotProduct(Off20, Up0)).Size() / 100.0;
+	double FleeSpeed = 0.0, MaxJump = 0.0;
+	for (double T = Close.T0 - 0.5; T < Close.T0 + D.FrightSec; T += 0.05)
+	{
+		FleeSpeed = FMath::Max(FleeSpeed, FVector::Dist(PanicOffset(Close, D, T + 0.05), PanicOffset(Close, D, T)) / 0.05 / 100.0);
+		MaxJump = FMath::Max(MaxJump, (FloaterVelocity(G, D, Close, R, T + 0.05) - FloaterVelocity(G, D, Close, R, T)).Size() / 100.0);
+	}
+	const double Back = PanicOffset(Close, D, Close.T0 + D.FrightSec + 0.01).Size();
+	const bool bOnLoop = FlightAt(G, D, Close, R, Close.T0 + D.FrightSec + 0.5, FFaunaPose(), 0.0).PosCm.Equals(PathAt(G, R, Close.T0 + D.FrightSec + 0.5).PosCm, 0.0);
+	AddInfo(FString::Printf(TEXT("a jelly of %.0f m %.0f m over the ground near its loop: a pass 80 m off startles it %d times, 400 m off %d, 80 m off but 6 km over the ground %d; someone on foot under it %d, a craft set down by it %d; 20 s on it is %.0f m away and %.0f m down, at most %.1f m/s off its loop, its velocity changing by at most %.2f m/s in 0.05 s; %.2f m off its loop at its fright's end"),
+		G.SpanM, G.CruiseCm / 100.0, CloseStartles, WideStartles, HighStartles, bWalker ? 1 : 0, bParked ? 1 : 0, Away20, Sink20, FleeSpeed, MaxJump, Back / 100.0));
+	TestTrue(TEXT("a craft passing 80 m off startles it"), CloseStartles >= 1);
+	TestEqual(TEXT("one passing 400 m off does not"), WideStartles, 0);
+	TestEqual(TEXT("nor one higher than any jelly drifts"), HighStartles, 0);
+	TestFalse(TEXT("nor someone on foot under it"), bWalker);
+	TestFalse(TEXT("nor a craft set down by it"), bParked);
+	TestTrue(TEXT("it squeezes itself away and down"), Away20 > 40.0 && Sink20 > 20.0 && Sink20 < 0.7 * Away20);
+	TestTrue(TEXT("at a jelly's pace"), FleeSpeed > 3.0 && FleeSpeed < 10.0);
+	TestTrue(TEXT("its velocity never jumps"), MaxJump < 0.3);
+	TestEqual(TEXT("back on its loop by its fright's end"), Back, 0.0);
+	TestTrue(TEXT("exactly on it"), bOnLoop);
+
+	// Startled again 10, 25 and 60 s on from the other side: the velocity runs on through each; the material's squeeze is the
+	// first's while it is in its forty seconds, and a frame across each startle moves no vertex more than the frames before.
+	FFaunaBodyPlan Plan = W.Profile.Plans[(int32)EFaunaKind::Floater];
+	UE::Geometry::FDynamicMesh3 Lod0;
+	SlonkFaunaMeshes::BuildLod(Plan, 0, Lod0);
+	const TArray<FLinearColor> Vcs = VertexColours(Lod0);
+	const TArray<FVector2f> Uvs = VertexUVs(Lod0);
+	TArray<FTransform> Xf;
+	TArray<float> Cu;
+	MembersOf(G, Xf, Cu);
+	FPanic Chased = Close;
+	double WorstVelJump = 0.0, WorstStepRatio = 0.0, WorstTrailJump = 0.0, WorstRateJump = 0.0, WorstRunBack = 0.0, WorstTipGap = 0.0;
+	int32 Again = 0;
+	for (const double After : { 10.0, 25.0, 60.0 })
+	{
+		const double T = Close.T0 + After;
+		const FFaunaPose Pose = FlightAt(G, D, Chased, R, T, FFaunaPose(), 0.0);
+		FFaunaThreat Craft;
+		Craft.PosCm = Pose.PosCm + Pose.Rot.GetAxisY() * ((Again % 2 == 0 ? -1.0 : 1.0) * 6000.0);
+		Craft.VelCmS = Pose.Rot.GetAxisX() * 5000.0;
+		Craft.AltitudeCm = 1.0e5;
+		const FPanic Before = Chased;
+		const FVector VelBefore = FloaterVelocity(G, D, Before, R, T);
+		if (!StartleGroup(Chased, D, Pose.PosCm, Craft, T)) { continue; }
+		++Again;
+		WorstVelJump = FMath::Max(WorstVelJump, (FloaterVelocity(G, D, Chased, R, T) - VelBefore).Size() / 100.0);
+		// The material a frame either side of it, against the frames before.
+		auto DataAt = [&](const FPanic& P, double At, float* Gd)
+		{
+			FMemory::Memzero(Gd, sizeof(float) * FloaterData::Num);
+			FloaterGroupData(G, D, P, R, At, FlightAt(G, D, P, R, At, FFaunaPose(), 0.0).Rot, 0.0, Gd);
+		};
+		float Ga[FloaterData::Num], Gb[FloaterData::Num], Gc[FloaterData::Num];
+		const double Dt = 1.0 / 60.0;
+		DataAt(Before, T - 2.0 * Dt, Ga);
+		DataAt(Before, T - Dt, Gb);
+		DataAt(Chased, T, Gc);
+		double StepBefore = 0.0, StepAcross = 0.0;
+		for (const int32 V : Lod0.VertexIndicesItr())
+		{
+			const FVector3f LP = (FVector3f)Lod0.GetVertex(V);
+			const FVector3f Pa = LP + FloaterMotion(LP, Vcs[V], Uvs[V], MaterialTime(T - 2.0 * Dt), Cu.GetData(), Ga, 2.0e4f, 960.f);
+			const FVector3f Pb = LP + FloaterMotion(LP, Vcs[V], Uvs[V], MaterialTime(T - Dt), Cu.GetData(), Gb, 2.0e4f, 960.f);
+			const FVector3f Pc = LP + FloaterMotion(LP, Vcs[V], Uvs[V], MaterialTime(T), Cu.GetData(), Gc, 2.0e4f, 960.f);
+			StepBefore = FMath::Max(StepBefore, (double)(Pb - Pa).Size());
+			StepAcross = FMath::Max(StepAcross, (double)(Pc - Pb).Size());
+		}
+		WorstStepRatio = FMath::Max(WorstStepRatio, StepAcross / FMath::Max(StepBefore * 1.5 + 0.5, 1e-3));
+		// What the material is sent a frame at a time through it (the frames before it of the flight before): the way it
+		// drifts through the air runs on, and so does how fast that changes; and the velocity pass's frame before, run back
+		// from each frame's data, trails its tentacles as that frame drew them.
+		FVector2D PrevV(0.0), PrevA(0.0);
+		float Prev[FloaterData::Num] = {};
+		for (int32 k = -3; k <= 9; ++k)
+		{
+			const double At = T + k * Dt;
+			float Gk[FloaterData::Num];
+			DataAt(k < 0 ? Before : Chased, At, Gk);
+			const FVector2D Vk(Gk[FloaterData::TrailX], Gk[FloaterData::TrailY]), Ak(Gk[FloaterData::TrailRateX], Gk[FloaterData::TrailRateY]);
+			if (k > -3)
+			{
+				WorstTrailJump = FMath::Max(WorstTrailJump, (Vk - PrevV).Size());
+				WorstRateJump = FMath::Max(WorstRateJump, (Ak - PrevA).Size());
+				WorstRunBack = FMath::Max(WorstRunBack, (Vk - Ak * Dt - PrevV).Size());
+				const float Was = MaterialTime(At - Dt);
+				for (const int32 V : Lod0.VertexIndicesItr())
+				{
+					if (Vcs[V].R < 0.25f || Vcs[V].G < 0.99f) { continue; }
+					const FVector3f LP = (FVector3f)Lod0.GetVertex(V);
+					const FVector3f Rebuilt = FloaterMotion(LP, Vcs[V], Uvs[V], Was, Cu.GetData(), Gk, 2.0e4f, 960.f);
+					const FVector3f Drawn = FloaterMotion(LP, Vcs[V], Uvs[V], Was, Cu.GetData(), Prev, 2.0e4f, 960.f);
+					WorstTipGap = FMath::Max(WorstTipGap, (double)(Rebuilt - Drawn).Size());
+				}
+			}
+			PrevV = Vk;
+			PrevA = Ak;
+			FMemory::Memcpy(Prev, Gk, sizeof(Prev));
+		}
+	}
+	// The squeeze: its rim pulled in hard a couple of seconds after the first startle, its calm pulse again by ten.
+	auto RimPull = [&](const FPanic& P, double At)
+	{
+		float Gd[FloaterData::Num] = {};
+		FloaterGroupData(G, D, P, R, At, FlightAt(G, D, P, R, At, FFaunaPose(), 0.0).Rot, 0.0, Gd);
+		double Most = 0.0;
+		for (const int32 V : Lod0.VertexIndicesItr())
+		{
+			if (Vcs[V].R > 0.25f || Vcs[V].G < 0.99f) { continue; }
+			const FVector3f LP = (FVector3f)Lod0.GetVertex(V);
+			const FVector3f Off = FloaterMotion(LP, Vcs[V], Uvs[V], MaterialTime(At), Cu.GetData(), Gd, 2.0e4f, 960.f);
+			Most = FMath::Max(Most, (double)-(FVector2f(Off.X, Off.Y) | FVector2f(LP.X, LP.Y).GetSafeNormal()) / FMath::Max((double)FVector2f(LP.X, LP.Y).Size(), 1.0));
+		}
+		return Most;
+	};
+	double Squeezed = 0.0, CalmMost = 0.0;
+	for (double A = 1.0; A <= 3.0; A += 0.25) { Squeezed = FMath::Max(Squeezed, RimPull(Close, Close.T0 + A)); }
+	for (double A = 0.0; A <= 6.0; A += 0.25) { CalmMost = FMath::Max(CalmMost, RimPull(FPanic(), Close.T0 + A)); }
+	AddInfo(FString::Printf(TEXT("startled again %d times: its velocity jumping by %.3f m/s at the most; a frame across each moving a vertex at most %.2f times the frames before's (and half a unit); its rim pulled in by %.2f of its radius a second or two after the first, %.2f at the most calm"),
+		Again, WorstVelJump, WorstStepRatio, Squeezed, CalmMost));
+	AddInfo(FString::Printf(TEXT("sent a frame at a time through each: the way it drifts through the air jumping by %.3f m/s at the most, how fast that changes by %.2f m/s/s; the velocity pass's frame before, run back from each frame's data, %.3f m/s off the trail drawn then (its tentacles' tips %.2f units off)"),
+		WorstTrailJump, WorstRateJump, WorstRunBack, WorstTipGap));
+	TestTrue(TEXT("startled again"), Again >= 2);
+	TestTrue(TEXT("its velocity runs on through a second fright"), WorstVelJump < 0.3);
+	TestTrue(TEXT("and no vertex snaps"), WorstStepRatio <= 1.0);
+	TestTrue(TEXT("the trail sent runs on through a second fright, and how fast it changes"), WorstTrailJump < 0.3 && WorstRateJump < 10.0);
+	TestTrue(TEXT("so the velocity pass sees the tentacles trail as they were drawn"), WorstRunBack < 0.2);
+	TestTrue(TEXT("squeezed hard after a startle, gently pulsing calm"), Squeezed > 0.28 && CalmMost > 0.1 && CalmMost < 0.2);
+
+	// Chased by a craft circling it 80 m off for seven minutes, startling it whenever it may.
+	double MostSink = 0.0, MostAway = 0.0, LeastClear = 1e30;
+	int32 Chases = 0;
+	for (int32 Run = 0; Run < 3; ++Run)
+	{
+		FFaunaGroup J;
+		if (!FindGroupNear(W, EFaunaKind::Floater, AlongGround(FVector(0.3, 0.8, 0.5).GetSafeNormal(), 3.0e6 * Run, R, 1.0), 4.0e7, 20000, J)) { continue; }
+		FPanic P;
+		for (double T = 500.0; T < 920.0; T += 0.25)
+		{
+			const FFaunaPose Pose = FlightAt(J, D, P, R, T, FFaunaPose(), 0.0);
+			const FVector Up = Pose.PosCm.GetSafeNormal();
+			const double A = 0.15 * T * (Run == 1 ? -1.0 : 1.0);
+			FFaunaThreat Craft;
+			Craft.PosCm = Pose.PosCm + (Pose.Rot.GetAxisX() * FMath::Cos(A) + Pose.Rot.GetAxisY() * FMath::Sin(A)) * 8000.0;
+			Craft.VelCmS = (Pose.Rot.GetAxisY() * FMath::Cos(A) - Pose.Rot.GetAxisX() * FMath::Sin(A)) * 1200.0;
+			Craft.AltitudeCm = 1.0e5;
+			Chases += StartleGroup(P, D, Pose.PosCm, Craft, T) ? 1 : 0;
+			const FVector Off = PanicOffset(P, D, T);
+			MostSink = FMath::Max(MostSink, -FVector::DotProduct(Off, Up));
+			MostAway = FMath::Max(MostAway, (Off - Up * FVector::DotProduct(Off, Up)).Size());
+			LeastClear = FMath::Min(LeastClear, JellyClearanceCm(J, R, FlightAt(J, D, P, R, T, FFaunaPose(), 0.0).PosCm, Ground));
+		}
+	}
+	const double ReachLeft = Floater::GroundReachCm - (50.0 * Floater::MaxSpanM + 2.0 * 50.0 * (Floater::MaxBell + Floater::MaxBell * Floater::MaxTentacles) * Floater::MaxSpanM * 0.5);
+	AddInfo(FString::Printf(TEXT("chased round by a craft 80 m off for seven minutes (%d startles): sunk %.0f m at the most (%.0f allowed), %.0f m off its loop across at the most (the ground read %.0f m round its loop, %.0f of it past the largest jelly's rim and trailing tentacles); its lowest point %.0f m clear of the ground at the least"),
+		Chases, MostSink / 100.0, Floater::SinkAllowCm / 100.0, MostAway / 100.0, Floater::GroundReachCm / 100.0, ReachLeft / 100.0, LeastClear / 100.0));
+	TestTrue(TEXT("chased and startled again and again"), Chases >= 10);
+	TestTrue(TEXT("sinking no further than its loop allows for"), MostSink <= Floater::SinkAllowCm);
+	TestTrue(TEXT("drifting off its loop no further than its ground was read"), MostAway <= ReachLeft);
+	TestTrue(TEXT("its lowest point clear of the ground"), LeastClear >= Floater::ClearCm);
+
+	// The debug command's startle (fauna startle), asked again and again of a jelly by a ship hovering 300 m off to its
+	// side (each a threat on the ship's side of it, 75 m off, as UPlanetFaunaComponent::StartleAll makes it): every 30 s for
+	// three minutes and every 2 s for one, it drifts off its loop no further than its ground was read, and sinks no further
+	// than its loop allows for, as a craft chasing it would leave it.
+	double CmdAway = 0.0, CmdSink = 0.0;
+	int32 CmdAsked = 0, CmdStartles = 0;
+	for (const int32 EverySteps : { 120, 8 })
+	{
+		FPanic P;
+		const double Start = 3000.0;
+		const FFaunaPose At0 = PathAt(G, R, Start);
+		const FVector Ship = At0.PosCm + At0.Rot.GetAxisY() * 3.0e4;
+		const int32 AskSteps = EverySteps > 100 ? 720 : 240;
+		for (int32 s = 0; s < AskSteps + 4 * (int32)D.FrightSec; ++s)
+		{
+			const double T = Start + 0.25 * s;
+			const FVector Path = PathAt(G, R, T).PosCm;
+			const FVector Pos = Path + PanicOffset(P, D, T);
+			const FVector Up = Path.GetSafeNormal();
+			if (s < AskSteps && s % EverySteps == 0)
+			{
+				FVector Toward = Ship - Pos;
+				Toward -= Up * FVector::DotProduct(Toward, Up);
+				FFaunaThreat Asked;
+				Asked.PosCm = Pos + Toward.GetClampedToMaxSize(0.5 * D.ScareRadiusCm);
+				Asked.AltitudeCm = 0.0;
+				++CmdAsked;
+				CmdStartles += StartleByCommand(P, D, Pos, Asked, T) ? 1 : 0;
+			}
+			const FVector Off = PanicOffset(P, D, T);
+			CmdSink = FMath::Max(CmdSink, -FVector::DotProduct(Off, Up));
+			CmdAway = FMath::Max(CmdAway, (Off - Up * FVector::DotProduct(Off, Up)).Size());
+		}
+	}
+	AddInfo(FString::Printf(TEXT("fauna startle asked %d times (every 30 s and every 2 s) by a ship hovering 300 m off: startled %d times, %.0f m off its loop across at the most (%.0f allowed), sunk %.0f m (%.0f allowed)"),
+		CmdAsked, CmdStartles, CmdAway / 100.0, ReachLeft / 100.0, CmdSink / 100.0, Floater::SinkAllowCm / 100.0));
+	TestTrue(TEXT("the command startles it"), CmdStartles >= 4);
+	TestTrue(TEXT("asked again and again, it drifts off its loop no further than its ground was read, nor sinks too far"), CmdAway <= ReachLeft && CmdSink <= Floater::SinkAllowCm);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaJellyTest, "Slonk.Fauna.Jelly", SLONK_TEST_FLAGS)
+bool FSlonkFaunaJellyTest::RunTest(const FString& Parameters)
+{
+	// A sky-jelly of every plan a world may roll: about 300, 60 and 16 triangles, its span across, its middle at the origin,
+	// its crown up; its vertex colours and UVs as the material reads them; every face wound to show the side its normals
+	// point to; a tangent basis at every vertex. The material's motion keeps every vertex of each LOD inside the instance's
+	// padded box (UPlanetInstancesComponent::InstanceBox with the kind's padding), whatever its size, pulse, fright, drift
+	// through the air and distance (the speck floor at twice its size among them); its tentacles keep their length as they
+	// trail; its motion runs on across the hour's wrap. Its LODs come in where a jelly is about 40 and 6 pixels across.
+	// Its membrane is pierced by pores the same at every moment, leaving about half of it; its crown, ribs, ring canal and
+	// tentacles whole; its light at night pulses down its ribs. Pale, its hue turned with a strange world's sky.
+	using namespace UE::Geometry;
+	namespace Vc = SlonkFauna::Vc;
+	namespace Fl = SlonkFauna::Floater;
+	const SlonkFauna::FFaunaKindDesc& D = SlonkFauna::KindDesc(EFaunaKind::Floater);
+	const TArray<FFaunaBodyPlan> Plans = JellyPlans();
+	int32 BadTris = 0, BadColour = 0, BadWinding = 0, OffBox = 0, Escaped = 0, Tried = 0, Stretched = 0, Seams = 0;
+	int32 MinTris[SlonkFaunaMeshes::NumLods] = { 1 << 20, 1 << 20, 1 << 20 }, MaxTris[SlonkFaunaMeshes::NumLods] = {};
+	double Margin = TNumericLimits<double>::Max(), MostStretch = 0.0, MostSeam = 0.0;
+	FVector Reach(0.0);
+	FRandomStream Rng(57);
+	for (const FFaunaBodyPlan& Plan : Plans)
+	{
+		const double H = Fl::HalfHeightCm(Plan), Lt = 100.0 * Fl::TentaclesOf(Plan);
+		const double Zr = H - 100.0 * Fl::BellOf(Plan);
+		const int32 Tents = Fl::TentacleCount(Plan);
+		FBox Box0(ForceInit);
+		FDynamicMesh3 Lods[SlonkFaunaMeshes::NumLods];
+		for (int32 L = 0; L < SlonkFaunaMeshes::NumLods; ++L)
+		{
+			FDynamicMesh3& M = Lods[L];
+			if (!SlonkFaunaMeshes::BuildLod(Plan, L, M)) { AddError(TEXT("no jelly built")); return false; }
+			const int32 Tris = M.TriangleCount();
+			MinTris[L] = FMath::Min(MinTris[L], Tris);
+			MaxTris[L] = FMath::Max(MaxTris[L], Tris);
+			BadTris += Tris == WantJellyTris(Tents, L) && Tris == SlonkFaunaMeshes::JellyTriangles(Plan, L) ? 0 : 1;
+			const FDynamicMeshNormalOverlay* N = M.Attributes()->PrimaryNormals();
+			const TArray<FLinearColor> Vcs = VertexColours(M);
+			const TArray<FVector2f> Uvs = VertexUVs(M);
+			for (const int32 T : M.TriangleIndicesItr())
+			{
+				FVector3d Fn, Centroid; double Area;
+				M.GetTriInfo(T, Fn, Area, Centroid);
+				const FIndex3i E = N->GetTriangle(T);
+				BadWinding += Fn.Dot(FVector3d(N->GetElement(E.A) + N->GetElement(E.B) + N->GetElement(E.C))) > 0.0 ? 0 : 1;
+			}
+			for (const int32 V : M.VertexIndicesItr())
+			{
+				const FVector P = (FVector)M.GetVertex(V);
+				const FLinearColor& C = Vcs[V];
+				const FVector2f& U = Uvs[V];
+				if (L == 0) { Box0 += P; }
+				bool bOk = U.X >= 0.f && U.X <= 1.f && C.B == U.X;
+				if (C.R == Vc::SurfaceBody)
+				{
+					// The bell: rigid, down it from its crown to its rim as its V says (its speck's drawn whole, its V from 0.1
+					// to under the crown's, or on its ring canal's at its rim), above its rim.
+					const bool bV = L < 2 ? C.G == U.Y : (U.Y >= 0.1f && U.Y < Fl::CrownV) || (FMath::Abs(U.Y - Fl::RingV) < 0.01f && P.Z <= Zr + 0.1 * 100.0 * Fl::BellOf(Plan) + 1e-3);
+					bOk &= C.A == Vc::JointRigid && C.G >= 0.f && C.G <= 1.f && bV && P.Z >= Zr - 3.01 && P.Z <= H + 1e-3;
+				}
+				else if (C.R == Vc::SurfaceTail)
+				{
+					// A tentacle: undulating, along it from its root (at the rim's height) to its tip (at -H) as its V says, its place
+					// round the bell its root's.
+					const double Along = 100.0 * (U.Y - 1.0);
+					bOk &= C.A == Vc::JointUndulate && C.G >= 0.f && C.G <= 1.f && U.Y >= 1.f && FMath::IsNearlyEqual(P.Z, Zr - Along, 1e-2) && FMath::IsNearlyEqual(Along, Lt * C.G, 1e-2);
+					if (L < 2) { const double Round = FMath::Frac(FMath::Atan2(P.Y, P.X) / UE_DOUBLE_TWO_PI + 1.0); bOk &= FMath::Abs(FMath::Frac(Round - C.B + 0.5) - 0.5) < 0.03; }
+				}
+				else { bOk = false; }
+				BadColour += bOk ? 0 : 1;
+			}
+		}
+		// Its box: its span across, its middle the origin; the coarser LODs within it (but for their rims, round where LOD 0's
+		// is scalloped: within a tenth of its radius of it).
+		OffBox += FMath::IsNearlyEqual(Box0.Max.X, Fl::RimCm, 1e-3) && Box0.Min.X >= -Fl::RimCm - 1e-3 && Box0.GetExtent().Y <= Fl::RimCm + 1e-3 && FMath::IsNearlyEqual(Box0.Max.Z, H, 1e-3)
+			&& FMath::IsNearlyEqual(Box0.Min.Z, -H, 1e-3) ? 0 : 1;
+		for (int32 L = 1; L < SlonkFaunaMeshes::NumLods; ++L)
+		{
+			for (const int32 V : Lods[L].VertexIndicesItr()) { OffBox += Box0.ExpandBy(FVector(0.1 * Fl::RimCm, 0.1 * Fl::RimCm, 1e-3)).IsInside((FVector)Lods[L].GetVertex(V)) ? 0 : 1; }
+		}
+		// The material's motion over every LOD's vertices: 30 cases of each plan.
+		const FBox Padded = Box0.ExpandBy(Box0.GetExtent() * 0.15 + FVector(20.0 + D.CullPaddingUnits));
+		for (int32 Case = 0; Case < 30; ++Case)
+		{
+			float Cu[SlonkFauna::Custom::Num] = {};
+			float Gd[SlonkFauna::FloaterData::Num] = {};
+			const float Size = Case % 5 == 0 ? (float)Fl::MinSpanM : Rng.FRandRange((float)Fl::MinSpanM, (float)Fl::MaxSpanM);
+			Cu[SlonkFauna::Custom::SizeM] = Size;
+			Cu[SlonkFauna::Custom::Seed] = Rng.FRand();
+			Cu[SlonkFauna::Custom::Phase] = Rng.FRand();
+			Cu[SlonkFauna::Custom::RateHz] = (float)Rng.RandRange(600, 1200) / 3600.f;
+			Cu[SlonkFauna::Custom::PerKind] = (float)Plan.Symmetry;
+			const float T = Rng.FRandRange(0.f, 3600.f);
+			// Drifting through the air any way, slow to far faster than a jelly goes (the extremes often), changing.
+			const float Spd = Case % 3 == 0 ? 30.f : Rng.FRandRange(0.f, 12.f), Way = Rng.FRandRange(0.f, 6.2831853f);
+			Gd[SlonkFauna::FloaterData::TrailX] = Spd * FMath::Cos(Way);
+			Gd[SlonkFauna::FloaterData::TrailY] = Spd * FMath::Sin(Way);
+			Gd[SlonkFauna::FloaterData::TrailRateX] = Rng.FRandRange(-6.f, 6.f);
+			Gd[SlonkFauna::FloaterData::TrailRateY] = Rng.FRandRange(-6.f, 6.f);
+			Gd[SlonkFauna::FloaterData::ClockT0] = FMath::Fmod(T - Rng.FRandRange(-0.5f, 2.f) + 3600.f, 3600.f);
+			// Calm, or frightened anywhere in its fright: its squeeze, its fast pulse coming in or easing.
+			if (Case % 2 == 1)
+			{
+				Gd[SlonkFauna::FloaterData::Startled] = 1.f;
+				const float Age = Rng.FRandRange(0.f, 150.f);
+				Gd[SlonkFauna::FloaterData::PanicT0] = FMath::Fmod(T - Age + 3600.f, 3600.f);
+				Gd[SlonkFauna::FloaterData::OnsetT0] = FMath::Fmod(T - Age - Rng.FRandRange(0.f, 1.f) + 3600.f, 3600.f);
+				Gd[SlonkFauna::FloaterData::SqueezeT0] = FMath::Fmod(T - Rng.FRandRange(0.f, 8.f) + 3600.f, 3600.f);
+			}
+			// Near (no speck floor), where it grows, and far (twice its size).
+			const float Dist = Case % 3 == 0 ? 5000.f : (Case % 3 == 1 ? Size * 100.f * 960.f / 5.f : 5.0e6f);
+			for (int32 L = 0; L < SlonkFaunaMeshes::NumLods; ++L)
+			{
+				const TArray<FLinearColor> Vcs = VertexColours(Lods[L]);
+				const TArray<FVector2f> Uvs = VertexUVs(Lods[L]);
+				for (const int32 V : Lods[L].VertexIndicesItr())
+				{
+					const FVector3f LP = (FVector3f)Lods[L].GetVertex(V);
+					const FVector3f Moved = LP + SlonkFauna::FloaterMotion(LP, Vcs[V], Uvs[V], T, Cu, Gd, Dist, 960.f);
+					++Tried;
+					const FVector Mv((double)Moved.X, (double)Moved.Y, (double)Moved.Z);
+					Escaped += Padded.IsInside(Mv) ? 0 : 1;
+					Reach = FVector(FMath::Max(Reach.X, FMath::Abs(Mv.X)), FMath::Max(Reach.Y, FMath::Abs(Mv.Y)), FMath::Max(Reach.Z, FMath::Abs(Mv.Z) - H));
+					Margin = FMath::Min(Margin, FMath::Min3(FMath::Min(Mv.X - Padded.Min.X, Padded.Max.X - Mv.X), FMath::Min(Mv.Y - Padded.Min.Y, Padded.Max.Y - Mv.Y), FMath::Min(Mv.Z - Padded.Min.Z, Padded.Max.Z - Mv.Z)));
+					// Across the hour's wrap, near: no seam.
+					if (L == 0 && Case % 3 == 0 && Case < 6)
+					{
+						float Gw[SlonkFauna::FloaterData::Num];
+						FMemory::Memcpy(Gw, Gd, sizeof(Gw));
+						Gw[SlonkFauna::FloaterData::ClockT0] = 3599.99f;
+						const FVector3f Wa = SlonkFauna::FloaterMotion(LP, Vcs[V], Uvs[V], 3599.995f, Cu, Gw, Dist, 960.f);
+						const FVector3f Wb = SlonkFauna::FloaterMotion(LP, Vcs[V], Uvs[V], 0.005f, Cu, Gw, Dist, 960.f);
+						const FVector3f Wc = SlonkFauna::FloaterMotion(LP, Vcs[V], Uvs[V], 0.015f, Cu, Gw, Dist, 960.f);
+						MostSeam = FMath::Max(MostSeam, (double)(Wa - Wb).Size());
+						Seams += (Wa - Wb).Size() <= 1.5f * (Wb - Wc).Size() + 0.05f ? 0 : 1;
+					}
+				}
+			}
+		}
+		// A tentacle trailing at full stretch (6 m/s and faster), near: its tip as far from its root as its length, within a
+		// fifth.
+		{
+			float Cu[SlonkFauna::Custom::Num] = {};
+			float Gd[SlonkFauna::FloaterData::Num] = {};
+			Cu[SlonkFauna::Custom::SizeM] = 40.f;
+			Cu[SlonkFauna::Custom::RateHz] = 900.f / 3600.f;
+			Cu[SlonkFauna::Custom::PerKind] = (float)Plan.Symmetry;
+			Gd[SlonkFauna::FloaterData::TrailX] = 8.f;
+			const TArray<FLinearColor> Vcs = VertexColours(Lods[0]);
+			const TArray<FVector2f> Uvs = VertexUVs(Lods[0]);
+			TMap<int32, FVector3f> Root, Tip;
+			for (const int32 V : Lods[0].VertexIndicesItr())
+			{
+				if (Vcs[V].R != Vc::SurfaceTail || (Vcs[V].G != 0.f && Vcs[V].G != 1.f)) { continue; }
+				const FVector3f LP = (FVector3f)Lods[0].GetVertex(V);
+				const FVector3f P = LP + SlonkFauna::FloaterMotion(LP, Vcs[V], Uvs[V], 100.f, Cu, Gd, 5000.f, 960.f);
+				const int32 Key = FMath::RoundToInt32(Vcs[V].B * 1000.f) * 2 + (LP.Y * FMath::Cos(Vcs[V].B * 6.2831853f) - LP.X * FMath::Sin(Vcs[V].B * 6.2831853f) > 0.f ? 1 : 0);
+				(Vcs[V].G == 0.f ? Root : Tip).Add(Key, P);
+			}
+			for (const TPair<int32, FVector3f>& Tp : Tip)
+			{
+				if (const FVector3f* Rt = Root.Find(Tp.Key))
+				{
+					const double S = (double)(Tp.Value - *Rt).Size() / Lt;
+					MostStretch = FMath::Max(MostStretch, FMath::Abs(S - 1.0));
+					Stretched += FMath::Abs(S - 1.0) < 0.2 ? 0 : 1;
+				}
+			}
+		}
+	}
+	AddInfo(FString::Printf(TEXT("%d plans of jelly: LODs of %d to %d, %d to %d and %d triangles (%d off), %d vertices off the colour contract, %d faces wound inward, %d off the box"),
+		Plans.Num(), MinTris[0], MaxTris[0], MinTris[1], MaxTris[1], MinTris[2], BadTris, BadColour, BadWinding, OffBox));
+	AddInfo(FString::Printf(TEXT("%d vertices moved by the material: %d outside the box padded %.0f units (the closest %.1f units inside; reaching %.0f and %.0f units across, %.0f past its half-height along); tentacles trailing in full off their length by %.3f at most (%d over a fifth); %.3f units moved across the hour's wrap at most (%d more than the hundredth of a second after)"),
+		Tried, Escaped, D.CullPaddingUnits, Margin, Reach.X, Reach.Y, Reach.Z, MostStretch, Stretched, MostSeam, Seams));
+	TestEqual(TEXT("its LODs' triangles"), BadTris, 0);
+	TestTrue(TEXT("about 300, 60 and 16"), MinTris[0] >= 280 && MaxTris[0] <= 340 && MinTris[1] >= 50 && MaxTris[1] <= 70 && MinTris[2] == 16 && MaxTris[2] == 16);
+	TestEqual(TEXT("every vertex as the material reads it"), BadColour, 0);
+	TestEqual(TEXT("every face shows the side its normals point to"), BadWinding, 0);
+	TestEqual(TEXT("its span across, its middle the origin, its coarser LODs inside it"), OffBox, 0);
+	TestEqual(TEXT("the material keeps every vertex in its instance's box"), Escaped, 0);
+	TestEqual(TEXT("its tentacles keep their length as they trail"), Stretched, 0);
+	TestEqual(TEXT("its motion runs on across the hour's wrap"), Seams, 0);
+
+	// Those hold of the float copies only while the material's floater branches are what was copied.
+	const FString WpoBlock = MaterialMotionBlock(EMotionBlock::Floaters);
+	const FString PixelBlock = MaterialMotionBlock(EMotionBlock::Floaters, true);
+	const uint32 WpoCrc = FCrc::StrCrc32(*WpoBlock), PixelCrc = FCrc::StrCrc32(*PixelBlock);
+	AddInfo(FString::Printf(TEXT("fauna_material.py's floater branch: in WPO_CODE %d characters, CRC 0x%08x (0x%08x when the copy was made); in CODE %d characters, CRC 0x%08x (0x%08x)"),
+		WpoBlock.Len(), WpoCrc, MaterialFloaterBlockCrc, PixelBlock.Len(), PixelCrc, MaterialFloaterPixelBlockCrc));
+	TestTrue(TEXT("fauna_material.py's floater branches found"), WpoBlock.Contains(TEXT("float2 jbend = ")) && PixelBlock.Contains(TEXT("bool jpore = ")));
+	TestEqual(TEXT("FloaterMotion copies the material's floater branch as it is now"), WpoCrc, MaterialFloaterBlockCrc);
+	TestEqual(TEXT("FloaterCover and FloaterLight copy its pixel shader's as it is now"), PixelCrc, MaterialFloaterPixelBlockCrc);
+	TestFalse(TEXT("the fliers' part holds none of the floater branch"), MaterialMotionBlock().Contains(TEXT("jbend")) || MaterialMotionBlock(EMotionBlock::Fliers, true).Contains(TEXT("jpore")));
+
+	// The static mesh: made once and kept, three LODs, a tangent basis everywhere; where its LODs come in for jellies of
+	// 50 m of the shortest and the tallest plans, through a 90-degree view at 16:9 (the GPU's radius, its padded box's).
+	for (const FFaunaBodyPlan& Plan : { Plans[0], Plans.Last(8) })
+	{
+		UStaticMesh* Mesh = SlonkFaunaMeshes::GetMesh(Plan, EFaunaKind::Floater);
+		TestTrue(TEXT("the jelly's mesh is made, and kept"), Mesh != nullptr && Mesh == SlonkFaunaMeshes::GetMesh(Plan, EFaunaKind::Floater));
+		if (!Mesh) { continue; }
+		TestEqual(TEXT("with three LODs"), Mesh->GetNumLODs(), SlonkFaunaMeshes::NumLods);
+		const double SpanM = 50.0;
+		UPlanetInstancesComponent* Set = NewObject<UPlanetInstancesComponent>();
+		Set->SetStaticMesh(Mesh);
+		Set->SetCullPadding(D.CullPaddingUnits);
+		Set->SetPieces(TArray<FTransform>{ FTransform(FQuat::Identity, FVector::ZeroVector, FVector(SpanM)) }, TConstArrayView<float>());
+		const double Proj = (16.0 / 9.0) / FMath::Tan(FMath::DegreesToRadians(45.0));
+		const double GpuR = Set->GetMaxInstanceRadius();
+		auto ComesInM = [&](int32 L) { return Proj * GpuR / D.LodScreenSize[L] / 100.0; };
+		auto PxAt = [&](double M) { return SpanM * 960.0 / M; };
+		AddInfo(FString::Printf(TEXT("a %.0f m jelly of a plan %.0f units tall (LOD radius %.1f spans): its 60-odd triangles from %.0f m (%.1f pixels across), its 16 from %.0f m (%.1f pixels)"),
+			SpanM, 2.0 * Fl::HalfHeightCm(Plan), GpuR / (100.0 * SpanM), ComesInM(1), PxAt(ComesInM(1)), ComesInM(2), PxAt(ComesInM(2))));
+		TestTrue(TEXT("its 60-odd triangles from about 40 pixels across"), PxAt(ComesInM(1)) > 30.0 && PxAt(ComesInM(1)) < 50.0);
+		TestTrue(TEXT("and its 16 from about 6"), PxAt(ComesInM(2)) > 4.5 && PxAt(ComesInM(2)) < 8.5);
+		int32 Vertices = 0, NoTangent = 0;
+		if (const FStaticMeshRenderData* RD = Mesh->GetRenderData())
+		{
+			for (const FStaticMeshLODResources& L : RD->LODResources)
+			{
+				const FStaticMeshVertexBuffer& VB = L.VertexBuffers.StaticMeshVertexBuffer;
+				for (uint32 i = 0; i < VB.GetNumVertices(); ++i)
+				{
+					const FVector3f Tx(VB.VertexTangentX(i)), Tz(VB.VertexTangentZ(i)), Ty(VB.VertexTangentY(i));
+					++Vertices;
+					NoTangent += Tx.Size() > 0.5f && Ty.Size() > 0.5f && FMath::Abs(FVector3f::DotProduct(Tx.GetSafeNormal(), Tz.GetSafeNormal())) < 0.1f ? 0 : 1;
+				}
+			}
+		}
+		TestTrue(TEXT("every vertex has a tangent basis"), Vertices > 0 && NoTangent == 0);
+	}
+
+	// Its membrane: over a fine lattice of its bell's UV, the share left whole (its pores the same at every moment: they ask no
+	// time), its crown, ribs and ring canal whole, its tentacles whole; its light at night on a rib, between them and on a
+	// tentacle over a few pulses.
+	float Cu[SlonkFauna::Custom::Num] = {};
+	Cu[SlonkFauna::Custom::Seed] = 0.37f;
+	Cu[SlonkFauna::Custom::PerKind] = 8.f;
+	Cu[SlonkFauna::Custom::RateHz] = 900.f / 3600.f;
+	int32 Panel = 0, PanelWhole = 0, CrownHoles = 0, RibHoles = 0, TentacleHoles = 0;
+	for (int32 j = 0; j < 400; ++j)
+	{
+		const float V = (j + 0.5f) / 400.f;
+		for (int32 i = 0; i < 1600; ++i)
+		{
+			const float U = (i + 0.5f) / 1600.f;
+			const bool bWhole = SlonkFauna::FloaterCover(FVector2f(U, V), FLinearColor(Vc::SurfaceBody, V, U, Vc::JointRigid), Cu);
+			const float RibD = FMath::Abs(FMath::Frac(U * 8.f + 0.5f) - 0.5f);
+			if (V < Fl::CrownV) { CrownHoles += bWhole ? 0 : 1; continue; }
+			if (RibD < 0.03f || FMath::Abs(V - Fl::RingV) < 0.01f) { RibHoles += bWhole ? 0 : 1; continue; }
+			++Panel;
+			PanelWhole += bWhole ? 1 : 0;
+		}
+		TentacleHoles += SlonkFauna::FloaterCover(FVector2f((j % 8 + 0.5f) / 8.f, 1.f + V), FLinearColor(Vc::SurfaceTail, V, 0.5f, Vc::JointUndulate), Cu) ? 0 : 1;
+	}
+	const double Whole = Panel > 0 ? (double)PanelWhole / Panel : 0.0;
+	float Gd[SlonkFauna::FloaterData::Num] = {};
+	float RibLo = 1e9f, RibHi = 0.f, BetweenHi = 0.f, TentHi = 0.f;
+	for (float T = 100.f; T < 112.f; T += 0.02f)
+	{
+		const float Rib = SlonkFauna::FloaterLight(FVector2f(0.f, 0.5f), FLinearColor(Vc::SurfaceBody, 0.5f, 0.f, Vc::JointRigid), T, Cu, Gd);
+		RibLo = FMath::Min(RibLo, Rib);
+		RibHi = FMath::Max(RibHi, Rib);
+		BetweenHi = FMath::Max(BetweenHi, SlonkFauna::FloaterLight(FVector2f(1.f / 16.f, 0.5f), FLinearColor(Vc::SurfaceBody, 0.5f, 1.f / 16.f, Vc::JointRigid), T, Cu, Gd));
+		TentHi = FMath::Max(TentHi, SlonkFauna::FloaterLight(FVector2f(0.5f, 1.5f), FLinearColor(Vc::SurfaceTail, 0.5f, 0.5f, Vc::JointUndulate), T, Cu, Gd));
+	}
+	AddInfo(FString::Printf(TEXT("its bell's panels %.0f%% whole (%d points), %d holes in its crown, %d in its ribs and ring canal, %d in its tentacles; at night a rib lit %.2f to %.2f over its pulses, between them %.2f, a tentacle up to %.2f"),
+		100.0 * Whole, Panel, CrownHoles, RibHoles, TentacleHoles, RibLo, RibHi, BetweenHi, TentHi));
+	TestTrue(TEXT("its membrane about half whole, translucent"), Whole > 0.35 && Whole < 0.7);
+	TestTrue(TEXT("its crown, ribs, ring canal and tentacles whole"), CrownHoles == 0 && RibHoles == 0 && TentacleHoles == 0);
+	TestTrue(TEXT("a pulse of light down its ribs and tentacles, a little always"), RibLo > 0.15f && RibLo < 0.3f && RibHi > 1.5f && TentHi > 1.5f && BetweenHi == 0.f);
+
+	// Pale, its hue turned with a strange world's sky.
+	const SlonkFauna::FFaunaLook Earth;
+	FWorldGenome Turned;
+	Turned.Strangeness = 1.f;
+	Turned.SkyHueShiftDeg = 150.f;
+	const FLinearColor Jelly = SlonkFauna::FloaterPigment(Earth, 0.0, 1.0), Strange = SlonkFauna::FloaterPigment(SlonkFauna::LookOf(Turned), 0.0, 1.0);
+	const FLinearColor Hsv = Jelly.LinearRGBToHSV();
+	AddInfo(FString::Printf(TEXT("a jelly's pigment: %.2f %.2f %.2f (hue %.0f deg, saturation %.2f) before its world's turn, %.2f %.2f %.2f (hue %.0f deg) under a sky turned 150 deg"),
+		Jelly.R, Jelly.G, Jelly.B, Hsv.R, Hsv.G, Strange.R, Strange.G, Strange.B, HueOf(Strange)));
+	TestTrue(TEXT("pale"), Hsv.G < 0.5f && Hsv.B > 0.6f);
+	TestTrue(TEXT("turned with a strange world's sky"), HueGap(HueOf(Strange), HueOf(Jelly)) > 100.f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaFloaterBudgetTest, "Slonk.Fauna.FloaterBudget", SLONK_TEST_FLAGS)
+bool FSlonkFaunaFloaterBudgetTest::RunTest(const FString& Parameters)
+{
+	// About any camera over a world teeming with jellies they keep to their caps (24, under 7,500 triangles at their nearest
+	// LOD), the caps full; a frame's math for them (each jelly's frame on its loop or fleeing, the threats to it, what its
+	// material reads: not the scene's writes, which want a world) is far under 0.15 ms of the game thread; a scan's first
+	// reading of the jellies' cells takes a few tens of milliseconds on its task, and one a sixth of a cell on reads only the
+	// cells new to it.
+	using namespace SlonkFauna;
+	FFaunaWorld W;
+	if (!JellyWorld(0.9f, 0.45f, 0.6f, W)) { AddError(TEXT("no teeming jelly world found")); return false; }
+	const FFaunaKindDesc& D = KindDesc(EFaunaKind::Floater);
+	const double R = W.P.RadiusCm;
+	int32 Places = 0, Over = 0, Full = 0, MaxGroups = 0, MaxTris = 0;
+	double FirstMs = 0.0, MovedMs = 0.0;
+	int32 FirstCells = 0, MovedCells = 0, MovedRead = 0;
+	FFaunaField Busiest;
+	for (int32 i = 0; i < 16; ++i)
+	{
+		FFaunaField F;
+		F.SetWorld(W);
+		TArray<uint64> Active;
+		double Ms = 0.0;
+		int32 Read = 0, Cells = 0;
+		const FVector Dir = Spread(i * 37 + 5, 600);
+		ScanAndSelect(F, CameraOver(W, Dir), Active, &Ms, &Read, &Cells);
+		++Places;
+		const int32 Groups = F.ActiveGroups(EFaunaKind::Floater);
+		Over += Groups <= D.MaxGroups && F.ActiveMembers(EFaunaKind::Floater) <= D.MaxMembers ? 0 : 1;
+		Full += Groups == D.MaxGroups ? 1 : 0;
+		if (Groups > MaxGroups) { MaxGroups = Groups; Busiest = F; }
+		MaxTris = FMath::Max(MaxTris, Groups * SlonkFaunaMeshes::JellyTriangles(W.Profile.Plans[(int32)EFaunaKind::Floater], 0));
+		if (i == 0)
+		{
+			FirstMs = Ms;
+			FirstCells = Read;
+			ScanAndSelect(F, CameraOver(W, AlongGround(Dir, D.CellCm / 6.0 + 100.0, R, 0.3)), Active, &MovedMs, &MovedRead, &MovedCells);
+		}
+	}
+	// A frame's math at the busiest place, as UpdateFloater does it, a craft passing by.
+	TMap<uint64, FPanic> Panics;
+	constexpr int32 Frames = 600;
+	double Sink = 0.0;
+	const double Start = FPlatformTime::Seconds();
+	for (int32 f = 0; f < Frames; ++f)
+	{
+		const double Now = 500.0 + f / 60.0;
+		for (const TPair<uint64, FFaunaField::FGroupRef>& A : Busiest.GetActive())
+		{
+			FPanic& P = Panics.FindOrAdd(A.Key);
+			FFaunaPose Pose = FlightAt(*A.Value, D, P, R, Now, FFaunaPose(), 0.0);
+			FFaunaThreat Craft;
+			Craft.PosCm = Pose.PosCm + Pose.Rot.GetAxisY() * 1.0e4;
+			Craft.AltitudeCm = 5.0e4;
+			FFaunaThreat Walker;
+			Walker.bCraft = false;
+			Walker.PosCm = Pose.PosCm - Pose.PosCm.GetSafeNormal() * 5.0e4;
+			if (StartleGroup(P, D, Pose.PosCm, Craft, Now) || StartleGroup(P, D, Pose.PosCm, Walker, Now)) { Pose = FlightAt(*A.Value, D, P, R, Now, FFaunaPose(), 0.0); }
+			float Gd[FloaterData::Num] = {};
+			FloaterGroupData(*A.Value, D, P, R, Now, Pose.Rot, 0.0, Gd);
+			Sink += Pose.PosCm.X + Gd[FloaterData::TrailX];
+		}
+	}
+	const double FrameMs = (FPlatformTime::Seconds() - Start) * 1000.0 / Frames;
+	AddInfo(FString::Printf(TEXT("about %d cameras on a world rolling jellies into %.0f%% of its cells: at most %d jellies (%d triangles at LOD 0), the caps full at %d of them, %d over; a frame's math on %d jellies %.4f ms; a first scan %.1f ms reading %d cells anew; one a sixth of a cell on %.1f ms, %d of its %d cells read anew"),
+		Places, 100.0 * W.Profile.FloaterShare, MaxGroups, MaxTris, Full, Over, Busiest.GetActive().Num(), FrameMs, FirstMs, FirstCells, MovedMs, MovedRead, MovedCells));
+	TestTrue(TEXT("places to try, jellies about"), Places >= 16 && MaxGroups > 0 && FMath::IsFinite(Sink));
+	TestEqual(TEXT("never over the jellies' caps"), Over, 0);
+	TestTrue(TEXT("the caps full on a teeming world"), Full > 0);
+	TestTrue(TEXT("under 7,500 triangles of jellies at LOD 0"), MaxTris <= 7500);
+	TestTrue(TEXT("a frame's math far under 0.15 ms"), FrameMs < 0.15);
+	TestTrue(TEXT("a scan a sixth of a cell on reads only the cells new to it"), MovedCells > 0 && MovedRead * 4 < MovedCells);
+
+	// With every kind about (the fliers and the herds too): a camera near the ground has every kind's cells read, one 6 km
+	// up the jellies' alone (no other kind is kept that high, and their habitat is the dearest to read), and coming up or
+	// down past a kind's height asks for a scan where it stands.
+	FFaunaWorld All = W;
+	All.KindMask = AllKinds;
+	FFaunaField Mixed;
+	Mixed.SetWorld(All);
+	const FVector Dir = Spread(5, 600);
+	const uint32 Low = Mixed.ScanKinds(3000.0), High = Mixed.ScanKinds(6.0e5);
+	const auto SLow = FFaunaField::Scan(All, Dir, Mixed.ScanRadiusCm(Low), nullptr, Low);
+	Mixed.Accept(*SLow);
+	const bool bUpWants = Mixed.WantsScan(Dir, 6.0e5), bStillWants = Mixed.WantsScan(Dir, 3000.0);
+	const auto SHigh = FFaunaField::Scan(All, Dir, Mixed.ScanRadiusCm(High), Mixed.GetCache(), High);
+	int32 LowKinds[NumKinds] = {}, HighOthers = 0;
+	for (const uint64 Id : SLow->CellIds) { LowKinds[FMath::Clamp((int32)(Id >> 60), 0, NumKinds - 1)] += 1; }
+	for (const uint64 Id : SHigh->CellIds) { HighOthers += (EFaunaKind)(Id >> 60) == EFaunaKind::Floater ? 0 : 1; }
+	AddInfo(FString::Printf(TEXT("with the fliers and herds about too: a camera 30 m up has %d fliers', %d herds' and %d jellies' cells read (kinds 0x%x), one 6 km up %d cells, %d of other kinds (kinds 0x%x; %d read anew); coming up asks for a scan %s, staying %s"),
+		LowKinds[(int32)EFaunaKind::Flier], LowKinds[(int32)EFaunaKind::Herd], LowKinds[(int32)EFaunaKind::Floater], SLow->Kinds, SHigh->CellIds.Num(), HighOthers, SHigh->Kinds, SHigh->Evaluated,
+		bUpWants ? TEXT("yes") : TEXT("no"), bStillWants ? TEXT("yes") : TEXT("no")));
+	TestTrue(TEXT("near the ground every kind's cells read"), LowKinds[(int32)EFaunaKind::Flier] > 0 && LowKinds[(int32)EFaunaKind::Herd] > 0 && LowKinds[(int32)EFaunaKind::Floater] > 0);
+	TestTrue(TEXT("6 km up the jellies' alone"), SHigh->CellIds.Num() > 0 && HighOthers == 0 && SHigh->Kinds == KindBit(EFaunaKind::Floater) && SHigh->Evaluated == 0);
+	TestTrue(TEXT("coming up past the others' height asks for a scan, staying put does not"), bUpWants && !bStillWants);
+
+	// Flying about the fliers' and herds' height over rolling ground (4.6 km over it and 3.9 km, twenty times, over the
+	// place read near the ground): no scan asked for, their cells kept. Up to 6 km and back down to the ground: a scan each
+	// way, the way down reading no cell anew (the cells of the kinds the way up's scan did not read kept as they were).
+	FFaunaField Rolling;
+	Rolling.SetWorld(All);
+	Rolling.Accept(*SLow);
+	auto FlyAt = [&](double AltCm, int32& Scans, int32& Read)
+	{
+		if (!Rolling.WantsScan(Dir, AltCm)) { return; }
+		const uint32 K = Rolling.ScanKinds(AltCm);
+		const auto S = FFaunaField::Scan(All, Dir, Rolling.ScanRadiusCm(K), Rolling.GetCache(), K);
+		Rolling.Accept(*S);
+		++Scans;
+		Read += S->Evaluated;
+	};
+	int32 RollScans = 0, RollRead = 0, UpScans = 0, UpRead = 0, DownScans = 0, DownRead = 0;
+	for (int32 k = 0; k < 20; ++k)
+	{
+		FlyAt(4.6e5, RollScans, RollRead);
+		FlyAt(3.9e5, RollScans, RollRead);
+	}
+	FlyAt(6.0e5, UpScans, UpRead);
+	FlyAt(3000.0, DownScans, DownRead);
+	AddInfo(FString::Printf(TEXT("flying between 3.9 and 4.6 km over the ground twenty times: %d scans asked for, %d cells read anew; up to 6 km %d scan (%d cells read anew), back down to 30 m %d (%d read anew)"),
+		RollScans, RollRead, UpScans, UpRead, DownScans, DownRead));
+	TestEqual(TEXT("flying about the fliers' height over rolling ground asks for no scan"), RollScans, 0);
+	TestTrue(TEXT("up past it and back down, a scan each way"), UpScans == 1 && DownScans == 1);
+	TestEqual(TEXT("and the way down reads no cell anew"), DownRead, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaFloaterGateTest, "Slonk.Fauna.FloaterGate", SLONK_TEST_FLAGS)
+bool FSlonkFaunaFloaterGateTest::RunTest(const FString& Parameters)
+{
+	// A camera coming straight down from 30 km over a world teeming with jellies to 2 km, and climbing back, at eight
+	// places over it: every jelly it spawns is past its fade (its nearest drawn point, wherever round its loop it is,
+	// farther from the camera than the kind's FadeCm), and so is every one it lets go (but those let go to make room for
+	// nearer ones, past their fade along the ground by their loops already), so none pops in or out. The same for one of
+	// the highest-drifting, largest jellies over a loop whose ground stands 1, 3 and 6 km higher than the ground under the
+	// scan's middle (a ridge, a range), under the camera and 4 and 9 km off to its side: spawned, and past its fade.
+	using namespace SlonkFauna;
+	FFaunaWorld W;
+	if (!JellyWorld(0.9f, 0.45f, 0.6f, W)) { AddError(TEXT("no teeming jelly world found")); return false; }
+	const FFaunaKindDesc& D = KindDesc(EFaunaKind::Floater);
+	const double R = W.P.RadiusCm;
+	const double H = Floater::HalfHeightCm(W.Profile.Plans[(int32)EFaunaKind::Floater]);
+	// How far from its middle a jelly is drawn at most: its instance's padded box (its mesh's box grown by 0.15 of it and
+	// 20 units, and by the kind's padding) at its span.
+	const double BoxAcross = 1.15 * Floater::RimCm + 20.0 + D.CullPaddingUnits, BoxAlong = 1.15 * H + 20.0 + D.CullPaddingUnits;
+	auto Nearest = [&](const FFaunaGroup& G, const FVector& Cam)
+	{
+		const double Reach = (double)G.SpanM * FMath::Sqrt(2.0 * BoxAcross * BoxAcross + BoxAlong * BoxAlong);
+		double Least = TNumericLimits<double>::Max();
+		for (int32 k = 0; k < 96; ++k) { Least = FMath::Min(Least, FVector::Dist(PathAt(G, R, G.PeriodSec * k / 96.0).PosCm, Cam) - Reach); }
+		return Least;
+	};
+	auto TopOf = [](const FFaunaGroup& G)
+	{
+		double Top = -1.0e30;
+		for (const float Hg : G.Ground) { Top = FMath::Max(Top, (double)Hg); }
+		return Top;
+	};
+	struct FFlown
+	{
+		int32 Spawned = 0, LetGo = 0, Near = 0;
+		double Least = TNumericLimits<double>::Max(), LowestSpawn = TNumericLimits<double>::Max(), HighestSpawn = 0.0, MostRise = 0.0;
+	};
+	// Down from 30 km to 2 km over the ground under the scan's middle in 50 m steps, and back up.
+	auto Fly = [&](FFaunaField& F, const FVector& Dir, FFlown& Out)
+	{
+		TArray<FFaunaField::FGroupRef> Spawned;
+		TArray<uint64> LetGo;
+		TMap<uint64, FFaunaField::FGroupRef> Known;
+		const double Ground = F.GetGroundCm();
+		auto Step = [&](double Alt)
+		{
+			const FVector Cam = Dir * (R + Ground + Alt);
+			F.Select(Cam, Spawned, LetGo);
+			for (const FFaunaField::FGroupRef& G : Spawned)
+			{
+				Known.Add(G->Id, G);
+				const double Nr = Nearest(*G, Cam);
+				++Out.Spawned;
+				Out.Near += Nr > D.FadeCm ? 0 : 1;
+				Out.Least = FMath::Min(Out.Least, Nr);
+				Out.LowestSpawn = FMath::Min(Out.LowestSpawn, Alt);
+				Out.HighestSpawn = FMath::Max(Out.HighestSpawn, Alt);
+				Out.MostRise = FMath::Max(Out.MostRise, TopOf(*G) - Ground);
+			}
+			for (const uint64 Id : LetGo)
+			{
+				const FFaunaField::FGroupRef* G = Known.Find(Id);
+				if (!G || FVector::Dist(Dir, (*G)->Centre) * R - (*G)->ExtentCm() > D.FadeCm) { continue; }
+				const double Nr = Nearest(**G, Cam);
+				++Out.LetGo;
+				Out.Near += Nr > D.FadeCm ? 0 : 1;
+				Out.Least = FMath::Min(Out.Least, Nr);
+			}
+		};
+		for (double Alt = 3.0e6; Alt >= 2.0e5; Alt -= 5000.0) { Step(Alt); }
+		for (double Alt = 2.0e5; Alt <= 3.0e6; Alt += 5000.0) { Step(Alt); }
+	};
+	FFlown Real;
+	for (int32 i = 0; i < 8; ++i)
+	{
+		const FVector Dir = Spread(i * 71 + 13, 600);
+		FFaunaField F;
+		F.SetWorld(W);
+		F.Accept(*FFaunaField::Scan(W, Dir, F.ScanRadiusCm(), nullptr));
+		Fly(F, Dir, Real);
+	}
+	AddInfo(FString::Printf(TEXT("coming down from 30 km to 2 km at 8 places over a world rolling jellies into %.0f%% of its cells, and climbing back: %d spawned (the camera %.1f to %.1f km over the ground under the scan's middle; their loops' ground up to %.0f m higher than that), %d let go by its height; their nearest drawn points %.2f km from the camera at the least (they fade out by %.1f km)"),
+		100.0 * W.Profile.FloaterShare, Real.Spawned, Real.LowestSpawn / 1e5, Real.HighestSpawn / 1e5, Real.MostRise / 100.0, Real.LetGo, Real.Least / 1e5, D.FadeCm / 1e5));
+	TestTrue(TEXT("jellies spawned coming down and let go climbing"), Real.Spawned > 20 && Real.LetGo > 20);
+	TestEqual(TEXT("every one past its fade as it comes and goes"), Real.Near, 0);
+
+	// A ridge's jelly: one of the highest-drifting and largest, its loop's highest ground 1, 3 and 6 km over the ground
+	// under the scan's middle, under the camera and off to its side.
+	FFaunaGroup Base;
+	if (!TestJelly(W, Base)) { AddError(TEXT("no jelly found")); return false; }
+	const FVector Dir = Spread(5, 600);
+	const TSharedRef<FFaunaField::FScan, ESPMode::ThreadSafe> Bare = FFaunaField::Scan(W, Dir, 0.0, nullptr, 0u);
+	FFlown Ridge;
+	int32 Cases = 0, CasesSpawned = 0;
+	double RidgeLow = TNumericLimits<double>::Max(), RidgeHigh = 0.0;
+	for (const double Rise : { 1.0e5, 3.0e5, 6.0e5 })
+	{
+		for (const double Off : { 0.0, 4.0e5, 9.0e5 })
+		{
+			FFaunaGroup J = Base;
+			J.Centre = AlongGround(Dir, Off, R, 0.6);
+			J.East = FVector::CrossProduct(FMath::Abs(J.Centre.Z) < 0.95 ? FVector::ZAxisVector : FVector::XAxisVector, J.Centre).GetSafeNormal();
+			J.North = FVector::CrossProduct(J.Centre, J.East);
+			const double Top = TopOf(Base);
+			for (float& Hg : J.Ground) { Hg = (float)(Bare->GroundCm + Rise + ((double)Hg - Top)); }
+			J.CruiseCm = Floater::MaxCruiseCm;
+			J.BobCm = 6.0e3;
+			J.SpanM = (float)Floater::MaxSpanM;
+			FFaunaField::FScan S = *Bare;
+			S.CellIds = { J.Id };
+			S.CellGroups = { MakeShared<const FFaunaGroup, ESPMode::ThreadSafe>(J) };
+			S.Kinds = KindBit(EFaunaKind::Floater);
+			FFaunaField F;
+			F.SetWorld(W);
+			F.Accept(S);
+			FFlown One;
+			Fly(F, Dir, One);
+			++Cases;
+			CasesSpawned += One.Spawned > 0 && One.LetGo > 0 ? 1 : 0;
+			Ridge.Spawned += One.Spawned;
+			Ridge.LetGo += One.LetGo;
+			Ridge.Near += One.Near;
+			Ridge.Least = FMath::Min(Ridge.Least, One.Least);
+			RidgeLow = FMath::Min(RidgeLow, One.LowestSpawn);
+			RidgeHigh = FMath::Max(RidgeHigh, One.HighestSpawn);
+		}
+	}
+	AddInfo(FString::Printf(TEXT("a jelly of %.0f m drifting %.0f m over a loop whose ground stands 1 to 6 km over the ground under the scan's middle, under the camera and off to its side: %d of %d cases spawned and let go (spawned with the camera %.1f to %.1f km over that ground), its nearest drawn point %.2f km from the camera at the least"),
+		Floater::MaxSpanM, Floater::MaxCruiseCm / 100.0, CasesSpawned, Cases, RidgeLow / 1e5, RidgeHigh / 1e5, Ridge.Least / 1e5));
+	TestEqual(TEXT("a ridge's jelly spawned and let go in every case"), CasesSpawned, Cases);
+	TestEqual(TEXT("and past its fade as it comes and goes"), Ridge.Near, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaJellySpeckTest, "Slonk.Fauna.JellySpeck", SLONK_TEST_FLAGS)
+bool FSlonkFaunaJellySpeckTest::RunTest(const FString& Parameters)
+{
+	// Each of a jelly's coarser LODs covers about as much of the sky as its finest does, seen from far off straight from
+	// above, from below and from the side (at eight bearings round it), within half as much again either way: its speck
+	// (LOD 2) drawn whole, as its finer LODs' pores (under a pixel by then) and their bell's two layers seen from the side
+	// leave most of it, with a level diamond at its rim for a view from above or below, to which its crossed planes are
+	// edge-on. Its tentacles glow about as much at night, within half as much again either way: its speck's sheet is as
+	// wide as its ribbons laid side by side, shared between its two planes. From the side that is on average round it (its
+	// ribbons hide one another, front and back, as the view comes round, by as much as half); from above and below its
+	// tentacles are edge-on at every LOD and glow next to nothing. And all of it glows about as much, from above, below and
+	// the side (round it): its speck's ribs lit over its whole bell, and a strip of its ring canal at its rim.
+	using namespace UE::Geometry;
+	const TArray<FFaunaBodyPlan> Plans = JellyPlans();
+	struct FView { FVector Dir; int32 Class; };
+	TArray<FView> Views = { { -FVector::ZAxisVector, 0 }, { FVector::ZAxisVector, 1 } };
+	for (int32 k = 0; k < 8; ++k) { const double A = UE_DOUBLE_HALF_PI * k / 8.0; Views.Add({ FVector(FMath::Cos(A), FMath::Sin(A), 0.0), 2 }); }
+	constexpr double Factor = 1.5;
+	double CoverLo[3][3], CoverHi[3][3], TentLo[3], TentHi[3], EachLo[3], EachHi[3], GlowLo[3], GlowHi[3], EdgeOn[3], TopGlowLo[3], TopGlowHi[3];
+	for (int32 L = 0; L < 3; ++L)
+	{
+		for (int32 C = 0; C < 3; ++C) { CoverLo[L][C] = 1e9; CoverHi[L][C] = 0.0; }
+		TentLo[L] = EachLo[L] = GlowLo[L] = TopGlowLo[L] = 1e9;
+		TentHi[L] = EachHi[L] = GlowHi[L] = EdgeOn[L] = TopGlowHi[L] = 0.0;
+	}
+	int32 CoverOff = 0, GlowOff = 0;
+	FJellySight First[3][3];
+	for (int32 p = 0; p < Plans.Num(); ++p)
+	{
+		const FFaunaBodyPlan& Plan = Plans[p];
+		FDynamicMesh3 Lods[SlonkFaunaMeshes::NumLods];
+		for (int32 L = 0; L < SlonkFaunaMeshes::NumLods; ++L)
+		{
+			if (!SlonkFaunaMeshes::BuildLod(Plan, L, Lods[L])) { AddError(TEXT("no jelly built")); return false; }
+		}
+		float Cu[SlonkFauna::Custom::Num] = {};
+		Cu[SlonkFauna::Custom::Seed] = 0.37f;
+		Cu[SlonkFauna::Custom::PerKind] = (float)Plan.Symmetry;
+		Cu[SlonkFauna::Custom::RateHz] = 0.25f;
+		TArray<FJellySight> Sights[SlonkFaunaMeshes::NumLods];
+		for (int32 L = 0; L < SlonkFaunaMeshes::NumLods; ++L)
+		{
+			for (const FView& V : Views) { Sights[L].Add(SeeJelly(Lods[L], V.Dir, Cu)); }
+			if (p == 0) { First[L][0] = Sights[L][0]; First[L][1] = Sights[L][1]; First[L][2] = Sights[L][2]; }
+		}
+		for (int32 L = 1; L < SlonkFaunaMeshes::NumLods; ++L)
+		{
+			double Tent0 = 0.0, TentL = 0.0, Glow0 = 0.0, GlowL = 0.0;
+			for (int32 v = 0; v < Views.Num(); ++v)
+			{
+				const FJellySight& S0 = Sights[0][v];
+				const FJellySight& S = Sights[L][v];
+				const double Rc = S.Covered / FMath::Max(S0.Covered, 1.0);
+				CoverLo[L][Views[v].Class] = FMath::Min(CoverLo[L][Views[v].Class], Rc);
+				CoverHi[L][Views[v].Class] = FMath::Max(CoverHi[L][Views[v].Class], Rc);
+				CoverOff += Rc >= 1.0 / Factor && Rc <= Factor ? 0 : 1;
+				if (Views[v].Class == 2)
+				{
+					Tent0 += S0.TentacleGlow;
+					TentL += S.TentacleGlow;
+					Glow0 += S0.Glow;
+					GlowL += S.Glow;
+					const double Re = S.TentacleGlow / FMath::Max(S0.TentacleGlow, 1.0);
+					EachLo[L] = FMath::Min(EachLo[L], Re);
+					EachHi[L] = FMath::Max(EachHi[L], Re);
+				}
+				else
+				{
+					const double Most = FMath::Max(S0.TentacleGlow, S.TentacleGlow) / FMath::Max(S0.Covered, 1.0);
+					EdgeOn[L] = FMath::Max(EdgeOn[L], Most);
+					const double Rb = S.Glow / FMath::Max(S0.Glow, 1.0);
+					TopGlowLo[L] = FMath::Min(TopGlowLo[L], Rb);
+					TopGlowHi[L] = FMath::Max(TopGlowHi[L], Rb);
+					GlowOff += Rb >= 1.0 / Factor && Rb <= Factor ? 0 : 1;
+					GlowOff += Most < 0.03 ? 0 : 1;
+				}
+			}
+			const double Rt = TentL / FMath::Max(Tent0, 1.0), Rg = GlowL / FMath::Max(Glow0, 1.0);
+			TentLo[L] = FMath::Min(TentLo[L], Rt);
+			TentHi[L] = FMath::Max(TentHi[L], Rt);
+			GlowLo[L] = FMath::Min(GlowLo[L], Rg);
+			GlowHi[L] = FMath::Max(GlowHi[L], Rg);
+			GlowOff += Rt >= 1.0 / Factor && Rt <= Factor && Rg >= 1.0 / Factor && Rg <= Factor ? 0 : 1;
+		}
+	}
+	AddInfo(FString::Printf(TEXT("the first plan (%d ribs, %d tentacles), unit-mesh cm squared covered from above, below and the side at bearing 0, LODs 0/1/2: %.0f/%.0f/%.0f, %.0f/%.0f/%.0f, %.0f/%.0f/%.0f; its tentacles glowing from the side %.0f/%.0f/%.0f"),
+		Plans[0].Symmetry, SlonkFauna::Floater::TentacleCount(Plans[0]), First[0][0].Covered, First[1][0].Covered, First[2][0].Covered, First[0][1].Covered, First[1][1].Covered, First[2][1].Covered,
+		First[0][2].Covered, First[1][2].Covered, First[2][2].Covered, First[0][2].TentacleGlow, First[1][2].TentacleGlow, First[2][2].TentacleGlow));
+	for (int32 L = 1; L < SlonkFaunaMeshes::NumLods; ++L)
+	{
+		AddInfo(FString::Printf(TEXT("%d plans, LOD %d against LOD 0: covering %.2f to %.2f as much from above, %.2f to %.2f from below, %.2f to %.2f from the side; its tentacles glowing %.2f to %.2f as much from the side round it (%.2f to %.2f at a bearing), all of it %.2f to %.2f; from above and below its tentacles' glow at most %.3f of LOD 0's cover, all its glow %.2f to %.2f as much"),
+			Plans.Num(), L, CoverLo[L][0], CoverHi[L][0], CoverLo[L][1], CoverHi[L][1], CoverLo[L][2], CoverHi[L][2], TentLo[L], TentHi[L], EachLo[L], EachHi[L], GlowLo[L], GlowHi[L], EdgeOn[L],
+			TopGlowLo[L], TopGlowHi[L]));
+	}
+	TestEqual(TEXT("each LOD covers within half as much again of the finest's, from above, below and the side"), CoverOff, 0);
+	TestEqual(TEXT("and its tentacles glow as much, within half as much again, from the side (next to nothing from above and below), and all of it from above, below and the side"), GlowOff, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaFloaterShadowTest, "Slonk.Fauna.FloaterShadow", SLONK_TEST_FLAGS)
+bool FSlonkFaunaFloaterShadowTest::RunTest(const FString& Parameters)
+{
+	// A jelly's shadow falls away from the sun from its middle down to the ground under it: straight under it with the sun
+	// overhead; 2 km up with the sun 30 degrees up, 3.46 km off along the ground, so crew standing in it, 4 km from the jelly
+	// and past the kind's 3.5 km reach for shadows, have it drawn (the nearer of the jelly and where its shadow falls, as
+	// UPlanetFaunaComponent::UpdateFloater switches it, is within it); with the sun all but on the horizon or under it,
+	// none (its middle). The ground its loop has it over is the ground its path flies it over.
+	using namespace SlonkFauna;
+	FFaunaWorld W;
+	if (!JellyWorld(0.8f, 0.2f, 0.6f, W)) { AddError(TEXT("no jelly world found")); return false; }
+	FFaunaGroup G;
+	if (!TestJelly(W, G)) { AddError(TEXT("no jelly found")); return false; }
+	const double R = W.P.RadiusCm;
+	const FFaunaKindDesc& D = KindDesc(EFaunaKind::Floater);
+	double OffPath = 0.0;
+	for (int32 k = 0; k < 96; ++k)
+	{
+		const double T = G.PeriodSec * k / 96.0;
+		const double Over = PathAt(G, R, T).PosCm.Size() - R - FloaterGroundAt(G, T) - G.CruiseCm;
+		OffPath = FMath::Max(OffPath, FMath::Max(-Over, Over - G.BobCm));
+	}
+	const FVector Up = G.Centre, E = G.East;
+	const double Ground = 4.0e4, Over = 2.0e5;
+	const FVector Pos = Up * (R + Ground + Over), Under = Up * (R + Ground);
+	const FVector Overhead = FloaterShadowFall(Pos, R, Ground, Up);
+	const FVector Sun30 = Up * FMath::Sin(UE_DOUBLE_PI / 6.0) + E * FMath::Cos(UE_DOUBLE_PI / 6.0);
+	const FVector At30 = FloaterShadowFall(Pos, R, Ground, Sun30);
+	const FVector AtDusk = FloaterShadowFall(Pos, R, Ground, (Up * 0.02 + E).GetSafeNormal());
+	const FVector AtNight = FloaterShadowFall(Pos, R, Ground, (E - Up * 0.3).GetSafeNormal());
+	const double Along30 = (At30 - Under).Size(), Level30 = FVector::DotProduct(At30 - Under, Up);
+	const FVector Crew = At30 + Up * 180.0;
+	const double JellyOff = FVector::Dist(Pos, Crew), Switched = FMath::Min(JellyOff, FVector::Dist(At30, Crew));
+	AddInfo(FString::Printf(TEXT("its path %.2f cm off its loop's ground, cruise and bob at the most; a jelly 2 km up: its shadow %.1f cm from under it with the sun overhead, %.3f km along the ground (%.1f cm off it) with the sun 30 degrees up, crew there %.2f km from it (its shadow switched by %.2f km, its reach %.1f km); its middle with the sun at 1 degree %s, under the horizon %s"),
+		OffPath, FVector::Dist(Overhead, Under), Along30 / 1e5, Level30, JellyOff / 1e5, Switched / 1e5, D.ShadowReachCm / 1e5,
+		AtDusk.Equals(Pos, 1e-3) ? TEXT("yes") : TEXT("no"), AtNight.Equals(Pos, 1e-3) ? TEXT("yes") : TEXT("no")));
+	TestTrue(TEXT("its loop's ground the ground its path flies over"), OffPath < 1.0);
+	TestTrue(TEXT("its shadow straight under it with the sun overhead"), FVector::Dist(Overhead, Under) < 1.0);
+	TestTrue(TEXT("and down the sun's rays to the ground with it 30 degrees up"), FMath::IsNearlyEqual(Along30, Over / FMath::Tan(UE_DOUBLE_PI / 6.0), 10.0) && FMath::Abs(Level30) < 1.0);
+	TestTrue(TEXT("crew standing in it past the reach of the jelly itself have it drawn"), JellyOff > D.ShadowReachCm && Switched < D.ShadowReachCm);
+	TestTrue(TEXT("none to speak of with the sun on the horizon or under it"), AtDusk.Equals(Pos, 1e-3) && AtNight.Equals(Pos, 1e-3));
 	return true;
 }
 
