@@ -4,7 +4,7 @@
 // last a couple of triangles for a speck. The vertex colours follow FaunaTypes.h's contract (SlonkFauna::Vc): a wing's
 // green rises from 0 on its hinge, which stands Vc::WingRootCm out from the body's axis, to 1 at its tip, and the material
 // beats the wing about that hinge by it; a walker's legs, neck and tail flex from their roots, its legs' blue their place
-// in the gait (SlonkFauna::Walker).
+// in the gait (SlonkFauna::Walker); a fish bends from its middle to its tail's tip as its tail flicks.
 
 #pragma once
 
@@ -18,9 +18,9 @@ namespace SlonkFaunaMeshes
 {
 	constexpr int32 NumLods = 3;
 	/** The mesh for a kind's body plan, its LOD screen sizes the kind's (SlonkFauna::FFaunaKindDesc::LodScreenSize):
-	 *  nullptr for a plan nothing is built for yet (only the winged fliers' and the four-legged walkers' so far: a bird of
-	 *  60, 12 and 2 triangles, a walker of 150, 30 and 2). Transient and rooted, so it survives PIE sessions; never
-	 *  reference it from anything saved. */
+	 *  nullptr for a plan nothing is built for yet (only the winged fliers', the four-legged walkers' and the finned
+	 *  fish's so far: a bird of 60, 12 and 2 triangles, a walker of 150, 30 and 2, a fish of 55, 19 and 2). Transient and
+	 *  rooted, so it survives PIE sessions; never reference it from anything saved. */
 	SLONK_API UStaticMesh* GetMesh(const FFaunaBodyPlan& Plan, EFaunaKind Kind);
 	/** A plan's LOD as built, for the tests: false if nothing is built for the plan. */
 	SLONK_API bool BuildLod(const FFaunaBodyPlan& Plan, int32 Lod, UE::Geometry::FDynamicMesh3& Out);

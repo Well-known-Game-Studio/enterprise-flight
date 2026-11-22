@@ -72,7 +72,76 @@ bool SlonkFauna::ShoalAt(const FVector& PlanetLocalCm, double RadiusCm, float De
 	Out.HalfLengthCm = Half * Cell * Along.Size();
 	Out.HalfWidthCm = 0.45 * Half * Cell * Across.Size();
 	Out.DepthCm = Depth;
+	// The loop's own middle, lifted onto the sphere the same way.
+	const double Lu = (Fu + CtrU) * Cell + (SeaPt[Iu] - Pn[Iu]), Lv = (Fv + CtrV) * Cell + (SeaPt[Iv] - Pn[Iv]);
+	const double LRest = RadiusCm * RadiusCm - Lu * Lu - Lv * Lv;
+	Out.LoopCentreCm[Iu] = Lu;
+	Out.LoopCentreCm[Iv] = Lv;
+	Out.LoopCentreCm[Ax] = (U[Ax] < 0.0 ? -1.0 : 1.0) * FMath::Sqrt(FMath::Max(LRest, 0.0));
+	Out.LoopRadiusCm = LoopR * Cell;
 	return true;
+}
+
+int32 SlonkFauna::ProjectionAxis(const FVector& Dir)
+{
+	const FVector A = Dir.GetAbs();
+	if (A.X >= A.Y && A.X >= A.Z) { return 0; }
+	return A.Y >= A.Z ? 1 : 2;
+}
+
+FVector SlonkFauna::SwellAt(const FVector& PlanetLocalCm, double TimeSec, double SwellCm)
+{
+	// terrain_material.py's SlonkGerstner, wave for wave, on the projection's plane at the point (its two components there,
+	// which whole wave numbers across the noise period leave the same however many periods are taken off them).
+	const int32 Ax = ProjectionAxis(PlanetLocalCm);
+	const int32 Iu = Ax == 0 ? 1 : 0, Iv = Ax == 2 ? 1 : 2;
+	const FVector Pn = SlonkScatter::ToNoiseSpace(PlanetLocalCm);
+	const double Pu = Pn[Iu], Pv = Pn[Iv];
+	static const double Kx[4] = { 100.0, 180.0, 0.0, -300.0 }, Ky[4] = { 70.0, -60.0, 256.0, 400.0 };
+	static const double Amp[4] = { 0.55, 0.3, 0.25, 0.12 };
+	constexpr double Q = 0.55;
+	FVector D = FVector::ZeroVector;
+	for (int32 i = 0; i < 4; ++i)
+	{
+		const double Ku = UE_DOUBLE_TWO_PI * Kx[i] / SlonkScatter::NoisePeriodCm, Kv = UE_DOUBLE_TWO_PI * Ky[i] / SlonkScatter::NoisePeriodCm;
+		const double Kl = FMath::Sqrt(Ku * Ku + Kv * Kv);
+		const double W = FMath::Sqrt(981.0 * Kl);
+		const double Ph = Ku * Pu + Kv * Pv - W * TimeSec;
+		const double A = Amp[i] * SwellCm;
+		const double Sn = FMath::Sin(Ph), Cs = FMath::Cos(Ph);
+		D.X += Ku / Kl * (Q * A * Cs);
+		D.Y += Kv / Kl * (Q * A * Cs);
+		D.Z += A * Sn;
+	}
+	return D;
+}
+
+double SlonkFauna::SwellFade(double DistFromCameraCm)
+{
+	return 1.0 - SlonkScatter::SmoothStep(80000.0, 250000.0, DistFromCameraCm);
+}
+
+double SlonkFauna::SeaSurfaceCm(const FVector& PlanetLocalCm, double RadiusCm, double TimeSec, double SwellCm, double Fade)
+{
+	if (Fade <= 0.0 || SwellCm <= 0.0) { return 0.0; }
+	const FVector U = PlanetLocalCm.GetSafeNormal();
+	const FVector S = U * RadiusCm;
+	// The surface over the point came from a vertex the swell sways across the plane onto it: one step back along that
+	// sway finds it near enough (the sway's own change over the step, a few centimetres at most, is left).
+	const int32 Ax = ProjectionAxis(U);
+	const int32 Iu = Ax == 0 ? 1 : 0, Iv = Ax == 2 ? 1 : 2;
+	const FVector D0 = SwellAt(S, TimeSec, SwellCm) * Fade;
+	FVector Back = S;
+	Back[Iu] -= D0.X;
+	Back[Iv] -= D0.Y;
+	// Its rise there: the swell's lift up its radial, and its sway's, which runs along its plane's fixed axes rather than
+	// along the sphere, so it lifts or lowers the vertex as well as carrying it across wherever the radial leans off the
+	// plane's (the more toward the projection's seams).
+	const FVector B = Back.GetSafeNormal();
+	const int32 Bx = ProjectionAxis(B);
+	const int32 Bu = Bx == 0 ? 1 : 0, Bv = Bx == 2 ? 1 : 2;
+	const FVector Db = SwellAt(B * RadiusCm, TimeSec, SwellCm);
+	return (Db.Z + B[Bu] * Db.X + B[Bv] * Db.Y) * Fade;
 }
 
 double SlonkFauna::ShoalShapeAt(const FShoal& S, const FVector& PlanetLocalCm)
@@ -149,6 +218,31 @@ namespace
 		{ 8, 40, 0.4f, 0.7f, 2.f, 4.f, 25.f, 90.f, 12.f, 17.f, 6.f, 8.f },
 	};
 
+	/** A leaper cell's plane of the projection, its two axes and its side of the planet, from its face. */
+	void LeaperPlane(int32 Face, int32& OutAx, int32& OutIu, int32& OutIv, double& OutSide)
+	{
+		OutAx = FMath::Clamp(Face / 2, 0, 2);
+		OutIu = OutAx == 0 ? 1 : 0;
+		OutIv = OutAx == 2 ? 1 : 2;
+		OutSide = (Face & 1) != 0 ? -1.0 : 1.0;
+	}
+	/** The side of a cell of the shoals' lattice, cm. */
+	constexpr double ShoalCellCm = SlonkScatter::NoisePeriodCm / SlonkFauna::ShoalCellsPerPeriod;
+	/** A point of a leaper cell's plane (cm across its two axes) lifted onto the sea-level sphere on its side: false where
+	 *  the plane is past the sphere's edge there. */
+	bool LeaperPlanePoint(const SlonkFauna::FFaunaCell& C, double RadiusCm, double Au, double Av, FVector& Out)
+	{
+		int32 Ax, Iu, Iv;
+		double Side;
+		LeaperPlane(C.Face, Ax, Iu, Iv, Side);
+		const double Rest = RadiusCm * RadiusCm - Au * Au - Av * Av;
+		if (Rest <= 0.0) { return false; }
+		Out[Iu] = Au;
+		Out[Iv] = Av;
+		Out[Ax] = Side * FMath::Sqrt(Rest);
+		return true;
+	}
+
 	float SmoothStepF(float A, float B, float X)
 	{
 		const float T = FMath::Clamp((X - A) / (B - A), 0.f, 1.f);
@@ -176,7 +270,8 @@ bool SlonkFauna::FFaunaWorld::operator==(const FFaunaWorld& O) const
 			&& A.Density == B.Density && A.WetMin == B.WetMin;
 	};
 	return P == O.P && SameProfile(Profile, O.Profile) && Palette.Mountain == O.Palette.Mountain && Palette.Land == O.Palette.Land && Palette.Land2 == O.Palette.Land2
-		&& Palette.Ice == O.Palette.Ice && Life == O.Life && Density == O.Density && KindMask == O.KindMask && bTowns == O.bTowns && (!bTowns || SamePeople(People, O.People));
+		&& Palette.Ice == O.Palette.Ice && Life == O.Life && Density == O.Density && KindMask == O.KindMask && bTowns == O.bTowns && (!bTowns || SamePeople(People, O.People))
+		&& Sea == O.Sea;
 }
 
 bool SlonkFauna::FFaunaGroup::operator==(const FFaunaGroup& O) const
@@ -188,7 +283,8 @@ bool SlonkFauna::FFaunaGroup::operator==(const FFaunaGroup& O) const
 		&& FlapHz == O.FlapHz && Pigment == O.Pigment && Glow == O.Glow
 		&& CycleSec == O.CycleSec && WalkCmS == O.WalkCmS && TrotCmS == O.TrotCmS && WalkA == O.WalkA && WalkB == O.WalkB && TrotA == O.TrotA && TrotB == O.TrotB
 		&& RampSec == O.RampSec && StartCm == O.StartCm && ArcCm == O.ArcCm && FormationCm == O.FormationCm && HerdRadiusCm == O.HerdRadiusCm && GroundHalfCm == O.GroundHalfCm
-		&& DryCm == O.DryCm;
+		&& DryCm == O.DryCm && ShoalDensity == O.ShoalDensity && ShoalHalfLengthCm == O.ShoalHalfLengthCm && ShoalHalfWidthCm == O.ShoalHalfWidthCm && ShoalDepthCm == O.ShoalDepthCm
+		&& WaterCm == O.WaterCm;
 }
 
 int64 SlonkFauna::CellsAcross(const FPlanetTerrainParams& P, EFaunaKind K)
@@ -200,12 +296,38 @@ SlonkFauna::FFaunaCell SlonkFauna::CellOf(const FPlanetTerrainParams& P, EFaunaK
 {
 	FFaunaCell C;
 	C.Kind = K;
+	if (K == EFaunaKind::Leaper)
+	{
+		// The shoals' own lattice on the projection's plane at the direction (as ShoalAt lays it, its cells unwrapped), the
+		// direction first brought onto the sea-level sphere.
+		const FVector Up = Dir.GetSafeNormal();
+		const int32 Ax = ProjectionAxis(Up);
+		const int32 Iu = Ax == 0 ? 1 : 0, Iv = Ax == 2 ? 1 : 2;
+		C.Face = Ax * 2 + (Up[Ax] < 0.0 ? 1 : 0);
+		C.X = (int64)FMath::FloorToDouble(Up[Iu] * P.RadiusCm / ShoalCellCm);
+		C.Y = (int64)FMath::FloorToDouble(Up[Iv] * P.RadiusCm / ShoalCellCm);
+		return C;
+	}
 	double U = 0.0, V = 0.0;
 	SlonkTerrain::FaceUV(Dir.GetSafeNormal(), C.Face, U, V);
 	const int64 N = CellsAcross(P, K);
 	C.X = FMath::Clamp<int64>((int64)FMath::FloorToDouble((U + 1.0) * 0.5 * (double)N), 0, N - 1);
 	C.Y = FMath::Clamp<int64>((int64)FMath::FloorToDouble((V + 1.0) * 0.5 * (double)N), 0, N - 1);
 	return C;
+}
+
+bool SlonkFauna::CellMiddle(const FPlanetTerrainParams& P, const FFaunaCell& C, FVector& OutDir)
+{
+	if (C.Kind == EFaunaKind::Leaper)
+	{
+		FVector Pt;
+		if (!LeaperPlanePoint(C, P.RadiusCm, ((double)C.X + 0.5) * ShoalCellCm, ((double)C.Y + 0.5) * ShoalCellCm, Pt)) { return false; }
+		OutDir = Pt.GetSafeNormal();
+		return true;
+	}
+	const double Wd = 2.0 / (double)CellsAcross(P, C.Kind);
+	OutDir = SlonkTerrain::CubeDir(C.Face, -1.0 + Wd * (C.X + 0.5), -1.0 + Wd * (C.Y + 0.5)).GetSafeNormal();
+	return true;
 }
 
 void SlonkFauna::CellsNear(const FPlanetTerrainParams& P, EFaunaKind K, const FVector& Dir, double RadiusCm, TArray<FFaunaCell>& Out)
@@ -233,9 +355,18 @@ void SlonkFauna::CellsNear(const FPlanetTerrainParams& P, EFaunaKind K, const FV
 			bool bAlready = false;
 			Seen.Add(C.Id(), &bAlready);
 			if (bAlready) { continue; }
-			// Nearest first, by the cell's own middle.
-			const double Wd = 2.0 / (double)Across;
-			const FVector Mid = SlonkTerrain::CubeDir(C.Face, -1.0 + Wd * (C.X + 0.5), -1.0 + Wd * (C.Y + 0.5));
+			// Nearest first, by the cell's own middle (a leaper's cell's, on its plane of the projection: one whose middle is off
+			// the sphere is the corner of a plane, which a point met on it never lies in).
+			FVector Mid;
+			if (K == EFaunaKind::Leaper)
+			{
+				if (!CellMiddle(P, C, Mid)) { continue; }
+			}
+			else
+			{
+				const double Wd = 2.0 / (double)Across;
+				Mid = SlonkTerrain::CubeDir(C.Face, -1.0 + Wd * (C.X + 0.5), -1.0 + Wd * (C.Y + 0.5));
+			}
 			Found.Add({ FVector::Dist(Mid, Up) * P.RadiusCm, C });
 		}
 	}
@@ -647,9 +778,128 @@ double SlonkFauna::HerdIntent(const FFaunaGroup& G, double Seconds)
 	return U >= G.WalkA - HerdLeadSec && U < G.WalkB + 0.5 ? 1.0 : 0.0;
 }
 
+double SlonkFauna::LeaperReachCm(const FShoal& S)
+{
+	// Its fish's homes within 0.55 of its painted shape; each leap out from its home up to Jitter of the longest fish's
+	// lengths either way and RangeLo + RangeSpan on, and half of it past that.
+	const double Longest = 100.0 * Leaper::MaxSizeM;
+	return 0.55 * FMath::Max(S.HalfLengthCm, S.HalfWidthCm) + Longest * (UE_DOUBLE_SQRT_2 * Leaper::Jitter + Leaper::RangeLo + Leaper::RangeSpan + 0.5);
+}
+
+SlonkFauna::FLeaperHabitatRead SlonkFauna::LeaperHabitatAt(const FFaunaWorld& W, const FFaunaCell& C)
+{
+	FLeaperHabitatRead R;
+	if (C.Kind != EFaunaKind::Leaper) { return R; }
+	int32 Ax, Iu, Iv;
+	double Side;
+	LeaperPlane(C.Face, Ax, Iu, Iv, Side);
+	const double Rad = W.P.RadiusCm;
+	// The shoal of the cell, found at the cell's middle as the material finds it there: this cell's, on this plane.
+	FVector Mid;
+	if (!LeaperPlanePoint(C, Rad, ((double)C.X + 0.5) * ShoalCellCm, ((double)C.Y + 0.5) * ShoalCellCm, Mid)) { return R; }
+	FShoal S;
+	auto Wrap = [](int64 I) { const int64 Wr = I % ShoalCellsPerPeriod; return (int32)(Wr < 0 ? Wr + ShoalCellsPerPeriod : Wr); };
+	if (!ShoalAt(Mid, Rad, W.Sea.ShoalDensity, 0.0, S) || S.Axis != Ax || S.Key != FIntPoint(Wrap(C.X), Wrap(C.Y)) || (S.LoopCentreCm[Ax] < 0.0) != (Side < 0.0)) { return R; }
+	R.bShoal = true;
+	R.Shoal = S;
+	// Wholly on its plane: its loop and its fish's reach past it, all round, nowhere another plane's (the material lays
+	// both its swell and its shoals by the plane at each pixel).
+	const double Lu = S.LoopCentreCm[Iu], Lv = S.LoopCentreCm[Iv];
+	const double Out = S.LoopRadiusCm + LeaperReachCm(S);
+	R.bOnePlane = true;
+	for (int32 k = 0; k < 8 && R.bOnePlane; ++k)
+	{
+		const double A = UE_DOUBLE_TWO_PI * k / 8.0;
+		FVector Pt;
+		R.bOnePlane = LeaperPlanePoint(C, Rad, Lu + Out * 1.2 * FMath::Cos(A), Lv + Out * 1.2 * FMath::Sin(A), Pt) && ProjectionAxis(Pt) == Ax && (Pt[Ax] < 0.0) == (Side < 0.0);
+	}
+	if (!R.bOnePlane) { return R; }
+	// Among the share of the shoals that hold leapers, on a world full of life at the density asked for.
+	SlonkScatter::FDraw Dr(SlonkScatter::CellHash(C.Face, 40 + (int32)C.Kind, C.X, C.Y, W.Salt()));
+	R.bGate = Dr.Next() < FMath::Min(Leaper::ShoalShare * (double)W.Life * (double)W.Density, 1.0);
+	if (!R.bGate) { return R; }
+	// (Read from the loop's middle out, and no further once a point will not do.)
+	// The open sea under its leaps, deep enough, no ice: its loop's middle and eight points round it, out to the loop and
+	// its reach (the field's water at ten metres, as the chunks lay it).
+	R.NeedDepthCm = FMath::Max(Leaper::MinWaterCm, S.DepthCm + Leaper::ShoalClearCm);
+	R.MinDepthCm = TNumericLimits<double>::Max();
+	for (int32 k = -1; k < 8 && R.NotSea == 0 && R.Shallow == 0; ++k)
+	{
+		FVector Pt;
+		const double A = UE_DOUBLE_TWO_PI * k / 8.0;
+		if (k >= 0 ? !LeaperPlanePoint(C, Rad, Lu + Out * FMath::Cos(A), Lv + Out * FMath::Sin(A), Pt) : !LeaperPlanePoint(C, Rad, Lu, Lv, Pt)) { ++R.NotSea; continue; }
+		const FVector Dir = Pt.GetSafeNormal();
+		const FPlanetTerrainSample T = SlonkTerrain::Sample(W.P, Dir, 1000.0);
+		++R.Points;
+		bool bSea = T.bWater && FMath::Abs(T.WaterCm) < 1.0 && T.River < 0.05f && T.Ice < 0.3f;
+		if (bSea && W.P.Climate == EClimateModel::Locked)
+		{
+			// A locked world's sea only where the air is neither baked nor frozen.
+			const double Heat = SlonkTerrain::TemperatureN(W.P, Dir, 0.0);
+			bSea = Heat >= 0.03 && Heat <= 0.72;
+		}
+		if (!bSea) { ++R.NotSea; R.MinDepthCm = FMath::Min(R.MinDepthCm, 0.0); continue; }
+		const double Depth = T.WaterCm - T.GroundCm;
+		R.MinDepthCm = FMath::Min(R.MinDepthCm, Depth);
+		R.Shallow += Depth < R.NeedDepthCm ? 1 : 0;
+	}
+	R.bSuits = R.NotSea == 0 && R.Shallow == 0;
+	return R;
+}
+
+namespace
+{
+	/** A group of leapers in a cell of the shoals' lattice: false where the cell holds no painted shoal, no leapers, or the
+	 *  water under them is not the open sea deep enough. */
+	bool LeaperInCell(const SlonkFauna::FFaunaWorld& W, const SlonkFauna::FFaunaCell& C, FFaunaGroup& Out)
+	{
+		using namespace SlonkFauna;
+		const FLeaperHabitatRead H = LeaperHabitatAt(W, C);
+		if (!H.bSuits) { return false; }
+		const FShoal& S = H.Shoal;
+		const FFaunaKindDesc& D = KindDesc(EFaunaKind::Leaper);
+		// The cell's draws after its gate (LeaperHabitatAt's first).
+		SlonkScatter::FDraw Dr(SlonkScatter::CellHash(C.Face, 40 + (int32)C.Kind, C.X, C.Y, W.Salt()));
+		Dr.Next();
+		FFaunaGroup G;
+		G.Id = C.Id();
+		G.Kind = EFaunaKind::Leaper;
+		G.Habitat = EFlierHabitat::Coast;
+		G.Seed = ((uint32)(Dr.Next() * 65536.0) << 16) | (uint32)(Dr.Next() * 65536.0);
+		G.Centre = S.LoopCentreCm.GetSafeNormal();
+		TangentAxes(G.Centre, G.East, G.North);
+		// One to five fish, of 35 to 80 cm (each a tenth either way of it), leaping in turn on a cycle of about four seconds
+		// to each of them (the hour's divisor nearest, 10 to 24 s).
+		G.Members = FMath::Clamp(1 + (int32)(Dr.Next() * Leaper::MaxPerGroup), FMath::Max(D.GroupMin, 1), FMath::Min(D.GroupMax, Leaper::MaxPerGroup));
+		G.SpanM = FMath::Lerp(0.35f, 0.8f, (float)Dr.Next());
+		const double Want = Leaper::SlotSec * G.Members + Leaper::SlotSpread * Dr.Next();
+		G.CycleSec = Leaper::Cycles[0];
+		for (const double Cyc : Leaper::Cycles) { if (FMath::Abs(Cyc - Want) < FMath::Abs(G.CycleSec - Want)) { G.CycleSec = Cyc; } }
+		G.PeriodSec = G.CycleSec;
+		G.Phase0 = Dr.Next();
+		G.FlapHz = 0.f;
+		// Its shoal: the loop it swims round (its extent the loop and its fish's reach past it), how it is painted, how deep
+		// it swims, and the shallowest water read under its leaps.
+		G.ShoalDensity = W.Sea.ShoalDensity;
+		G.RadiusCm = S.LoopRadiusCm;
+		G.Lobe = 0.0;
+		G.MeanderCm = LeaperReachCm(S);
+		G.ShoalHalfLengthCm = S.HalfLengthCm;
+		G.ShoalHalfWidthCm = S.HalfWidthCm;
+		G.ShoalDepthCm = S.DepthCm;
+		G.WaterCm = H.MinDepthCm;
+		G.SpacingM = (float)(S.HalfWidthCm / 100.0);
+		G.Pigment = LeaperPigment(W.Profile.Look, W.Sea.Shallow, 0.85 + 0.3 * Dr.Next());
+		G.Glow = 0.f;
+		Out = MoveTemp(G);
+		return true;
+	}
+}
+
 bool SlonkFauna::GroupInCell(const FFaunaWorld& W, const FFaunaCell& C, FFaunaGroup& Out)
 {
-	if (!W.Spawns(C.Kind) || (C.Kind != EFaunaKind::Flier && C.Kind != EFaunaKind::Herd)) { return false; }
+	if (!W.Spawns(C.Kind) || (C.Kind != EFaunaKind::Flier && C.Kind != EFaunaKind::Herd && C.Kind != EFaunaKind::Leaper)) { return false; }
+	if (C.Kind == EFaunaKind::Leaper) { return LeaperInCell(W, C, Out); }
 	const FFaunaKindDesc& D = KindDesc(C.Kind);
 	const int64 Across = CellsAcross(W.P, C.Kind);
 	if (C.X < 0 || C.Y < 0 || C.X >= Across || C.Y >= Across || C.Face < 0 || C.Face > 5) { return false; }
@@ -766,7 +1016,12 @@ bool SlonkFauna::FindGroupNear(const FFaunaWorld& W, EFaunaKind K, const FVector
 					bool bAlready = false;
 					Seen.Add(C.Id(), &bAlready);
 					if (bAlready) { continue; }
-					const FVector Mid = SlonkTerrain::CubeDir(C.Face, -1.0 + Wd * (C.X + 0.5), -1.0 + Wd * (C.Y + 0.5)).GetSafeNormal();
+					FVector Mid;
+					if (K == EFaunaKind::Leaper)
+					{
+						if (!CellMiddle(W.P, C, Mid)) { continue; }
+					}
+					else { Mid = SlonkTerrain::CubeDir(C.Face, -1.0 + Wd * (C.X + 0.5), -1.0 + Wd * (C.Y + 0.5)).GetSafeNormal(); }
 					Ring.Add({ FVector::Dist(Mid, Up) * W.P.RadiusCm, C });
 				}
 			}
@@ -900,9 +1155,81 @@ namespace
 	}
 }
 
+namespace
+{
+	/** A group of leapers' frame: its shoal's middle at the world's seconds (never wrapped: the material swims its shoals
+	 *  on them), on the sea-level sphere, x the way it swims, z up; at its loop's middle, x its own east, should the shoal
+	 *  not be found (it always is). */
+	SlonkFauna::FFaunaPose LeaperPathAt(const FFaunaGroup& G, double RadiusCm, double Seconds)
+	{
+		auto At = [&](double S, FVector& OutHeading)
+		{
+			SlonkFauna::FShoal Sh;
+			if (SlonkFauna::ShoalAt(G.Centre * RadiusCm, RadiusCm, G.ShoalDensity, S, Sh)) { OutHeading = Sh.Heading; return Sh.CentreCm; }
+			OutHeading = G.East;
+			return G.Centre * RadiusCm;
+		};
+		SlonkFauna::FFaunaPose Pose;
+		FVector Heading, Hm, Hp;
+		Pose.PosCm = At(Seconds, Heading);
+		constexpr double H = 0.25;
+		Pose.VelCmS = (At(Seconds + H, Hp) - At(Seconds - H, Hm)) / (2.0 * H);
+		const FVector Up = Pose.PosCm.GetSafeNormal();
+		FVector Fwd = (Heading - Up * FVector::DotProduct(Heading, Up)).GetSafeNormal();
+		if (Fwd.IsNearlyZero()) { FVector N; TangentAxes(Up, Fwd, N); }
+		Pose.Rot = FRotationMatrix::MakeFromXZ(Fwd, Up).ToQuat();
+		return Pose;
+	}
+
+	/** A group of leapers' fish: each at its home within its shoal's painted shape (out to 0.55 of its half-length along it
+	 *  and of its half-width across, no two closer than a longest fish's length where there is room), unturned, of its
+	 *  length; its slot in the group's cycle the group's offset and its place in the group's order. */
+	void LeaperMembersOf(const FFaunaGroup& G, TArray<FTransform>& OutXf, TArray<float>& OutCustom)
+	{
+		const int32 N = FMath::Clamp(G.Members, 0, SlonkFauna::Leaper::MaxPerGroup);
+		if (N == 0) { return; }
+		FRandomStream Rng((int32)G.Seed);
+		const SlonkFauna::FFaunaKindDesc& D = SlonkFauna::KindDesc(G.Kind);
+		const double Ha = 0.55 * G.ShoalHalfLengthCm, Hw = 0.55 * G.ShoalHalfWidthCm;
+		TArray<FVector> Homes;
+		for (int32 i = 0; i < N; ++i)
+		{
+			FVector Best = FVector::ZeroVector;
+			double BestGap = -1.0;
+			for (int32 Try = 0; Try < 24 && BestGap < 100.0 * SlonkFauna::Leaper::MaxSizeM; ++Try)
+			{
+				FVector B;
+				do { B = FVector(Rng.FRandRange(-1.f, 1.f), Rng.FRandRange(-1.f, 1.f), 0.0); } while (B.SizeSquared() > 1.0);
+				B = FVector(B.X * Ha, B.Y * Hw, 0.0);
+				double Gap = TNumericLimits<double>::Max();
+				for (const FVector& Q : Homes) { Gap = FMath::Min(Gap, FVector::Dist2D(B, Q)); }
+				if (Gap > BestGap) { BestGap = Gap; Best = B; }
+			}
+			Homes.Add(Best);
+		}
+		OutXf.Reserve(N);
+		OutCustom.Reserve(N * SlonkFauna::Custom::Num);
+		for (int32 i = 0; i < N; ++i)
+		{
+			const double Size = FMath::Clamp((double)G.SpanM * Rng.FRandRange(0.9f, 1.1f), SlonkFauna::Leaper::MinSizeM, SlonkFauna::Leaper::MaxSizeM);
+			const float Shade = Rng.FRandRange(0.9f, 1.1f);
+			const float Seed = Rng.FRand();
+			// Its slot in the group's cycle: the group's offset and its place in the order, so the group's fish leap in turn,
+			// a slot (the cycle over their count) apart about.
+			float Ph = (float)G.Phase0 + (float)i / (float)N;
+			Ph -= FMath::FloorToFloat(Ph);
+			OutXf.Add(FTransform(FQuat::Identity, Homes[i], FVector(Size)));
+			const float C[SlonkFauna::Custom::Num] = { G.Pigment.R * Shade, G.Pigment.G * Shade, G.Pigment.B * Shade, G.Glow, Seed, (float)Size, Ph, (float)G.CycleSec,
+				(float)(8 * i + N), (float)D.FadeCm };
+			OutCustom.Append(C, SlonkFauna::Custom::Num);
+		}
+	}
+}
+
 SlonkFauna::FFaunaPose SlonkFauna::PathAt(const FFaunaGroup& G, double RadiusCm, double Seconds)
 {
 	if (G.Kind == EFaunaKind::Herd) { return HerdPathAt(G, RadiusCm, Seconds); }
+	if (G.Kind == EFaunaKind::Leaper) { return LeaperPathAt(G, RadiusCm, Seconds); }
 	// The material's hour: every period divides it, so the wrap changes nothing.
 	double T = FMath::Fmod(Seconds, ClockPeriodSec);
 	if (T < 0.0) { T += ClockPeriodSec; }
@@ -936,6 +1263,7 @@ void SlonkFauna::MembersOf(const FFaunaGroup& G, TArray<FTransform>& OutXf, TArr
 	OutXf.Reset();
 	OutCustom.Reset();
 	if (G.Kind == EFaunaKind::Herd) { HerdMembersOf(G, OutXf, OutCustom); return; }
+	if (G.Kind == EFaunaKind::Leaper) { LeaperMembersOf(G, OutXf, OutCustom); return; }
 	const int32 N = FMath::Max(G.Members, 0);
 	if (N == 0) { return; }
 	FRandomStream Rng((int32)G.Seed);
@@ -2126,12 +2454,349 @@ FVector3f SlonkFauna::WalkerMotion(const FVector3f& LP, const FVector3f& LPP, co
 	return P - LP;
 }
 
-void SlonkFauna::FFaunaField::SetWorld(const FFaunaWorld& W)
+namespace
 {
-	if (bHasWorld && W == World) { return; }
+	/** The leaps' hash (fauna_material.py's leaper branch, uint for uint): a cycle's draw K for a fish's seed. */
+	uint32 LeapHash(uint32 N, uint32 Seed, uint32 K)
+	{
+		uint32 X = N * 0x9E3779B1u + Seed * 0x85EBCA77u + K * 0xC2B2AE3Du + 0x27D4EB2Fu;
+		X ^= X >> 16;
+		X *= 0x7FEB352Du;
+		X ^= X >> 15;
+		X *= 0x846CA68Bu;
+		X ^= X >> 16;
+		return X;
+	}
+	/** Its top 24 bits as a unit value, exactly as a float holds them. */
+	float LeapU(uint32 X) { return (float)(X >> 8) * (1.f / 16777216.f); }
+	/** A fish's place in its group's order and the group's count, from its custom float (8 times the one plus the other). */
+	void LeaperOrder(float PerKind, int32& OutIndex, int32& OutCount)
+	{
+		const float Idx = FMath::FloorToFloat((PerKind + 0.5f) / 8.f);
+		OutIndex = (int32)Idx;
+		OutCount = FMath::Max((int32)(PerKind - Idx * 8.f), 1);
+	}
+}
+
+SlonkFauna::FLeap SlonkFauna::LeapOf(const float* Custom, int64 Cycle)
+{
+	// fauna_material.py's leaper branch: the cycle's place in the hour (its hash's), its draws, and the leap they make.
+	FLeap L;
+	L.Cycle = Cycle;
+	const float Size = FMath::Max(Custom[Custom::SizeM], 0.1f);
+	const float Cyc = FMath::Max(Custom[Custom::RateHz], 1.f);
+	int32 Idx, Count;
+	LeaperOrder(Custom[Custom::PerKind], Idx, Count);
+	const int64 PerHour = FMath::Max<int64>(FMath::RoundToInt64(ClockPeriodSec / Cyc), 1);
+	const int64 Wrapped = ((Cycle % PerHour) + PerHour) % PerHour;
+	const uint32 SeedBits = (uint32)(Custom[Custom::Seed] * 65536.f);
+	auto U = [&](uint32 K) { return LeapU(LeapHash((uint32)Wrapped, SeedBits, K)); };
+	L.bLeaps = U(0) >= Leaper::SkipShare;
+	const float J = Leaper::SlotLo + Leaper::SlotSpan * U(1);
+	L.Yaw = (U(2) - 0.5f) * Leaper::YawSpan;
+	const float Len = Size * 100.f;
+	L.FromCm = FVector2D((2.f * U(3) - 1.f) * Leaper::Jitter * Len, (2.f * U(4) - 1.f) * Leaper::Jitter * Len);
+	L.ApexCm = (Leaper::ApexLo + Leaper::ApexSpan * U(5)) * Len;
+	L.RangeCm = (Leaper::RangeLo + Leaper::RangeSpan * U(6)) * Len;
+	L.FlightSec = 2.0 * FMath::Sqrt(2.0 * L.ApexCm / Leaper::GravityCmS2);
+	// How long it is drawn under the surface either side: until its middle is LeadDepth of its lengths down, at the speed it
+	// crosses the surface.
+	const double Rise = 4.0 * L.ApexCm / L.FlightSec;
+	L.LeadSec = Leaper::LeadDepth * Len / Rise;
+	L.T0 = ((double)Cycle + (double)Custom[Custom::Phase]) * Cyc + (double)(J * (Cyc / (float)Count));
+	return L;
+}
+
+SlonkFauna::FLeap SlonkFauna::LeapAt(const float* Custom, double Seconds)
+{
+	const double Cyc = FMath::Max((double)Custom[Custom::RateHz], 1.0);
+	return LeapOf(Custom, (int64)FMath::FloorToDouble(Seconds / Cyc - (double)Custom[Custom::Phase]));
+}
+
+SlonkFauna::FLeapPose SlonkFauna::LeapPoseAt(const FLeap& L, double H0, double H1, double T)
+{
+	FLeapPose P;
+	const double Tf = FMath::Max(L.FlightSec, 1e-3);
+	const double S = (T - L.T0) / Tf;
+	H0 = FMath::Clamp(H0, -(double)Leaper::MaxSurfaceCm, (double)Leaper::MaxSurfaceCm);
+	H1 = FMath::Clamp(H1, -(double)Leaper::MaxSurfaceCm, (double)Leaper::MaxSurfaceCm);
+	// A parabola under gravity from the surface where it leaves to the surface where it dives back in, its apex ApexCm
+	// over the line between them, run on either side of them under the water.
+	const FVector2D Way(FMath::Cos(L.Yaw), FMath::Sin(L.Yaw));
+	const FVector2D Xy = L.FromCm + Way * (L.RangeCm * S);
+	P.PosCm = FVector(Xy.X, Xy.Y, FMath::Lerp(H0, H1, S) + 4.0 * L.ApexCm * S * (1.0 - S));
+	P.Pitch = FMath::Atan2((H1 - H0) / Tf + 4.0 * L.ApexCm * (1.0 - 2.0 * S) / Tf, L.RangeCm / Tf);
+	P.Share = S;
+	return P;
+}
+
+bool SlonkFauna::LeapDived(const FPanic& Dive, double T0)
+{
+	if (Dive.T0 < -1.0e29) { return false; }
+	const double Len = FMath::Clamp(Dive.T0 + Leaper::DiveSec - Dive.ScatterT0, 0.0, 3000.0);
+	return T0 >= Dive.ScatterT0 && T0 < Dive.ScatterT0 + Len;
+}
+
+void SlonkFauna::LeapEventsBetween(const float* Custom, int32 Member, double FromSec, double ToSec, TArray<FLeapEvent>& Out)
+{
+	if (ToSec <= FromSec) { return; }
+	const double Cyc = FMath::Max((double)Custom[Custom::RateHz], 1.0);
+	const double Phase = (double)Custom[Custom::Phase];
+	// Every cycle whose leap could leave or dive back in within the span (a leap is out of the water well within its cycle).
+	const int64 First = (int64)FMath::FloorToDouble(FromSec / Cyc - Phase) - 1, Last = (int64)FMath::FloorToDouble(ToSec / Cyc - Phase);
+	for (int64 N = First; N <= Last; ++N)
+	{
+		const FLeap L = LeapOf(Custom, N);
+		if (!L.bLeaps) { continue; }
+		for (const bool bEntry : { false, true })
+		{
+			const double At = bEntry ? L.T1() : L.T0;
+			if (At > FromSec && At <= ToSec)
+			{
+				FLeapEvent E;
+				E.Member = Member;
+				E.bEntry = bEntry;
+				E.TimeSec = At;
+				E.Leap = L;
+				Out.Add(E);
+			}
+		}
+	}
+}
+
+FVector SlonkFauna::LeaperFramePoint(const FFaunaGroup& G, double RadiusCm, double WorldSec, const FVector& FrameCm)
+{
+	const FFaunaPose Pose = LeaperPathAt(G, RadiusCm, WorldSec);
+	return Pose.PosCm + Pose.Rot.RotateVector(FrameCm);
+}
+
+FVector SlonkFauna::LeapCrossing(const FFaunaGroup& G, double RadiusCm, double SwellCm, double Fade, const FVector& HomeCm, const FLeap& L, bool bEntry, double* OutSurfaceCm)
+{
+	const double At = bEntry ? L.T1() : L.T0;
+	const FVector2D Off = bEntry ? L.ToCm() : L.FromCm;
+	const FVector Pt = LeaperFramePoint(G, RadiusCm, At, HomeCm + FVector(Off.X, Off.Y, 0.0));
+	const double H = FMath::Clamp(SeaSurfaceCm(Pt, RadiusCm, At, SwellCm, Fade), -(double)Leaper::MaxSurfaceCm, (double)Leaper::MaxSurfaceCm);
+	if (OutSurfaceCm) { *OutSurfaceCm = H; }
+	return Pt.GetSafeNormal() * (RadiusCm + H);
+}
+
+FVector SlonkFauna::LeaperWatchDir(const FFaunaGroup& G, double RadiusCm, double WorldSec, double AltCm, double* OutSideCm)
+{
+	const FFaunaKindDesc& D = KindDesc(EFaunaKind::Leaper);
+	const double SideCm = AltCm < D.ScareAltitudeCm * 1.2 ? 1.6 * D.ScareRadiusCm : FMath::Max(0.6 * AltCm, 3000.0);
+	if (OutSideCm) { *OutSideCm = SideCm; }
+	const FFaunaPose Here = LeaperPathAt(G, RadiusCm, WorldSec);
+	// Out from the loop's middle through where the shoal is now, along the sea.
+	const FVector Mid = G.Centre * RadiusCm;
+	const FVector Up = G.Centre;
+	FVector Out = Here.PosCm - Mid;
+	Out = (Out - Up * FVector::DotProduct(Out, Up)).GetSafeNormal();
+	if (Out.IsNearlyZero()) { Out = (Here.Rot.GetAxisY() - Up * FVector::DotProduct(Here.Rot.GetAxisY(), Up)).GetSafeNormal(); }
+	// The loop is a circle on its plane of the projection, lifted onto the sphere: stretched there by up to the radial's
+	// lean off the plane's axis, so on the sea it reaches no further from its middle than its radius over that.
+	const double Reach = G.RadiusCm / FMath::Max(G.Centre.GetAbs().GetMax(), 0.5) * 1.02;
+	return (Mid + Out * (Reach + SideCm)).GetSafeNormal();
+}
+
+bool SlonkFauna::StartleLeapers(FPanic& Dive, const FFaunaKindDesc& D, const FVector& GroupPosCm, const FFaunaThreat& T, double Now, bool bForce)
+{
+	const bool bWasLive = Dive.IsLive(Now);
+	if (!bForce)
+	{
+		// A craft passing low over it, no one on foot (on a shore, or wading in), and not again within a re-startle's while.
+		if (!T.bCraft || !Scares(D, GroupPosCm, T)) { return false; }
+		if (bWasLive && Now - Dive.T0 < RestartleSec) { return false; }
+	}
+	// While its dive lasts a startle carries it on from where it began, adding to it only leaps not yet in sight (none
+	// leaves the water from the window's end on, and none comes into sight on its way up until DiveLeadSec before it
+	// leaves). Once the window has closed, or is too near closing for that, its fish leap again: a startle then waits until
+	// every leap the dive kept under is past its time back in the water (moving the window off them then shows none of
+	// them in the air), forced or not.
+	const double End = Dive.T0 + Leaper::DiveSec;
+	const bool bDiving = bWasLive && Now < End - Leaper::DiveLeadSec;
+	if (bWasLive && !bDiving && Now < End + Leaper::HeldUnderSec) { return false; }
+	// A new dive keeps under the leaps leaving from DiveLeadSec on, past those already on their way up. One kept up half an
+	// hour runs from ten seconds back (every leap before that is long back in the water), so the material's hour never
+	// wraps on it.
+	double Began = bDiving ? Dive.ScatterT0 : Now + Leaper::DiveLeadSec;
+	if (Now - Began > 1800.0) { Began = Now - 10.0; }
+	Dive.T0 = Now;
+	Dive.LiveSec = D.FrightSec;
+	Dive.ScatterT0 = Began;
+	Dive.FleeT0 = Now;
+	Dive.Dir = FVector::ZeroVector;
+	Dive.Carry = FVector::ZeroVector;
+	Dive.CarryVel = FVector::ZeroVector;
+	return true;
+}
+
+void SlonkFauna::LeaperDiveData(const FPanic& Dive, double Now, float* Group)
+{
+	const bool bLive = Dive.IsLive(Now);
+	Group[LeaperData::DiveT0] = bLive ? OnMaterialClock(Dive.ScatterT0, 0.0) : 0.f;
+	Group[LeaperData::Diving] = bLive ? 1.f : 0.f;
+	Group[LeaperData::DiveLen] = bLive ? (float)FMath::Clamp(Dive.T0 + Leaper::DiveSec - Dive.ScatterT0, 0.0, 3000.0) : 0.f;
+}
+
+SlonkFauna::FLeap SlonkFauna::LeapToRead(const float* Custom, double WorldSec)
+{
+	const FLeap L = LeapAt(Custom, WorldSec);
+	return WorldSec > L.T1() + L.LeadSec + 1.0 ? LeapOf(Custom, L.Cycle + 1) : L;
+}
+
+void SlonkFauna::LeaperGroupData(const FFaunaGroup& G, TConstArrayView<float> Custom, TConstArrayView<FVector> Homes, double RadiusCm, double SwellCm, double Fade, double WorldSec,
+	const FPanic& Dive, FLeaperSurfaceCache& Cache, float* Group)
+{
+	LeaperDiveData(Dive, WorldSec, Group);
+	const int32 N = FMath::Min3(Homes.Num(), Custom.Num() / Custom::Num, Leaper::MaxPerGroup);
+	for (int32 i = 0; i < N; ++i)
+	{
+		const float* C = Custom.GetData() + i * Custom::Num;
+		const FLeap L = LeapToRead(C, WorldSec);
+		if (L.Cycle != Cache.Cycle[i])
+		{
+			Cache.Cycle[i] = L.Cycle;
+			LeapCrossing(G, RadiusCm, SwellCm, 1.0, Homes[i], L, false, &Cache.Surface[i][0]);
+			LeapCrossing(G, RadiusCm, SwellCm, 1.0, Homes[i], L, true, &Cache.Surface[i][1]);
+		}
+		for (int32 k = 0; k < 2; ++k)
+		{
+			Group[LeaperData::Surface0 + 2 * i + k] = (float)FMath::Clamp(Cache.Surface[i][k] * Fade, -(double)Leaper::MaxSurfaceCm, (double)Leaper::MaxSurfaceCm);
+		}
+	}
+}
+
+namespace
+{
+	/** The leaper branch's reading of a fish's leap at the material's time, in floats as the GPU runs it (both of the
+	 *  material's shaders read it so). */
+	struct FLeaperRead
+	{
+		float Size = 1.f, Tau = 0.f, Tau0 = 0.f, Tf = 1.f, Lead = 0.f, Yaw = 0.f, Fx = 0.f, Fy = 0.f, Apex = 0.f, Range = 0.f, HA = 0.f, HB = 0.f;
+		bool bShown = false;
+	};
+	FLeaperRead ReadLeap(float T, const float* C, const float* Gd)
+	{
+		FLeaperRead R;
+		const float S = FMath::Max(C[SlonkFauna::Custom::SizeM], 0.1f);
+		const float Cyc = FMath::Max(C[SlonkFauna::Custom::RateHz], 1.f);
+		const float Bearing = C[SlonkFauna::Custom::PerKind];
+		const float Idx = FMath::FloorToFloat((Bearing + 0.5f) / 8.f);
+		const float Cnt = FMath::Max(Bearing - Idx * 8.f, 1.f);
+		const float U = T / Cyc - C[SlonkFauna::Custom::Phase];
+		const float N = FMath::FloorToFloat(U);
+		const float M = FMath::RoundToFloat(3600.f / Cyc);
+		const float Nw = N - M * FMath::FloorToFloat(N / M);
+		R.Tau = (U - N) * Cyc;
+		const uint32 Sd = (uint32)(C[SlonkFauna::Custom::Seed] * 65536.f);
+		const uint32 Nu = (uint32)Nw;
+		auto Uk = [&](uint32 K) { return LeapU(LeapHash(Nu, Sd, K)); };
+		const bool bLeaps = Uk(0) >= 0.25f;
+		const float J = 0.15f + 0.45f * Uk(1);
+		R.Tau0 = J * (Cyc / Cnt);
+		R.Yaw = (Uk(2) - 0.5f) * 1.4f;
+		const float Len = S * 100.f;
+		R.Fx = (2.f * Uk(3) - 1.f) * 1.2f * Len;
+		R.Fy = (2.f * Uk(4) - 1.f) * 1.2f * Len;
+		R.Apex = (0.7f + 1.1f * Uk(5)) * Len;
+		R.Range = (2.f + 2.5f * Uk(6)) * Len;
+		R.Tf = 2.f * FMath::Sqrt(2.f * R.Apex / 981.f);
+		R.Lead = 0.6f * Len / (4.f * R.Apex / R.Tf);
+		// A dive keeps a leap leaving from when it began to its length past that in the water.
+		const float T0m = T + (R.Tau0 - R.Tau);
+		const float DiveAge = FMath::Fmod(T0m - Gd[SlonkFauna::LeaperData::DiveT0] + 7201.f, 3600.f) - 1.f;
+		const bool bDived = Gd[SlonkFauna::LeaperData::Diving] > 0.5f && DiveAge >= 0.f && DiveAge < Gd[SlonkFauna::LeaperData::DiveLen];
+		R.bShown = bLeaps && !bDived && R.Tau >= R.Tau0 - R.Lead && R.Tau <= R.Tau0 + R.Tf + R.Lead;
+		const int32 I = FMath::Clamp((int32)Idx, 0, SlonkFauna::Leaper::MaxPerGroup - 1);
+		R.HA = FMath::Clamp(Gd[SlonkFauna::LeaperData::Surface0 + 2 * I], -150.f, 150.f);
+		R.HB = FMath::Clamp(Gd[SlonkFauna::LeaperData::Surface0 + 2 * I + 1], -150.f, 150.f);
+		R.Size = S;
+		return R;
+	}
+}
+
+bool SlonkFauna::LeaperShown(float T, const float* Custom, const float* Group)
+{
+	return ReadLeap(T, Custom, Group).bShown;
+}
+
+FVector2f SlonkFauna::LeaperTurn(float T, const float* Custom, const float* Group)
+{
+	const FLeaperRead R = ReadLeap(T, Custom, Group);
+	const float Sh = (R.Tau - R.Tau0) / R.Tf;
+	const float Vh = R.Range / R.Tf;
+	const float Vz = (R.HB - R.HA) / R.Tf + 4.f * R.Apex * (1.f - 2.f * Sh) / R.Tf;
+	return FVector2f(FMath::Atan2(Vz, Vh), R.Yaw);
+}
+
+FVector3f SlonkFauna::LeaperMotion(const FVector3f& LP, const FLinearColor& VC, float T, const float* C, const float* Gd, float DistCm, float PxPerRad)
+{
+	// fauna_material.py's leaper branch, line for line.
+	const FLeaperRead R = ReadLeap(T, C, Gd);
+	const float S = R.Size;
+	if (!R.bShown) { return FVector3f(0.f, 0.f, -(150.f / S + 80.f)); }
+	const float Sh = (R.Tau - R.Tau0) / R.Tf;
+	const float Base = FMath::Lerp(R.HA, R.HB, Sh);
+	const float Px = R.Fx + FMath::Cos(R.Yaw) * R.Range * Sh;
+	const float Py = R.Fy + FMath::Sin(R.Yaw) * R.Range * Sh;
+	const float Pz = Base + 4.f * R.Apex * Sh * (1.f - Sh);
+	const float Vh = R.Range / R.Tf;
+	const float Vz = (R.HB - R.HA) / R.Tf + 4.f * R.Apex * (1.f - 2.f * Sh) / R.Tf;
+	const float Pitch = FMath::Atan2(Vz, Vh);
+	// Its tail flicking in the air, a whole number of beats a minute.
+	const float Seed = C[SlonkFauna::Custom::Seed];
+	const float Beat = FMath::RoundToFloat((6.f + 4.f * FracF(Seed * 3.7f)) * 60.f) / 60.f;
+	const float Air = FMath::Clamp(4.f * Sh * (1.f - Sh), 0.f, 1.f);
+	FVector3f P = LP;
+	P.Y += 12.f * VC.G * VC.G * Air * FMath::Sin(6.2831853f * FracF(T * Beat + Seed * 5.f));
+	// Pitched along its arc (nose up), turned the way it leaps.
+	const float Cp = FMath::Cos(Pitch), Sp = FMath::Sin(Pitch);
+	P = FVector3f(P.X * Cp - P.Z * Sp, P.Y, P.X * Sp + P.Z * Cp);
+	const float Cy = FMath::Cos(R.Yaw), Sy = FMath::Sin(R.Yaw);
+	P = FVector3f(P.X * Cy - P.Y * Sy, P.X * Sy + P.Y * Cy, P.Z);
+	// The speck floor, from its own size at the surface to its full at the top of its leap.
+	const float Pxs = S * 100.f * PxPerRad / FMath::Max(DistCm, 1.f);
+	const float K = FMath::Clamp(2.f / FMath::Max(Pxs, 0.001f), 1.f, 2.f);
+	P *= 1.f + (K - 1.f) * FMath::Sin(3.14159265f * FMath::Clamp(Sh, 0.f, 1.f));
+	return P + FVector3f(Px, Py, Pz) / S - LP;
+}
+
+bool SlonkFauna::FFaunaField::SetWorld(const FFaunaWorld& W)
+{
+	if (bHasWorld && W == World) { return true; }
+	// Only its seas changed (as fauna switched off and on takes the shoals out of the terrain's material and puts them
+	// back): only the leapers live by them, so only their groups and cells go, and a scan reads theirs again.
+	FFaunaWorld SameSeas = W;
+	SameSeas.Sea = World.Sea;
+	if (bHasWorld && SameSeas == World)
+	{
+		World = W;
+		for (auto It = Active.CreateIterator(); It; ++It)
+		{
+			if (It.Value()->Kind != EFaunaKind::Leaper) { continue; }
+			Members[(int32)EFaunaKind::Leaper] -= It.Value()->Members;
+			Groups[(int32)EFaunaKind::Leaper] -= 1;
+			It.RemoveCurrent();
+		}
+		Candidates.RemoveAll([](const FGroupRef& G) { return G->Kind == EFaunaKind::Leaper; });
+		if (Cache.IsValid())
+		{
+			// The cache is shared with any scan in flight: a new one without the leapers' cells (a cell's kind is its id's top bits).
+			TSharedPtr<FCellCache, ESPMode::ThreadSafe> Next = MakeShared<FCellCache, ESPMode::ThreadSafe>();
+			Next->Reserve(Cache->Num());
+			for (const TPair<uint64, FGroupRef>& C : *Cache)
+			{
+				if ((EFaunaKind)(C.Key >> 60) != EFaunaKind::Leaper) { Next->Add(C.Key, C.Value); }
+			}
+			Cache = Next;
+		}
+		bScanned = false;
+		return true;
+	}
 	Clear(true);
 	World = W;
 	bHasWorld = true;
+	return false;
 }
 
 double SlonkFauna::FFaunaField::ScanRadiusCm() const

@@ -1,4 +1,5 @@
 #include "FaunaProfile.h"
+#include "FaunaHabitat.h"
 #include "FaunaMeshes.h"
 #include "ScatterSpot.h"
 #include "TerrainScatter.h"
@@ -54,8 +55,19 @@ namespace
 	 * herd's plane), which every instance's box is padded by (4 m); their LOD screen sizes are set with that box (about 7.9
 	 * lengths round, where a walker is 1), so a walker goes to its 30 triangles about 30 pixels long and to its 2 about 6
 	 * (Slonk.Fauna.Walker).
-	 * The rest are the later phases' budgets (not spawned yet): 30 leapers in 6 groups, 24 floaters alone. 2,414 instances
-	 * and 58 group sets in all.
+	 * The leapers: fish in groups of 1 to 5 leaping out of the shoals the terrain material paints (SlonkFauna::ShoalAt), a
+	 * group in the cell of the shoals' own lattice (about 200 m) holding the shoal it leaps from, in half the shoals over
+	 * water at least 3 m deep and 3 m deeper than the shoal swims; groups are spawned within 1.5 km of the camera's ground
+	 * point and kept to 1.9 km (their fish fade by 1.2 km, so one comes and goes unseen), at most 6 of them and 30 fish,
+	 * none while the camera is more than 500 m over the sea. A craft in the air lower than 50 m over the sea and within
+	 * 50 m of a group sends it diving: no fish of it leaves the water for a minute after (SlonkFauna::Leaper::DiveSec; the
+	 * crew on a shore are nothing to it). No shadows (each fish is out of the water a second at a time). The material moves
+	 * a fish's vertices up to about 7.6 unit-mesh metres past its box (its leap out from its home, up to 1.2 of its lengths
+	 * either way and 4.5 on; up 1.8 of them; the sea's surface it leaves, up to 1.5 m off its level, 4.7 of the shortest
+	 * fish's lengths; the speck floor's growth to twice its size at the top of its leap), which every instance's box is
+	 * padded by (8 m); their LOD screen sizes are set with that box (about 29 lengths round, where a fish is 1), so a fish
+	 * goes to its fewer triangles about 30 pixels long and to its 2 about 6 (Slonk.Fauna.Fish).
+	 * The floaters are a later phase's budget (not spawned yet): 24 of them alone. 2,414 instances and 58 group sets in all.
 	 */
 	FFaunaKindDesc MakeDesc(EFaunaKind K)
 	{
@@ -91,9 +103,13 @@ namespace
 			for (int32 L = 0; L < 3; ++L) { D.LodScreenSize[L] = SlonkFaunaMeshes::MoteLodScreenSize[L]; }
 			break;
 		case EFaunaKind::Leaper:
-			D.CellCm = 1048576.0 / 52.0; D.ReachCm = 1.5e5; D.MaxAltitudeCm = 5.0e4;
-			D.GroupMin = 1; D.GroupMax = 5; D.MaxGroups = 6; D.MaxMembers = 30;
+			D.bLive = true;
+			D.CellCm = SlonkScatter::NoisePeriodCm / SlonkFauna::ShoalCellsPerPeriod; D.ReachCm = 1.5e5; D.MaxAltitudeCm = 5.0e4;
+			D.GroupMin = 1; D.GroupMax = SlonkFauna::Leaper::MaxPerGroup; D.MaxGroups = 6; D.MaxMembers = 30;
 			D.ScareRadiusCm = 5.0e3; D.ScareAltitudeCm = 5.0e3; D.FadeCm = 1.2e5;
+			D.FrightSec = SlonkFauna::Leaper::DiveSec + 6.0; D.FleeRiseSec = 1.0; D.FleeUp = 0.0;
+			D.CullPaddingUnits = 800.0;
+			D.LodScreenSize[0] = 1.f; D.LodScreenSize[1] = 0.8f; D.LodScreenSize[2] = 0.16f;
 			break;
 		case EFaunaKind::Floater:
 			D.CellCm = 3.0e5; D.ReachCm = 1.2e6; D.MaxAltitudeCm = 1.0e6;
@@ -269,6 +285,23 @@ FLinearColor SlonkFauna::HerdPigment(const FFaunaLook& L, const FScatterPalette&
 	// A strange world's: the ground's colour itself, as bright as the Earth's coat, at full strength on the strangest.
 	const FLinearColor Own = Ground * ((0.2126f * Earth.R + 0.7152f * Earth.G + 0.0722f * Earth.B) / Luma);
 	FLinearColor C = FMath::Lerp(Earth, Own, L.Vivid);
+	C = TurnPigment(C, L.HueTurnDeg) * (float)Vary;
+	C.A = 1.f;
+	return C;
+}
+
+FLinearColor SlonkFauna::LeaperPigment(const FFaunaLook& L, const FLinearColor& SeaColor, double Vary)
+{
+	// An Earth fish's silver-blue, a quarter of it in the sea's own shade (its brightest channel at 1).
+	const FLinearColor Earth(0.36f, 0.44f, 0.52f);
+	const float SeaMax = FMath::Max3(SeaColor.R, SeaColor.G, SeaColor.B);
+	const FLinearColor Shade = SeaMax > 1e-4f ? FLinearColor(SeaColor.R / SeaMax, SeaColor.G / SeaMax, SeaColor.B / SeaMax) : FLinearColor::White;
+	const FLinearColor Tinted = FMath::Lerp(Earth, Earth * Shade, 0.25f);
+	const float EarthLuma = 0.2126f * Earth.R + 0.7152f * Earth.G + 0.0722f * Earth.B;
+	const float ShadeLuma = FMath::Max(0.2126f * Shade.R + 0.7152f * Shade.G + 0.0722f * Shade.B, 1e-3f);
+	// A strange world's: the sea's own colour, as bright as the Earth's fish, at full strength on the strangest.
+	const FLinearColor Own = Shade * (EarthLuma / ShadeLuma);
+	FLinearColor C = FMath::Lerp(Tinted, Own, L.Vivid);
 	C = TurnPigment(C, L.HueTurnDeg) * (float)Vary;
 	C.A = 1.f;
 	return C;

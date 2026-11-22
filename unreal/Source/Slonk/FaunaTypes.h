@@ -118,7 +118,7 @@ namespace SlonkFauna
 	struct FFaunaKindDesc
 	{
 		EFaunaKind Kind = EFaunaKind::Flier;
-		/** Whether this build spawns it (the fliers and the herds so far; the others are the later phases'). */
+		/** Whether this build spawns it (the fliers, the herds and the leapers so far; the floaters are a later phase's). */
 		bool bLive = false;
 		/** The side of its habitat cells on the cube's faces, cm: at most one group to a cell. */
 		double CellCm = 1.0e5;
@@ -316,6 +316,84 @@ namespace SlonkFauna
 		constexpr double SteerM = 0.5;
 	}
 	/**
+	 * A leaping fish's custom floats, in the same slots (SlonkFauna::MembersOf writes them for a group of leapers): its
+	 * pigment RGB; how brightly it glows at night (0 on an Earth); a seed; its length in metres (its scale); where its slot
+	 * in its group's leap cycle begins, a share of the cycle (Phase); the group's leap cycle, s (RateHz's slot: a divisor
+	 * of the hour); its place in its group and the group's count, as 8 times the one plus the other (PerKind); and the
+	 * distance from the camera it fades out by, cm. Its instance stands at its home in the shoal, unturned in its group's
+	 * frame (the shoal's: x the way it swims, y to its left, z up from the sea's level; on the sea-level sphere at the
+	 * shoal's middle): the material moves it out on each leap and turns it the way the leap goes.
+	 *
+	 * Its leaps, in closed form on the material's clock (SlonkFauna::LeapOf mirrors it): its cycle n (whole cycles from the
+	 * hour's turn, its slot's start Phase of a cycle in) holds one leap unless the cycle's hash skips it (SkipShare of
+	 * them), leaving the water a share SlotLo to SlotLo + SlotSpan of its slot (a cycle over the group's count) in, a
+	 * way along the shoal turned up to YawSpan / 2 either side, from a point up to Jitter of its lengths either way of its
+	 * home, rising ApexLo to ApexLo + ApexSpan of its lengths and coming down RangeLo to RangeLo + RangeSpan of them on,
+	 * under gravity (GravityCmS2): a parabola from the sea's surface at the point it leaves to the surface at the point it
+	 * dives back in (each read where and when it crosses it: LeaperData), its body pitched along it. It is drawn from
+	 * LeadDepth of its lengths under the surface as it comes up to as deep as it dives again (so it comes out of the sea
+	 * whole and goes back into it whole), and nowhere between leaps (masked, and kept HiddenCm and more under the sea).
+	 */
+	namespace Leaper
+	{
+		constexpr int32 MaxPerGroup = 5;
+		constexpr double GravityCmS2 = 981.0;
+		constexpr float SkipShare = 0.25f;
+		constexpr float SlotLo = 0.15f, SlotSpan = 0.45f;
+		constexpr float YawSpan = 1.4f;
+		constexpr float Jitter = 1.2f;
+		constexpr float ApexLo = 0.7f, ApexSpan = 1.1f;
+		constexpr float RangeLo = 2.0f, RangeSpan = 2.5f;
+		constexpr float LeadDepth = 0.6f;
+		/** Between leaps the material holds it this far under its home on the sea's level, cm, and 0.8 of its length more. */
+		constexpr float HiddenCm = 150.f;
+		/** The most the sea's surface stands off its level where a fish crosses it, cm, as sent and as the material takes it
+		 *  (the swell: its lift up to 1.22 times APlanetBody's SwellCm of 120, its sway's lift besides toward the
+		 *  projection's seams bringing it to about 1.3 times there, 160 cm, only with all four waves in step). */
+		constexpr float MaxSurfaceCm = 150.f;
+		/** The speck floor: a fish far off is drawn no shorter than SpeckPx, at most SpeckMax times its size at the top of its
+		 *  leap, coming in from its size at the surface (so it never pokes out of the water before it leaves it). */
+		constexpr float SpeckPx = 2.f, SpeckMax = 2.f;
+		/** How far its tail's tip flicks either side as it leaps, unit-mesh cm. */
+		constexpr float FlickCm = 12.f;
+		/** The shortest and longest fish, m (the box each is culled by holds the sea's surface over the shortest's length). */
+		constexpr double MinSizeM = 0.32, MaxSizeM = 0.9;
+		/** The leap cycles a group may take, s, each a divisor of the hour: a group's is the one nearest SlotSec to each of its
+		 *  fish and up to SlotSpread more (a lone fish's and a pair's 10 s, five fish's 20 or 24), so its fish leave the water
+		 *  a few seconds apart (SlotSec over the share of the cycles that leap, on average) and each leaps about every 13 to
+		 *  32 s. Every fish's slot is at least 3 s, so each leap is back under the water long before its fish's next comes up. */
+		constexpr double Cycles[] = { 10.0, 12.0, 15.0, 16.0, 18.0, 20.0, 24.0, 25.0 };
+		constexpr double SlotSec = 4.0, SlotSpread = 2.0;
+		/** A startled group's leaps stop for DiveSec from its latest startle (they dive): none leaves the water then, a leap
+		 *  already in the air comes down. */
+		constexpr double DiveSec = 60.0;
+		/** A dive keeps under the leaps leaving from this long after the startle that begins it, s: past every leap already
+		 *  drawn on its way up under the water (LeadSec, at most 0.15 s, the longest fish's lowest leap's), so none in sight
+		 *  is hidden. */
+		constexpr double DiveLeadSec = 0.2;
+		/** How long after a dive's window closes every leap it kept under is past where it would have been back under the
+		 *  water, s (FlightSec and LeadSec after it leaves, at most 1.25 s, the longest fish's highest leap's): a new dive
+		 *  begins only after it, so moving the window off them shows none of them in the air. */
+		constexpr double HeldUnderSec = 1.5;
+		/** Of the shoals the terrain material paints, the share holding leapers on a world full of life at density 1. */
+		constexpr double ShoalShare = 0.5;
+		/** The water under a group's leaps is at least this deep, cm, and deeper than its shoal swims by ShoalClearCm (where
+		 *  the material paints the shoal whole). */
+		constexpr double MinWaterCm = 300.0, ShoalClearCm = 300.0;
+	}
+	/**
+	 * A group of leapers' custom primitive data, set each frame (UPlanetFaunaComponent): 0 the night; 1 when its dive began
+	 * (DiveLeadSec after the startle that began it, on the material's clock), 6 whether it is diving (1 until a little past the end
+	 * of its dive), 7 how long its dive lasts from slot 1, s (to DiveSec past its latest startle): no fish leaves the water
+	 * from 1 to 1 plus 7 while 6 is 1; and 14 to 23 the sea's surface over its level, cm (each held to MaxSurfaceCm), where
+	 * and when each fish's current or next leap leaves it and dives back into it, two to a fish in its order. The flock's
+	 * pins read them in the material (ScatterT0, Startled, SpreadM, HerdGround0 to 9).
+	 */
+	namespace LeaperData
+	{
+		enum : int32 { Night = 0, DiveT0 = 1, Diving = 6, DiveLen = 7, Surface0 = 14, Num = 24 };
+	}
+	/**
 	 * A fauna mesh's vertex colour: R the surface (0 body, 0.25 a bill or a beak, 0.5 a tail, 0.75 a mote's card, 1 a
 	 * wing), G how far it flexes (0 at its joint, rising to 1 at the tip), B its side (0 left, 0.5 the middle, 1 right) and
 	 * A the kind of joint the material moves it by (0 rigid, 0.25 a tail, 0.375 a neck, 0.5 a wing hinged along the body,
@@ -326,6 +404,11 @@ namespace SlonkFauna
 	 * surface (dark), a leg's G is 0 at the hip and 1 at the hoof and its B the leg's place in the gait (Walker: 0 the hind
 	 * left, 0.25 the fore left, 0.5 the hind right, 0.75 the fore right), and the neck's and head's G is 0 at its root and 1
 	 * at the muzzle; its UV is its place along the body (U 0 at the rump, 1 at the muzzle) and up it (V, z over 60 cm).
+	 * A fish is drawn by its leaper branch alone (its Leapers parameter, which the leapers' sets set): R its surface (0 its
+	 * body, 0.5 its fins and tail), G how far it bends as its tail flicks (0 from its nose to FishBendFromCm, rising to 1
+	 * at its tail's tip), B its side, A JointUndulate; its UV its place along it (U 0 at the tail's tip, 1 at its nose) and
+	 * up it (V 0 at its belly, 1 at its back), for its countershading. Its nose is along +x at 50, its middle the mesh's
+	 * origin.
 	 */
 	namespace Vc
 	{
@@ -334,5 +417,7 @@ namespace SlonkFauna
 		constexpr float JointRigid = 0.f, JointTail = 0.25f, JointNeck = 0.375f, JointWing = 0.5f, JointLeg = 0.75f, JointUndulate = 1.f;
 		/** A wing's hinge stands this far out from the body's axis, unit-mesh cm: its root vertices (G 0) lie on it. */
 		constexpr double WingRootCm = 4.0;
+		/** A fish bends from this far along it, unit-mesh cm (its tail's tip is at -50). */
+		constexpr double FishBendFromCm = 10.0;
 	}
 }

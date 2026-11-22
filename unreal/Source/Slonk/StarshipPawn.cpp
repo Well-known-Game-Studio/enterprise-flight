@@ -2336,7 +2336,10 @@ void AStarshipPawn::ProcessDebugCommand()
 		// too slowly to wait for: the ship parks off to the side of where it is now (off its path if a fright or the crew
 		// has taken it there), out from the loop's middle, 1.6 times its scare radius off (240 m) when lower than its scare
 		// altitude and else half its height off (at least 80 m), so the craft does not startle it, facing it, the herd
-		// below and ahead for the chase camera.
+		// below and ahead for the chase camera. Leaping fish (goto leaper) likewise off to the side of the shoal they leap
+		// from, out from its loop's middle and past all of its loop: 80 m past it when lower than 60 m (out of reach of
+		// their dive wherever round its loop the shoal swims), else 0.6 of its height past it (at least 30 m), over the
+		// sea's level.
 		// fauna goto mote <alt m> [night|dusk|day]: park over the densest mote country near (wet, level ground along a forest's
 		// edge, where the fireflies are thickest), searched from under the ship, from the middle of the night side with
 		// night, from the dusk side of the terminator nearest the ship with dusk (the sun 8 degrees down), or on the ship's
@@ -2365,7 +2368,9 @@ void AStarshipPawn::ProcessDebugCommand()
 			// fauna watch [distance m] [low] | fauna watch off: the view follows the drawn flock nearest the camera from that
 			// far behind and to one side of it (40 m), a little above it, or below it with low (the birds against the sky),
 			// as it flies, through a camera of its own; off gives the view back. A herd from behind and to one side of the way
-			// it walks (120 m unless asked), a third of that over the ground, or from where someone would stand with low.
+			// it walks (120 m unless asked), a third of that over the ground, or from where someone would stand with low. A
+			// leaping shoal from behind and to one side of the way it swims (25 m), a third of that over the sea, or from a
+			// wader's eye height with low.
 			APlayerController* PC = Cast<APlayerController>(GetController());
 			if (!PC) { PC = GetWorld()->GetFirstPlayerController(); }
 			if (ArgStr(2) == TEXT("off"))
@@ -2381,7 +2386,8 @@ void AStarshipPawn::ProcessDebugCommand()
 				if (PC) { PC->GetPlayerViewPoint(View, ViewRot); }
 				FaunaWatchId = F->NearestDrawnGroup(View);
 				const bool bGivenDist = Args.IsValidIndex(2) && ArgStr(2) != TEXT("low");
-				const float DefaultDist = FaunaWatchId && F->GetDrawnGroupKind(FaunaWatchId) == EFaunaKind::Herd ? 120.f : 40.f;
+				const EFaunaKind WatchKind = FaunaWatchId ? F->GetDrawnGroupKind(FaunaWatchId) : EFaunaKind::Flier;
+				const float DefaultDist = WatchKind == EFaunaKind::Herd ? 120.f : (WatchKind == EFaunaKind::Leaper ? 25.f : 40.f);
 				FaunaWatchDistCm = FMath::Max(bGivenDist ? Arg(2, DefaultDist) : DefaultDist, 2.f) * 100.0;
 				FVector Pos; FQuat Rot;
 				if (FaunaWatchId && F->GetDrawnGroupPose(FaunaWatchId, Pos, Rot))
@@ -2389,9 +2395,11 @@ void AStarshipPawn::ProcessDebugCommand()
 					if (!FaunaWatchCamera) { FaunaWatchCamera = GetWorld()->SpawnActor<ACameraActor>(); }
 					TickFaunaWatch();
 					if (PC && FaunaWatchCamera) { PC->SetViewTarget(FaunaWatchCamera); }
-					UE_LOG(LogTemp, Log, TEXT("Fauna watch: the %s %016llx, %.0f m from the view, followed from %.0f m%s"), F->GetDrawnGroupKind(FaunaWatchId) == EFaunaKind::Herd ? TEXT("herd") : TEXT("flock"), FaunaWatchId, FVector::Dist(Pos, View) / 100.0, FaunaWatchDistCm / 100.0, bFaunaWatchLow ? TEXT(" (low)") : TEXT(""));
+					UE_LOG(LogTemp, Log, TEXT("Fauna watch: the %s %016llx, %.0f m from the view, followed from %.0f m%s"),
+						WatchKind == EFaunaKind::Herd ? TEXT("herd") : (WatchKind == EFaunaKind::Leaper ? TEXT("leaping shoal") : TEXT("flock")), FaunaWatchId, FVector::Dist(Pos, View) / 100.0,
+						FaunaWatchDistCm / 100.0, bFaunaWatchLow ? TEXT(" (low)") : TEXT(""));
 				}
-				else { FaunaWatchId = 0; UE_LOG(LogTemp, Log, TEXT("Fauna watch: no flock or herd drawn")); }
+				else { FaunaWatchId = 0; UE_LOG(LogTemp, Log, TEXT("Fauna watch: no flock, herd or leaping shoal drawn")); }
 			}
 		}
 		else if (Mode == TEXT("only"))
@@ -2547,10 +2555,44 @@ void AStarshipPawn::ProcessDebugCommand()
 				// 390 km), 20,000 of the fliers' (about 95 km: their habitat takes longer to read, and they are common).
 				SlonkFauna::FFaunaGroup G;
 				SlonkFauna::FGroupSearch Search;
-				const bool bFound = SlonkFauna::FindGroupNear(W, Kind, From, 4.0e7, Kind == EFaunaKind::Herd ? 120000 : 20000, G, &Search);
+				// The leapers' cells are the shoals' 200 m ones: 60,000 of them reach about 28 km.
+				const int32 MaxCells = Kind == EFaunaKind::Herd ? 120000 : (Kind == EFaunaKind::Leaper ? 60000 : 20000);
+				const bool bFound = SlonkFauna::FindGroupNear(W, Kind, From, 4.0e7, MaxCells, G, &Search);
 				UE_LOG(LogTemp, Log, TEXT("Fauna goto %s: looked at %d cells, every one within %.1f km of the search's start, on %s"), SlonkFauna::KindName(Kind), Search.Cells,
 					Search.ReachCm / 1e5, *Planet->GetDisplayName());
-				if (!bFound) { UE_LOG(LogTemp, Log, TEXT("Fauna goto: no %s group found within %.1f km on %s"), SlonkFauna::KindName(Kind), Search.ReachCm / 1e5, *Planet->GetDisplayName()); }
+				if (!bFound)
+				{
+					UE_LOG(LogTemp, Log, TEXT("Fauna goto: no %s group found within %.1f km on %s%s"), SlonkFauna::KindName(Kind), Search.ReachCm / 1e5, *Planet->GetDisplayName(),
+						Kind == EFaunaKind::Leaper && W.Sea.ShoalDensity <= 0.f ? TEXT(" (its seas hold no shoals)") : TEXT(""));
+				}
+				else if (Kind == EFaunaKind::Leaper)
+				{
+					// A shoal swims too slowly to wait for: the ship parks off to the side of where it is now, out from its loop's
+					// middle (as far past all of its loop), out of its dive's reach when lower than its scare altitude (1.6 times its
+					// scare radius off, 80 m) wherever round its loop it swims, else a little off from over it (so the chase camera,
+					// behind the ship, sees it ahead), over the sea's level, facing it (SlonkFauna::LeaperWatchDir).
+					const double R = W.P.RadiusCm;
+					const double WorldNow = GetWorld()->GetTimeSeconds();
+					const SlonkFauna::FFaunaKindDesc& LD = SlonkFauna::KindDesc(Kind);
+					const SlonkFauna::FFaunaPose Here = SlonkFauna::PathAt(G, R, WorldNow);
+					double SideCm = 0.0;
+					const FVector UpL = SlonkFauna::LeaperWatchDir(G, R, WorldNow, AltCm, &SideCm);
+					const FVector PosL = UpL * (R + AltCm);
+					const FVector Pos = TT.TransformPositionNoScale(PosL);
+					const FVector Up = TT.TransformVectorNoScale(UpL);
+					FVector Fwd = TT.TransformVectorNoScale(Here.PosCm - PosL);
+					Fwd = (Fwd - Up * FVector::DotProduct(Fwd, Up)).GetSafeNormal();
+					if (Fwd.IsNearlyZero()) { Fwd = FVector::CrossProduct(Up, FVector::ZAxisVector).GetSafeNormal(); }
+					Movement->SetThrottle(0.0); Movement->Velocity = FVector::ZeroVector; Movement->AngularVelocity = FRotator::ZeroRotator;
+					SetActorLocationAndRotation(Pos, FRotationMatrix::MakeFromXZ(Fwd, Up).ToQuat(), false, nullptr, ETeleportType::TeleportPhysics);
+					Movement->SetTerrainFollow(AltCm);
+					static const IConsoleVariable* HoldSpin = IConsoleManager::Get().FindConsoleVariable(TEXT("slonk.Planet.HoldSpin"));
+					if (HoldSpin && HoldSpin->GetInt() == 0) { UE_LOG(LogTemp, Log, TEXT("Fauna goto leaper: the world turns under the ship (slonk.Planet.HoldSpin 0); the ship rides the ground with it")); }
+					UE_LOG(LogTemp, Log, TEXT("Fauna goto leaper on %s: %d fish of %.2f m (%016llx) %.1f km from the search's start, leaping every %.0f s about from a shoal %.0f m down over %.0f m of water at the least; parked %.0f m out past its loop (%.0f m from it now, its dive's reach %.0f m below %.0f m), %.0f m up, facing it (nose.sun %.2f)%s"),
+						*Planet->GetDisplayName(), G.Members, G.SpanM, G.Id, FVector::Dist(G.Centre, From) * R / 1e5, G.CycleSec, G.ShoalDepthCm / 100.0, G.WaterCm / 100.0,
+						SideCm / 100.0, FVector::Dist(Here.PosCm, PosL) / 100.0, LD.ScareRadiusCm / 100.0, LD.ScareAltitudeCm / 100.0, AltCm / 100.0, FVector::DotProduct(Fwd, Planet->GetStarDirection()),
+						F->CanDrawLeapers() ? TEXT("") : TEXT("; M_Fauna has no leaper branch yet, so none is drawn"));
+				}
 				else if (Kind == EFaunaKind::Herd)
 				{
 					const double R = W.P.RadiusCm;
@@ -3000,7 +3042,7 @@ void AStarshipPawn::ProcessDebugCommand()
 			TEXT("ship camera [chase|bridge|cinematic|front|port|starboard|top|bottom] | zoom <x> | look <yaw> <pitch> [s]"),
 			TEXT("ship warpvis [classic|real] | cscale <0..1> | systems | shipwarp [km] [far]"),
 			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mesa|badlands|cliffs|city|mountain|coast|river|linea|green|land|substellar|ring|nightcap> <alt m> [across|sun|away|along|uphill|giant] [night] | terrain rocks [on|off|density <x>|check]"),
-			TEXT("ship fauna [status|on|off|density <x>|only <flier|herd|mote|leaper|floater|all>|startle|time <s>|strange <0..1>|cells|habitat [km]] | fauna goto <flier|herd> <alt m> [night] | fauna goto mote <alt m> [night|dusk|day] | fauna watch [m] [low|off]  (the animals of the world below: flocks, herds, motes)"),
+			TEXT("ship fauna [status|on|off|density <x>|only <flier|herd|mote|leaper|floater|all>|startle|time <s>|strange <0..1>|cells|habitat [km]] | fauna goto <flier|herd|leaper> <alt m> [night] | fauna goto mote <alt m> [night|dusk|day] | fauna watch [m] [low|off]  (the animals of the world below: flocks, herds, motes, leaping fish; slonk.Fauna.Splash 0 throws no splashes)"),
 			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km] [hazy] [strange <0..1>] [seed <n>] [locked] | people [none|stone|iron|industrial|modern|starfaring] [organic] [cliff]"),
 			TEXT("ship shuttle  (launch the shuttlecraft; aboard it, dock when the bay is within 500 m) | ship takeoff"),
 			TEXT("ship scan [stop]  (sensors on the locked / nav target; landed: survey the ground) | ship science [reset]"),
@@ -4409,7 +4451,15 @@ void AStarshipPawn::TickFaunaWatch()
 	const FVector Fwd = Rot.GetForwardVector(), Up = (Pos - Planet->GetActorLocation()).GetSafeNormal();
 	const FVector Side = FVector::CrossProduct(Up, Fwd).GetSafeNormal();
 	FVector Cam = Pos - Fwd * FaunaWatchDistCm + Side * (FaunaWatchDistCm * 0.6) + Up * (FaunaWatchDistCm * (bFaunaWatchLow ? -0.25 : 0.2));
-	if (F->GetDrawnGroupKind(FaunaWatchId) == EFaunaKind::Herd && Planet->Terrain)
+	if (F->GetDrawnGroupKind(FaunaWatchId) == EFaunaKind::Leaper)
+	{
+		// A leaping shoal from behind and to one side of the way it swims, a third of the distance over the sea's level, or
+		// from a wader's eye height with low (as someone on a shore would see it).
+		const FVector Centre = Planet->GetActorLocation();
+		const FVector Flat = Pos - Fwd * FaunaWatchDistCm + Side * (FaunaWatchDistCm * 0.6);
+		Cam = Centre + (Flat - Centre).GetSafeNormal() * (Planet->GetRadiusCm() + (bFaunaWatchLow ? 170.0 : FaunaWatchDistCm * 0.33));
+	}
+	else if (F->GetDrawnGroupKind(FaunaWatchId) == EFaunaKind::Herd && Planet->Terrain)
 	{
 		// A herd from a third of the distance over the drawn ground there, or from a walker's eye height with low (as
 		// someone on foot would see it).

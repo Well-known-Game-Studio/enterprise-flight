@@ -31,7 +31,7 @@ static_assert(SlonkFauna::Custom::Num == SlonkScatter::NumCustomFloats, "every p
 // The animals on the worlds with life. 0 takes every one away, the seas' plankton and shoals (APlanetBody) and the motes
 // over the ground with them, so a world looks as it did before it had any (for captures to compare with).
 static TAutoConsoleVariable<int32> CVarFaunaEnable(TEXT("slonk.Fauna.Enable"), 1,
-	TEXT("The animals on the worlds with life: the flocks, the seas' plankton and shoals, the pollen, gnats and fireflies over the ground (1, the default), or none, every world as it was before them (0)"));
+	TEXT("The animals on the worlds with life: the flocks, the herds, the leaping fish and their splashes, the seas' plankton and shoals, the pollen, gnats and fireflies over the ground (1, the default), or none, every world as it was before them (0)"));
 static TAutoConsoleVariable<float> CVarFaunaDensity(TEXT("slonk.Fauna.Density"), 1.f,
 	TEXT("Scales the share of the habitat's cells holding a group of animals, and of the ground's cells holding a cloud of motes (1 as designed, 0 none; the caps on groups and members still hold)"));
 
@@ -58,6 +58,13 @@ void UPlanetFaunaComponent::Configure(UPlanetTerrainComponent* InTerrain, const 
 	RefreshWorld();
 }
 
+void UPlanetFaunaComponent::SetSea(const SlonkFauna::FFaunaSea& InSea)
+{
+	if (InSea == Sea) { return; }
+	Sea = InSea;
+	RefreshWorld();
+}
+
 SlonkScatter::FMoteSettings UPlanetFaunaComponent::MakeMoteSettings() const
 {
 	SlonkScatter::FMoteSettings M;
@@ -80,23 +87,33 @@ SlonkFauna::FFaunaWorld UPlanetFaunaComponent::MakeFaunaWorld() const
 	W.KindMask = KindMask;
 	W.bTowns = bTowns;
 	W.People = People;
-	// The herds only while something can draw them (M_Fauna's walker branch, or the debug's basic material).
+	W.Sea = Sea;
+	// The herds only while something can draw them (M_Fauna's walker branch, or the debug's basic material); the leapers
+	// likewise (its leaper branch).
 	if (!CanDrawHerds()) { W.KindMask &= ~SlonkFauna::KindBit(EFaunaKind::Herd); }
+	if (!CanDrawLeapers()) { W.KindMask &= ~SlonkFauna::KindBit(EFaunaKind::Leaper); }
 	return W;
 }
 
 void UPlanetFaunaComponent::RefreshWorld()
 {
 	if (!bConfigured || !Terrain) { return; }
-	// Whether the herds can be drawn, before the world they are in is made.
+	// Whether the herds and the leapers can be drawn, before the world they are in is made.
 	EnsureHerdMaterial();
+	EnsureLeaperMaterial();
 	// The motes on the terrain's chunks, as the settings have them now (nothing is built again unless they moved).
 	Terrain->SetMoteOptions(MakeMoteSettings());
 	const SlonkFauna::FFaunaWorld W = MakeFaunaWorld();
 	if (Field.HasWorld() && W == Field.GetWorld()) { return; }
-	// Another world, density, kinds or profile: every group goes, and the cells are read again.
-	ReleaseAllSets();
-	Field.SetWorld(W);
+	// Another world, density, kinds or profile: every group goes, and the cells are read again. Its seas alone (fauna
+	// switched off or on): only the leapers go, and only their cells are read again.
+	if (Field.SetWorld(W))
+	{
+		TArray<uint64> Leapers;
+		for (const TPair<uint64, FGroupSet>& S : Sets) { if (S.Value.Group->Kind == EFaunaKind::Leaper) { Leapers.Add(S.Key); } }
+		for (const uint64 Id : Leapers) { ReleaseSet(Id); }
+	}
+	else { ReleaseAllSets(); }
 	++Generation;
 }
 
@@ -208,6 +225,51 @@ void UPlanetFaunaComponent::EnsureHerdMaterial()
 	}
 }
 
+void UPlanetFaunaComponent::EnsureLeaperMaterial()
+{
+	// As the herds' (EnsureHerdMaterial): looked for again when the debug setting changes, and every few seconds while
+	// M_Fauna has no leaper branch (its Leapers parameter); one built before it would draw the fish as birds, so then
+	// there are none. slonk.Fauna.Debug draws them in the engine's basic material, each still at its home on the sea.
+	const int32 Debug = CVarFaunaDebug.GetValueOnGameThread();
+	const double Now = FPlatformTime::Seconds();
+	if (LeaperMIDDebug == Debug && (bLeaperMaterial || Debug > 0 || Now - LeaperProbedAt < 5.0)) { return; }
+	LeaperMIDDebug = Debug;
+	LeaperProbedAt = Now;
+	LastLeaperPxPerRad = -1.f;
+	bLeaperDebug = Debug > 0;
+	UMaterialInterface* Mat = Debug > 0 ? nullptr : LoadObject<UMaterialInterface>(nullptr, SlonkFauna::MaterialPath, nullptr, LOAD_Quiet | LOAD_NoWarn);
+	float Probe = 0.f;
+	const bool bLeapers = Mat && Mat->GetScalarParameterValue(FHashedMaterialParameterInfo(TEXT("Leapers")), Probe);
+	if (bLeapers == bLeaperMaterial && LeaperMID && Debug == 0) { return; }
+	bLeaperMaterial = bLeapers;
+	LeaperMID = nullptr;
+	if (bLeapers)
+	{
+		LeaperMID = UMaterialInstanceDynamic::Create(Mat, this);
+		LeaperMID->SetScalarParameterValue(TEXT("Leapers"), 1.f);
+	}
+	else if (Debug > 0)
+	{
+		if (UMaterialInterface* Basic = LoadObject<UMaterialInterface>(nullptr, SlonkMaterials::FallbackLitPath)) { LeaperMID = UMaterialInstanceDynamic::Create(Basic, this); }
+	}
+	else
+	{
+		static bool bWarned = false;
+		if (!bWarned)
+		{
+			bWarned = true;
+			UE_LOG(LogTemp, Warning, TEXT("Fauna: %s has no leaper branch yet (tools/planet_materials/fauna_material.py builds it): no leaping fish until it does"), SlonkFauna::MaterialPath);
+		}
+	}
+	if (LeaperMID)
+	{
+		for (TPair<uint64, FGroupSet>& Pair : Sets)
+		{
+			if (Pair.Value.Leaper.IsValid() && Pair.Value.Set && Pair.Value.Set->GetMaterial(0) != LeaperMID) { Pair.Value.Set->SetMaterial(0, LeaperMID); }
+		}
+	}
+}
+
 double UPlanetFaunaComponent::GroundHeightAt(const FVector& Dir) const
 {
 	double H = 0.0;
@@ -246,9 +308,11 @@ void UPlanetFaunaComponent::SpawnSet(const SlonkFauna::FFaunaField::FGroupRef& G
 	if (!Mesh) { return; }
 	EnsureMaterial();
 	const bool bHerd = G->Kind == EFaunaKind::Herd;
-	UMaterialInstanceDynamic* Mat = bHerd ? HerdMID.Get() : MID.Get();
-	// A herd only in its own material (M_Fauna's walker branch, or the debug's): drawn as birds, they would fly apart.
-	if (bHerd && !Mat) { return; }
+	const bool bLeaper = G->Kind == EFaunaKind::Leaper;
+	UMaterialInstanceDynamic* Mat = bHerd ? HerdMID.Get() : (bLeaper ? LeaperMID.Get() : MID.Get());
+	// A herd only in its own material (M_Fauna's walker branch, or the debug's): drawn as birds, they would fly apart. A
+	// group of leapers likewise (its leaper branch).
+	if ((bHerd || bLeaper) && !Mat) { return; }
 	const SlonkFauna::FFaunaKindDesc& D = SlonkFauna::KindDesc(G->Kind);
 	UPlanetInstancesComponent* C = AcquireSet();
 	if (C->GetStaticMesh() != Mesh) { C->SetStaticMesh(Mesh); }
@@ -268,6 +332,12 @@ void UPlanetFaunaComponent::SpawnSet(const SlonkFauna::FFaunaField::FGroupRef& G
 		SlonkFauna::StepHerd(*Herd, *G, Params.RadiusCm, Now, 0.0, SlonkFauna::HerdFrightOffset(*G, D, Panic, Params.RadiusCm, Now), Panic.IsLive(Now), false, true,
 			[this](const FVector& Dir) { return GroundHeightAt(Dir); }, TimeOffset, nullptr, &Ahead);
 		C->SetRelativeLocationAndRotation(Herd->FramePos, Herd->FrameRot);
+	}
+	else if (bLeaper)
+	{
+		// With its shoal where the material paints it now (the world's own seconds).
+		Pose = SlonkFauna::PathAt(*G, Params.RadiusCm, WorldSeconds());
+		C->SetRelativeLocationAndRotation(Pose.PosCm, Pose.Rot);
 	}
 	else
 	{
@@ -289,6 +359,15 @@ void UPlanetFaunaComponent::SpawnSet(const SlonkFauna::FFaunaField::FGroupRef& G
 	Entry.PoseAt = Now;
 	Entry.Herd = Herd;
 	if (bHerd) { Entry.Water = MakeShared<SlonkFauna::FHerdWater>(Params); }
+	if (bLeaper)
+	{
+		// Its fish as the set was given them, for their leaps' schedule and their splashes (their homes before the debug's
+		// growth, which only shows where they are).
+		Entry.Leaper = MakeShared<FLeaperState>();
+		Entry.Leaper->Custom = Custom;
+		for (const FTransform& T : Xf) { Entry.Leaper->Home.Add(T.GetLocation()); }
+		Entry.PoseAt = WorldSeconds();
+	}
 	Sets.Add(G->Id, MoveTemp(Entry));
 }
 
@@ -431,14 +510,25 @@ void UPlanetFaunaComponent::UpdateView(const APlayerController* PC, const FVecto
 	{
 		if (!It.Value().IsLive(Now)) { It.RemoveCurrent(); }
 	}
+	// The leapers keep to the world's own seconds, as the terrain material swims its shoals: their dives over by then are
+	// forgotten too, and their splashes are of the crossings since the last frame (none after a pause or a jump).
+	const double WorldNow = WorldSeconds();
+	const double WorldFrom = LastLeaperWorldSec >= 0.0 && WorldNow > LastLeaperWorldSec && WorldNow - LastLeaperWorldSec < 1.0 ? LastLeaperWorldSec : WorldNow;
+	LastLeaperWorldSec = WorldNow;
+	for (auto It = LeaperDives.CreateIterator(); It; ++It)
+	{
+		if (!It.Value().IsLive(WorldNow)) { It.RemoveCurrent(); }
+	}
+	SplashPool.Tick(WorldNow);
 	TArray<SlonkFauna::FFaunaThreat> Threats;
 	GatherThreats(PC, Threats);
 	const FVector Sun = SunDirectionWorld.GetSafeNormal();
 	for (TPair<uint64, FGroupSet>& Pair : Sets)
 	{
 		FGroupSet& S = Pair.Value;
-		// A herd walks on the drawn ground (UpdateHerd).
+		// A herd walks on the drawn ground (UpdateHerd); a group of leapers leaps from its shoal (UpdateLeaper).
 		if (S.Herd.IsValid()) { UpdateHerd(Pair.Key, S, Threats, CamLocal, Sun, Now, Dt); continue; }
+		if (S.Leaper.IsValid()) { UpdateLeaper(Pair.Key, S, Threats, CamLocal, Sun, WorldNow, WorldFrom); continue; }
 		const SlonkFauna::FFaunaGroup& G = *S.Group;
 		const SlonkFauna::FFaunaKindDesc& D = SlonkFauna::KindDesc(G.Kind);
 		// Its frame as it flies, on its path or shaken off it, turning from the frame it had.
@@ -500,6 +590,12 @@ void UPlanetFaunaComponent::UpdateView(const APlayerController* PC, const FVecto
 			const float PxPerRad = SlonkFauna::PixelsPerRadian(PC);
 			HerdMID->SetVectorParameterValue(TEXT("ViewPos"), FLinearColor((float)ViewLocationWorld.X, (float)ViewLocationWorld.Y, (float)ViewLocationWorld.Z, 0.f));
 			if (!FMath::IsNearlyEqual(PxPerRad, LastHerdPxPerRad, 0.5f)) { LastHerdPxPerRad = PxPerRad; HerdMID->SetScalarParameterValue(TEXT("PxPerRad"), PxPerRad); }
+		}
+		if (LeaperMID)
+		{
+			const float PxPerRad = SlonkFauna::PixelsPerRadian(PC);
+			LeaperMID->SetVectorParameterValue(TEXT("ViewPos"), FLinearColor((float)ViewLocationWorld.X, (float)ViewLocationWorld.Y, (float)ViewLocationWorld.Z, 0.f));
+			if (!FMath::IsNearlyEqual(PxPerRad, LastLeaperPxPerRad, 0.5f)) { LastLeaperPxPerRad = PxPerRad; LeaperMID->SetScalarParameterValue(TEXT("PxPerRad"), PxPerRad); }
 		}
 		// Every group's members are written with its frame of this frame, whether or not the rocks and plants are.
 		Terrain->QueuePlanetInstanceWrites();
@@ -628,14 +724,7 @@ void UPlanetFaunaComponent::UpdateDust(uint64 Id, FGroupSet& S, const FVector& C
 		In.VelWorldCmS = GetComponentTransform().TransformVectorNoScale(H.VelCmS);
 		// The ground's own way through the world as the planet turns, which every puff is born with and comes to rest in: as
 		// far over this frame's tick of the dust's emitter as the ground turned in it.
-		if (const APlanetBody* Planet = Cast<APlanetBody>(GetOwner()))
-		{
-			const UNiagaraSettings* NS = GetDefault<UNiagaraSettings>();
-			const UWorld* World = GetWorld();
-			In.CarryWorldCmS = SlonkFauna::GroundCarryCmS(Planet->GetActorUpVector(), Planet->GetActorLocation(), Planet->SpinDegPerSec, UGameClockSubsystem::ScaleOf(this),
-				Planet->IsSpinHeld(), GetComponentTransform().TransformPositionNoScale(H.FramePos), World ? World->GetDeltaSeconds() : 0.0,
-				NS && NS->bLimitDeltaTime ? NS->MaxDeltaTimePerTick : 0.0);
-		}
+		In.CarryWorldCmS = GroundCarryAt(GetComponentTransform().TransformPositionNoScale(H.FramePos), true);
 		In.Wet = S.DustWet;
 		In.Life = Life;
 		In.Night = Night;
@@ -669,6 +758,142 @@ void UPlanetFaunaComponent::UpdateDust(uint64 Id, FGroupSet& S, const FVector& C
 	}
 }
 
+FVector UPlanetFaunaComponent::GroundCarryAt(const FVector& WorldPos, bool bOverFrame) const
+{
+	const APlanetBody* Planet = Cast<APlanetBody>(GetOwner());
+	if (!Planet) { return FVector::ZeroVector; }
+	const UNiagaraSettings* NS = GetDefault<UNiagaraSettings>();
+	const UWorld* World = GetWorld();
+	return SlonkFauna::GroundCarryCmS(Planet->GetActorUpVector(), Planet->GetActorLocation(), Planet->SpinDegPerSec, UGameClockSubsystem::ScaleOf(this), Planet->IsSpinHeld(), WorldPos,
+		bOverFrame && World ? World->GetDeltaSeconds() : 0.0, NS && NS->bLimitDeltaTime ? NS->MaxDeltaTimePerTick : 0.0);
+}
+
+void UPlanetFaunaComponent::UpdateLeaper(uint64 Id, FGroupSet& S, const TArray<SlonkFauna::FFaunaThreat>& Threats, const FVector& CamLocal, const FVector& Sun, double WorldNow, double WorldFrom)
+{
+	using namespace SlonkFauna;
+	const FFaunaGroup& G = *S.Group;
+	const FFaunaKindDesc& D = KindDesc(G.Kind);
+	FLeaperState& L = *S.Leaper;
+	const double R = Params.RadiusCm;
+	// The whole group moves as its frame, with its shoal: the velocity pass sees the shoal's swim in the transform, each
+	// fish's leap in the material's clock.
+	const FFaunaPose Pose = PathAt(G, R, WorldNow);
+	S.Set->SetRelativeLocationAndRotation(Pose.PosCm, Pose.Rot);
+	S.Pose = Pose;
+	S.PoseAt = WorldNow;
+	// Sent diving by a craft passing low over it (someone on a shore is nothing to it).
+	FPanic Dive = LeaperDives.FindRef(Id);
+	for (const FFaunaThreat& T : Threats)
+	{
+		if (StartleLeapers(Dive, D, Pose.PosCm, T, WorldNow))
+		{
+			LeaperDives.Add(Id, Dive);
+			++Startles;
+			break;
+		}
+	}
+	// What the material reads of the group: the night where it is, its dive, and the sea's surface where and when each
+	// fish's current or next leap leaves the water and dives back in (read once a leap, at the swell's full strength, and
+	// faded each frame as the material fades the swell at the camera's distance).
+	float Gd[LeaperData::Num] = {};
+	const double SunUp = FVector::DotProduct(GetComponentTransform().TransformVectorNoScale(Pose.PosCm.GetSafeNormal()), Sun);
+	const float Night = LeaperNight(SunUp);
+	Gd[LeaperData::Night] = Night;
+	const double Dist = FVector::Dist(Pose.PosCm, CamLocal);
+	const double Fade = SwellFade(Dist);
+	LeaperGroupData(G, L.Custom, L.Home, R, Sea.SwellCm, Fade, WorldNow, Dive, L.Surface, Gd);
+	const int32 N = FMath::Min(L.Home.Num(), Leaper::MaxPerGroup);
+	// Every slot at once (one update of the primitive's data a frame).
+	S.Set->SetCustomPrimitiveDataFloatArray(0, TConstArrayView<float>(Gd, LeaperData::Num));
+	// The splashes of the leaps that left the water or dove back in since the last frame, near the camera (a crossing too
+	// long ago, over a hitch, is let go), of those the dive did not keep in the water; none by night, where the sun that
+	// lights them is too far under the horizon to.
+	if (!SplashEnabled() || !SplashLitAt(Night) || WorldFrom >= WorldNow || Dist > SplashReachCm + G.ExtentCm()) { return; }
+	TArray<FLeapEvent> Events;
+	for (int32 i = 0; i < N; ++i) { LeapEventsBetween(L.Custom.GetData() + i * Custom::Num, i, FMath::Max(WorldFrom, WorldNow - SplashLateSec), WorldNow, Events); }
+	for (const FLeapEvent& E : Events)
+	{
+		if (LeapDived(Dive, E.Leap.T0)) { continue; }
+		const FVector Place = LeapCrossing(G, R, Sea.SwellCm, Fade, L.Home[E.Member], E.Leap, E.bEntry);
+		if (FVector::Dist(Place, CamLocal) > SplashReachCm) { continue; }
+		ThrowSplash(Place, 100.0 * L.Custom[E.Member * Custom::Num + Custom::SizeM], E.bEntry, Night);
+	}
+}
+
+bool UPlanetFaunaComponent::EnsureSplashSystem()
+{
+	if (SplashSystem) { return true; }
+	if (bSplashMissing) { return false; }
+	// As the herds take their dust: the asset if it is there, else none, said once.
+	if (FPackageName::DoesPackageExist(SlonkFauna::FishSplashPackage)) { SplashSystem = TSoftObjectPtr<UNiagaraSystem>(FSoftObjectPath(SlonkFauna::FishSplashPath)).LoadSynchronous(); }
+	if (!SplashSystem)
+	{
+		bSplashMissing = true;
+		UE_LOG(LogTemp, Log, TEXT("Fauna: %s not usable, the leaping fish throw no splashes."), SlonkFauna::FishSplashPath);
+	}
+	return SplashSystem != nullptr;
+}
+
+UNiagaraComponent* UPlanetFaunaComponent::MakeSplashComponent()
+{
+	if (!SplashSystem) { return nullptr; }
+	UNiagaraComponent* C = NewObject<UNiagaraComponent>(GetOwner() ? (UObject*)GetOwner() : (UObject*)this, NAME_None, RF_Transient);
+	C->SetAsset(SplashSystem);
+	C->SetAutoActivate(false);
+	C->SetAutoDestroy(false);
+	C->SetCastShadow(false);
+	// In the planet's frame, so the burst comes where the crossing is however the world turns before its first tick.
+	C->SetupAttachment(this);
+	C->RegisterComponent();
+	SplashComponents.Add(C);
+	return C;
+}
+
+void UPlanetFaunaComponent::ThrowSplash(const FVector& PlaceLocal, double SizeCm, bool bEntry, float Night)
+{
+	if (!EnsureSplashSystem()) { return; }
+	UNiagaraComponent* C = SplashPool.Acquire(WorldSeconds(), [this]() { return MakeSplashComponent(); });
+	if (!C) { return; }
+	// At the crossing on the sea's surface, its z the sea's up there; its droplets born moving with the ground as the
+	// planet turns (User.Carry).
+	if (C->GetAttachParent() != this) { C->AttachToComponent(this, FAttachmentTransformRules::KeepRelativeTransform); }
+	C->SetRelativeLocationAndRotation(PlaceLocal, FRotationMatrix::MakeFromZ(PlaceLocal.GetSafeNormal()).ToQuat());
+	SlonkFauna::FFishSplashInput In;
+	In.SizeCm = SizeCm;
+	In.bEntry = bEntry;
+	In.Night = Night;
+	// Set once for the whole burst, the ground's own velocity as it is (not scaled to this frame's tick, as the dust's,
+	// set again every frame, is).
+	In.CarryWorldCmS = GroundCarryAt(GetComponentTransform().TransformPositionNoScale(PlaceLocal), false);
+	In.Shallow = Sea.Shallow;
+	In.Ocean = Sea.Ocean;
+	const SlonkFauna::FFishSplash Sp = SlonkFauna::FishSplashFor(In);
+	C->SetVariableFloat(TEXT("Size"), Sp.Size);
+	C->SetVariableLinearColor(TEXT("Color"), Sp.Color);
+	C->SetVariableVec3(TEXT("Carry"), Sp.Carry);
+	C->SetVariableFloat(TEXT("Entry"), Sp.Entry);
+	C->SetVariableFloat(TEXT("Night"), Sp.Night);
+	C->Activate(true);
+}
+
+int32 UPlanetFaunaComponent::GetLeapingCount() const
+{
+	const double Now = WorldSeconds();
+	int32 N = 0;
+	for (const TPair<uint64, FGroupSet>& Pair : Sets)
+	{
+		if (!Pair.Value.Leaper.IsValid()) { continue; }
+		const SlonkFauna::FPanic Dive = LeaperDives.FindRef(Pair.Key);
+		const FLeaperState& L = *Pair.Value.Leaper;
+		for (int32 i = 0; i < L.Home.Num(); ++i)
+		{
+			const SlonkFauna::FLeap Lp = SlonkFauna::LeapAt(L.Custom.GetData() + i * SlonkFauna::Custom::Num, Now);
+			N += Lp.DrawnAt(Now) && !SlonkFauna::LeapDived(Dive, Lp.T0) ? 1 : 0;
+		}
+	}
+	return N;
+}
+
 FVector UPlanetFaunaComponent::HerdPlaceNow(const SlonkFauna::FFaunaGroup& G) const
 {
 	if (const FGroupSet* S = Sets.Find(G.Id))
@@ -697,6 +922,19 @@ int32 UPlanetFaunaComponent::StartleAll(const AActor* Craft)
 	{
 		const SlonkFauna::FFaunaGroup& G = *Pair.Value.Group;
 		const SlonkFauna::FFaunaKindDesc& D = SlonkFauna::KindDesc(G.Kind);
+		if (Pair.Value.Leaper.IsValid())
+		{
+			// A group of leapers dives, whatever comes at it, on the world's own seconds (but for the second or two after a
+			// dive's window closes, while the leaps it kept under are not yet past their time back in the water).
+			SlonkFauna::FPanic Dive = LeaperDives.FindRef(Pair.Key);
+			if (SlonkFauna::StartleLeapers(Dive, D, Pair.Value.Pose.PosCm, SlonkFauna::FFaunaThreat(), WorldSeconds(), true))
+			{
+				LeaperDives.Add(Pair.Key, Dive);
+				++N;
+				++Startles;
+			}
+			continue;
+		}
 		SlonkFauna::FPanic Panic = Panics.FindRef(Pair.Key);
 		// A herd where its frame stands on the ground, a flock where its path and its fright have it.
 		const FVector Pos = Pair.Value.Herd.IsValid() ? Pair.Value.Herd->FramePos : SlonkFauna::PathAt(G, Params.RadiusCm, Now).PosCm + SlonkFauna::PanicOffset(Panic, D, Now);
@@ -781,8 +1019,27 @@ FString UPlanetFaunaComponent::Describe() const
 	const FString Herds = !CanDrawHerds() ? FString(TEXT("no herds (M_Fauna has no walker branch yet)"))
 		: FString::Printf(TEXT("%d herds drawn (%d walkers: %d grazing, %d walking, %d fleeing; %s) in %s"), Grazing + Walking + Fleeing, Walkers, Grazing, Walking, Fleeing, *Dust,
 			bWalkerMaterial ? TEXT("M_Fauna's walker branch") : TEXT("the basic material (slonk.Fauna.Debug)"));
-	return FString::Printf(TEXT("%s, life %.2f, density %.2f, strangeness %.2f: %s; %s; %d groups in the last scan of %d cells (%d read anew, %.1f ms), %d shaken, %d startles, clock %+.0f s, %s; %s"),
-		SlonkFauna::IsEnabled() ? TEXT("on") : TEXT("off"), W.Life, W.Density, Profile.Strangeness, Kinds.IsEmpty() ? TEXT("none live here") : *Kinds, *Herds,
+	// The leapers about: how many groups and fish, how many fish are out of the water (or rising or diving under it) now, how
+	// many groups are diving; and the splashes in the air.
+	int32 LeaperGroups = 0, Fish = 0, Diving = 0;
+	const double WorldNow = WorldSeconds();
+	for (const TPair<uint64, FGroupSet>& S : Sets)
+	{
+		if (!S.Value.Leaper.IsValid()) { continue; }
+		++LeaperGroups;
+		Fish += S.Value.Group->Members;
+		Diving += LeaperDives.Contains(S.Key) && LeaperDives[S.Key].IsLive(WorldNow) ? 1 : 0;
+	}
+	const FString Splashes = !SlonkFauna::SplashEnabled() ? FString(TEXT("no splashes (slonk.Fauna.Splash 0)"))
+		: (bSplashMissing ? FString(TEXT("no splashes (NS_FishSplash missing)"))
+			: FString::Printf(TEXT("%d splashes in the air (%d thrown, %d components, %d resting, %d let go)"), SplashPool.NumLive(), SplashPool.NumBursts(), SplashPool.NumMade(),
+				SplashPool.NumResting(), SplashPool.NumDropped()));
+	const FString Leapers = Sea.ShoalDensity <= 0.f ? FString(TEXT("no leapers (no shoals in these seas)"))
+		: (!CanDrawLeapers() ? FString(TEXT("no leapers (M_Fauna has no leaper branch yet)"))
+			: FString::Printf(TEXT("%d leaper groups drawn (%d fish, %d leaping now, %d groups diving; %s) in %s"), LeaperGroups, Fish, GetLeapingCount(), Diving, *Splashes,
+				bLeaperMaterial ? TEXT("M_Fauna's leaper branch") : TEXT("the basic material (slonk.Fauna.Debug)")));
+	return FString::Printf(TEXT("%s, life %.2f, density %.2f, strangeness %.2f: %s; %s; %s; %d groups in the last scan of %d cells (%d read anew, %.1f ms), %d shaken, %d startles, clock %+.0f s, %s; %s"),
+		SlonkFauna::IsEnabled() ? TEXT("on") : TEXT("off"), W.Life, W.Density, Profile.Strangeness, Kinds.IsEmpty() ? TEXT("none live here") : *Kinds, *Herds, *Leapers,
 		Field.GetCandidates().Num(), LastScanCells, LastScanEvaluated, LastScanMs, Shaken, Startles, TimeOffset,
 		MID ? (bFaunaMaterial ? TEXT("M_Fauna") : (bPlainAsked ? TEXT("the basic material (slonk.Fauna.Debug)") : TEXT("the basic material (M_Fauna missing)"))) : TEXT("no material yet"),
 		Terrain ? *Terrain->DescribeMotes() : TEXT("no motes"));
@@ -796,6 +1053,15 @@ void UPlanetFaunaComponent::DescribeCells(TArray<FString>& OutLines) const
 	for (const SlonkFauna::FFaunaField::FGroupRef& G : Field.GetCandidates())
 	{
 		const double Dist = FVector::Dist(CamDir, G->Centre) * Params.RadiusCm;
+		if (G->Kind == EFaunaKind::Leaper)
+		{
+			const double WorldNow = WorldSeconds();
+			const bool bDiving = LeaperDives.Contains(G->Id) && LeaperDives[G->Id].IsLive(WorldNow);
+			OutLines.Add(FString::Printf(TEXT("%016llx leaper: %d fish of %.2f m leaping every %.0f s about, from a shoal %.0f by %.0f m %.0f m down over %.0f m of water at the least, %.2f km off%s%s"),
+				G->Id, G->Members, G->SpanM, G->CycleSec, 2.0 * G->ShoalHalfLengthCm / 100.0, 2.0 * G->ShoalHalfWidthCm / 100.0, G->ShoalDepthCm / 100.0, G->WaterCm / 100.0, Dist / 1e5,
+				Sets.Contains(G->Id) ? TEXT(", about") : TEXT(""), bDiving ? TEXT(", diving") : TEXT("")));
+			continue;
+		}
 		const SlonkFauna::FFaunaPose Pose = SlonkFauna::PathAt(*G, Params.RadiusCm, Now);
 		if (G->Kind == EFaunaKind::Herd)
 		{

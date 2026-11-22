@@ -13,6 +13,7 @@
 #include "../FaunaHabitat.h"
 #include "../FaunaMeshes.h"
 #include "../FaunaProfile.h"
+#include "../FishSplash.h"
 #include "../GameClock.h"
 #include "../HerdDust.h"
 #include "../PlanetBody.h"
@@ -1242,14 +1243,15 @@ bool FSlonkFaunaFlightTest::RunTest(const FString& Parameters)
 namespace
 {
 	/** The parts of fauna_material.py's WPO_CODE a float copy is held to: the fliers' motion (all of it but its
-	 *  branches), its mote branch and its walker branch. */
-	enum class EMotionBlock : uint8 { Fliers, Motes, Walkers };
-	/** fauna_material.py's WPO_CODE, its lines trimmed, the blank ones and the comments left out: the fliers' motion, which
-	 *  SlonkFauna::FlierMotion copies; its mote branch (from its test of Motes to the brace that closes it), whose turn to
-	 *  the camera Slonk.Fauna.MoteCloud copies; or its walker branch (from its test of Walkers to the brace that closes
-	 *  it), which SlonkFauna::WalkerMotion copies. Each leaves the others out. Empty if the script or the block is not
-	 *  found. */
-	FString MaterialMotionBlock(EMotionBlock Which = EMotionBlock::Fliers)
+	 *  branches), its mote branch, its walker branch and its leaper branch. */
+	enum class EMotionBlock : uint8 { Fliers, Motes, Walkers, Leapers };
+	/** fauna_material.py's WPO_CODE (or with bPixel its CODE), its lines trimmed, the blank ones and the comments left out:
+	 *  the fliers' motion, which SlonkFauna::FlierMotion copies; its mote branch (from its test of Motes to the brace that
+	 *  closes it), whose turn to the camera Slonk.Fauna.MoteCloud copies; its walker branch (from its test of Walkers to
+	 *  the brace that closes it), which SlonkFauna::WalkerMotion copies; or its leaper branch, which SlonkFauna::LeaperMotion
+	 *  copies (and in CODE, LeaperShown and LeaperTurn). Each leaves the others out. Empty if the script or the block is
+	 *  not found. */
+	FString MaterialMotionBlock(EMotionBlock Which = EMotionBlock::Fliers, bool bPixel = false)
 	{
 		FString Py;
 		if (!FFileHelper::LoadFileToString(Py, *FPaths::Combine(FPaths::ProjectDir(), TEXT("../tools/planet_materials/fauna_material.py")))) { return FString(); }
@@ -1262,13 +1264,14 @@ namespace
 		for (FString& L : Lines)
 		{
 			L.TrimStartAndEndInline();
-			if (!bIn) { bIn = L.StartsWith(TEXT("WPO_CODE = r\"\"\"")); continue; }
+			if (!bIn) { bIn = L.StartsWith(bPixel ? TEXT("CODE = r\"\"\"") : TEXT("WPO_CODE = r\"\"\"")); continue; }
 			if (L.StartsWith(TEXT("\"\"\""))) { return Block; }
 			if (L.IsEmpty() || L.StartsWith(TEXT("//"))) { continue; }
 			if (In == EMotionBlock::Fliers)
 			{
 				if (L.StartsWith(TEXT("[branch] if (Motes"))) { In = EMotionBlock::Motes; Depth = 0; }
 				else if (L.StartsWith(TEXT("[branch] if (Walkers"))) { In = EMotionBlock::Walkers; Depth = 0; }
+				else if (L.StartsWith(TEXT("[branch] if (Leapers"))) { In = EMotionBlock::Leapers; Depth = 0; }
 			}
 			const EMotionBlock Line = In;
 			if (In != EMotionBlock::Fliers)
@@ -1286,6 +1289,10 @@ namespace
 	constexpr uint32 MaterialMoteBlockCrc = 0xa89449edu;
 	/** The walker branch's CRC when SlonkFauna::WalkerMotion was last brought in line with it. */
 	constexpr uint32 MaterialWalkerBlockCrc = 0x42806976u;
+	/** The leaper branch's CRCs, in WPO_CODE and in CODE, when SlonkFauna::LeaperMotion, LeaperShown and LeaperTurn were
+	 *  last brought in line with them. */
+	constexpr uint32 MaterialLeaperBlockCrc = 0x706d3a3cu;
+	constexpr uint32 MaterialLeaperPixelBlockCrc = 0xff013bddu;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaMeshesTest, "Slonk.Fauna.Meshes", SLONK_TEST_FLAGS)
@@ -1347,7 +1354,7 @@ bool FSlonkFaunaMeshesTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("wings hinged at the root, flexing to the tip"), Hinges > 0 && Tips > 0);
 	TestTrue(TEXT("a unit mesh a metre across"), FMath::IsNearlyEqual(Box0.Min.Y, -50.0, 0.5) && FMath::IsNearlyEqual(Box0.Max.Y, 50.0, 0.5));
 	FDynamicMesh3 Nothing;
-	TestFalse(TEXT("nothing built yet for a plan without wings or legs (a fish)"), SlonkFaunaMeshes::BuildLod(SlonkFauna::EarthPlan(EFaunaKind::Leaper), 0, Nothing));
+	TestFalse(TEXT("nothing built yet for a plan without wings, legs or fins (a floater)"), SlonkFaunaMeshes::BuildLod(SlonkFauna::EarthPlan(EFaunaKind::Floater), 0, Nothing));
 
 	// The material's motion over LOD 0's vertices, every seed, time, bank, startle and speck size, inside the box each
 	// instance is culled by (UPlanetInstancesComponent::InstanceBox with the kind's padding).
@@ -1418,7 +1425,7 @@ bool FSlonkFaunaMeshesTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("the bird's mesh is made"), Mesh != nullptr);
 	TestTrue(TEXT("and kept"), Mesh == SlonkFaunaMeshes::GetMesh(Plan, EFaunaKind::Flier));
 	if (Mesh) { TestEqual(TEXT("with three LODs"), Mesh->GetNumLODs(), SlonkFaunaMeshes::NumLods); }
-	TestTrue(TEXT("no mesh for a plan with nothing built"), SlonkFaunaMeshes::GetMesh(SlonkFauna::EarthPlan(EFaunaKind::Leaper), EFaunaKind::Leaper) == nullptr);
+	TestTrue(TEXT("no mesh for a plan with nothing built"), SlonkFaunaMeshes::GetMesh(SlonkFauna::EarthPlan(EFaunaKind::Floater), EFaunaKind::Floater) == nullptr);
 	return true;
 }
 
@@ -3939,7 +3946,7 @@ bool FSlonkFaunaWalkerTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("every vertex has a tangent basis"), Vertices > 0 && NoTangent == 0);
 	}
 	FDynamicMesh3 Nothing;
-	TestFalse(TEXT("nothing built yet for a fish"), SlonkFaunaMeshes::BuildLod(SlonkFauna::EarthPlan(EFaunaKind::Leaper), 0, Nothing));
+	TestFalse(TEXT("nothing built yet for a floater"), SlonkFaunaMeshes::BuildLod(SlonkFauna::EarthPlan(EFaunaKind::Floater), 0, Nothing));
 	return true;
 }
 
@@ -4275,6 +4282,1436 @@ bool FSlonkFaunaHerdDustTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("one given back is not lent while its puffs fade"), Back == A && C && C != A && C != B);
 	TestTrue(TEXT("and is lent again once they have"), Again == A && MadeThen == 3);
 	TestTrue(TEXT("every component comes back"), Returned == 3 && Pool.NumLive() == 0 && Pool.NumResting() == MadeThen);
+	return true;
+}
+
+namespace
+{
+	/** That world with its seas as the terrain material paints them on a living world (SeaLifeOf's shoals) and the style's
+	 *  swell. */
+	SlonkFauna::FFaunaWorld EarthSeas(float Life = 1.f)
+	{
+		SlonkFauna::FFaunaWorld W = EarthFauna(Life);
+		W.Sea.ShoalDensity = SlonkFauna::SeaLifeOf(Life, SlonkGenome::Roll(EPlanetArchetype::Terrestrial, 0.f, 7919u)).ShoalDensity;
+		W.Sea.SwellCm = 120.f;
+		return W;
+	}
+
+	/** The open sea's depth at a direction as a group of leapers reads its water (the field's at ten metres): -1 off it. */
+	double SeaDepthAt(const FPlanetTerrainParams& P, const FVector& Dir)
+	{
+		const FPlanetTerrainSample S = SlonkTerrain::Sample(P, Dir.GetSafeNormal(), 1000.0);
+		return S.bWater && FMath::Abs(S.WaterCm) < 1.0 && S.River < 0.05f && S.Ice < 0.3f ? S.WaterCm - S.GroundCm : -1.0;
+	}
+
+	/** Directions over the open sea at least MinDepthCm deep, of N spread over the globe: at most Count of them, taken
+	 *  evenly from all there are (so from every latitude). */
+	TArray<FVector> SeaSpots(const FPlanetTerrainParams& P, int32 N, double MinDepthCm, int32 Count)
+	{
+		TArray<FVector> All;
+		for (int32 i = 0; i < N; ++i)
+		{
+			const FVector Dir = Spread(i, N);
+			if (SeaDepthAt(P, Dir) > MinDepthCm) { All.Add(Dir); }
+		}
+		if (All.Num() <= Count) { return All; }
+		TArray<FVector> Out;
+		for (int32 k = 0; k < Count; ++k) { Out.Add(All[(int32)((int64)k * All.Num() / Count)]); }
+		return Out;
+	}
+
+	/** A group of leapers to test with: the nearest to the first deep sea of the spread directions that has one near. */
+	bool TestLeapers(const SlonkFauna::FFaunaWorld& W, SlonkFauna::FFaunaGroup& Out)
+	{
+		for (const FVector& Dir : SeaSpots(W.P, 400, 5.0e3, 8))
+		{
+			if (SlonkFauna::FindGroupNear(W, EFaunaKind::Leaper, Dir, 3.0e5, 6000, Out)) { return true; }
+		}
+		return false;
+	}
+
+	/** Groups of leapers in the cells round deep sea spread over the globe, at most Count. */
+	void LeaperGroupsOverSeas(const SlonkFauna::FFaunaWorld& W, int32 Count, TArray<SlonkFauna::FFaunaGroup>& Out)
+	{
+		Out.Reset();
+		TSet<uint64> Seen;
+		for (const FVector& Dir : SeaSpots(W.P, 1200, 5.0e3, 40))
+		{
+			TArray<SlonkFauna::FFaunaCell> Cells;
+			SlonkFauna::CellsNear(W.P, EFaunaKind::Leaper, Dir, 6.0e4, Cells);
+			for (const SlonkFauna::FFaunaCell& C : Cells)
+			{
+				bool bAlready = false;
+				Seen.Add(C.Id(), &bAlready);
+				SlonkFauna::FFaunaGroup G;
+				if (!bAlready && SlonkFauna::GroupInCell(W, C, G)) { Out.Add(MoveTemp(G)); }
+				if (Out.Num() >= Count) { return; }
+			}
+		}
+	}
+
+	/** A mesh's vertex colours by vertex (its first element's). */
+	TArray<FLinearColor> VertexColours(const UE::Geometry::FDynamicMesh3& M)
+	{
+		TArray<FLinearColor> Out;
+		Out.Init(FLinearColor(0.f, 0.f, 0.5f, 0.f), M.MaxVertexID());
+		TArray<bool> Done;
+		Done.Init(false, M.MaxVertexID());
+		const UE::Geometry::FDynamicMeshColorOverlay* C = M.Attributes()->PrimaryColors();
+		for (const int32 El : C->ElementIndicesItr())
+		{
+			const int32 V = C->GetParentVertex(El);
+			if (V >= 0 && !Done[V]) { const FVector4f Cv = C->GetElement(El); Out[V] = FLinearColor(Cv.X, Cv.Y, Cv.Z, Cv.W); Done[V] = true; }
+		}
+		return Out;
+	}
+
+	/** The material's clock at a moment of the world's. */
+	float MaterialTime(double WorldSec) { return (float)FMath::Fmod(WorldSec, SlonkFauna::ClockPeriodSec); }
+
+	/**
+	 * The terrain material's swell at a planet-local point on its sea (its WPO_CODE's plane of the projection and
+	 * SlonkGerstner), transliterated in floats as the GPU runs it from the vertex's noise-space point (the point less whole
+	 * periods): the displacement along the plane's two axes and up, cm, at full strength. A hand copy: Slonk.Fauna.LeaperArcs
+	 * ties it to the script by the CRC of the code it copies (TerrainSwellBlock).
+	 */
+	FVector3f MaterialSwell(const FVector& Local, float Time, float SwellCm, int32* OutIu = nullptr, int32* OutIv = nullptr)
+	{
+		const FVector Pn = SlonkScatter::ToNoiseSpace(Local);
+		const FVector3f p((float)Pn.X, (float)Pn.Y, (float)Pn.Z);
+		const FVector Ud = Local.GetSafeNormal();
+		const FVector3f aU(FMath::Abs((float)Ud.X), FMath::Abs((float)Ud.Y), FMath::Abs((float)Ud.Z));
+		FVector2f pu;
+		int32 Iu, Iv;
+		if (aU.X >= aU.Y && aU.X >= aU.Z) { pu = FVector2f(p.Y, p.Z); Iu = 1; Iv = 2; }
+		else if (aU.Y >= aU.Z) { pu = FVector2f(p.X, p.Z); Iu = 0; Iv = 2; }
+		else { pu = FVector2f(p.X, p.Y); Iu = 0; Iv = 1; }
+		if (OutIu) { *OutIu = Iu; }
+		if (OutIv) { *OutIv = Iv; }
+		const FVector2f K[4] = { FVector2f(100.f, 70.f), FVector2f(180.f, -60.f), FVector2f(0.f, 256.f), FVector2f(-300.f, 400.f) };
+		const float A[4] = { 0.55f, 0.3f, 0.25f, 0.12f };
+		const float Q = 0.55f;
+		FVector3f Disp(0.f);
+		for (int32 i = 0; i < 4; ++i)
+		{
+			const FVector2f k = K[i] * (6.2831853f / 1048576.f);
+			const float kl = k.Size();
+			const FVector2f d = k / kl;
+			const float w = FMath::Sqrt(981.f * kl);
+			const float ph = (k.X * pu.X + k.Y * pu.Y) - w * Time;
+			const float a = A[i] * SwellCm;
+			const float sn = FMath::Sin(ph), cs = FMath::Cos(ph);
+			Disp.X += d.X * (Q * a * cs);
+			Disp.Y += d.Y * (Q * a * cs);
+			Disp.Z += a * sn;
+		}
+		return Disp;
+	}
+
+	/** Where the terrain material's WPO_CODE carries a vertex of its sea at a planet-local point on the sea-level sphere,
+	 *  its swell faded by Fade: along its plane's two fixed axes (Tw and Bw) and up its own radial (U), from MaterialSwell. */
+	FVector MaterialSeaVertex(const FVector& Rest, float Time, float SwellCm, float Fade)
+	{
+		int32 Iu = 0, Iv = 0;
+		const FVector3f D = MaterialSwell(Rest, Time, SwellCm, &Iu, &Iv);
+		FVector Off = Rest.GetSafeNormal() * (double)D.Z;
+		Off[Iu] += D.X;
+		Off[Iv] += D.Y;
+		return Rest + Off * Fade;
+	}
+
+	/** The terrain material's drawn sea over the sea-level sphere along the radial through a planet-local point, cm: the
+	 *  vertex its swell carries onto that radial (found to convergence) and how high over the sphere it is carried there.
+	 *  Out the residual (how far off the radial that carried vertex still is, cm) and the swell's own lift up that vertex's
+	 *  radial alone (its sway's left out), cm. */
+	double DrawnSeaCm(const FVector& Local, double RadiusCm, float Time, float SwellCm, float Fade = 1.f, double* OutResidualCm = nullptr, double* OutLiftCm = nullptr)
+	{
+		const FVector U = Local.GetSafeNormal();
+		FVector B = U;
+		FVector V = MaterialSeaVertex(B * RadiusCm, Time, SwellCm, Fade);
+		for (int32 It = 0; It < 16; ++It)
+		{
+			// Moved back by how far the vertex it carries lands off the radial.
+			B = (B + (U - V.GetSafeNormal())).GetSafeNormal();
+			V = MaterialSeaVertex(B * RadiusCm, Time, SwellCm, Fade);
+		}
+		if (OutResidualCm) { *OutResidualCm = (V.GetSafeNormal() - U).Size() * RadiusCm; }
+		if (OutLiftCm) { *OutLiftCm = MaterialSwell(B * RadiusCm, Time, SwellCm).Z * Fade; }
+		return V.Size() - RadiusCm;
+	}
+
+	/** The code MaterialSwell copies, as terrain_material.py has it now: its SlonkGerstner function and its WPO_CODE, each
+	 *  line trimmed, the blank ones and the comments left out. Empty if the script or either is not found. */
+	FString TerrainSwellBlock()
+	{
+		FString Py;
+		if (!FFileHelper::LoadFileToString(Py, *FPaths::Combine(FPaths::ProjectDir(), TEXT("../tools/planet_materials/terrain_material.py")))) { return FString(); }
+		TArray<FString> Lines;
+		Py.ParseIntoArrayLines(Lines, false);
+		FString Gerstner, Wpo;
+		bool bGerstner = false, bWpo = false, bGerstnerDone = false, bWpoDone = false;
+		for (FString& L : Lines)
+		{
+			L.TrimStartAndEndInline();
+			if (!bGerstner && !bGerstnerDone && L.StartsWith(TEXT("void SlonkGerstner("))) { bGerstner = true; }
+			if (bGerstner)
+			{
+				if (!L.IsEmpty() && !L.StartsWith(TEXT("//"))) { Gerstner += L + TEXT("\n"); }
+				if (L == TEXT("}")) { bGerstner = false; bGerstnerDone = true; }
+				continue;
+			}
+			if (!bWpo && !bWpoDone && L.StartsWith(TEXT("WPO_CODE = r\"\"\""))) { bWpo = true; continue; }
+			if (bWpo)
+			{
+				if (L.StartsWith(TEXT("\"\"\""))) { bWpo = false; bWpoDone = true; continue; }
+				if (!L.IsEmpty() && !L.StartsWith(TEXT("//"))) { Wpo += L + TEXT("\n"); }
+			}
+		}
+		return bGerstnerDone && bWpoDone ? Gerstner + Wpo : FString();
+	}
+	/** Its CRC when MaterialSwell and SlonkFauna::SwellAt were last brought in line with it. */
+	constexpr uint32 TerrainSwellBlockCrc = 0xd19fff79u;
+
+	/** A group of leapers' fish as its set is given them: their custom floats and their homes in its frame. */
+	struct FFish
+	{
+		TArray<FTransform> Xf;
+		TArray<float> Custom;
+		TArray<FVector> Home;
+		int32 Num() const { return Xf.Num(); }
+		const float* At(int32 i) const { return Custom.GetData() + i * SlonkFauna::Custom::Num; }
+	};
+	FFish FishOf(const SlonkFauna::FFaunaGroup& G)
+	{
+		FFish F;
+		SlonkFauna::MembersOf(G, F.Xf, F.Custom);
+		for (const FTransform& T : F.Xf) { F.Home.Add(T.GetLocation()); }
+		return F;
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaLeaperHabitatTest, "Slonk.Fauna.LeaperHabitat", SLONK_TEST_FLAGS)
+bool FSlonkFaunaLeaperHabitatTest::RunTest(const FString& Parameters)
+{
+	// Leaping fish live only in the shoals the terrain material paints: a group's cell holds a shoal (the material's float
+	// copy draws it where its group says it swims), the group in its own cell, one group to a shoal, in about half the
+	// shoals; over the open sea all round its leaps, at least 3 m deep and 3 m deeper than its shoal swims (so never on
+	// land, nor in the shallows: the coasts' shoals over shallow water hold none); and none on a lifeless, airless or
+	// molten world, nor in a sea whose shoals are not painted.
+	const SlonkFauna::FFaunaWorld W = EarthSeas();
+	const double R = W.P.RadiusCm;
+	// The shoals' cells round points of sea spread over the globe, the shallows by the coasts among them; and round points of
+	// sea on the seams of the projection (where a direction's two largest axes are as large), where the material's shoals
+	// and swell change their plane.
+	TArray<SlonkFauna::FFaunaCell> Cells;
+	int32 SeamSpots = 0;
+	{
+		TArray<FVector> Spots = SeaSpots(W.P, 4000, 0.0, 240);
+		const int32 Spread0 = Spots.Num();
+		for (int32 i = 0; i < 6000 && SeamSpots < 120; ++i)
+		{
+			FVector Dir = Spread(i, 6000);
+			const FVector A = Dir.GetAbs();
+			const int32 Big = A.X >= A.Y && A.X >= A.Z ? 0 : (A.Y >= A.Z ? 1 : 2);
+			const int32 Next = Big == 0 ? (A.Y >= A.Z ? 1 : 2) : (Big == 1 ? (A.X >= A.Z ? 0 : 2) : (A.X >= A.Y ? 0 : 1));
+			const double M = 0.5 * (A[Big] + A[Next]);
+			Dir[Big] = FMath::Sign(Dir[Big]) * M;
+			Dir[Next] = FMath::Sign(Dir[Next]) * M;
+			Dir = Dir.GetSafeNormal();
+			if (SeaDepthAt(W.P, Dir) > 1000.0 && i % 7 == 0) { Spots.Add(Dir); ++SeamSpots; }
+		}
+		TSet<uint64> Seen;
+		for (int32 s = 0; s < Spots.Num(); ++s)
+		{
+			TArray<SlonkFauna::FFaunaCell> Near;
+			SlonkFauna::CellsNear(W.P, EFaunaKind::Leaper, Spots[s], s < Spread0 ? 6.0e4 : 3.0e4, Near);
+			for (const SlonkFauna::FFaunaCell& C : Near)
+			{
+				bool bAlready = false;
+				Seen.Add(C.Id(), &bAlready);
+				if (!bAlready) { Cells.Add(C); }
+			}
+		}
+	}
+	int32 OffPlane = 0;
+	int32 Shoals = 0, OnePlane = 0, Gated = 0, TurnedAway = 0, OverLand = 0, OverShallows = 0, Groups = 0, NoShoal = 0, NotTheirs = 0, Unpainted = 0, Shallow = 0, Twice = 0;
+	int32 Fish = 0, FishMin = 99, FishMax = 0;
+	double LeastWater = TNumericLimits<double>::Max(), LeastClear = TNumericLimits<double>::Max();
+	TSet<FIntVector> Claimed;
+	for (const SlonkFauna::FFaunaCell& C : Cells)
+	{
+		const SlonkFauna::FLeaperHabitatRead H = SlonkFauna::LeaperHabitatAt(W, C);
+		SlonkFauna::FFaunaGroup G;
+		const bool bGroup = SlonkFauna::GroupInCell(W, C, G);
+		Shoals += H.bShoal ? 1 : 0;
+		OnePlane += H.bShoal && H.bOnePlane ? 1 : 0;
+		Gated += H.bShoal && H.bOnePlane && H.bGate ? 1 : 0;
+		if (H.bShoal && H.bOnePlane && H.bGate && !H.bSuits)
+		{
+			++TurnedAway;
+			OverLand += H.NotSea > 0 ? 1 : 0;
+			OverShallows += H.NotSea == 0 && H.Shallow > 0 ? 1 : 0;
+		}
+		if (!bGroup) { continue; }
+		++Groups;
+		Fish += G.Members;
+		FishMin = FMath::Min(FishMin, G.Members);
+		FishMax = FMath::Max(FishMax, G.Members);
+		// Its shoal where the material paints it: ShoalAt at its middle, through a day, finds the loop it swims round, in its
+		// own cell; and the material's float copy of the terrain's shoals draws it where it swims then.
+		NotTheirs += SlonkFauna::CellOf(W.P, EFaunaKind::Leaper, G.Centre).Id() == C.Id() ? 0 : 1;
+		for (const double T : { 0.0, 777.7, 4321.0, 86000.0 })
+		{
+			SlonkFauna::FShoal S;
+			if (!SlonkFauna::ShoalAt(G.Centre * R, R, W.Sea.ShoalDensity, T, S) || !S.LoopCentreCm.Equals(G.Centre * R, 1.0)) { ++NoShoal; continue; }
+			const float Shape = MaterialShoalShape(S.CentreCm, W.Sea.ShoalDensity, (float)T);
+			Unpainted += Shape >= 0.f && Shape < 0.5f ? 0 : 1;
+		}
+		// The open sea all round its leaps, deep enough: 25 points from its loop's middle out to its loop and its fish's reach,
+		// read afresh (not as its own read had them).
+		const double Need = FMath::Max(SlonkFauna::Leaper::MinWaterCm, G.ShoalDepthCm + SlonkFauna::Leaper::ShoalClearCm);
+		for (int32 Ring = 0; Ring <= 3; ++Ring)
+		{
+			const int32 Around = Ring == 0 ? 1 : 8;
+			for (int32 k = 0; k < Around; ++k)
+			{
+				const FVector Dir = Ring == 0 ? G.Centre : AlongGround(G.Centre, G.ExtentCm() * Ring / 3.0, R, UE_DOUBLE_TWO_PI * (k + 0.5 * (Ring % 2)) / Around);
+				const double Depth = SeaDepthAt(W.P, Dir);
+				Shallow += Depth >= Need ? 0 : 1;
+				// And all of it on its own cell's plane of the projection, on its side.
+				OffPlane += SlonkFauna::ProjectionAxis(Dir) == C.Face / 2 && (Dir[C.Face / 2] < 0.0) == ((C.Face & 1) != 0) ? 0 : 1;
+				LeastWater = FMath::Min(LeastWater, Depth);
+				LeastClear = FMath::Min(LeastClear, Depth - G.ShoalDepthCm);
+			}
+		}
+		// One group to a shoal.
+		bool bAlready = false;
+		Claimed.Add(FIntVector((int32)FMath::RoundToDouble(G.Centre.X * R / 100.0), (int32)FMath::RoundToDouble(G.Centre.Y * R / 100.0), (int32)FMath::RoundToDouble(G.Centre.Z * R / 100.0)), &bAlready);
+		Twice += bAlready ? 1 : 0;
+	}
+	// Where the cell holds no shoal of its own, no group.
+	int32 WithoutShoal = 0;
+	for (const SlonkFauna::FFaunaCell& C : Cells)
+	{
+		FVector Mid;
+		SlonkFauna::FShoal S;
+		if (!SlonkFauna::CellMiddle(W.P, C, Mid) || !SlonkFauna::ShoalAt(Mid * R, R, W.Sea.ShoalDensity, 0.0, S))
+		{
+			SlonkFauna::FFaunaGroup G;
+			WithoutShoal += SlonkFauna::GroupInCell(W, C, G) ? 1 : 0;
+		}
+	}
+	AddInfo(FString::Printf(TEXT("%d cells of the shoals' lattice round the seas: %d hold a painted shoal (%d wholly on their plane), %d of those in the leapers' share; %d groups of %d fish (%d to %d a group), %d turned away (%d over land, ice or a river, %d over the shallows)"),
+		Cells.Num(), Shoals, OnePlane, Gated, Groups, Fish, FishMin, FishMax, TurnedAway, OverLand, OverShallows));
+	AddInfo(FString::Printf(TEXT("the groups: %d not in their own cell, %d times their shoal not found where they swim and %d not painted there by the material's copy, %d points of their water read afresh shallower than they need (the least %.1f m, %.1f m past their shoal's depth), %d off their plane of the projection (%d points of sea on its seams among those read round), %d shoals with two groups; %d groups in cells without a shoal"),
+		NotTheirs, NoShoal, Unpainted, Shallow, LeastWater / 100.0, LeastClear / 100.0, OffPlane, SeamSpots, Twice, WithoutShoal));
+	TestTrue(TEXT("shoals across a seam of the projection turned away"), SeamSpots > 50 && OnePlane < Shoals);
+	TestEqual(TEXT("each group's leaps wholly on its own plane of the projection, where the material's swell is the same plane's"), OffPlane, 0);
+	TestTrue(TEXT("enough shoals and groups to judge by"), Shoals > 500 && Groups > 100);
+	TestTrue(TEXT("about half the shoals that may hold leapers do"), Gated > 0 && FMath::Abs((double)Gated / FMath::Max(OnePlane, 1) - SlonkFauna::Leaper::ShoalShare) < 0.08);
+	TestTrue(TEXT("shoals over the shallows and the shore turned away"), OverShallows > 0 && OverLand > 0);
+	TestEqual(TEXT("each group in its own cell"), NotTheirs, 0);
+	TestEqual(TEXT("each group's shoal found where it swims"), NoShoal, 0);
+	TestEqual(TEXT("and painted there by the terrain material"), Unpainted, 0);
+	TestEqual(TEXT("the open sea all round their leaps, at least 3 m deep and 3 m deeper than their shoal swims"), Shallow, 0);
+	TestTrue(TEXT("never on land, never in the shallows"), LeastWater >= SlonkFauna::Leaper::MinWaterCm && LeastClear >= SlonkFauna::Leaper::ShoalClearCm);
+	TestEqual(TEXT("one group to a shoal"), Twice, 0);
+	TestEqual(TEXT("none where no shoal is painted"), WithoutShoal, 0);
+	TestTrue(TEXT("one to five fish a group"), FishMin >= 1 && FishMax <= SlonkFauna::Leaper::MaxPerGroup);
+
+	// No leapers on a world where nothing lives, without air, with molten seas (none of whose shoals are painted), or with
+	// the kind switched off.
+	FWorldGenome Molten = SlonkGenome::Roll(EPlanetArchetype::Terrestrial, 0.f, 7919u);
+	Molten.Solvent = ESolvent::Magma;
+	SlonkFauna::FFaunaWorld Dead = EarthSeas(0.f), Airless = EarthSeas(), Magma = EarthSeas(), Off = EarthSeas();
+	Airless.P.bAirless = true;
+	Magma.Sea.ShoalDensity = SlonkFauna::SeaLifeOf(1.f, Molten).ShoalDensity;
+	Off.KindMask = SlonkFauna::AllKinds & ~SlonkFauna::KindBit(EFaunaKind::Leaper);
+	int32 InDead = 0, InAirless = 0, InMagma = 0, InOff = 0;
+	for (int32 i = 0; i < Cells.Num(); i += 7)
+	{
+		SlonkFauna::FFaunaGroup G;
+		InDead += SlonkFauna::GroupInCell(Dead, Cells[i], G) ? 1 : 0;
+		InAirless += SlonkFauna::GroupInCell(Airless, Cells[i], G) ? 1 : 0;
+		InMagma += SlonkFauna::GroupInCell(Magma, Cells[i], G) ? 1 : 0;
+		InOff += SlonkFauna::GroupInCell(Off, Cells[i], G) ? 1 : 0;
+	}
+	AddInfo(FString::Printf(TEXT("of a seventh of those cells: %d groups on a lifeless world, %d without air, %d in molten seas (shoal density %.2f), %d with the kind off"), InDead, InAirless, InMagma, Magma.Sea.ShoalDensity, InOff));
+	TestTrue(TEXT("no leapers on a lifeless, airless or molten world, nor with the kind off"), InDead == 0 && InAirless == 0 && InMagma == 0 && InOff == 0 && !Magma.Spawns(EFaunaKind::Leaper));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaLeaperArcsTest, "Slonk.Fauna.LeaperArcs", SLONK_TEST_FLAGS)
+bool FSlonkFaunaLeaperArcsTest::RunTest(const FString& Parameters)
+{
+	// A fish's leaps, in closed form (SlonkFauna::LeapAt, LeapPoseAt) and as the material draws them (its float copy,
+	// LeaperMotion and LeaperShown), agree: it is drawn only from just under the sea as it comes up to just under it as it
+	// dives back in, leaving the water at the sea's drawn surface where and when it crosses it and diving back in at the
+	// surface there and then, never drawn above the water outside a leap nor below the shallowest sea floor it may live
+	// over; the splashes come where and when its leaps cross the surface; every cycle divides the hour and the hour's wrap
+	// shows no seam; the fish of a group leap a few seconds apart, irregularly. The swell the crossings are read from is the
+	// terrain material's own.
+	const SlonkFauna::FFaunaWorld W = EarthSeas();
+	const double R = W.P.RadiusCm;
+	const double Swell = W.Sea.SwellCm;
+	TArray<SlonkFauna::FFaunaGroup> Groups;
+	LeaperGroupsOverSeas(W, 30, Groups);
+	if (Groups.Num() < 10) { AddError(TEXT("too few groups of leapers found")); return false; }
+	using namespace UE::Geometry;
+	FDynamicMesh3 Lod0;
+	SlonkFaunaMeshes::BuildLod(SlonkFauna::EarthPlan(EFaunaKind::Leaper), 0, Lod0);
+	const TArray<FLinearColor> Vcs = VertexColours(Lod0);
+	const FLinearColor Middle(0.f, 0.f, 0.5f, SlonkFauna::Vc::JointUndulate);
+	int32 Tried = 0, ShownDisagree = 0, Off = 0, NotAtSurface = 0, CrossingOff = 0, AboveOutside = 0, PokesOut = 0, BelowFloor = 0, Leaps = 0, Crossings = 0, OffDrawnSea = 0;
+	double WorstOffCm = 0.0, WorstSurfaceCm = 0.0, WorstCrossCm = 0.0, WorstDrawnSeaCm = 0.0, Lowest = 0.0, Highest = -1.0e9, HiddenHighest = -1.0e9;
+	FRandomStream Rng(808);
+	SlonkFauna::FPanic NoDive;
+	for (const SlonkFauna::FFaunaGroup& G : Groups)
+	{
+		const FFish F = FishOf(G);
+		SlonkFauna::FLeaperSurfaceCache Cache;
+		for (int32 i = 0; i < F.Num(); ++i)
+		{
+			const float* C = F.At(i);
+			const float S = C[SlonkFauna::Custom::SizeM];
+			// Cycles of the first two hours (and so across the hour's wrap), and a few of a day later.
+			for (int32 Pick = 0; Pick < 14; ++Pick)
+			{
+				const double Cyc = C[SlonkFauna::Custom::RateHz];
+				const int64 N = Pick < 4 ? (int64)FMath::RoundToDouble(3600.0 / Cyc) - 2 + Pick : (Pick < 10 ? Rng.RandRange(0, 480) : 86400 / (int64)Cyc + Rng.RandRange(0, 100));
+				const SlonkFauna::FLeap L = SlonkFauna::LeapOf(C, N);
+				if (!L.bLeaps) { continue; }
+				++Leaps;
+				// Moments before it is drawn, through its leap (its two crossings among them) and after.
+				TArray<double> Ts = { L.T0 - L.LeadSec - 0.02, L.T0 - L.LeadSec + 0.002, L.T0, L.T1(), L.T1() + L.LeadSec - 0.002, L.T1() + L.LeadSec + 0.02 };
+				for (int32 k = 0; k < 6; ++k) { Ts.Add(L.T0 - L.LeadSec + (L.FlightSec + 2.0 * L.LeadSec) * Rng.FRand()); }
+				for (const double T : Ts)
+				{
+					++Tried;
+					float Gd[SlonkFauna::LeaperData::Num] = {};
+					SlonkFauna::LeaperGroupData(G, F.Custom, F.Home, R, Swell, 1.0, T, NoDive, Cache, Gd);
+					const float Tm = MaterialTime(T);
+					const bool bShown = SlonkFauna::LeaperShown(Tm, C, Gd);
+					const bool bDrawn = L.DrawnAt(T);
+					const bool bNearEdge = FMath::Abs(T - (L.T0 - L.LeadSec)) < 0.005 || FMath::Abs(T - (L.T1() + L.LeadSec)) < 0.005;
+					ShownDisagree += bShown == bDrawn || bNearEdge ? 0 : 1;
+					const double H0 = Gd[SlonkFauna::LeaperData::Surface0 + 2 * i], H1 = Gd[SlonkFauna::LeaperData::Surface0 + 2 * i + 1];
+					const SlonkFauna::FLeapPose P = SlonkFauna::LeapPoseAt(L, H0, H1, T);
+					// The material's fish's middle (its mesh's origin) in its group's frame, cm from its home.
+					const FVector Mid = (FVector)SlonkFauna::LeaperMotion(FVector3f::ZeroVector, Middle, Tm, C, Gd, 2000.f, 960.f) * S;
+					// Every vertex of it, in its group's frame over its home (the sea's level at z 0).
+					double Top = -1.0e9, Bottom = 1.0e9;
+					for (const int32 V : Lod0.VertexIndicesItr())
+					{
+						const FVector3f LP = (FVector3f)Lod0.GetVertex(V);
+						const FVector3f Moved = LP + SlonkFauna::LeaperMotion(LP, Vcs[V], Tm, C, Gd, 2000.f, 960.f);
+						Top = FMath::Max(Top, (double)Moved.Z * S);
+						Bottom = FMath::Min(Bottom, (double)Moved.Z * S);
+					}
+					Lowest = FMath::Min(Lowest, Bottom);
+					BelowFloor += Bottom >= -SlonkFauna::Leaper::MinWaterCm ? 0 : 1;
+					if (!bShown)
+					{
+						// Masked, and held under the sea however low its surface stands.
+						HiddenHighest = FMath::Max(HiddenHighest, Top);
+						AboveOutside += Top < -SlonkFauna::Leaper::MaxSurfaceCm ? 0 : 1;
+						continue;
+					}
+					Highest = FMath::Max(Highest, Top);
+					const double OffCm = (Mid - P.PosCm).Size();
+					WorstOffCm = FMath::Max(WorstOffCm, OffCm);
+					Off += OffCm < 0.5 ? 0 : 1;
+					// At the very start and end of its drawing, all of it under the line between the surfaces it crosses.
+					if (FMath::Abs(T - (L.T0 - L.LeadSec)) < 0.01 || FMath::Abs(T - (L.T1() + L.LeadSec)) < 0.01)
+					{
+						PokesOut += Top <= FMath::Lerp(H0, H1, P.Share) + 0.5 ? 0 : 1;
+					}
+					// At its crossings, at the surface there: and where LeapCrossing (the splash's place) says it crosses.
+					for (const bool bEntry : { false, true })
+					{
+						if (T != (bEntry ? L.T1() : L.T0)) { continue; }
+						const double Want = bEntry ? H1 : H0;
+						WorstSurfaceCm = FMath::Max(WorstSurfaceCm, FMath::Abs(Mid.Z - Want));
+						NotAtSurface += FMath::Abs(Mid.Z - Want) < 0.5 ? 0 : 1;
+						const FVector2D Off2 = bEntry ? L.ToCm() : L.FromCm;
+						NotAtSurface += FVector2D(Mid.X, Mid.Y).Equals(Off2, 0.5) ? 0 : 1;
+						double Surf = 0.0;
+						const FVector Splash = SlonkFauna::LeapCrossing(G, R, Swell, 1.0, F.Home[i], L, bEntry, &Surf);
+						const FVector Drawn = SlonkFauna::LeaperFramePoint(G, R, T, F.Home[i] + FVector(Mid.X, Mid.Y, 0.0));
+						const FVector DrawnOnSea = Drawn.GetSafeNormal() * (R + Mid.Z);
+						const double Cross = (Splash - DrawnOnSea).Size();
+						WorstCrossCm = FMath::Max(WorstCrossCm, Cross);
+						CrossingOff += Cross < 1.0 && FMath::Abs(Surf - Want) < 0.01 ? 0 : 1;
+						// And there the sea as the terrain draws it (its float copy's vertex carried onto the radial through the
+						// fish's middle, held to the most the material takes): the fish and its splash on it.
+						const double Sea = FMath::Clamp(DrawnSeaCm(Drawn, R, (float)T, (float)Swell), -(double)SlonkFauna::Leaper::MaxSurfaceCm, (double)SlonkFauna::Leaper::MaxSurfaceCm);
+						WorstDrawnSeaCm = FMath::Max(WorstDrawnSeaCm, FMath::Abs(Mid.Z - Sea));
+						OffDrawnSea += FMath::Abs(Mid.Z - Sea) < 2.0 ? 0 : 1;
+						++Crossings;
+					}
+				}
+			}
+		}
+	}
+	AddInfo(FString::Printf(TEXT("%d groups, %d leaps, %d moments: %d disagree on whether the fish is drawn, %d drawn off the closed form (%.3f cm at worst), %d off the surface where they cross it (%.3f cm), %d off the splash's place (%.3f cm)"),
+		Groups.Num(), Leaps, Tried, ShownDisagree, Off, WorstOffCm, NotAtSurface, WorstSurfaceCm, CrossingOff, WorstCrossCm));
+	AddInfo(FString::Printf(TEXT("%d crossings: %d off the sea as the terrain draws it there (%.2f cm at worst)"), Crossings, OffDrawnSea, WorstDrawnSeaCm));
+	AddInfo(FString::Printf(TEXT("drawn up to %.0f cm over the sea's level; between leaps held %.0f cm under it at the highest (%d not under the lowest surface); %d poking out of the water as they come and go; the lowest any vertex goes %.0f cm (%d under 3 m)"),
+		Highest, -HiddenHighest, AboveOutside, PokesOut, -Lowest, BelowFloor));
+	TestTrue(TEXT("enough leaps tried"), Leaps > 400);
+	TestEqual(TEXT("drawn when the closed form has it drawn, and only then"), ShownDisagree, 0);
+	TestEqual(TEXT("the material's fish where the closed form has it"), Off, 0);
+	TestEqual(TEXT("leaving and diving back in at the sea's surface there and then"), NotAtSurface, 0);
+	TestEqual(TEXT("the splash where the arc crosses the surface"), CrossingOff, 0);
+	TestTrue(TEXT("enough crossings tried"), Crossings > 800);
+	TestEqual(TEXT("leaving and diving back in on the sea as the terrain draws it"), OffDrawnSea, 0);
+	TestEqual(TEXT("never drawn above water outside a leap: held under the lowest surface"), AboveOutside, 0);
+	TestEqual(TEXT("under the water whole as it comes and goes"), PokesOut, 0);
+	TestEqual(TEXT("never below the shallowest sea floor it lives over"), BelowFloor, 0);
+
+	// The splashes: over two hours, each leaping cycle of each fish leaves the water once and dives back in once, at its
+	// crossings, in order (asked frame by frame); none for a cycle that skips its leap.
+	int32 Events = 0, EventsOff = 0, Skipped = 0, Cycles = 0, OutOfOrder = 0;
+	double Gaps = 0.0, GapSq = 0.0;
+	int32 NumGaps = 0, Together = 0;
+	for (int32 g = 0; g < FMath::Min(Groups.Num(), 16); ++g)
+	{
+		const FFish F = FishOf(Groups[g]);
+		TArray<double> Leaves;
+		for (int32 i = 0; i < F.Num(); ++i)
+		{
+			const float* C = F.At(i);
+			TArray<SlonkFauna::FLeapEvent> Ev;
+			for (double T = 0.0; T < 7200.0; T += 0.25) { SlonkFauna::LeapEventsBetween(C, i, T, T + 0.25, Ev); }
+			const double Cyc = C[SlonkFauna::Custom::RateHz];
+			int32 Want = 0;
+			for (int64 N = -1; N <= (int64)(7200.0 / Cyc) + 1; ++N)
+			{
+				const SlonkFauna::FLeap L = SlonkFauna::LeapOf(C, N);
+				++Cycles;
+				Skipped += L.bLeaps ? 0 : 1;
+				if (!L.bLeaps) { continue; }
+				Want += (L.T0 > 0.0 && L.T0 <= 7200.0 ? 1 : 0) + (L.T1() > 0.0 && L.T1() <= 7200.0 ? 1 : 0);
+				if (L.T0 > 0.0 && L.T0 <= 3600.0) { Leaves.Add(L.T0); }
+			}
+			Events += Ev.Num();
+			EventsOff += Ev.Num() == Want ? 0 : 1;
+			for (int32 e = 0; e < Ev.Num(); ++e)
+			{
+				const SlonkFauna::FLeapEvent& E = Ev[e];
+				EventsOff += E.Member == i && E.TimeSec == (E.bEntry ? E.Leap.T1() : E.Leap.T0) && E.Leap.bLeaps ? 0 : 1;
+				OutOfOrder += e == 0 || Ev[e - 1].TimeSec <= E.TimeSec ? 0 : 1;
+			}
+		}
+		// The fish of a group of two or more leave the water a few seconds apart, irregularly.
+		if (F.Num() < 2) { continue; }
+		Leaves.Sort();
+		for (int32 k = 1; k < Leaves.Num(); ++k)
+		{
+			const double Gap = Leaves[k] - Leaves[k - 1];
+			Gaps += Gap;
+			GapSq += Gap * Gap;
+			++NumGaps;
+			Together += Gap < 0.3 ? 1 : 0;
+		}
+	}
+	const double MeanGap = Gaps / FMath::Max(NumGaps, 1);
+	const double GapSd = FMath::Sqrt(FMath::Max(GapSq / FMath::Max(NumGaps, 1) - MeanGap * MeanGap, 0.0));
+	AddInfo(FString::Printf(TEXT("splashes over two hours: %d crossings, %d fish with crossings off their leaps, %d out of order; %d of %d cycles skip their leap (%.2f); the fish of groups of two or more leave the water %.1f s apart on average (%.1f s either way), %d of %d within 0.3 s of another"),
+		Events, EventsOff, OutOfOrder, Skipped, Cycles, (double)Skipped / FMath::Max(Cycles, 1), MeanGap, GapSd, Together, NumGaps));
+	TestEqual(TEXT("a splash where and when each leap leaves the water and dives back in, and no other"), EventsOff, 0);
+	TestEqual(TEXT("in order"), OutOfOrder, 0);
+	TestTrue(TEXT("about a quarter of the cycles skip their leap"), FMath::Abs((double)Skipped / FMath::Max(Cycles, 1) - SlonkFauna::Leaper::SkipShare) < 0.06);
+	TestTrue(TEXT("a group's fish leap a few seconds apart, irregularly"), MeanGap > 2.0 && MeanGap < 8.0 && GapSd > 0.3 * MeanGap);
+
+	// Every cycle divides the hour and every tail beats a whole number of times a minute; the same leap an hour on; and the
+	// material's wrap of its clock at the hour moves no fish (its motion two frames apart across the wrap as between any two
+	// frames: within the closed form's).
+	int32 NotDividing = 0, NotHourly = 0, Seams = 0;
+	for (const SlonkFauna::FFaunaGroup& G : Groups)
+	{
+		const FFish F = FishOf(G);
+		for (int32 i = 0; i < F.Num(); ++i)
+		{
+			const float* C = F.At(i);
+			const double Cyc = C[SlonkFauna::Custom::RateHz];
+			NotDividing += FMath::IsNearlyEqual(FMath::Fmod(3600.0, Cyc), 0.0, 1e-9) ? 0 : 1;
+			const float Beat = FMath::RoundToFloat((6.f + 4.f * FMath::Frac(C[SlonkFauna::Custom::Seed] * 3.7f)) * 60.f);
+			NotDividing += Beat == FMath::RoundToFloat(Beat) && Beat > 0.f ? 0 : 1;
+			for (int32 k = 0; k < 6; ++k)
+			{
+				const double T = Rng.FRandRange(0.f, 3600.f);
+				const SlonkFauna::FLeap A = SlonkFauna::LeapAt(C, T), B = SlonkFauna::LeapAt(C, T + 3600.0);
+				NotHourly += A.bLeaps == B.bLeaps && FMath::IsNearlyEqual(A.T0 + 3600.0, B.T0, 1e-6) && A.FromCm == B.FromCm && A.Yaw == B.Yaw && A.ApexCm == B.ApexCm && A.RangeCm == B.RangeCm ? 0 : 1;
+			}
+		}
+	}
+	// Across the wrap: a fish drawn as the hour turns, its middle a frame either side, against the closed form's then.
+	{
+		for (const SlonkFauna::FFaunaGroup& G : Groups)
+		{
+			const FFish F = FishOf(G);
+			SlonkFauna::FLeaperSurfaceCache Cache;
+			for (int32 i = 0; i < F.Num(); ++i)
+			{
+				const float* C = F.At(i);
+				for (int32 Hour = 1; Hour <= 2; ++Hour)
+				{
+					for (const double Dt : { -1.0 / 60.0, 1.0 / 60.0 })
+					{
+						const double T = 3600.0 * Hour + Dt;
+						float Gd[SlonkFauna::LeaperData::Num] = {};
+						SlonkFauna::LeaperGroupData(G, F.Custom, F.Home, R, Swell, 1.0, T, NoDive, Cache, Gd);
+						const SlonkFauna::FLeap L = SlonkFauna::LeapAt(C, T);
+						const float Tm = MaterialTime(T);
+						if (SlonkFauna::LeaperShown(Tm, C, Gd) != L.DrawnAt(T)) { ++Seams; continue; }
+						if (!L.DrawnAt(T)) { continue; }
+						const FVector Mid = (FVector)SlonkFauna::LeaperMotion(FVector3f::ZeroVector, Middle, Tm, C, Gd, 2000.f, 960.f) * C[SlonkFauna::Custom::SizeM];
+						const SlonkFauna::FLeapPose P = SlonkFauna::LeapPoseAt(L, Gd[SlonkFauna::LeaperData::Surface0 + 2 * i], Gd[SlonkFauna::LeaperData::Surface0 + 2 * i + 1], T);
+						Seams += (Mid - P.PosCm).Size() < 0.5 ? 0 : 1;
+					}
+				}
+			}
+		}
+	}
+	AddInfo(FString::Printf(TEXT("%d cycles or beats not dividing the hour, %d leaps not the same an hour on, %d seams at the hour's wrap"), NotDividing, NotHourly, Seams));
+	TestEqual(TEXT("every cycle and beat divides the hour"), NotDividing, 0);
+	TestEqual(TEXT("the same leap an hour on"), NotHourly, 0);
+	TestEqual(TEXT("no seam at the hour's wrap"), Seams, 0);
+
+	// The swell the crossings are read from is the terrain material's: SwellAt against its float copy, and the surface over
+	// a point (SeaSurfaceCm) against the drawn sea there, the material's vertex carried onto the point's radial (found to
+	// convergence) and how high over the sphere it is carried (its sway along the plane's fixed axes lifting it too), at
+	// full strength and faded; points on the projection's seams and corners among them, where that lift is the most.
+	int32 SwellOff = 0, SurfaceOff = 0, Unconverged = 0;
+	double WorstSwell = 0.0, WorstSurface = 0.0, SurfaceSq = 0.0, WorstLift = 0.0;
+	constexpr int32 NumSurfaces = 3000;
+	for (int32 k = 0; k < NumSurfaces; ++k)
+	{
+		FVector P = Rng.GetUnitVector();
+		if (k % 3 == 1)
+		{
+			// Near a seam: two of its axes nearly as large.
+			const int32 A = Rng.RandRange(0, 2), B = (A + Rng.RandRange(1, 2)) % 3;
+			P[B] = FMath::Sign(P[B] == 0.0 ? 1.0 : P[B]) * FMath::Abs(P[A]) * Rng.FRandRange(0.97f, 1.f);
+		}
+		else if (k % 3 == 2)
+		{
+			// Near a corner: all three nearly as large.
+			P = FVector(FMath::Sign(P.X + 1e-9) * Rng.FRandRange(0.95f, 1.f), FMath::Sign(P.Y + 1e-9) * Rng.FRandRange(0.95f, 1.f), FMath::Sign(P.Z + 1e-9) * Rng.FRandRange(0.95f, 1.f));
+		}
+		P = P.GetSafeNormal() * R;
+		const double T = Rng.FRandRange(0.f, 5000.f);
+		const FVector D = SlonkFauna::SwellAt(P, T, Swell);
+		const FVector3f M = MaterialSwell(P, (float)T, (float)Swell);
+		const double Diff = (D - (FVector)M).Size();
+		WorstSwell = FMath::Max(WorstSwell, Diff);
+		SwellOff += Diff < 0.5 ? 0 : 1;
+		const double Fade = k % 4 == 3 ? 0.4 : 1.0;
+		double Residual = 0.0, Lift = 0.0;
+		const double Want = DrawnSeaCm(P, R, (float)T, (float)Swell, (float)Fade, &Residual, &Lift);
+		Unconverged += Residual < 0.01 ? 0 : 1;
+		const double Got = SlonkFauna::SeaSurfaceCm(P, R, T, Swell, Fade);
+		WorstSurface = FMath::Max(WorstSurface, FMath::Abs(Got - Want));
+		SurfaceSq += FMath::Square(Got - Want);
+		SurfaceOff += FMath::Abs(Got - Want) < 2.0 ? 0 : 1;
+		// What the sway's own lift adds to the swell's.
+		WorstLift = FMath::Max(WorstLift, FMath::Abs(Want - Lift));
+	}
+	const FString Block = TerrainSwellBlock();
+	const uint32 BlockCrc = FCrc::StrCrc32(*Block);
+	AddInfo(FString::Printf(TEXT("the swell at %d points: %d off the terrain material's float copy (%.3f cm at worst), %d surfaces off the drawn sea there (%.2f cm at worst, %.2f cm RMS; %d not converged), its sway's lift up to %.0f cm over the swell's own; terrain_material.py's swell code %d characters, CRC 0x%08x (0x%08x when the copy was made)"),
+		NumSurfaces, SwellOff, WorstSwell, SurfaceOff, WorstSurface, FMath::Sqrt(SurfaceSq / NumSurfaces), Unconverged, WorstLift, Block.Len(), BlockCrc, TerrainSwellBlockCrc));
+	TestEqual(TEXT("the swell mirrors the terrain material's"), SwellOff, 0);
+	TestEqual(TEXT("the drawn sea found to convergence"), Unconverged, 0);
+	TestEqual(TEXT("the surface over a point is the drawn sea's there, the sway's lift and all"), SurfaceOff, 0);
+	TestTrue(TEXT("terrain_material.py's swell code found"), Block.Len() > 500 && Block.Contains(TEXT("void SlonkGerstner(")));
+	TestEqual(TEXT("the copy is of the terrain material's swell as it is now"), BlockCrc, TerrainSwellBlockCrc);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaLeaperDiveTest, "Slonk.Fauna.LeaperDive", SLONK_TEST_FLAGS)
+bool FSlonkFaunaLeaperDiveTest::RunTest(const FString& Parameters)
+{
+	// A craft passing low over a group of leapers (below 50 m within 50 m) sends it diving: none of its fish leaves the water
+	// for a minute after the latest startle, a leap already out of the water comes down (and splashes back in), and once the
+	// dive is over they leap again; as the material draws it, no fish shows but at the start of a leap, the dive's start and
+	// end and its extension by a second pass among it. A craft higher, further off or set down, and anyone on foot (on a
+	// shore or wading in), are nothing to it.
+	const SlonkFauna::FFaunaWorld W = EarthSeas();
+	const double R = W.P.RadiusCm;
+	TArray<SlonkFauna::FFaunaGroup> Groups;
+	LeaperGroupsOverSeas(W, 8, Groups);
+	if (Groups.Num() < 4) { AddError(TEXT("too few groups of leapers found")); return false; }
+	const SlonkFauna::FFaunaKindDesc& D = SlonkFauna::KindDesc(EFaunaKind::Leaper);
+	int32 Scared = 0, NotScared = 0, Restarted = 0, LeftInDive = 0, CameDown = 0, Resumed = 0, Popped = 0, Disagree = 0, SplashesInDive = 0, EntriesInDive = 0, Frames = 0;
+	for (const SlonkFauna::FFaunaGroup& G : Groups)
+	{
+		const FFish F = FishOf(G);
+		// Startled while its first fish is out of the water, two fifths of the way through a leap of its after 1000 s.
+		SlonkFauna::FLeap Out = SlonkFauna::LeapAt(F.At(0), 1000.0);
+		while (!Out.bLeaps || Out.T0 < 1000.0) { Out = SlonkFauna::LeapOf(F.At(0), Out.Cycle + 1); }
+		const double T0 = Out.T0 + 0.4 * Out.FlightSec;
+		const SlonkFauna::FFaunaPose Pose = SlonkFauna::PathAt(G, R, T0);
+		const FVector Side = Pose.Rot.GetAxisY();
+		auto Craft = [&](double AltCm, double OffCm, bool bLanded)
+		{
+			SlonkFauna::FFaunaThreat T;
+			T.PosCm = (Pose.PosCm + Side * OffCm).GetSafeNormal() * (R + AltCm);
+			T.VelCmS = Pose.Rot.GetAxisX() * 3000.0;
+			T.AltitudeCm = AltCm;
+			T.bLanded = bLanded;
+			return T;
+		};
+		SlonkFauna::FFaunaThreat Crew = Craft(170.0, 300.0, false);
+		Crew.bCraft = false;
+		SlonkFauna::FPanic Dive;
+		// Not by a craft 100 m up, nor one 80 m off at 30 m, one set down beside it, nor someone wading three metres off.
+		for (const SlonkFauna::FFaunaThreat& T : { Craft(10000.0, 0.0, false), Craft(3000.0, 8000.0, false), Craft(0.0, 1000.0, true), Crew })
+		{
+			NotScared += SlonkFauna::StartleLeapers(Dive, D, Pose.PosCm, T, T0) ? 1 : 0;
+		}
+		// By one passing 30 m up and 25 m off (its dive keeping under the leaps leaving from a moment on, past those already
+		// on their way up); not again 3 s on, again 20 s on (its dive going on from its start).
+		Scared += SlonkFauna::StartleLeapers(Dive, D, Pose.PosCm, Craft(3000.0, 2500.0, false), T0) ? 1 : 0;
+		const double Began = Dive.ScatterT0;
+		Restarted += Began >= T0 && Began <= T0 + SlonkFauna::Leaper::DiveLeadSec ? 0 : 1;
+		Restarted += SlonkFauna::StartleLeapers(Dive, D, Pose.PosCm, Craft(3000.0, 2500.0, false), T0 + 3.0) ? 1 : 0;
+		SlonkFauna::FPanic Extended = Dive;
+		Restarted += SlonkFauna::StartleLeapers(Extended, D, Pose.PosCm, Craft(3000.0, 2500.0, false), T0 + 20.0) ? 0 : 1;
+		Restarted += Extended.ScatterT0 == Began ? 0 : 1;
+		const double DiveEnd = T0 + 20.0 + SlonkFauna::Leaper::DiveSec;
+		// Frame by frame through the dive, its extension and on past it: the material's fish against the closed form and the
+		// dive's rule, and none coming into sight but at the start of a leap.
+		SlonkFauna::FLeaperSurfaceCache Cache;
+		TArray<bool> WasShown;
+		WasShown.Init(false, F.Num());
+		const double Dt = 1.0 / 30.0;
+		for (double T = T0 - 5.0; T < DiveEnd + 60.0; T += Dt)
+		{
+			++Frames;
+			// Startled at T0 and again at T0 + 20, as the component would have it.
+			const SlonkFauna::FPanic& Now = T < T0 ? SlonkFauna::FPanic() : (T < T0 + 20.0 ? Dive : Extended);
+			float Gd[SlonkFauna::LeaperData::Num] = {};
+			SlonkFauna::LeaperGroupData(G, F.Custom, F.Home, R, W.Sea.SwellCm, 1.0, T, Now, Cache, Gd);
+			const float Tm = MaterialTime(T);
+			for (int32 i = 0; i < F.Num(); ++i)
+			{
+				const float* C = F.At(i);
+				const SlonkFauna::FLeap L = SlonkFauna::LeapAt(C, T);
+				const bool bShown = SlonkFauna::LeaperShown(Tm, C, Gd);
+				const bool bWant = L.DrawnAt(T) && !SlonkFauna::LeapDived(Now, L.T0);
+				const bool bNearEdge = FMath::Abs(T - (L.T0 - L.LeadSec)) < 0.005 || FMath::Abs(T - (L.T1() + L.LeadSec)) < 0.005;
+				Disagree += bShown == bWant || bNearEdge ? 0 : 1;
+				if (T > T0 - 5.0 + 0.5 * Dt && bShown && !WasShown[i] && T - (L.T0 - L.LeadSec) > Dt + 1e-3) { ++Popped; }
+				WasShown[i] = bShown;
+				if (!bShown) { continue; }
+				if (T >= T0 && L.T0 >= Began && L.T0 < DiveEnd) { ++LeftInDive; }
+				if (T >= T0 && L.T0 < T0) { ++CameDown; }
+				if (L.T0 >= DiveEnd) { ++Resumed; }
+			}
+			// The splashes this frame, of the leaps the dive does not keep in the water.
+			for (int32 i = 0; i < F.Num(); ++i)
+			{
+				TArray<SlonkFauna::FLeapEvent> Ev;
+				SlonkFauna::LeapEventsBetween(F.At(i), i, T - Dt, T, Ev);
+				for (const SlonkFauna::FLeapEvent& E : Ev)
+				{
+					if (SlonkFauna::LeapDived(Now, E.Leap.T0) || E.TimeSec < Began || E.TimeSec >= DiveEnd) { continue; }
+					SplashesInDive += E.bEntry ? 0 : 1;
+					EntriesInDive += E.bEntry ? 1 : 0;
+				}
+			}
+		}
+	}
+	AddInfo(FString::Printf(TEXT("%d groups: %d sent diving by a craft passing 30 m up and 25 m off, %d by a craft 100 m up, 80 m off, set down or by someone wading in; startled again 3 s and 20 s on: %d wrong"),
+		Groups.Num(), Scared, NotScared, Restarted));
+	AddInfo(FString::Printf(TEXT("%d frames: %d fish frames out of the water from a leap begun in the dive, %d of leaps already out coming down, %d of leaps after it; %d fish coming into sight but at a leap's start, %d off the closed form and the dive; %d splashes of leaving the water in the dive, %d of diving back in"),
+		Frames, LeftInDive, CameDown, Resumed, Popped, Disagree, SplashesInDive, EntriesInDive));
+	TestEqual(TEXT("a craft passing low sends every group diving"), Scared, Groups.Num());
+	TestEqual(TEXT("a craft higher, further off or set down, and the crew, do not"), NotScared, 0);
+	TestEqual(TEXT("startled again within the re-startle's while it keeps its dive, after it its dive goes on from its start"), Restarted, 0);
+	TestEqual(TEXT("no fish leaves the water while the group dives"), LeftInDive, 0);
+	TestEqual(TEXT("no splash of a fish leaving the water while it dives"), SplashesInDive, 0);
+	TestTrue(TEXT("a leap already out of the water comes down, and once the dive is over they leap again"), CameDown > 0 && Resumed > 0);
+	TestEqual(TEXT("as the material draws it: drawn as the closed form and the dive have it"), Disagree, 0);
+	TestEqual(TEXT("and no fish comes into sight but at the start of a leap"), Popped, 0);
+
+	// The bounds the dive's rule leans on: no leap is drawn on its way up under the water for longer than DiveLeadSec
+	// before it leaves it, nor for longer than HeldUnderSec after it leaves it (the longest fish's lowest and highest leaps,
+	// and every leap of these groups' fish over two hours).
+	double MostLead = 0.0, MostAfter = 0.0;
+	{
+		const double Len = SlonkFauna::Leaper::MaxSizeM * 100.0;
+		for (const double Apex : { (double)SlonkFauna::Leaper::ApexLo, (double)(SlonkFauna::Leaper::ApexLo + SlonkFauna::Leaper::ApexSpan) })
+		{
+			const double Tf = 2.0 * FMath::Sqrt(2.0 * Apex * Len / SlonkFauna::Leaper::GravityCmS2);
+			const double Lead = SlonkFauna::Leaper::LeadDepth * Len / (4.0 * Apex * Len / Tf);
+			MostLead = FMath::Max(MostLead, Lead);
+			MostAfter = FMath::Max(MostAfter, Tf + Lead);
+		}
+	}
+	double SeenLead = 0.0, SeenAfter = 0.0;
+	for (const SlonkFauna::FFaunaGroup& G : Groups)
+	{
+		const FFish F = FishOf(G);
+		for (int32 i = 0; i < F.Num(); ++i)
+		{
+			const float* C = F.At(i);
+			for (int64 N = 0; N <= (int64)(7200.0 / C[SlonkFauna::Custom::RateHz]); ++N)
+			{
+				const SlonkFauna::FLeap L = SlonkFauna::LeapOf(C, N);
+				if (!L.bLeaps) { continue; }
+				SeenLead = FMath::Max(SeenLead, L.LeadSec);
+				SeenAfter = FMath::Max(SeenAfter, L.FlightSec + L.LeadSec);
+			}
+		}
+	}
+	AddInfo(FString::Printf(TEXT("a leap is drawn under the water on its way up for %.3f s at most (%.3f s seen; a dive keeps under those from %.2f s after its startle), and out and back under for %.3f s at most after it leaves (%.3f s seen; a new dive waits %.2f s past the last one's window)"),
+		MostLead, SeenLead, SlonkFauna::Leaper::DiveLeadSec, MostAfter, SeenAfter, SlonkFauna::Leaper::HeldUnderSec));
+	TestTrue(TEXT("a new dive starts past every leap already on its way up"), MostLead < SlonkFauna::Leaper::DiveLeadSec && SeenLead <= MostLead + 1e-6);
+	TestTrue(TEXT("and only once every leap the last one kept under is past its time back in the water"), MostAfter < SlonkFauna::Leaper::HeldUnderSec && SeenAfter <= MostAfter + 1e-6);
+
+	// Startled again at many moments round the end of its dive's window (just before it closes, as it closes, in the few
+	// seconds its fright lingers past it, and after), by a craft passing low and by the command; and, calm, at many moments
+	// round a leap's leaving the water (its nose out before its middle is): no fish in sight is ever hidden before its leap
+	// is back under the water, none out of the water among them; every leap that leaves the water (its splash thrown) dives
+	// back into it (its splash thrown); and a startle does nothing only in the moments round the window's end it must.
+	int32 Vanished = 0, VanishedInAir = 0, NoEntry = 0, Entries = 0, SweepFrames = 0, Sweeps = 0, InAirAtStartle = 0, WrongRefusal = 0, Refusals = 0;
+	auto Sweep = [&](const SlonkFauna::FFaunaGroup& G, const FFish& F, SlonkFauna::FPanic Dive, double At, bool bForce, double From, double To, bool& bOutStartled)
+	{
+		++Sweeps;
+		bOutStartled = false;
+		const double Dt = 1.0 / 60.0;
+		TArray<bool> WasShown;
+		WasShown.Init(false, F.Num());
+		// Each fish's leap whose leaving the water threw its splash, until its diving back in.
+		TArray<int64> Left;
+		Left.Init(TNumericLimits<int64>::Lowest(), F.Num());
+		bool bAsked = false;
+		for (double T = From; T < To; T += Dt)
+		{
+			++SweepFrames;
+			// As the component has it: a dive over is forgotten, then the craft or the command startles it.
+			if (!Dive.IsLive(T)) { Dive = SlonkFauna::FPanic(); }
+			if (!bAsked && T >= At)
+			{
+				bAsked = true;
+				const SlonkFauna::FFaunaPose Pose = SlonkFauna::PathAt(G, R, T);
+				SlonkFauna::FFaunaThreat Low;
+				Low.PosCm = (Pose.PosCm + Pose.Rot.GetAxisY() * 2500.0).GetSafeNormal() * (R + 3000.0);
+				Low.VelCmS = Pose.Rot.GetAxisX() * 3000.0;
+				Low.AltitudeCm = 3000.0;
+				bOutStartled = SlonkFauna::StartleLeapers(Dive, D, Pose.PosCm, Low, T, bForce);
+				for (int32 i = 0; i < F.Num(); ++i)
+				{
+					const SlonkFauna::FLeap L = SlonkFauna::LeapAt(F.At(i), T);
+					if (L.bLeaps && T >= L.T0 && T <= L.T1()) { ++InAirAtStartle; break; }
+				}
+			}
+			float Gd[SlonkFauna::LeaperData::Num] = {};
+			SlonkFauna::LeaperDiveData(Dive, T, Gd);
+			const float Tm = MaterialTime(T);
+			for (int32 i = 0; i < F.Num(); ++i)
+			{
+				const float* C = F.At(i);
+				const SlonkFauna::FLeap L = SlonkFauna::LeapAt(C, T);
+				const bool bShown = SlonkFauna::LeaperShown(Tm, C, Gd);
+				// Shown the frame before and its leap still to be drawn now (not at its very end), yet hidden.
+				const bool bNearEnd = FMath::Abs(T - (L.T1() + L.LeadSec)) < 0.005;
+				if (T > From + 0.5 * Dt && WasShown[i] && !bShown && L.DrawnAt(T) && !bNearEnd)
+				{
+					++Vanished;
+					VanishedInAir += T >= L.T0 && T <= L.T1() ? 1 : 0;
+				}
+				WasShown[i] = bShown;
+				// The splashes this frame, as UpdateLeaper throws them (of the leaps the dive does not keep in the water).
+				TArray<SlonkFauna::FLeapEvent> Ev;
+				SlonkFauna::LeapEventsBetween(C, i, T - Dt, T, Ev);
+				for (const SlonkFauna::FLeapEvent& E : Ev)
+				{
+					const bool bThrown = !SlonkFauna::LeapDived(Dive, E.Leap.T0);
+					if (!E.bEntry)
+					{
+						if (bThrown) { Left[i] = E.Leap.Cycle; }
+						continue;
+					}
+					if (Left[i] != E.Leap.Cycle) { continue; }
+					++Entries;
+					NoEntry += bThrown ? 0 : 1;
+					Left[i] = TNumericLimits<int64>::Lowest();
+				}
+			}
+		}
+	};
+	for (int32 g = 0; g < Groups.Num(); ++g)
+	{
+		const SlonkFauna::FFaunaGroup& G = Groups[g];
+		const FFish F = FishOf(G);
+		const double First = 2000.0 + 37.0 * g;
+		const SlonkFauna::FFaunaPose Pose = SlonkFauna::PathAt(G, R, First);
+		SlonkFauna::FFaunaThreat Low;
+		Low.PosCm = Pose.PosCm.GetSafeNormal() * (R + 3000.0);
+		Low.AltitudeCm = 3000.0;
+		SlonkFauna::FPanic Calm, Dived;
+		SlonkFauna::StartleLeapers(Dived, D, Pose.PosCm, Low, First);
+		const double End = Dived.T0 + SlonkFauna::Leaper::DiveSec;
+		// Round the end of its window: from a second before it to a second past its fright's lingering.
+		for (int32 k = 0; k <= 80; ++k)
+		{
+			const double At = End - 1.0 + 0.1 * k + 0.003 * g;
+			for (const bool bForce : { false, true })
+			{
+				bool bStartled = false;
+				Sweep(G, F, Dived, At, bForce, At - 2.0, At + 3.0, bStartled);
+				// Startled on the first frame at or after At: refused in the gap from DiveLeadSec short of the window's end to
+				// HeldUnderSec past it, and only there (a frame either side of its edges may go either way).
+				const double Frame = 1.0 / 60.0;
+				const bool bMustRefuse = At >= End - SlonkFauna::Leaper::DiveLeadSec && At + Frame <= End + SlonkFauna::Leaper::HeldUnderSec;
+				const bool bMustTake = At + Frame <= End - SlonkFauna::Leaper::DiveLeadSec || At >= End + SlonkFauna::Leaper::HeldUnderSec;
+				Refusals += bStartled ? 0 : 1;
+				WrongRefusal += (bMustRefuse && bStartled) || (bMustTake && !bStartled) ? 1 : 0;
+			}
+		}
+		// Calm, round each fish's next leap's leaving the water, from just before it is drawn to a little after it leaves.
+		for (int32 i = 0; i < F.Num(); ++i)
+		{
+			SlonkFauna::FLeap L = SlonkFauna::LeapAt(F.At(i), 3000.0 + 11.0 * g);
+			while (!L.bLeaps || L.T0 < 3000.0 + 11.0 * g) { L = SlonkFauna::LeapOf(F.At(i), L.Cycle + 1); }
+			for (int32 k = 0; k <= 12; ++k)
+			{
+				const double At = L.T0 - L.LeadSec - 0.02 + (L.LeadSec + 0.12) * k / 12.0;
+				bool bStartled = false;
+				Sweep(G, F, Calm, At, k % 2 == 1, At - 0.5, At + 2.0, bStartled);
+				WrongRefusal += bStartled ? 0 : 1;
+			}
+		}
+	}
+	AddInfo(FString::Printf(TEXT("%d startles round a dive's end and a leap's leaving the water (%d with a fish out of the water then; %d refused, %d wrongly so or not), %d frames: %d fish in sight hidden before their leap was back under (%d of them out of the water), %d of %d leaps that splashed out of the water with no splash diving back in"),
+		Sweeps, InAirAtStartle, Refusals, WrongRefusal, SweepFrames, Vanished, VanishedInAir, NoEntry, Entries));
+	TestTrue(TEXT("enough startles with a fish out of the water"), InAirAtStartle > 40 && Entries > 200);
+	TestEqual(TEXT("a startle never hides a fish in sight"), Vanished, 0);
+	TestEqual(TEXT("nor one out of the water"), VanishedInAir, 0);
+	TestEqual(TEXT("every leap that leaves the water dives back in, and splashes as it does"), NoEntry, 0);
+	TestEqual(TEXT("a startle does nothing only while the leaps the last dive kept under may still be in sight"), WrongRefusal, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaLeaperGotoTest, "Slonk.Fauna.LeaperGoto", SLONK_TEST_FLAGS)
+bool FSlonkFaunaLeaperGotoTest::RunTest(const FString& Parameters)
+{
+	// `fauna goto leaper` parks the ship (SlonkFauna::LeaperWatchDir) where the shoal it watches, swimming round its loop,
+	// never comes within reach of its fright: at every height the command may be given below the scare altitude, wherever
+	// round its loop the shoal is when the ship comes, over the whole of its loop and on; off to the side of the shoal, out
+	// from the loop's middle, no further off than it need be.
+	const SlonkFauna::FFaunaWorld W = EarthSeas();
+	const double R = W.P.RadiusCm;
+	TArray<SlonkFauna::FFaunaGroup> Groups;
+	LeaperGroupsOverSeas(W, 30, Groups);
+	if (Groups.Num() < 10) { AddError(TEXT("too few groups of leapers found")); return false; }
+	const SlonkFauna::FFaunaKindDesc& D = SlonkFauna::KindDesc(EFaunaKind::Leaper);
+	int32 Parks = 0, ScaredParks = 0, OffSide = 0, Inward = 0;
+	double Nearest = 1.0e30, MostOff = 0.0;
+	for (const SlonkFauna::FFaunaGroup& G : Groups)
+	{
+		for (const double Alt : { 200.0, 1000.0, 3000.0, 4500.0 })
+		{
+			for (int32 k = 0; k < 4; ++k)
+			{
+				const double Now = 1000.0 + 77.0 * k;
+				double SideCm = 0.0;
+				const FVector Dir = SlonkFauna::LeaperWatchDir(G, R, Now, Alt, &SideCm);
+				++Parks;
+				SlonkFauna::FFaunaThreat Ship;
+				Ship.PosCm = Dir * (R + Alt);
+				Ship.AltitudeCm = Alt;
+				Ship.bCraft = true;
+				// Off to the side of the shoal now, at least SideCm off and no more than its loop across further, out from the
+				// loop's middle.
+				const FVector Here = SlonkFauna::PathAt(G, R, Now).PosCm;
+				const double Off = FVector::Dist(Dir * R, Here);
+				MostOff = FMath::Max(MostOff, Off - SideCm);
+				OffSide += Off >= SideCm - 1.0 && Off <= SideCm + 4.0 * G.RadiusCm ? 0 : 1;
+				const FVector Mid = G.Centre * R;
+				Inward += FVector::DotProduct(Dir * R - Mid, Here - Mid) > 0.0 ? 0 : 1;
+				// Round its loop and on (once round takes 67 to 320 s): never in reach of its fright.
+				bool bScared = false;
+				for (double T = Now; T < Now + 400.0; T += 1.0)
+				{
+					const FVector Pos = SlonkFauna::PathAt(G, R, T).PosCm;
+					Nearest = FMath::Min(Nearest, FVector::Dist(Pos, Ship.PosCm));
+					bScared |= SlonkFauna::Scares(D, Pos, Ship);
+				}
+				ScaredParks += bScared ? 1 : 0;
+			}
+		}
+	}
+	AddInfo(FString::Printf(TEXT("%d groups, %d parkings from 2 m to 45 m up: %d where the shoal swims within reach of its fright (the nearest it comes %.1f m); %d not off its side as asked (up to %.1f m further than asked), %d not out from the loop's middle"),
+		Groups.Num(), Parks, ScaredParks, Nearest / 100.0, OffSide, MostOff / 100.0, Inward));
+	TestEqual(TEXT("the shoal never swims within reach of the parked ship's fright"), ScaredParks, 0);
+	TestTrue(TEXT("never nearer than the scare radius"), Nearest > D.ScareRadiusCm);
+	TestEqual(TEXT("off to the side of the shoal as asked"), OffSide, 0);
+	TestEqual(TEXT("out from its loop's middle"), Inward, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaFishSplashTest, "Slonk.Fauna.FishSplash", SLONK_TEST_FLAGS)
+bool FSlonkFaunaFishSplashTest::RunTest(const FString& Parameters)
+{
+	// A splash as the asset is given it: the fish's length, whether it dives back in, the night, the ground's carry, the foam
+	// white in any sea; and the pool of one-shots: a component lent rests while its burst plays and is lent again after,
+	// new ones only while none has finished, up to the most there may be, every one coming back.
+	SlonkFauna::FFishSplashInput In;
+	In.SizeCm = 60.0;
+	In.CarryWorldCmS = FVector(1.2e4, -3.0e3, 50.0);
+	const SlonkFauna::FFishSplash Leave = SlonkFauna::FishSplashFor(In);
+	In.bEntry = true;
+	In.Night = 1.7;
+	const SlonkFauna::FFishSplash Entry = SlonkFauna::FishSplashFor(In);
+	In.Shallow = FLinearColor(0.07f, 0.06f, 0.04f);
+	In.Ocean = FLinearColor(0.018f, 0.016f, 0.014f);
+	const SlonkFauna::FFishSplash Methane = SlonkFauna::FishSplashFor(In);
+	auto Luma = [](const FLinearColor& C) { return 0.2126f * C.R + 0.7152f * C.G + 0.0722f * C.B; };
+	AddInfo(FString::Printf(TEXT("a 60 cm fish's splash: size %.0f cm, entry %.0f then %.0f, night %.1f then %.1f; foam %.2f %.2f %.2f (opacity %.2f) on water, %.2f %.2f %.2f on methane; carry %.0f cm/s"),
+		Leave.Size, Leave.Entry, Entry.Entry, Leave.Night, Entry.Night, Leave.Color.R, Leave.Color.G, Leave.Color.B, Leave.Color.A, Methane.Color.R, Methane.Color.G, Methane.Color.B, Leave.Carry.Size()));
+	TestTrue(TEXT("the fish's length, whether it dives back in, the night held to 1"), Leave.Size == 60.f && Leave.Entry == 0.f && Entry.Entry == 1.f && Leave.Night == 0.f && Entry.Night == 1.f);
+	TestTrue(TEXT("the ground's carry handed on as it is"), Leave.Carry.Equals(In.CarryWorldCmS));
+	TestTrue(TEXT("foam white in the sun on any sea, nearly opaque"), Luma(Leave.Color) > 0.8f && Luma(Methane.Color) > 0.75f && Leave.Color.A > 0.6f);
+
+	// None by night: thrown by day and at dusk (the sun on the horizon there), none from where the sun is far enough under
+	// the horizon that the sky atmosphere's planet, its ground 0.05% of the radius under the sea (SlonkGameMode), shades a
+	// splash on the sea wholly (it is lit by that sun alone, and would draw black), nor any deeper in the night.
+	const double ShadedUp = -FMath::Sin(FMath::Acos(0.9995));
+	int32 DarkThrown = 0, LitNotThrown = 0;
+	for (int32 k = 0; k <= 200; ++k)
+	{
+		const double Up = 1.0 - 2.0 * k / 200.0;
+		const float Night = SlonkFauna::LeaperNight(Up);
+		DarkThrown += Up <= ShadedUp && SlonkFauna::SplashLitAt(Night) ? 1 : 0;
+		LitNotThrown += Up >= 0.0 && !SlonkFauna::SplashLitAt(Night) ? 1 : 0;
+	}
+	DarkThrown += SlonkFauna::SplashLitAt(SlonkFauna::LeaperNight(ShadedUp)) ? 1 : 0;
+	AddInfo(FString::Printf(TEXT("the night %.2f with the sun on the horizon, %.2f where the sky's planet shades a splash (the sun %.1f degrees down); splashes thrown to a night of %.2f: %d thrown in the dark, %d not thrown with the sun up"),
+		SlonkFauna::LeaperNight(0.0), SlonkFauna::LeaperNight(ShadedUp), FMath::RadiansToDegrees(FMath::Asin(-ShadedUp)), SlonkFauna::SplashNightMax, DarkThrown, LitNotThrown));
+	TestEqual(TEXT("no splash where the sun cannot light it"), DarkThrown, 0);
+	TestEqual(TEXT("splashes by day and at dusk"), LitNotThrown, 0);
+
+	// The pool: three bursts at once, a fourth a second later (four made); at 2.6 s the first three are over and lent again
+	// (no more made); past their bursts every one comes back; and never more than the most, a burst past them let go.
+	SlonkFauna::FSplashPool Pool;
+	int32 Made = 0;
+	auto Make = [&Made]() { ++Made; return NewObject<UNiagaraComponent>(GetTransientPackage()); };
+	UNiagaraComponent* First[3];
+	for (int32 i = 0; i < 3; ++i) { First[i] = Pool.Acquire(0.0, Make); }
+	UNiagaraComponent* Fourth = Pool.Acquire(1.0, Make);
+	const int32 MadeThen = Made;
+	TSet<UNiagaraComponent*> Again;
+	for (int32 i = 0; i < 3; ++i) { Again.Add(Pool.Acquire(SlonkFauna::SplashLifeSec + 0.1, Make)); }
+	const bool bReused = Made == MadeThen && Again.Contains(First[0]) && Again.Contains(First[1]) && Again.Contains(First[2]) && !Again.Contains(Fourth);
+	Pool.Tick(20.0);
+	const bool bBack = Pool.NumLive() == 0 && Pool.NumResting() == Made;
+	SlonkFauna::FSplashPool Full;
+	int32 FullMade = 0, Lent = 0;
+	auto MakeFull = [&FullMade]() { ++FullMade; return NewObject<UNiagaraComponent>(GetTransientPackage()); };
+	for (int32 i = 0; i < SlonkFauna::MaxSplashComponents + 6; ++i) { Lent += Full.Acquire(0.5, MakeFull) ? 1 : 0; }
+	AddInfo(FString::Printf(TEXT("the splashes' pool: %d made for 4 bursts, the first three lent again once over %s; %d in the air and %d resting after; %d bursts at once: %d lent, %d made, %d let go"),
+		MadeThen, bReused ? TEXT("(no more made)") : TEXT("(more made)"), Pool.NumLive(), Pool.NumResting(), SlonkFauna::MaxSplashComponents + 6, Lent, FullMade, Full.NumDropped()));
+	TestTrue(TEXT("a component for each burst while none is over"), MadeThen == 4 && First[0] && First[1] && First[2] && Fourth && First[0] != First[1]);
+	TestTrue(TEXT("lent again once its burst is over, not before"), bReused);
+	TestTrue(TEXT("every component comes back"), bBack);
+	TestTrue(TEXT("never more than the most, a burst past them let go"), FullMade == SlonkFauna::MaxSplashComponents && Lent == SlonkFauna::MaxSplashComponents && Full.NumDropped() == 6);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaFishTest, "Slonk.Fauna.Fish", SLONK_TEST_FLAGS)
+bool FSlonkFaunaFishTest::RunTest(const FString& Parameters)
+{
+	// An Earth fish: 55, 19 and 2 triangles (fewer than 80 at LOD 0), a metre from its tail's tip to its nose, its middle at
+	// the origin; its vertex colours as the material reads them (its body and its fins, how far it bends from its middle
+	// to its tail's tip, its side, a body that undulates), every face wound to show the side its normals point to, a
+	// tangent basis at every vertex. The material's motion keeps every vertex inside the instance's padded box, whatever
+	// its size, cycle, leap, surface, dive and speck size; its LODs come in where a fish is about 30 and 6 pixels long.
+	using namespace UE::Geometry;
+	namespace Vc = SlonkFauna::Vc;
+	const FFaunaBodyPlan Plan = SlonkFauna::EarthPlan(EFaunaKind::Leaper);
+	const int32 WantTris[SlonkFaunaMeshes::NumLods] = { 55, 19, 2 };
+	int32 Tris[SlonkFaunaMeshes::NumLods] = {};
+	int32 BadColour = 0, BadWinding = 0, Fins = 0, Bending = 0;
+	FBox Box0(ForceInit);
+	FDynamicMesh3 Lod0;
+	for (int32 L = 0; L < SlonkFaunaMeshes::NumLods; ++L)
+	{
+		FDynamicMesh3 M;
+		if (!SlonkFaunaMeshes::BuildLod(Plan, L, M)) { AddError(TEXT("no fish built")); return false; }
+		Tris[L] = M.TriangleCount();
+		const FDynamicMeshColorOverlay* C = M.Attributes()->PrimaryColors();
+		const FDynamicMeshNormalOverlay* N = M.Attributes()->PrimaryNormals();
+		for (const int32 T : M.TriangleIndicesItr())
+		{
+			FVector3d Fn, Centroid; double Area;
+			M.GetTriInfo(T, Fn, Area, Centroid);
+			const FIndex3i E = N->GetTriangle(T);
+			BadWinding += Fn.Dot(FVector3d(N->GetElement(E.A) + N->GetElement(E.B) + N->GetElement(E.C))) > 0.0 ? 0 : 1;
+			const FIndex3i Ce = C->GetTriangle(T);
+			const FIndex3i Tv = M.GetTriangle(T);
+			for (int32 k = 0; k < 3; ++k)
+			{
+				const FVector4f Col = C->GetElement(Ce[k]);
+				const FVector3d P = M.GetVertex(Tv[k]);
+				if (L == 0) { Box0 += (FVector)P; }
+				const float WantBend = (float)FMath::Clamp((Vc::FishBendFromCm - P.X) / (Vc::FishBendFromCm + 50.0), 0.0, 1.0);
+				const float WantSide = P.Y > 0.5 ? Vc::SideRight : (P.Y < -0.5 ? Vc::SideLeft : Vc::SideMiddle);
+				BadColour += (Col.X == Vc::SurfaceBody || Col.X == Vc::SurfaceTail) && FMath::IsNearlyEqual(Col.Y, WantBend, 1e-3f) && Col.Z == WantSide && Col.W == Vc::JointUndulate ? 0 : 1;
+				Fins += Col.X == Vc::SurfaceTail ? 1 : 0;
+				Bending += Col.Y > 0.99f ? 1 : 0;
+			}
+		}
+		if (L == 0) { Lod0 = MoveTemp(M); }
+	}
+	AddInfo(FString::Printf(TEXT("fish LODs %d, %d and %d triangles; LOD 0 %.0f x %.0f x %.0f cm of the unit mesh (z %.1f to %.1f); %d vertices off the colour contract, %d faces wound inward; %d of fins and tail, %d at the tail's tip"),
+		Tris[0], Tris[1], Tris[2], Box0.GetSize().X, Box0.GetSize().Y, Box0.GetSize().Z, Box0.Min.Z, Box0.Max.Z, BadColour, BadWinding, Fins, Bending));
+	for (int32 L = 0; L < SlonkFaunaMeshes::NumLods; ++L) { TestEqual(FString::Printf(TEXT("LOD %d's triangles"), L), Tris[L], WantTris[L]); }
+	TestTrue(TEXT("fewer than 80 triangles at LOD 0"), Tris[0] < 80);
+	TestEqual(TEXT("every vertex as the material reads it"), BadColour, 0);
+	TestEqual(TEXT("every face shows the side its normals point to"), BadWinding, 0);
+	TestTrue(TEXT("fins and a tail, bending to its tip"), Fins > 0 && Bending > 0);
+	TestTrue(TEXT("a unit mesh a metre long, its middle at the origin"), FMath::IsNearlyEqual(Box0.Min.X, -50.0, 0.5) && FMath::IsNearlyEqual(Box0.Max.X, 50.0, 0.5));
+
+	// The material's motion over LOD 0's vertices: every size, cycle, slot, leap, surface, dive and speck size, inside the box
+	// each instance is culled by (UPlanetInstancesComponent::InstanceBox with the kind's padding).
+	const SlonkFauna::FFaunaKindDesc& D = SlonkFauna::KindDesc(EFaunaKind::Leaper);
+	const FBox Padded = Box0.ExpandBy(Box0.GetExtent() * 0.15 + FVector(20.0 + D.CullPaddingUnits));
+	const TArray<FLinearColor> Vcs = VertexColours(Lod0);
+	FRandomStream Rng(91);
+	int32 Escaped = 0, Tried = 0, Shown = 0;
+	double Margin = TNumericLimits<double>::Max();
+	FVector Reach(0.0);
+	for (int32 Case = 0; Case < 400; ++Case)
+	{
+		float Cu[SlonkFauna::Custom::Num] = {};
+		float Gd[SlonkFauna::LeaperData::Num] = {};
+		const float Size = Case % 5 == 0 ? (float)SlonkFauna::Leaper::MinSizeM : Rng.FRandRange((float)SlonkFauna::Leaper::MinSizeM, (float)SlonkFauna::Leaper::MaxSizeM);
+		const int32 Count = Rng.RandRange(1, SlonkFauna::Leaper::MaxPerGroup), Idx = Rng.RandRange(0, Count - 1);
+		Cu[SlonkFauna::Custom::SizeM] = Size;
+		Cu[SlonkFauna::Custom::Seed] = Rng.FRand();
+		Cu[SlonkFauna::Custom::Phase] = Rng.FRand();
+		Cu[SlonkFauna::Custom::RateHz] = (float)SlonkFauna::Leaper::Cycles[Rng.RandRange(0, (int32)UE_ARRAY_COUNT(SlonkFauna::Leaper::Cycles) - 1)];
+		Cu[SlonkFauna::Custom::PerKind] = (float)(8 * Idx + Count);
+		// The surface where it leaves and dives back in anywhere within what is sent (the extremes often), the dive on or off.
+		for (int32 k = 0; k < 2 * SlonkFauna::Leaper::MaxPerGroup; ++k)
+		{
+			Gd[SlonkFauna::LeaperData::Surface0 + k] = Case % 3 == 0 ? (Rng.FRand() < 0.5f ? -1.f : 1.f) * SlonkFauna::Leaper::MaxSurfaceCm : Rng.FRandRange(-1.f, 1.f) * SlonkFauna::Leaper::MaxSurfaceCm;
+		}
+		Gd[SlonkFauna::LeaperData::Diving] = Case % 4 == 0 ? 1.f : 0.f;
+		Gd[SlonkFauna::LeaperData::DiveT0] = Rng.FRandRange(0.f, 3600.f);
+		Gd[SlonkFauna::LeaperData::DiveLen] = Rng.FRandRange(0.f, 70.f);
+		// Within a leap mostly, else anywhere in the hour.
+		float T = Rng.FRandRange(0.f, 3600.f);
+		if (Case % 4 != 3)
+		{
+			const SlonkFauna::FLeap L = SlonkFauna::LeapOf(Cu, Rng.RandRange(0, 200));
+			T = MaterialTime(L.T0 - L.LeadSec + (L.FlightSec + 2.0 * L.LeadSec) * Rng.FRand());
+		}
+		Shown += SlonkFauna::LeaperShown(T, Cu, Gd) ? 1 : 0;
+		// Near (no speck floor), a little past where it comes in, and far (twice its size).
+		const float Dist = Case % 3 == 0 ? 2000.f : (Case % 3 == 1 ? Size * 100.f * 960.f / 1.5f : 4.0e5f);
+		for (const int32 V : Lod0.VertexIndicesItr())
+		{
+			const FVector3f LP = (FVector3f)Lod0.GetVertex(V);
+			const FVector3f Moved = LP + SlonkFauna::LeaperMotion(LP, Vcs[V], T, Cu, Gd, Dist, 960.f);
+			++Tried;
+			const FVector Mv((double)Moved.X, (double)Moved.Y, (double)Moved.Z);
+			Escaped += Padded.IsInside(Mv) ? 0 : 1;
+			Reach = FVector(FMath::Max(Reach.X, FMath::Abs(Mv.X)), FMath::Max(Reach.Y, FMath::Abs(Mv.Y)), FMath::Max(Reach.Z, FMath::Abs(Mv.Z)));
+			Margin = FMath::Min(Margin, FMath::Min3(FMath::Min(Mv.X - Padded.Min.X, Padded.Max.X - Mv.X), FMath::Min(Mv.Y - Padded.Min.Y, Padded.Max.Y - Mv.Y), FMath::Min(Mv.Z - Padded.Min.Z, Padded.Max.Z - Mv.Z)));
+		}
+	}
+	AddInfo(FString::Printf(TEXT("%d vertices moved by the material (%d of 400 cases in a leap): %d outside the box padded %.0f units (the closest %.0f units inside; reaching %.0f, %.0f and %.0f units from the origin)"),
+		Tried, Shown, Escaped, D.CullPaddingUnits, Margin, Reach.X, Reach.Y, Reach.Z));
+	TestTrue(TEXT("cases in a leap and out of one"), Shown > 150 && Shown < 400);
+	TestEqual(TEXT("the material keeps every vertex in its instance's box"), Escaped, 0);
+	// Those hold of the float copies only while the material's leaper branches are what was copied: an edit to either
+	// branch of fauna_material.py alone fails here, until the copies are brought in line and the CRCs with them.
+	const FString WpoBlock = MaterialMotionBlock(EMotionBlock::Leapers);
+	const FString PixelBlock = MaterialMotionBlock(EMotionBlock::Leapers, true);
+	const uint32 WpoCrc = FCrc::StrCrc32(*WpoBlock), PixelCrc = FCrc::StrCrc32(*PixelBlock);
+	AddInfo(FString::Printf(TEXT("fauna_material.py's leaper branch: in WPO_CODE %d characters, CRC 0x%08x (0x%08x when the copy was made); in CODE %d characters, CRC 0x%08x (0x%08x)"),
+		WpoBlock.Len(), WpoCrc, MaterialLeaperBlockCrc, PixelBlock.Len(), PixelCrc, MaterialLeaperPixelBlockCrc));
+	TestTrue(TEXT("fauna_material.py's leaper branches found"), WpoBlock.Contains(TEXT("float lpitch = atan2(")) && PixelBlock.Contains(TEXT("bool lshown = ")));
+	TestEqual(TEXT("LeaperMotion copies the material's leaper branch as it is now"), WpoCrc, MaterialLeaperBlockCrc);
+	TestEqual(TEXT("LeaperShown and LeaperTurn copy its pixel shader's as it is now"), PixelCrc, MaterialLeaperPixelBlockCrc);
+	// The fliers' part of WPO_CODE leaves the leaper branch out (Slonk.Fauna.Meshes holds it to its own CRC).
+	TestFalse(TEXT("the fliers' part holds none of the leaper branch"), MaterialMotionBlock().Contains(TEXT("lpitch")));
+
+	// The static mesh: made once and kept, three LODs at the kind's screen sizes; where they come in for a fish 60 cm long
+	// through a 90-degree view at 16:9 (the GPU's radius, its padded box's), and how long it is there in pixels.
+	UStaticMesh* Mesh = SlonkFaunaMeshes::GetMesh(Plan, EFaunaKind::Leaper);
+	TestTrue(TEXT("the fish's mesh is made, and kept"), Mesh != nullptr && Mesh == SlonkFaunaMeshes::GetMesh(Plan, EFaunaKind::Leaper));
+	if (Mesh)
+	{
+		TestEqual(TEXT("with three LODs"), Mesh->GetNumLODs(), SlonkFaunaMeshes::NumLods);
+		const double LengthM = 0.6;
+		UPlanetInstancesComponent* Set = NewObject<UPlanetInstancesComponent>();
+		Set->SetStaticMesh(Mesh);
+		Set->SetCullPadding(D.CullPaddingUnits);
+		Set->SetPieces(TArray<FTransform>{ FTransform(FQuat::Identity, FVector::ZeroVector, FVector(LengthM)) }, TConstArrayView<float>());
+		const double Proj = (16.0 / 9.0) / FMath::Tan(FMath::DegreesToRadians(45.0));
+		const double GpuR = Set->GetMaxInstanceRadius();
+		auto ComesInM = [&](int32 L) { return Proj * GpuR / D.LodScreenSize[L] / 100.0; };
+		auto PxAt = [&](double M) { return LengthM * 960.0 / M; };
+		AddInfo(FString::Printf(TEXT("a %.1f m fish (LOD radius %.0f cm): 19 triangles from %.0f m (%.1f pixels long), 2 from %.0f m (%.1f pixels)"), LengthM, GpuR, ComesInM(1), PxAt(ComesInM(1)), ComesInM(2), PxAt(ComesInM(2))));
+		TestTrue(TEXT("its 19 triangles from about 30 pixels long"), PxAt(ComesInM(1)) > 24.0 && PxAt(ComesInM(1)) < 38.0);
+		TestTrue(TEXT("and its 2 from about 6"), PxAt(ComesInM(2)) > 4.5 && PxAt(ComesInM(2)) < 8.0);
+		int32 Vertices = 0, NoTangent = 0;
+		if (const FStaticMeshRenderData* RD = Mesh->GetRenderData())
+		{
+			for (const FStaticMeshLODResources& L : RD->LODResources)
+			{
+				const FStaticMeshVertexBuffer& VB = L.VertexBuffers.StaticMeshVertexBuffer;
+				for (uint32 i = 0; i < VB.GetNumVertices(); ++i)
+				{
+					const FVector3f Tx(VB.VertexTangentX(i)), Tz(VB.VertexTangentZ(i)), Ty(VB.VertexTangentY(i));
+					++Vertices;
+					NoTangent += Tx.Size() > 0.5f && Ty.Size() > 0.5f && FMath::Abs(FVector3f::DotProduct(Tx.GetSafeNormal(), Tz.GetSafeNormal())) < 0.1f ? 0 : 1;
+				}
+			}
+		}
+		AddInfo(FString::Printf(TEXT("the fish's mesh: %d vertices over its LODs, %d without a tangent basis at right angles to its normal"), Vertices, NoTangent));
+		TestTrue(TEXT("every vertex has a tangent basis"), Vertices > 0 && NoTangent == 0);
+	}
+
+	// Its colour: an Earth fish's silver-blue at strangeness 0, a little of its sea's colour through it; turned round the
+	// wheel with a strange world, as the other animals' are.
+	const SlonkFauna::FFaunaLook Earth;
+	const FLinearColor Water = SlonkFauna::LeaperPigment(Earth, FLinearColor(0.1f, 0.35f, 0.5f), 1.0);
+	SlonkFauna::FFaunaLook Strange;
+	Strange.HueTurnDeg = 120.f;
+	Strange.Vivid = 1.f;
+	const FLinearColor Turned = SlonkFauna::LeaperPigment(Strange, FLinearColor(0.1f, 0.35f, 0.5f), 1.0);
+	const FLinearColor Ammonia = SlonkFauna::LeaperPigment(Earth, FLinearColor(0.22f, 0.17f, 0.40f), 1.0);
+	AddInfo(FString::Printf(TEXT("a fish's pigment: %.2f %.2f %.2f on an Earth (hue %.0f deg), %.2f %.2f %.2f in an ammonia sea, %.2f %.2f %.2f on a strange world (hue %.0f deg)"),
+		Water.R, Water.G, Water.B, HueOf(Water), Ammonia.R, Ammonia.G, Ammonia.B, Turned.R, Turned.G, Turned.B, HueOf(Turned)));
+	TestTrue(TEXT("silver-blue at strangeness 0"), HueOf(Water) > 190.f && HueOf(Water) < 230.f && Water.B > Water.R && Water.GetMax() > 0.35f);
+	TestTrue(TEXT("tinted by its sea's solvent"), !Ammonia.Equals(Water, 0.01f));
+	TestTrue(TEXT("turned with a strange world"), HueGap(HueOf(Turned), HueOf(Water)) > 60.f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaLeaperStaysPutTest, "Slonk.Fauna.LeaperStaysPut", SLONK_TEST_FLAGS)
+bool FSlonkFaunaLeaperStaysPutTest::RunTest(const FString& Parameters)
+{
+	// The leapers are pure functions of the world and the place, as every kind is: a cell holds the same group whatever
+	// order the cells are read in; a group's fish are the same every time; the groups about a camera are chosen by distance
+	// alone (gone 30 km off and come back, the same groups, the same as about a camera that never left, their frames where
+	// theirs are); one a little past its reach stays, a quarter past it goes; none about a camera too high over the sea.
+	SlonkFauna::FFaunaWorld W = EarthSeas();
+	W.KindMask = SlonkFauna::KindBit(EFaunaKind::Leaper);
+	const double R = W.P.RadiusCm;
+	SlonkFauna::FFaunaGroup G0;
+	if (!TestLeapers(W, G0)) { AddError(TEXT("no group of leapers found on the Earth-like world")); return false; }
+	TArray<SlonkFauna::FFaunaCell> Cells;
+	SlonkFauna::CellsNear(W.P, EFaunaKind::Leaper, G0.Centre, 2.0e5, Cells);
+	TArray<TOptional<SlonkFauna::FFaunaGroup>> Forward, Backward;
+	Forward.SetNum(Cells.Num());
+	Backward.SetNum(Cells.Num());
+	for (int32 i = 0; i < Cells.Num(); ++i) { SlonkFauna::FFaunaGroup G; if (SlonkFauna::GroupInCell(W, Cells[i], G)) { Forward[i] = G; } }
+	for (int32 i = Cells.Num() - 1; i >= 0; --i) { SlonkFauna::FFaunaGroup G; if (SlonkFauna::GroupInCell(W, Cells[i], G)) { Backward[i] = G; } }
+	int32 Held = 0, Mismatch = 0;
+	for (int32 i = 0; i < Cells.Num(); ++i)
+	{
+		Held += Forward[i].IsSet() ? 1 : 0;
+		Mismatch += Forward[i].IsSet() == Backward[i].IsSet() && (!Forward[i].IsSet() || Forward[i].GetValue() == Backward[i].GetValue()) ? 0 : 1;
+	}
+	const FFish Fa = FishOf(G0), Fb = FishOf(G0);
+	bool bFishSame = Fa.Num() == Fb.Num() && Fa.Custom == Fb.Custom && Fa.Num() == G0.Members;
+	for (int32 i = 0; bFishSame && i < Fa.Num(); ++i) { bFishSame &= Fa.Xf[i].Equals(Fb.Xf[i], 0.0); }
+	// Gone to B and back to A.
+	const FVector CamA = CameraOver(W, G0.Centre);
+	const FVector CamB = CameraOver(W, AlongGround(G0.Centre, 3.0e6, R, 2.0));
+	SlonkFauna::FFaunaField F, Stayed;
+	F.SetWorld(W);
+	Stayed.SetWorld(W);
+	TArray<uint64> A1, B1, A2, Kept;
+	ScanAndSelect(F, CamA, A1);
+	ScanAndSelect(Stayed, CamA, Kept);
+	TMap<uint64, SlonkFauna::FFaunaGroup> First;
+	for (const TPair<uint64, SlonkFauna::FFaunaField::FGroupRef>& A : F.GetActive()) { First.Add(A.Key, *A.Value); }
+	ScanAndSelect(F, CamB, B1);
+	int32 Overlap = 0;
+	for (const uint64 Id : B1) { Overlap += A1.Contains(Id) ? 1 : 0; }
+	ScanAndSelect(F, CamA, A2);
+	ScanAndSelect(Stayed, CamA, Kept);
+	int32 Changed = 0, Moved = 0;
+	for (const TPair<uint64, SlonkFauna::FFaunaField::FGroupRef>& A : F.GetActive())
+	{
+		const SlonkFauna::FFaunaGroup* Was = First.Find(A.Key);
+		const SlonkFauna::FFaunaField::FGroupRef* Never = Stayed.GetActive().Find(A.Key);
+		Changed += Was && *Was == *A.Value && Never && **Never == *A.Value ? 0 : 1;
+		if (Never) { Moved += SlonkFauna::PathAt(*A.Value, R, 1234.5).PosCm.Equals(SlonkFauna::PathAt(**Never, R, 1234.5).PosCm, 0.0) ? 0 : 1; }
+	}
+	// The hysteresis, on a sparse sea (a few groups within reach, the caps leaving room).
+	SlonkFauna::FFaunaWorld Sparse = W;
+	Sparse.Density = 0.15f;
+	SlonkFauna::FFaunaGroup G1;
+	bool bSparse = TestLeapers(Sparse, G1);
+	const double Reach = SlonkFauna::KindDesc(EFaunaKind::Leaper).ReachCm;
+	TArray<uint64> AtG1, Near, Far, High;
+	int32 NearGroups = 0;
+	if (bSparse)
+	{
+		SlonkFauna::FFaunaField SparseField;
+		SparseField.SetWorld(Sparse);
+		ScanAndSelect(SparseField, CameraOver(Sparse, G1.Centre), AtG1);
+		ScanAndSelect(SparseField, CameraOver(Sparse, AlongGround(G1.Centre, 1.1 * Reach, R, 0.7)), Near);
+		NearGroups = SparseField.ActiveGroups(EFaunaKind::Leaper);
+		ScanAndSelect(SparseField, CameraOver(Sparse, AlongGround(G1.Centre, 1.3 * Reach, R, 0.7)), Far);
+	}
+	ScanAndSelect(F, G0.Centre * (R + SlonkFauna::KindDesc(EFaunaKind::Leaper).MaxAltitudeCm * 1.4), High);
+	AddInfo(FString::Printf(TEXT("%d cells round a group of %d: %d hold one, %d read otherwise backward; its fish the same made twice %s; about A %d groups, about B 30 km off %d (%d of A's), back at A %d, %d of them changed, %d off where the groups never left are; %d about a camera too high"),
+		Cells.Num(), G0.Members, Held, Mismatch, bFishSame ? TEXT("yes") : TEXT("no"), A1.Num(), B1.Num(), Overlap, A2.Num(), Changed, Moved, High.Num()));
+	TestEqual(TEXT("a cell holds the same group whatever order the cells are read in"), Mismatch, 0);
+	TestTrue(TEXT("a group's fish are the same every time"), bFishSame);
+	TestTrue(TEXT("groups about A, the test's group among them"), A1.Num() > 0 && A1.Contains(G0.Id));
+	TestEqual(TEXT("none of A's about B"), Overlap, 0);
+	TestTrue(TEXT("back at A, the same groups, as about a camera that never left"), A2 == A1 && Kept == A1);
+	TestEqual(TEXT("each the same group as before and as one never left"), Changed, 0);
+	TestEqual(TEXT("where one never left would be"), Moved, 0);
+	TestTrue(TEXT("on the sparse sea, its group about its middle, and room under the caps past it"), bSparse && AtG1.Contains(G1.Id) && NearGroups < SlonkFauna::KindDesc(EFaunaKind::Leaper).MaxGroups);
+	TestTrue(TEXT("a group just past its reach stays"), Near.Contains(G1.Id));
+	TestFalse(TEXT("a group a quarter past its reach goes"), Far.Contains(G1.Id));
+	TestEqual(TEXT("none under a camera too high over the sea"), High.Num(), 0);
+
+	// Fauna switched off and on (the seas' shoals taken out of the terrain's material and put back, the world otherwise the
+	// same): only the leapers' groups and cells go; every other kind's groups about and cells read are kept, so the scans
+	// after read none of theirs again, and back on the same groups are about as before.
+	{
+		const SlonkFauna::FFaunaWorld All = EarthSeas();
+		SlonkFauna::FFaunaWorld NoSea = All;
+		NoSea.Sea = SlonkFauna::FFaunaSea();
+		auto CellsOf = [](const SlonkFauna::FFaunaField& Fd, bool bLeapers)
+		{
+			int32 N = 0;
+			if (Fd.GetCache().IsValid())
+			{
+				for (const TPair<uint64, SlonkFauna::FFaunaField::FGroupRef>& C : *Fd.GetCache()) { N += ((EFaunaKind)(C.Key >> 60) == EFaunaKind::Leaper) == bLeapers ? 1 : 0; }
+			}
+			return N;
+		};
+		auto OthersAbout = [](const SlonkFauna::FFaunaField& Fd)
+		{
+			TArray<uint64> Ids;
+			for (const TPair<uint64, SlonkFauna::FFaunaField::FGroupRef>& A : Fd.GetActive()) { if (A.Value->Kind != EFaunaKind::Leaper) { Ids.Add(A.Key); } }
+			Ids.Sort();
+			return Ids;
+		};
+		// Over the sea near a coast, where groups of leapers and of other kinds are about together (the first such of points
+		// of sea over the globe, the shallows by the coasts among them; else over the test's group).
+		SlonkFauna::FFaunaField Fd;
+		TArray<uint64> Before, During, After;
+		FVector Cam = CamA;
+		for (const FVector& Dir : SeaSpots(All.P, 3000, 300.0, 300))
+		{
+			SlonkFauna::FFaunaField Try;
+			Try.SetWorld(All);
+			TArray<uint64> Ids;
+			const FVector At = CameraOver(All, Dir);
+			ScanAndSelect(Try, At, Ids);
+			if (OthersAbout(Try).Num() > 0 && Try.ActiveGroups(EFaunaKind::Leaper) > 0) { Cam = At; break; }
+		}
+		Fd.SetWorld(All);
+		int32 EvalOff = -1, EvalOn = -1;
+		ScanAndSelect(Fd, Cam, Before);
+		const int32 OthersCells = CellsOf(Fd, false), LeaperCells = CellsOf(Fd, true);
+		const TArray<uint64> OthersBefore = OthersAbout(Fd);
+		Fd.SetWorld(NoSea);
+		const int32 OthersCellsOff = CellsOf(Fd, false), LeaperCellsOff = CellsOf(Fd, true);
+		const TArray<uint64> OthersOff = OthersAbout(Fd);
+		const int32 LeapersOff = Fd.ActiveGroups(EFaunaKind::Leaper) + Fd.GetCandidates().FilterByPredicate([](const SlonkFauna::FFaunaField::FGroupRef& G) { return G->Kind == EFaunaKind::Leaper; }).Num();
+		ScanAndSelect(Fd, Cam, During, nullptr, &EvalOff);
+		Fd.SetWorld(All);
+		ScanAndSelect(Fd, Cam, After, nullptr, &EvalOn);
+		AddInfo(FString::Printf(TEXT("fauna off and on over the sea near a coast: %d groups about before (%d of other kinds), %d cells of other kinds and %d of the leapers read; off, %d and %d cells kept, %d of the other kinds' groups about, %d leaper groups left, its scan reading %d cells; on, %d groups about, its scan reading %d cells"),
+			Before.Num(), OthersBefore.Num(), OthersCells, LeaperCells, OthersCellsOff, LeaperCellsOff, OthersOff.Num(), LeapersOff, EvalOff, After.Num(), EvalOn));
+		TestTrue(TEXT("cells of other kinds and of the leapers read there, groups of both about"), OthersCells > 0 && LeaperCells > 0 && OthersBefore.Num() > 0 && Before.Num() > OthersBefore.Num());
+		TestTrue(TEXT("off, the other kinds' cells and groups kept, the leapers' gone"), OthersCellsOff == OthersCells && LeaperCellsOff == 0 && OthersOff == OthersBefore && LeapersOff == 0);
+		TestEqual(TEXT("off, its scan reads no cell again"), EvalOff, 0);
+		TestEqual(TEXT("on, its scan reads the leapers' cells alone"), EvalOn, LeaperCells);
+		TestTrue(TEXT("and the same groups are about as before"), After == Before);
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaLeaperBudgetTest, "Slonk.Fauna.LeaperBudget", SLONK_TEST_FLAGS)
+bool FSlonkFaunaLeaperBudgetTest::RunTest(const FString& Parameters)
+{
+	// About any camera over an Earth's seas the leapers keep to their caps (6 groups, 30 fish, under 1,700 triangles at their
+	// nearest LOD), the caps full over the open sea; and a frame's math for them (each group's frame with its shoal, its dive
+	// and the threats to it, the surface its fish's leaps cross and the crossings to splash for, as UpdateLeaper does it:
+	// not the scene's writes, which want a world) is far under 0.15 ms of the game thread.
+	SlonkFauna::FFaunaWorld W = EarthSeas();
+	W.KindMask = SlonkFauna::KindBit(EFaunaKind::Leaper);
+	const SlonkFauna::FFaunaKindDesc& D = SlonkFauna::KindDesc(EFaunaKind::Leaper);
+	const double R = W.P.RadiusCm;
+	int32 Places = 0, Over = 0, Full = 0, MaxGroups = 0, MaxFish = 0;
+	SlonkFauna::FFaunaField Busiest;
+	for (const FVector& Dir : SeaSpots(W.P, 2000, 5.0e3, 30))
+	{
+		SlonkFauna::FFaunaField F;
+		F.SetWorld(W);
+		TArray<uint64> Active;
+		ScanAndSelect(F, CameraOver(W, Dir), Active);
+		++Places;
+		const int32 Groups = F.ActiveGroups(EFaunaKind::Leaper), Fish = F.ActiveMembers(EFaunaKind::Leaper);
+		Over += Groups <= D.MaxGroups && Fish <= D.MaxMembers ? 0 : 1;
+		Full += Groups == D.MaxGroups || Fish + SlonkFauna::Leaper::MaxPerGroup > D.MaxMembers ? 1 : 0;
+		if (Groups > MaxGroups) { MaxGroups = Groups; Busiest = F; }
+		MaxFish = FMath::Max(MaxFish, Fish);
+	}
+	// A frame's math at the busiest place, as UpdateLeaper does it, a ship passing low over the first group.
+	struct FAbout { SlonkFauna::FFaunaField::FGroupRef G; FFish F; SlonkFauna::FLeaperSurfaceCache Cache; SlonkFauna::FPanic Dive; };
+	TArray<FAbout> About;
+	for (const TPair<uint64, SlonkFauna::FFaunaField::FGroupRef>& A : Busiest.GetActive()) { FAbout Ab; Ab.G = A.Value; Ab.F = FishOf(*A.Value); About.Add(MoveTemp(Ab)); }
+	constexpr int32 Frames = 600;
+	double Sink = 0.0;
+	int32 Splashes = 0;
+	const double Start = FPlatformTime::Seconds();
+	for (int32 f = 0; f < Frames; ++f)
+	{
+		const double Now = 500.0 + f / 60.0, Was = Now - 1.0 / 60.0;
+		for (int32 g = 0; g < About.Num(); ++g)
+		{
+			FAbout& Ab = About[g];
+			const SlonkFauna::FFaunaPose Pose = SlonkFauna::PathAt(*Ab.G, R, Now);
+			SlonkFauna::FFaunaThreat Craft;
+			Craft.PosCm = Pose.PosCm.GetSafeNormal() * (R + (g == 0 ? 2000.0 : 1.0e4));
+			Craft.AltitudeCm = g == 0 ? 2000.0 : 1.0e4;
+			SlonkFauna::FFaunaThreat Walker;
+			Walker.bCraft = false;
+			Walker.PosCm = Pose.PosCm;
+			SlonkFauna::StartleLeapers(Ab.Dive, D, Pose.PosCm, Craft, Now);
+			SlonkFauna::StartleLeapers(Ab.Dive, D, Pose.PosCm, Walker, Now);
+			float Gd[SlonkFauna::LeaperData::Num] = {};
+			SlonkFauna::LeaperGroupData(*Ab.G, Ab.F.Custom, Ab.F.Home, R, W.Sea.SwellCm, SlonkFauna::SwellFade(5000.0), Now, Ab.Dive, Ab.Cache, Gd);
+			TArray<SlonkFauna::FLeapEvent> Ev;
+			for (int32 i = 0; i < Ab.F.Num(); ++i) { SlonkFauna::LeapEventsBetween(Ab.F.At(i), i, Was, Now, Ev); }
+			for (const SlonkFauna::FLeapEvent& E : Ev)
+			{
+				if (SlonkFauna::LeapDived(Ab.Dive, E.Leap.T0)) { continue; }
+				Sink += SlonkFauna::LeapCrossing(*Ab.G, R, W.Sea.SwellCm, 1.0, Ab.F.Home[E.Member], E.Leap, E.bEntry).X;
+				++Splashes;
+			}
+			Sink += Pose.PosCm.X + Gd[SlonkFauna::LeaperData::Surface0];
+		}
+	}
+	const double FrameMs = (FPlatformTime::Seconds() - Start) * 1000.0 / Frames;
+	AddInfo(FString::Printf(TEXT("about %d cameras over the sea: at most %d groups and %d fish (%d triangles at LOD 0), the caps full at %d of them, %d over; a frame's math on %d groups %.4f ms (%d splashes over %d frames)"),
+		Places, MaxGroups, MaxFish, MaxFish * 55, Full, Over, About.Num(), FrameMs, Splashes, Frames));
+	TestTrue(TEXT("places over the sea to try"), Places >= 20 && MaxGroups > 0);
+	TestEqual(TEXT("never over the leapers' caps"), Over, 0);
+	TestTrue(TEXT("the caps full over the open sea"), Full > 0);
+	TestTrue(TEXT("under 1,700 triangles of fish at LOD 0"), MaxFish * 55 <= 1700);
+	TestTrue(TEXT("splashes thrown in the frames timed"), Splashes > 0 && FMath::IsFinite(Sink));
+	TestTrue(TEXT("a frame's math far under 0.15 ms"), FrameMs < 0.15);
 	return true;
 }
 

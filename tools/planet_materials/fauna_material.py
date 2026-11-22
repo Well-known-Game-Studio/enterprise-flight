@@ -117,6 +117,46 @@ Slonk.Fauna.Walker checks a float copy of this branch against it (SlonkFauna::Wa
 the test holds the CRC of the branch's lines, its comments aside, as the copy was made, and fails when they change).
 Its normals are turned the way it faces (the Normal output, in tangent space; every other branch gives the vertex's own).
 
+The leaper branch (Leapers 1, which only the leapers' instance of this material sets, UPlanetFaunaComponent: a material
+built before the branch has no Leapers parameter, and the game then keeps no leaping fish). A group of leapers is one
+instanced set whose frame the game moves each frame with the shoal the terrain material paints (SlonkFauna::ShoalAt): on
+the sea-level sphere at the shoal's middle, x the way it swims, z up; its fish (SlonkFaunaMeshes' fish: 55, 19 and 2
+triangles, a metre from the tail's tip to the nose, its middle at the origin, nose along +x, back up) stand unturned in it,
+each at its home in the shoal. Their vertex colours: R the surface (0 body, 0.5 fins and tail), G how far it bends (0
+from the nose back to 10 cm of the unit mesh, 1 at the tail's tip), B its side, A 1; UV its place along it (U from the
+tail's tip) and up its side (V from the belly). Per-instance custom data in the same slots:
+    0-2 its pigment (an Earth fish's silver-blue, a little of its sea's own colour through it)
+    3   glow at night (0 on an Earth)
+    4   seed
+    5   its length, m (its scale)
+    6   where its slot in its group's leap cycle begins, a share of the cycle
+    7   its group's leap cycle, s (a divisor of the hour)
+    8   its place in its group's order and the group's count, 8 times the one plus the other
+    9   the distance it fades out by, cm (a fish at a time, by a number of its own, over the last fifth of it)
+Per-group custom primitive data (SlonkFauna::LeaperData, slots 0 to 23, set each frame):
+    0   night
+    1   when its dive began, on this material's clock (s, wrapped to the hour)
+    6   1 while it dives (a craft passed low over it), till a little past its dive's end
+    7   how long its dive lasts from slot 1, s: no fish leaves the water from 1 to 1 plus 7 while 6 is 1
+    14-23 the sea's surface over its level, cm (each within 150), where and when each fish's current or next leap leaves
+        the water and where and when it dives back in, two to a fish in its order (the swell read by the game where the
+        leap crosses it, SlonkFauna::LeapCrossing, faded as the terrain fades its swell at the camera's distance)
+Each fish: in each cycle of its group's (its slot's start a share in, the hour a whole number of them) it leaps unless
+the cycle's hash (SlonkFauna::LeapOf's, uint for uint) skips it, a quarter of them: leaving the water 0.15 to 0.6 of its
+slot (the cycle over its group's count) in, the way the shoal swims turned up to 0.7 rad either side, from up to 1.2 of
+its lengths either way of its home, rising 0.7 to 1.8 of its lengths over the line between the surfaces it leaves and
+dives back into, coming down 2 to 4.5 of its lengths on, under gravity (981 cm/s/s): a parabola, its body pitched along
+it and its tail flicking in the air; drawn from 0.6 of its length under the surface as it comes up to as deep as it
+dives again (so it comes out of the sea and goes back in whole, the opaque sea hiding what is under it), held under the
+sea and masked between its leaps and through its group's dive; grown by a speck floor (no shorter than 2 pixels, at most
+twice its size at the top of its leap, its own size where it crosses the surface). Every vertex stays within 800
+unit-mesh cm of the mesh's box (its leap out from its home; the surface up to 150 cm off the sea's level, 469 for the
+shortest fish of 0.32 m; the speck floor), which the instances' boxes are padded by (FFaunaKindDesc::CullPaddingUnits),
+and Slonk.Fauna.Fish checks a float copy of this branch against it (SlonkFauna::LeaperMotion, LeaperShown and LeaperTurn,
+which must change with it: the test holds the CRCs of the branch's lines in both shaders, their comments aside, as the
+copy was made, and fails when they change). Its normals are pitched and turned as its body is (the Normal output, in
+tangent space).
+
 The motion (WPO_CODE): bursts of wingbeats on a cycle of 3 to 7 s of each bird's own, gliding with the wings a little
 raised between, beating all the time and faster while startled; the body banked into the turn; a ripple through the
 flock; a startle's scatter, out from the flock's middle and mostly away from what startled it, opening in a second and
@@ -204,6 +244,77 @@ Nrm = float3(0.0, 0.0, 1.0);
     float wdet = dot(wt0, cross(wb0, wz0));
     Nrm = abs(wdet) > 1e-4 ? normalize(float3(dot(cross(wb0, wz0), wnw), dot(cross(wz0, wt0), wnw), dot(cross(wt0, wb0), wnw)) / wdet) : float3(0.0, 0.0, 1.0);
     return wcol;
+}
+[branch] if (Leapers > 0.5)
+{
+    // A leaping fish (SlonkFauna::Leaper): its leap read as the vertex shader reads it (SlonkFauna::LeaperShown and
+    // LeaperTurn copy this), so it is drawn only from just under the surface as it comes up to just under it as it dives
+    // back in, never between its leaps nor while its group dives, and its normals turned as its body is turned.
+    float ls = max(Size, 0.1);
+    float lcyc = max(Rate, 1.0);
+    float lidx = floor((PerKind + 0.5) / 8.0);
+    float lcnt = max(PerKind - lidx * 8.0, 1.0);
+    float lu = T / lcyc - Phase;
+    float ln = floor(lu);
+    float lm = round(3600.0 / lcyc);
+    float lnw = ln - lm * floor(ln / lm);
+    float ltau = (lu - ln) * lcyc;
+    uint lsd = (uint)(Seed * 65536.0);
+    uint lnu = (uint)lnw;
+    float lh[7];
+    [unroll] for (int lk = 0; lk < 7; lk++)
+    {
+        uint lx = lnu * 0x9E3779B1u + lsd * 0x85EBCA77u + (uint)lk * 0xC2B2AE3Du + 0x27D4EB2Fu;
+        lx ^= lx >> 16;
+        lx *= 0x7FEB352Du;
+        lx ^= lx >> 15;
+        lx *= 0x846CA68Bu;
+        lx ^= lx >> 16;
+        lh[lk] = (float)(lx >> 8) * (1.0 / 16777216.0);
+    }
+    float ltau0 = (0.15 + 0.45 * lh[1]) * (lcyc / lcnt);
+    float lyaw = (lh[2] - 0.5) * 1.4;
+    float llen = ls * 100.0;
+    float lapex = (0.7 + 1.1 * lh[5]) * llen;
+    float lrange = (2.0 + 2.5 * lh[6]) * llen;
+    float ltf = 2.0 * sqrt(2.0 * lapex / 981.0);
+    float llead = 0.6 * llen / (4.0 * lapex / ltf);
+    float ldage = fmod(T + (ltau0 - ltau) - ScatterT0 + 7201.0, 3600.0) - 1.0;
+    bool ldived = Startled > 0.5 && ldage >= 0.0 && ldage < Spread;
+    bool lshown = lh[0] >= 0.25 && !ldived && ltau >= ltau0 - llead && ltau <= ltau0 + ltf + llead;
+    int li = clamp((int)lidx, 0, 4);
+    float lha = clamp(li == 0 ? H0 : (li == 1 ? H2 : (li == 2 ? H4 : (li == 3 ? H6 : H8))), -150.0, 150.0);
+    float lhb = clamp(li == 0 ? H1 : (li == 1 ? H3 : (li == 2 ? H5 : (li == 3 ? H7 : H9))), -150.0, 150.0);
+    float lsh = (ltau - ltau0) / ltf;
+    float lpitch = atan2((lhb - lha) / ltf + 4.0 * lapex * (1.0 - 2.0 * lsh) / ltf, lrange / ltf);
+    // Fading out over the last fifth of its fade, a fish at a time by a number of its own that holds from frame to frame.
+    float lfade = FadeFar > 0.0 ? saturate((FadeFar - length(WP - ViewPos)) / (0.2 * FadeFar)) : 1.0;
+    Mask = (lshown && lfade > frac(Seed * 91.37 + 0.13)) ? 1.0 : 0.0;
+    // Silver-blue: its back darker, its flanks and belly bright silver, its fins and tail a darker shade.
+    float lfin = saturate(1.0 - abs(VC.r - 0.5) * 8.0);
+    float3 lbase = Pigment * (0.9 + 0.2 * frac(Seed * 11.3));
+    float3 lcol = lerp(lbase * 1.5 + float3(0.06, 0.07, 0.08), lbase * 0.55, smoothstep(0.35, 0.85, UV.y));
+    lcol = lerp(lcol, lbase * 0.45, lfin);
+    Rough = lerp(0.3, 0.5, lfin);
+    Sub = float3(0.0, 0.0, 0.0);
+    Emis = GlowColor * (Glow * Night * 0.3);
+    // Its normal pitched along its arc about its group's left (its instance's y) and turned the way it leaps about its up,
+    // as the vertex shader turns its body, then into the tangent space the engine takes the normal in.
+    float3 lay = normalize(AxY);
+    float3 laz = normalize(BodyUp);
+    float3 ln0 = normalize(N);
+    float lca = cos(-lpitch);
+    float lsa = sin(-lpitch);
+    float3 ln1 = ln0 * lca + cross(lay, ln0) * lsa + lay * dot(lay, ln0) * (1.0 - lca);
+    float lcy = cos(lyaw);
+    float lsy = sin(lyaw);
+    float3 ln2 = ln1 * lcy + cross(laz, ln1) * lsy + laz * dot(laz, ln1) * (1.0 - lcy);
+    float3 lt0 = Parameters.TangentToWorld[0];
+    float3 lb0 = Parameters.TangentToWorld[1];
+    float3 lz0 = Parameters.TangentToWorld[2];
+    float ldet = dot(lt0, cross(lb0, lz0));
+    Nrm = abs(ldet) > 1e-4 ? normalize(float3(dot(cross(lb0, lz0), ln2), dot(cross(lz0, lt0), ln2), dot(cross(lt0, lb0), ln2)) / ldet) : float3(0.0, 0.0, 1.0);
+    return lcol;
 }
 [branch] if (Motes > 0.5)
 {
@@ -563,6 +674,90 @@ WPO_CODE = r"""
     p.z += clamp(lerp(wga, wgb, wgf.y), -150.0, 150.0) / s;
     return p - LP;
 }
+[branch] if (Leapers > 0.5)
+{
+    // A leaping fish (SlonkFauna::Leaper; SlonkFauna::LeaperMotion is a float copy of this: change both). Its group's slots
+    // it reads by their flock's pins: ScatterT0 when its dive began (slot 1), Startled whether it is diving (6), Spread how
+    // long its dive lasts (7), H0 to H9 the sea's surface over its level where and when each fish's leap leaves the water
+    // and dives back in (14 to 23, two to a fish); its own: Rate its group's leap cycle, s (a divisor of the hour), Phase
+    // its slot's start in it, Bearing its place in the group's order and the group's count (8 i + n). Offsets in the unit
+    // mesh's cm, in the instance's frame, which is its group's unturned and scaled by its length (its home on the sea).
+    float ls = max(Size, 0.1);
+    float lcyc = max(Rate, 1.0);
+    float lidx = floor((Bearing + 0.5) / 8.0);
+    float lcnt = max(Bearing - lidx * 8.0, 1.0);
+    // The cycle it is in (from the hour's turn, its slot's start a share in), the cycle's place in the hour, how far in.
+    float lu = T / lcyc - Phase;
+    float ln = floor(lu);
+    float lm = round(3600.0 / lcyc);
+    float lnw = ln - lm * floor(ln / lm);
+    float ltau = (lu - ln) * lcyc;
+    // The cycle's draws: whether it leaps (three in four), when in its slot it leaves the water, which way, from where,
+    // how high and how far.
+    uint lsd = (uint)(Seed * 65536.0);
+    uint lnu = (uint)lnw;
+    float lh[7];
+    [unroll] for (int lk = 0; lk < 7; lk++)
+    {
+        uint lx = lnu * 0x9E3779B1u + lsd * 0x85EBCA77u + (uint)lk * 0xC2B2AE3Du + 0x27D4EB2Fu;
+        lx ^= lx >> 16;
+        lx *= 0x7FEB352Du;
+        lx ^= lx >> 15;
+        lx *= 0x846CA68Bu;
+        lx ^= lx >> 16;
+        lh[lk] = (float)(lx >> 8) * (1.0 / 16777216.0);
+    }
+    float ltau0 = (0.15 + 0.45 * lh[1]) * (lcyc / lcnt);
+    float lyaw = (lh[2] - 0.5) * 1.4;
+    float llen = ls * 100.0;
+    float lfx = (2.0 * lh[3] - 1.0) * 1.2 * llen;
+    float lfy = (2.0 * lh[4] - 1.0) * 1.2 * llen;
+    float lapex = (0.7 + 1.1 * lh[5]) * llen;
+    float lrange = (2.0 + 2.5 * lh[6]) * llen;
+    float ltf = 2.0 * sqrt(2.0 * lapex / 981.0);
+    float llead = 0.6 * llen / (4.0 * lapex / ltf);
+    // A dive keeps every leap leaving from its start to its end in the water.
+    float ldage = fmod(T + (ltau0 - ltau) - ScatterT0 + 7201.0, 3600.0) - 1.0;
+    bool ldived = Startled > 0.5 && ldage >= 0.0 && ldage < Spread;
+    bool lshown = lh[0] >= 0.25 && !ldived && ltau >= ltau0 - llead && ltau <= ltau0 + ltf + llead;
+    // Between its leaps it is held under the sea at its home (and masked).
+    if (!lshown)
+    {
+        return float3(0.0, 0.0, -(150.0 / ls + 80.0));
+    }
+    int li = clamp((int)lidx, 0, 4);
+    float lha = clamp(li == 0 ? H0 : (li == 1 ? H2 : (li == 2 ? H4 : (li == 3 ? H6 : H8))), -150.0, 150.0);
+    float lhb = clamp(li == 0 ? H1 : (li == 1 ? H3 : (li == 2 ? H5 : (li == 3 ? H7 : H9))), -150.0, 150.0);
+    // A parabola under gravity from the sea's surface where it leaves to the surface where it dives back in, its apex over
+    // the line between them, run on under the water either side; its body pitched along it.
+    float lsh = (ltau - ltau0) / ltf;
+    float lbase = lerp(lha, lhb, lsh);
+    float lpx = lfx + cos(lyaw) * lrange * lsh;
+    float lpy = lfy + sin(lyaw) * lrange * lsh;
+    float lpz = lbase + 4.0 * lapex * lsh * (1.0 - lsh);
+    float lpitch = atan2((lhb - lha) / ltf + 4.0 * lapex * (1.0 - 2.0 * lsh) / ltf, lrange / ltf);
+    // Its tail flicking while it is in the air, a whole number of beats a minute.
+    float lbeat = round((6.0 + 4.0 * frac(Seed * 3.7)) * 60.0) / 60.0;
+    float lair = saturate(4.0 * lsh * (1.0 - lsh));
+    float3 lp = LP;
+    lp.y += 12.0 * VC.g * VC.g * lair * sin(6.2831853 * frac(T * lbeat + Seed * 5.0));
+    float lcp = cos(lpitch);
+    float lsp = sin(lpitch);
+    lp = float3(lp.x * lcp - lp.z * lsp, lp.y, lp.x * lsp + lp.z * lcp);
+    float lcy = cos(lyaw);
+    float lsy = sin(lyaw);
+    lp = float3(lp.x * lcy - lp.y * lsy, lp.x * lsy + lp.y * lcy, lp.z);
+    // The speck floor: no shorter than 2 pixels far off, at most twice its size at the top of its leap and its own size
+    // where it crosses the surface (so it never shows out of the water before it leaves it).
+    float lpxs = ls * 100.0 * PxPerRad / max(length(WP - ViewPos), 1.0);
+    float lgr = clamp(2.0 / max(lpxs, 0.001), 1.0, 2.0);
+    lp *= 1.0 + (lgr - 1.0) * sin(3.14159265 * saturate(lsh));
+    // Every vertex stays within 800 unit-mesh cm of the mesh's box (FFaunaKindDesc::CullPaddingUnits): out from its home
+    // up to 1.2 of its lengths either way and 4.5 on, its body twice its size (680 at most along it); up 1.8 of its
+    // lengths and the surface 150 cm over its level, 469 for the shortest fish, its body twice its size (760 at most); down
+    // 150 cm, 0.6 of its length and its body (600 at most).
+    return lp + float3(lpx, lpy, lpz) / ls - LP;
+}
 // Every cycle here is a whole number of cycles an hour (T is the world's time wrapped to 3600 s), so the hour's wrap
 // shows no seam. Offsets are in the unit mesh's centimetres, in the instance's frame (a span is 100); the transform
 // after this node turns them into the world's. SlonkFauna::FlierMotion is a float copy of this: change both.
@@ -624,12 +819,15 @@ return p - LP;
 """
 
 HERD_GROUND = ["H%d" % i for i in range(21)]
+# The leapers' sea surface, two to a fish: the herds' ground slots 14 to 23 (SlonkFauna::LeaperData).
+LEAPER_SURFACE = HERD_GROUND[:10]
 INPUTS = ["VC", "N", "BodyUp", "Pigment", "Glow", "Seed", "FadeFar", "WP", "ViewPos", "Night", "GlowColor",
           "Motes", "UV", "SunDir", "T", "Phase", "PerKind", "PxPerRad",
-          "Walkers", "Rate", "Heading", "Graze", "ClockT0", "Travel", "VCA", "HerdGait", "PivotRef", "WalkKap", "TurnPack"]
+          "Walkers", "Rate", "Heading", "Graze", "ClockT0", "Travel", "VCA", "HerdGait", "PivotRef", "WalkKap", "TurnPack",
+          "Leapers", "Size", "ScatterT0", "Startled", "Spread", "AxY"] + LEAPER_SURFACE
 WPO_INPUTS = ["LP", "VC", "VCA", "T", "Size", "Seed", "Phase", "Rate", "Bearing", "ScatterT0", "SDX", "SDY", "SDZ", "Bank", "Startled", "Spread",
               "PanicT0", "OnsetT0", "WP", "ViewPos", "PxPerRad", "Motes", "UV", "SunDir", "BodyUp", "AxX", "AxY",
-              "Walkers", "LPP", "Dist", "Graze", "ClockT0", "Travel", "GroundHalf"] + HERD_GROUND
+              "Walkers", "LPP", "Dist", "Graze", "ClockT0", "Travel", "GroundHalf", "Leapers"] + HERD_GROUND
 
 
 def build():
@@ -681,6 +879,9 @@ def build():
     herd_travel = g.scalar("HerdTravel", 0.0, cpd=13)
     herd_ground = [g.scalar("HerdGround%d" % i, 0.0, cpd=14 + i) for i in range(21)]
     herd_half = g.scalar("HerdGroundHalf", 1000.0, cpd=35)
+    # The leaper branch: on in the leapers' instance alone. Their group's slots are read by the flock's and the herd's pins
+    # (SlonkFauna::LeaperData: its dive in 1, 6 and 7, the sea's surface its fish's leaps cross in 14 to 23).
+    leapers = g.scalar("Leapers", 0.0)
     # Where a vertex is in its herd's frame (its instance's place in it), for the ground under it.
     lpp = g.node("LocalPosition", {"IncludedOffsets": "ExcludeOffsets", "LocalOrigin": "Primitive"})
     uv = g.texcoord(0)
@@ -696,7 +897,9 @@ def build():
                      ("WP", wp), ("ViewPos", view_pos), ("Night", night), ("GlowColor", glow_color),
                      ("Motes", motes), ("UV", uv), ("SunDir", sun_dir), ("T", tm), ("Phase", phase), ("PerKind", bearing), ("PxPerRad", px_per_rad),
                      ("Walkers", walkers), ("Rate", rate), ("Heading", bank), ("Graze", herd_graze), ("ClockT0", herd_clock), ("Travel", herd_travel),
-                     ("HerdGait", spread), ("PivotRef", scatter_t0), ("WalkKap", sdy), ("TurnPack", sdz)]:
+                     ("HerdGait", spread), ("PivotRef", scatter_t0), ("WalkKap", sdy), ("TurnPack", sdz),
+                     ("Leapers", leapers), ("Size", size), ("ScatterT0", scatter_t0), ("Startled", startled), ("Spread", spread), ("AxY", axy)] \
+            + list(zip(LEAPER_SURFACE, herd_ground[:10])):
         g.c(src, e, pin)
     # A walker's joint kind, the colour node's alpha pin.
     g.c(vc, e, "VCA", "A")
@@ -707,7 +910,7 @@ def build():
                      ("PanicT0", panic_t0), ("OnsetT0", onset_t0), ("WP", wp), ("ViewPos", view_pos), ("PxPerRad", px_per_rad),
                      ("Motes", motes), ("UV", uv), ("SunDir", sun_dir), ("BodyUp", up), ("AxX", axx), ("AxY", axy),
                      ("Walkers", walkers), ("LPP", lpp), ("Dist", herd_dist), ("Graze", herd_graze), ("ClockT0", herd_clock), ("Travel", herd_travel),
-                     ("GroundHalf", herd_half)] + list(zip(HERD_GROUND, herd_ground)):
+                     ("GroundHalf", herd_half), ("Leapers", leapers)] + list(zip(HERD_GROUND, herd_ground)):
         g.c(src, w, pin)
     # The colour node's main output is RGB; the joint kind is its alpha pin.
     g.c(vc, w, "VCA", "A")

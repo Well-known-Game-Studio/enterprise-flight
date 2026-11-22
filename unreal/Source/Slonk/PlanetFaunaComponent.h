@@ -18,6 +18,17 @@
 // the camera raises dust off dry ground by day (HerdDust.h: a Niagara system, one pooled component on each such herd's
 // set; none without the asset, or with slonk.Fauna.Dust 0).
 //
+// The leapers are sets too, one a group of fish leaping out of a painted shoal, the set's frame moved each frame with the
+// shoal as the terrain material swims it (SlonkFauna::PathAt, on the world's own seconds): the material leaps each fish
+// out of the sea and back on its schedule, from the swell's surface where it leaves to where it dives back in (each
+// read here where and when the leap crosses it, and given the material: SlonkFauna::LeaperData), and keeps it masked
+// and under the sea between leaps. They are drawn in M_Fauna's leaper branch (its Leapers parameter, on a material
+// instance of their own): while M_Fauna has none there are no leapers, and the status line says so. A craft passing low
+// over a group sends it diving: no fish of it leaves the water for a minute. Where a leap leaves the water and dives back
+// in near the camera, a splash is thrown (FishSplash.h: a Niagara one-shot from a pool of components; none without the
+// asset, or with slonk.Fauna.Splash 0), by day and dimmer through dusk; none once the sun cannot light it (past
+// SplashNightMax).
+//
 // The motes (pollen and gnats by day, fireflies at night) are the terrain's chunks' to carry, as the plants are
 // (SlonkScatter::PlaceMotes): this component says what they are (FMoteSettings) and the terrain places and draws them.
 //
@@ -31,6 +42,7 @@
 #include "CoreMinimal.h"
 #include "Components/SceneComponent.h"
 #include "FaunaHabitat.h"
+#include "FishSplash.h"
 #include "HerdDust.h"
 #include "Tasks/Task.h"
 #include "PlanetFaunaComponent.generated.h"
@@ -66,6 +78,10 @@ public:
 	 *  every group go and scans again; the same again changes nothing. */
 	void Configure(UPlanetTerrainComponent* InTerrain, const FPlanetTerrainParams& P, const SlonkFauna::FFaunaProfile& InProfile, float InLife, const FScatterPalette& InPalette,
 		bool bInTowns = false, const FCivilization& InPeople = FCivilization());
+	/** What the world's seas carry as the terrain material paints them (its shoals, its swell, its colours: the leapers
+	 *  leap out of those shoals): a change lets every group go, as Configure's does. */
+	void SetSea(const SlonkFauna::FFaunaSea& InSea);
+	const SlonkFauna::FFaunaSea& GetSea() const { return Sea; }
 	/** Each frame, after the terrain's view update: the groups round the camera come and go, each group's frame moves along
 	 *  its path (and off it, turned the way it flies, while it is shaken: SlonkFauna::FlightAt), and a craft in the air
 	 *  or someone on foot near one startles it. SunDirectionWorld is the way to the star. */
@@ -99,6 +115,12 @@ public:
 	/** Whether the herds can be drawn: M_Fauna has its walker branch, or slonk.Fauna.Debug draws them in the basic
 	 *  material. While they cannot, the world keeps none. */
 	bool CanDrawHerds() const { return bWalkerMaterial || bHerdDebug; }
+	/** Whether the leapers can be drawn: M_Fauna has its leaper branch, or slonk.Fauna.Debug draws them in the basic
+	 *  material (each fish still at its home on the sea). While they cannot, the world keeps none. */
+	bool CanDrawLeapers() const { return bLeaperMaterial || bLeaperDebug; }
+	/** How many splashes are in the air now, and how many fish are out of the water (or about to be, under it) now. */
+	int32 GetSplashCount() const { return SplashPool.NumLive(); }
+	int32 GetLeapingCount() const;
 	/** Debug (fauna watch): the group drawn nearest a point in the world, and where a drawn group is and how it is turned
 	 *  (its frame, its flight along X), in the world; false when it is not drawn. */
 	uint64 NearestDrawnGroup(const FVector& WorldPos) const;
@@ -120,6 +142,14 @@ public:
 	void RefreshWorld();
 
 private:
+	/** A group of leapers as it is drawn: each fish's custom floats (as its set was given them) and home in the group's
+	 *  frame; and the sea's surface each fish's leap to read crosses, as last read (SlonkFauna::LeaperGroupData). */
+	struct FLeaperState
+	{
+		TArray<float> Custom;
+		TArray<FVector> Home;
+		SlonkFauna::FLeaperSurfaceCache Surface;
+	};
 	struct FGroupSet
 	{
 		SlonkFauna::FFaunaField::FGroupRef Group;
@@ -137,6 +167,8 @@ private:
 		 *  goes fast enough to raise any, its speed smoothed (SlonkFauna::StepDustGate). */
 		double DustWet = 0.5, DustWetAt = -1.0e9;
 		SlonkFauna::FDustGate DustGate;
+		/** A group of leapers' fish and the sea's surface their leaps cross. */
+		TSharedPtr<FLeaperState> Leaper;
 	};
 	using FScanRef = TSharedPtr<SlonkFauna::FFaunaField::FScan, ESPMode::ThreadSafe>;
 
@@ -154,6 +186,20 @@ private:
 	/** NS_HerdDust, loaded the first time a herd would raise dust (false, and one line in the log, without it). */
 	bool EnsureDustSystem();
 	UNiagaraComponent* MakeDustComponent();
+	/** The leapers' material instance (M_Fauna, its Leapers on), looked for as the herds' is. */
+	void EnsureLeaperMaterial();
+	/** A group of leapers' step this frame (the world's seconds, and the last frame's): its frame with its shoal, its dive,
+	 *  the sea's surface its fish's leaps cross, and the splashes of the leaps that crossed it since the last frame. */
+	void UpdateLeaper(uint64 Id, FGroupSet& S, const TArray<SlonkFauna::FFaunaThreat>& Threats, const FVector& CamLocal, const FVector& Sun, double WorldNow, double WorldFrom);
+	/** A splash where a leap crossed the sea's surface (planet-local), of a fish of that length; an entry or not; how deep
+	 *  in the night it is there. */
+	void ThrowSplash(const FVector& PlaceLocal, double SizeCm, bool bEntry, float Night);
+	/** NS_FishSplash, loaded the first time a splash would be thrown (false, and one line in the log, without it). */
+	bool EnsureSplashSystem();
+	UNiagaraComponent* MakeSplashComponent();
+	/** The ground's own velocity through the world at a world place, as the planet turns (User.Carry): with bOverFrame,
+	 *  over this frame's tick of an emitter (for the dust, set again each frame), else as it is (for a one-shot's burst). */
+	FVector GroundCarryAt(const FVector& WorldPos, bool bOverFrame) const;
 	/** The world's own seconds, which the dust's pool rests its components by. */
 	double WorldSeconds() const;
 	/** The drawn ground's height at a planet-local direction (the field's where none is drawn), cm over the sea-level sphere. */
@@ -213,4 +259,25 @@ private:
 	bool bDustMissing = false;
 	UPROPERTY() TArray<TObjectPtr<UNiagaraComponent>> DustComponents;
 	SlonkFauna::FDustPool DustPool;
+
+	/** The seas as the terrain material paints them. */
+	SlonkFauna::FFaunaSea Sea;
+	/** The leapers' material instance, as the herds' is kept. */
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> LeaperMID;
+	bool bLeaperMaterial = false;
+	bool bLeaperDebug = false;
+	int32 LeaperMIDDebug = -1;
+	double LeaperProbedAt = -1.0e9;
+	float LastLeaperPxPerRad = -1.f;
+	/** Each diving group of leapers' dive, by its id, on the world's own seconds (the leaps' clock): kept while it lasts,
+	 *  whether the group is about or not. */
+	TMap<uint64, SlonkFauna::FPanic> LeaperDives;
+	/** The world's seconds the leapers were last stepped at (the splashes are of the crossings since). */
+	double LastLeaperWorldSec = -1.0;
+	/** The splashes: their system (none until a splash would first be thrown; bSplashMissing once it was looked for and not
+	 *  found), every component made of it (kept here from the garbage collector) and the pool lending them. */
+	UPROPERTY() TObjectPtr<UNiagaraSystem> SplashSystem;
+	bool bSplashMissing = false;
+	UPROPERTY() TArray<TObjectPtr<UNiagaraComponent>> SplashComponents;
+	SlonkFauna::FSplashPool SplashPool;
 };

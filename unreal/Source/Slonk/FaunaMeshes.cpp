@@ -342,12 +342,127 @@ namespace
 	}
 }
 
+namespace
+{
+	/** A fish's colour at a point of it: its surface, how far it bends there (0 from the nose back to FishBendFromCm, 1 at
+	 *  the tail's tip), its side, its joint (it undulates). */
+	FVector4f FishCol(float Surface, const FVector& P)
+	{
+		const float Bend = (float)FMath::Clamp((Vc::FishBendFromCm - P.X) / (Vc::FishBendFromCm + 50.0), 0.0, 1.0);
+		return FVector4f(Surface, Bend, P.Y > 0.5 ? Vc::SideRight : (P.Y < -0.5 ? Vc::SideLeft : Vc::SideMiddle), Vc::JointUndulate);
+	}
+
+	/**
+	 * A fish of the plan (an Earth fish: streamlined, a forked tail, fins), at a LOD: 55, 19 or 2 triangles, a metre from
+	 * its tail's tip to its nose, its middle at the origin, its back up. LOD 0: a six-sided body of four rings from the
+	 * tail's root to the head, coned to the nose and to the tail's root; a forked tail of three triangles, a dorsal fin, an
+	 * anal fin and two pectoral fins; LOD 1: a four-sided body of two rings, coned, the tail's two lobes and the dorsal fin;
+	 * LOD 2: one triangle standing along it and one lying along it. Its UV is its place along it (U from the tail's tip)
+	 * and up its side (V from its belly), for its countershading.
+	 */
+	void BuildFish(FBuild& B, const FFaunaBodyPlan& Plan, int32 Lod)
+	{
+		const double G = FMath::Clamp((double)Plan.Girth, 0.12, 0.35) / 0.2;
+		const double Rz = 10.0 * G, Ry = 6.0 * G;
+		const double Root = -30.0, Nose = 50.0, TailTip = -50.0;
+		auto FishUV = [&](const FVector& P) { return FVector2f((float)((P.X + 50.0) / 100.0), (float)FMath::Clamp((P.Z + Rz) / (2.0 * Rz), 0.0, 1.0)); };
+		auto V = [&](const FVector& P, const FVector& N, float Surface) { return B.Vert(P, N, FishUV(P), FishCol(Surface, P)); };
+		const FVector YAx = FVector::YAxisVector, ZAx = FVector::ZAxisVector;
+		if (Lod >= 2)
+		{
+			// A speck: its side standing along it, its back lying along it.
+			const FVector S0(Nose, 0.0, 0.0), S1(TailTip, 0.0, 1.2 * Rz), S2(TailTip, 0.0, -1.2 * Rz);
+			TriFacing(B, V(S0, YAx, Vc::SurfaceBody), V(S1, YAx, Vc::SurfaceBody), V(S2, YAx, Vc::SurfaceBody), YAx);
+			const FVector T0(Nose, 0.0, 0.0), T1(-40.0, -1.2 * Ry, 0.0), T2(-40.0, 1.2 * Ry, 0.0);
+			TriFacing(B, V(T0, ZAx, Vc::SurfaceBody), V(T1, ZAx, Vc::SurfaceBody), V(T2, ZAx, Vc::SurfaceBody), ZAx);
+			return;
+		}
+		const bool bFine = Lod == 0;
+		// The body: rings of an ellipse a little deeper than it is wide, their normals out from the axis.
+		{
+			const int32 Sides = bFine ? 6 : 4;
+			const TArray<double> X = bFine ? TArray<double>{ Root, -12.0, 10.0, 30.0 } : TArray<double>{ -26.0, 10.0 };
+			const TArray<double> K = bFine ? TArray<double>{ 0.25, 0.75, 1.0, 0.75 } : TArray<double>{ 0.45, 1.0 };
+			const double StartA = UE_DOUBLE_HALF_PI;
+			TArray<TArray<int32>> Rings;
+			for (int32 r = 0; r < X.Num(); ++r)
+			{
+				TArray<int32> Ring;
+				for (int32 k = 0; k < Sides; ++k)
+				{
+					const double A = UE_DOUBLE_TWO_PI * k / Sides + StartA;
+					const FVector P(X[r], Ry * K[r] * FMath::Cos(A), Rz * K[r] * FMath::Sin(A));
+					Ring.Add(V(P, FVector(0.0, FMath::Cos(A) / Ry, FMath::Sin(A) / Rz), Vc::SurfaceBody));
+				}
+				Rings.Add(Ring);
+			}
+			for (int32 r = 0; r + 1 < Rings.Num(); ++r)
+			{
+				for (int32 k = 0; k < Sides; ++k)
+				{
+					const int32 A = Rings[r][k], Bv = Rings[r][(k + 1) % Sides], C = Rings[r + 1][(k + 1) % Sides], D = Rings[r + 1][k];
+					const FVector Mid = ((FVector)B.Mesh.GetVertex(A) + (FVector)B.Mesh.GetVertex(Bv) + (FVector)B.Mesh.GetVertex(C) + (FVector)B.Mesh.GetVertex(D)) * 0.25;
+					const FVector Out(0.0, Mid.Y, Mid.Z);
+					TriFacing(B, A, Bv, C, Out);
+					TriFacing(B, A, C, D, Out);
+				}
+			}
+			// Coned to the nose (a little below the axis, the mouth) and to the tail's root, each from its own vertices.
+			const TArray<int32>& Front = Rings.Last();
+			const TArray<int32>& Back = Rings[0];
+			const int32 Tip = V(FVector(Nose, 0.0, -0.1 * Rz), FVector::XAxisVector, Vc::SurfaceBody);
+			const int32 Stub = V(FVector(Root - 4.0, 0.0, 0.0), -FVector::XAxisVector, Vc::SurfaceBody);
+			for (int32 k = 0; k < Sides; ++k)
+			{
+				const FVector Fm = ((FVector)B.Mesh.GetVertex(Front[k]) + (FVector)B.Mesh.GetVertex(Front[(k + 1) % Sides])) * 0.5;
+				TriFacing(B, Front[k], Front[(k + 1) % Sides], Tip, FVector(0.5, Fm.Y, Fm.Z));
+				const FVector Bm = ((FVector)B.Mesh.GetVertex(Back[k]) + (FVector)B.Mesh.GetVertex(Back[(k + 1) % Sides])) * 0.5;
+				TriFacing(B, Back[k], Back[(k + 1) % Sides], Stub, FVector(-0.5, Bm.Y, Bm.Z));
+			}
+		}
+		// The tail: forked, standing up from its root to its two tips (a notch between at LOD 0).
+		{
+			const FVector RT(Root - 1.0, 0.0, 0.3 * Rz), RB(Root - 1.0, 0.0, -0.3 * Rz), UT(TailTip, 0.0, 1.15 * Rz), LT(TailTip, 0.0, -1.15 * Rz);
+			if (bFine)
+			{
+				const FVector Notch(-41.0, 0.0, 0.0);
+				TriFacing(B, V(RT, YAx, Vc::SurfaceTail), V(UT, YAx, Vc::SurfaceTail), V(Notch, YAx, Vc::SurfaceTail), YAx);
+				TriFacing(B, V(RT, YAx, Vc::SurfaceTail), V(Notch, YAx, Vc::SurfaceTail), V(RB, YAx, Vc::SurfaceTail), YAx);
+				TriFacing(B, V(RB, YAx, Vc::SurfaceTail), V(Notch, YAx, Vc::SurfaceTail), V(LT, YAx, Vc::SurfaceTail), YAx);
+			}
+			else
+			{
+				const FVector Mid(Root - 1.0, 0.0, 0.0);
+				TriFacing(B, V(Mid, YAx, Vc::SurfaceTail), V(UT, YAx, Vc::SurfaceTail), V(FVector(-42.0, 0.0, 0.0), YAx, Vc::SurfaceTail), YAx);
+				TriFacing(B, V(Mid, YAx, Vc::SurfaceTail), V(FVector(-42.0, 0.0, 0.0), YAx, Vc::SurfaceTail), V(LT, YAx, Vc::SurfaceTail), YAx);
+			}
+		}
+		// The dorsal fin, swept back from the back.
+		TriFacing(B, V(FVector(10.0, 0.0, 0.95 * Rz), YAx, Vc::SurfaceTail), V(FVector(-8.0, 0.0, 0.8 * Rz), YAx, Vc::SurfaceTail),
+			V(FVector(-6.0, 0.0, 1.55 * Rz), YAx, Vc::SurfaceTail), YAx);
+		if (bFine)
+		{
+			// The anal fin, and the two pectoral fins behind the head, swept back and down.
+			TriFacing(B, V(FVector(-12.0, 0.0, -0.7 * Rz), YAx, Vc::SurfaceTail), V(FVector(-24.0, 0.0, -0.35 * Rz), YAx, Vc::SurfaceTail),
+				V(FVector(-23.0, 0.0, -1.1 * Rz), YAx, Vc::SurfaceTail), YAx);
+			for (const double S : { -1.0, 1.0 })
+			{
+				const FVector Up = FVector(0.0, S * 0.35, 1.0).GetSafeNormal();
+				TriFacing(B, V(FVector(26.0, S * 0.8 * Ry, -0.35 * Rz), Up, Vc::SurfaceTail), V(FVector(16.0, S * 0.9 * Ry, -0.45 * Rz), Up, Vc::SurfaceTail),
+					V(FVector(12.0, S * (Ry + 7.0), -0.75 * Rz), Up, Vc::SurfaceTail), Up);
+			}
+		}
+	}
+}
+
 bool SlonkFaunaMeshes::BuildLod(const FFaunaBodyPlan& Plan, int32 Lod, FDynamicMesh3& Out)
 {
 	const bool bWalker = Plan.Wings == EFaunaWings::None && Plan.Limbs == EFaunaLimbs::Legs && Plan.LimbPairs == 2;
-	if (Plan.Wings == EFaunaWings::None && !bWalker) { return false; }
+	const bool bFish = Plan.Wings == EFaunaWings::None && Plan.Limbs == EFaunaLimbs::Fins;
+	if (Plan.Wings == EFaunaWings::None && !bWalker && !bFish) { return false; }
 	FBuild B;
 	if (bWalker) { BuildWalker(B, Plan, FMath::Clamp(Lod, 0, NumLods - 1)); }
+	else if (bFish) { BuildFish(B, Plan, FMath::Clamp(Lod, 0, NumLods - 1)); }
 	else { BuildBird(B, Plan, FMath::Clamp(Lod, 0, NumLods - 1)); }
 	Out = MoveTemp(B.Mesh);
 	return true;
@@ -367,11 +482,12 @@ UStaticMesh* SlonkFaunaMeshes::GetMesh(const FFaunaBodyPlan& Plan, EFaunaKind Ki
 	}
 	// The material moves the vertices past the mesh's box by up to the kind's padding, which the instances' boxes take in
 	// (UPlanetInstancesComponent::SetCullPadding): the mesh's own bounds stay its own, and its LOD screen sizes are the
-	// kind's, set for the padded box the GPU picks them by. A walker's mesh has a tangent basis, as the material turns its
-	// normals the way it faces in tangent space; the birds' normals are the mesh's own, whatever their tangents.
+	// kind's, set for the padded box the GPU picks them by. A walker's mesh and a fish's have a tangent basis, as the
+	// material turns their normals the way they face in tangent space; the birds' normals are the mesh's own, whatever
+	// their tangents.
 	const SlonkFauna::FFaunaKindDesc& D = SlonkFauna::KindDesc(Kind);
 	UStaticMesh* Mesh = SlonkProcMesh::MakeStaticMesh(*FString::Printf(TEXT("SlonkFauna_%s_%08x"), SlonkFauna::KindName(Kind), Key), TEXT("Fauna"),
-		TArrayView<const FDynamicMesh3>(Lods, NumLods), TArrayView<const float>(D.LodScreenSize, NumLods), FVector::ZeroVector, Kind == EFaunaKind::Herd);
+		TArrayView<const FDynamicMesh3>(Lods, NumLods), TArrayView<const float>(D.LodScreenSize, NumLods), FVector::ZeroVector, Kind == EFaunaKind::Herd || Kind == EFaunaKind::Leaper);
 	GFaunaMeshes.Add(Key, Mesh);
 	return Mesh;
 }
