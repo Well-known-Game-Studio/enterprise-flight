@@ -1,5 +1,6 @@
 #include "FaunaHabitat.h"
 #include "HAL/PlatformTime.h"
+#include "PlanetCities.h"
 #include "ScatterSpot.h"
 #include "TerrainScatter.h"
 
@@ -168,8 +169,14 @@ uint64 SlonkFauna::FFaunaWorld::Salt() const
 
 bool SlonkFauna::FFaunaWorld::operator==(const FFaunaWorld& O) const
 {
+	// The towns the herds keep out of: whether there are any, and whose (where they stand and how wide they are).
+	auto SamePeople = [](const FCivilization& A, const FCivilization& B)
+	{
+		return A.bInhabited == B.bInhabited && A.bColonists == B.bColonists && A.Age == B.Age && A.Organic == B.Organic && A.CliffAffinity == B.CliffAffinity
+			&& A.Density == B.Density && A.WetMin == B.WetMin;
+	};
 	return P == O.P && SameProfile(Profile, O.Profile) && Palette.Mountain == O.Palette.Mountain && Palette.Land == O.Palette.Land && Palette.Land2 == O.Palette.Land2
-		&& Palette.Ice == O.Palette.Ice && Life == O.Life && Density == O.Density && KindMask == O.KindMask;
+		&& Palette.Ice == O.Palette.Ice && Life == O.Life && Density == O.Density && KindMask == O.KindMask && bTowns == O.bTowns && (!bTowns || SamePeople(People, O.People));
 }
 
 bool SlonkFauna::FFaunaGroup::operator==(const FFaunaGroup& O) const
@@ -178,7 +185,10 @@ bool SlonkFauna::FFaunaGroup::operator==(const FFaunaGroup& O) const
 		&& RadiusCm == O.RadiusCm && Lobe == O.Lobe && LobePhase == O.LobePhase && MeanderCm == O.MeanderCm && Lobes == O.Lobes && MeanderK == O.MeanderK
 		&& BobK == O.BobK && PeriodSec == O.PeriodSec && Phase0 == O.Phase0 && Turn == O.Turn && CruiseCm == O.CruiseCm && BobCm == O.BobCm
 		&& LengthCm == O.LengthCm && SpeedCmS == O.SpeedCmS && Ground == O.Ground && Members == O.Members && SpanM == O.SpanM && SpacingM == O.SpacingM
-		&& FlapHz == O.FlapHz && Pigment == O.Pigment && Glow == O.Glow;
+		&& FlapHz == O.FlapHz && Pigment == O.Pigment && Glow == O.Glow
+		&& CycleSec == O.CycleSec && WalkCmS == O.WalkCmS && TrotCmS == O.TrotCmS && WalkA == O.WalkA && WalkB == O.WalkB && TrotA == O.TrotA && TrotB == O.TrotB
+		&& RampSec == O.RampSec && StartCm == O.StartCm && ArcCm == O.ArcCm && FormationCm == O.FormationCm && HerdRadiusCm == O.HerdRadiusCm && GroundHalfCm == O.GroundHalfCm
+		&& DryCm == O.DryCm;
 }
 
 int64 SlonkFauna::CellsAcross(const FPlanetTerrainParams& P, EFaunaKind K)
@@ -295,12 +305,355 @@ SlonkFauna::FFlierHabitatRead SlonkFauna::FlierHabitatAt(const FPlanetTerrainPar
 	return R;
 }
 
+bool SlonkFauna::HerdGrass(const SlonkScatter::FHabitat& H, bool bStrict)
+{
+	if (H.bWater || H.Ice > 0.2 || H.Alpine > 0.7) { return false; }
+	// The ground's wetness has no upper bound here: lush grass reads wet to the top of its range (water and rivers are their
+	// own), and only the driest land, desert, is too poor for a herd.
+	if (bStrict) { return H.Flat > 0.85 && H.Wet >= 0.2 && H.Forest < 0.3; }
+	return H.Flat > 0.7 && H.Wet >= 0.14 && H.Forest < 0.45;
+}
+
+bool SlonkFauna::HerdCrosses(const SlonkScatter::FHabitat& H)
+{
+	return !H.bWater && H.Ice <= 0.2 && H.Alpine <= 0.7 && H.Cliff <= 0.3 && H.Flat > 0.45 && H.Forest < 0.6;
+}
+
+namespace
+{
+	/** The divisors of the hour a herd's schedule may repeat on, s. */
+	const double HerdCycles[] = { 240.0, 300.0, 360.0, 400.0, 450.0, 600.0 };
+
+	/** The integral of smoothstep(0, 1, x) from 0, x clamped to the ramp and run on past it. */
+	double RampIntegral(double X)
+	{
+		if (X <= 0.0) { return 0.0; }
+		if (X >= 1.0) { return X - 0.5; }
+		return X * X * X - 0.5 * X * X * X * X;
+	}
+	/** A window coming in over Ramp from A and going over Ramp to B, and its integral from 0, at U (s into the cycle). */
+	double Window(double U, double A, double B, double Ramp)
+	{
+		return SlonkScatter::SmoothStep(A, A + Ramp, U) - SlonkScatter::SmoothStep(B - Ramp, B, U);
+	}
+	double WindowIntegral(double U, double A, double B, double Ramp)
+	{
+		return Ramp * (RampIntegral((U - A) / Ramp) - RampIntegral((U - (B - Ramp)) / Ramp));
+	}
+	/** How far a herd walks in one cycle of its schedule, cm. */
+	double CycleWalkCm(const FFaunaGroup& G)
+	{
+		return G.WalkCmS * (G.WalkB - G.WalkA - G.RampSec) + (G.TrotCmS - G.WalkCmS) * (G.TrotB - G.TrotA - G.RampSec);
+	}
+	double WrapHour(double Seconds)
+	{
+		const double T = FMath::Fmod(Seconds, SlonkFauna::ClockPeriodSec);
+		return T < 0.0 ? T + SlonkFauna::ClockPeriodSec : T;
+	}
+	/** The theta along a herd's loop at a way along it from theta 0, cm (wrapped to the loop), from its table. */
+	double ThetaAlong(const FFaunaGroup& G, double Cm)
+	{
+		const int32 N = G.ArcCm.Num() - 1;
+		if (N < 1 || G.LengthCm <= 0.0) { return 0.0; }
+		const double Total = G.ArcCm.Last();
+		double S = FMath::Fmod(Cm / G.LengthCm, 1.0);
+		if (S < 0.0) { S += 1.0; }
+		S *= Total;
+		int32 Lo = 0, Hi = N;
+		while (Hi - Lo > 1)
+		{
+			const int32 Mid = (Lo + Hi) / 2;
+			if ((double)G.ArcCm[Mid] <= S) { Lo = Mid; } else { Hi = Mid; }
+		}
+		const double A = G.ArcCm[Lo], B = G.ArcCm[Hi];
+		const double F = B > A ? (S - A) / (B - A) : 0.0;
+		return UE_DOUBLE_TWO_PI * ((double)Lo + F) / N;
+	}
+	/** Where along its loop a herd is at a time, cm from theta 0 (the loop's own way), as its schedule walks it. */
+	double HerdAlongCm(const FFaunaGroup& G, double Seconds)
+	{
+		return G.StartCm + G.Turn * SlonkFauna::HerdWalkedCm(G, Seconds);
+	}
+	/** A herd's longest member, head and all, m: its walkers are at most a tenth longer than its span. */
+	double HerdBodyM(const FFaunaGroup& G)
+	{
+		return 1.1 * 1.15 * (double)G.SpanM;
+	}
+	/** A herd's shortest walkers' stride, m: their share of the shortest length its span gives a walker (HerdMembersOf),
+	 *  to within the rounding that fits a whole number of them round its loop. */
+	double HerdShortStrideM(const FFaunaGroup& G)
+	{
+		return SlonkFauna::Walker::StrideShare * FMath::Clamp(0.9 * (double)G.SpanM, SlonkFauna::Walker::MinSizeM, 2.6);
+	}
+	/** How far apart a herd's walkers' grazing circles' middles are kept, cm: its spacing, but never less than the longest
+	 *  of them and the two smallest circles they amble round (three of the longest one's strides round) between them. */
+	double HerdKeepCm(const FFaunaGroup& G)
+	{
+		const double SmallCircleM = 3.0 * SlonkFauna::Walker::StrideShare * 1.1 * (double)G.SpanM / UE_DOUBLE_TWO_PI;
+		return 100.0 * FMath::Max(0.8 * (double)G.SpacingM, HerdBodyM(G) + 2.0 * SmallCircleM);
+	}
+
+	/** A herd's loop at the k-th of HerdLoopReads points round it (theta evenly from 0), Off across it (along its normal
+	 *  there in its plane, outward positive): a planet-local unit direction. */
+	FVector HerdLoopReadDir(const FFaunaGroup& G, double RadiusCm, int32 K, double Off = 0.0)
+	{
+		const double Th = UE_DOUBLE_TWO_PI * K / SlonkFauna::HerdLoopReads;
+		const FVector Pt = LoopPoint(G, Th);
+		if (Off == 0.0) { return (G.Centre * RadiusCm + Pt).GetSafeNormal(); }
+		const FVector Across = FVector::CrossProduct(LoopPoint(G, Th + 1.0e-3) - LoopPoint(G, Th - 1.0e-3), G.Centre).GetSafeNormal();
+		return (G.Centre * RadiusCm + Pt + Across * Off).GetSafeNormal();
+	}
+
+	/** A herd's habitat read along its loop: its middle and HerdLoopReads points round the loop, each as a chunk reads it
+	 *  there, and across its walkers' footprint at each of them (HerdFootReads either side, out to its radius); the towns
+	 *  near it and the roads between them (at every fifth point); and the water across its loop at every fifth point, half
+	 *  its margin apart out to HerdDryReadCm either side (the field's structure alone, which is where the water is), each
+	 *  side read out no further than the nearest water found yet. Every fifth point is read first, so ground it will not do
+	 *  shows soonest. */
+	SlonkFauna::FHerdHabitatRead ReadHerdLoop(const SlonkFauna::FFaunaWorld& W, const FFaunaGroup& G)
+	{
+		using namespace SlonkFauna;
+		FHerdHabitatRead R;
+		const double Rad = W.P.RadiusCm;
+		double WetSum = 0.0;
+		int32 Grass = 0;
+		bool bCrossed[HerdLoopReads] = {};
+		// Whether it sets foot on a spot at all: on a locked world only where the air is neither baked nor frozen.
+		auto SetsFoot = [&](const FVector& Dir, const SlonkScatter::FHabitat& H)
+		{
+			if (!HerdCrosses(H)) { return false; }
+			if (W.P.Climate != EClimateModel::Locked) { return true; }
+			const double Heat = SlonkTerrain::TemperatureN(W.P, Dir, FMath::Max(H.HeightCm, 0.0));
+			return Heat >= 0.06 && Heat <= 0.6;
+		};
+		// On its loop's line: whether it sets foot there, and if so whether on its grass (as it likes it best or not) or on
+		// ground it crosses.
+		auto Read = [&](const FVector& Dir, int32 K)
+		{
+			const SlonkScatter::FHabitat H = SlonkScatter::HabitatAt(W.P, Dir);
+			++R.Points;
+			if (!SetsFoot(Dir, H)) { ++R.Off; return; }
+			R.MinFlat = FMath::Min(R.MinFlat, H.Flat);
+			R.MaxForest = FMath::Max(R.MaxForest, H.Forest);
+			if (!HerdGrass(H, false))
+			{
+				++R.Crossed;
+				++R.Rough;
+				if (K >= 0) { bCrossed[K] = true; }
+				return;
+			}
+			if (!HerdGrass(H, true)) { ++R.Rough; }
+			R.MinWet = FMath::Min(R.MinWet, H.Wet);
+			R.MaxWet = FMath::Max(R.MaxWet, H.Wet);
+			WetSum += H.Wet;
+			++Grass;
+		};
+		Read(G.Centre, -1);
+		for (int32 Pass = 0; Pass < 5 && R.Off == 0 && R.Crossed <= HerdCrossMax; ++Pass)
+		{
+			for (int32 k = Pass; k < HerdLoopReads && R.Off == 0 && R.Crossed <= HerdCrossMax; k += 5) { Read(HerdLoopReadDir(G, Rad, k), k); }
+		}
+		if (R.Off > 0 || R.Crossed > HerdCrossMax) { return R; }
+		// Its longest stretch of crossed ground in a row, round the loop.
+		for (int32 k = 0, Run = 0; k < 2 * HerdLoopReads; ++k)
+		{
+			Run = bCrossed[k % HerdLoopReads] ? Run + 1 : 0;
+			R.LongestCrossed = FMath::Max(R.LongestCrossed, FMath::Min(Run, HerdLoopReads));
+		}
+		R.MeanWet = WetSum / FMath::Max(Grass, 1);
+		if (R.LongestCrossed > HerdCrossRun || R.Rough > HerdRoughMax) { return R; }
+		// Off every town's ground (a cliff town's runs along its wall either way, 300 m across it) by its own radius and
+		// HerdTownMarginCm at every point of its loop, and off the roads between them by its radius and HerdRoadMarginCm.
+		if (W.bTowns)
+		{
+			const FCivilization Civ = W.People.bInhabited ? W.People : SlonkCivs::Colonists();
+			TArray<FTownSite> Sites;
+			SlonkCities::EnumerateTowns(W.P, Civ, G.Centre * Rad, G.ExtentCm() + 4.0e5, Sites, 64);
+			for (int32 k = 0; k < HerdLoopReads && !R.bTown && !R.bRoad; k += 5)
+			{
+				const FVector Dir = HerdLoopReadDir(G, Rad, k);
+				for (const FTownSite& T : Sites)
+				{
+					const double Reach = (T.bCliff ? FMath::Sqrt(FMath::Square(T.RadiusCm) + FMath::Square(30000.0)) : T.RadiusCm) + G.HerdRadiusCm + HerdTownMarginCm;
+					R.bTown |= FVector::DistSquared(T.LocalCm, Dir * Rad) < Reach * Reach;
+				}
+				R.bRoad = !R.bTown && SlonkCities::PaintedWayCm(W.P, Civ, Dir) < G.HerdRadiusCm + HerdRoadMarginCm;
+			}
+			if (R.bTown || R.bRoad) { return R; }
+		}
+		// Its walkers' footprint: across its loop at every point, out to its radius either side (the outermost first, where
+		// ground it will not stand on comes in), nowhere a foot could fall that it never sets one.
+		for (int32 Pass = 0; Pass < 5 && R.Off == 0; ++Pass)
+		{
+			for (int32 k = Pass; k < HerdLoopReads && R.Off == 0; k += 5)
+			{
+				for (int32 j = HerdFootReads; j >= 1 && R.Off == 0; --j)
+				{
+					for (const double Side : { 1.0, -1.0 })
+					{
+						const FVector Dir = HerdLoopReadDir(G, Rad, k, Side * G.HerdRadiusCm * j / HerdFootReads);
+						const SlonkScatter::FHabitat H = SlonkScatter::HabitatAt(W.P, Dir);
+						++R.Foot;
+						if (!SetsFoot(Dir, H)) { ++R.Off; break; }
+						R.MinFlat = FMath::Min(R.MinFlat, H.Flat);
+						R.MaxForest = FMath::Max(R.MaxForest, H.Forest);
+					}
+				}
+			}
+		}
+		if (R.Off > 0) { return R; }
+		// The water across its loop, out either side of every fifth point (along the loop's normal there): none within its
+		// margin, and how far the nearest is.
+		R.DryCm = HerdDryReadCm;
+		constexpr double Step = 0.5 * HerdWaterMarginCm;
+		for (int32 k = 0; k < HerdLoopReads && R.WaterNear == 0; k += 5)
+		{
+			for (const double Side : { 1.0, -1.0 })
+			{
+				for (double Off = Step; Off < R.DryCm + 1.0; Off += Step)
+				{
+					if (SlonkTerrain::SampleStructure(W.P, HerdLoopReadDir(G, Rad, k, Side * Off), 1000.0).bWater)
+					{
+						// The last read that was dry: the shore lies somewhere past it, up to a step on.
+						R.DryCm = FMath::Min(R.DryCm, Off - Step);
+						R.WaterNear += Off <= HerdWaterMarginCm + 1.0 ? 1 : 0;
+						break;
+					}
+				}
+			}
+		}
+		R.bSuits = R.WaterNear == 0;
+		return R;
+	}
+
+	/** A herd in a cell: its schedule, its loop as long as the hour's schedule walks, its members; false where the
+	 *  ground along its loop is not its grass, or the cell holds none. */
+	bool HerdInCell(const SlonkFauna::FFaunaWorld& W, const SlonkFauna::FFaunaCell& C, FFaunaGroup& Out)
+	{
+		using namespace SlonkFauna;
+		const FFaunaKindDesc& D = KindDesc(EFaunaKind::Herd);
+		const int64 Across = CellsAcross(W.P, C.Kind);
+		SlonkScatter::FDraw Dr(SlonkScatter::CellHash(C.Face, 40 + (int32)C.Kind, C.X, C.Y, W.Salt()));
+		const double Wd = 2.0 / (double)Across;
+		const double U = -1.0 + Wd * ((double)C.X + 0.2 + 0.6 * Dr.Next());
+		const double V = -1.0 + Wd * ((double)C.Y + 0.2 + 0.6 * Dr.Next());
+		const double Gate = Dr.Next();
+		// At most HerdCellShare of the cells hold a herd, on a world full of life at the density asked for.
+		if (Gate >= FMath::Min(HerdCellShare * (double)W.Life * (double)W.Density, 1.0)) { return false; }
+		const FVector Centre = SlonkTerrain::CubeDir(C.Face, U, V).GetSafeNormal();
+		// A first look at its middle: most cells are no grassland at all.
+		if (!HerdGrass(SlonkScatter::HabitatAt(W.P, Centre), true)) { return false; }
+
+		FFaunaGroup G;
+		G.Id = C.Id();
+		G.Kind = EFaunaKind::Herd;
+		G.Habitat = EFlierHabitat::Meadow;
+		G.Seed = ((uint32)(Dr.Next() * 65536.0) << 16) | (uint32)(Dr.Next() * 65536.0);
+		G.Centre = Centre;
+		TangentAxes(Centre, G.East, G.North);
+		// Its schedule: grazing most of the cycle, walking a little over a quarter to a third of it, trotting a tenth
+		// within the walk: about 2 km an hour.
+		G.CycleSec = HerdCycles[FMath::Min((int32)(Dr.Next() * UE_ARRAY_COUNT(HerdCycles)), (int32)UE_ARRAY_COUNT(HerdCycles) - 1)];
+		G.WalkCmS = 100.0 * FMath::Lerp(1.0, 1.4, Dr.Next());
+		G.TrotCmS = 100.0 * FMath::Lerp(2.4, 3.4, Dr.Next());
+		G.RampSec = 4.0;
+		const double WalkLen = G.CycleSec * FMath::Lerp(0.28, 0.36, Dr.Next());
+		const double TrotLen = FMath::Max(G.CycleSec * FMath::Lerp(0.07, 0.11, Dr.Next()), 2.0 * G.RampSec + 4.0);
+		G.WalkA = FMath::Lerp(12.0, G.CycleSec - WalkLen - 12.0, Dr.Next());
+		G.WalkB = G.WalkA + WalkLen;
+		G.TrotA = G.WalkA + G.RampSec + (WalkLen - 2.0 * G.RampSec - TrotLen) * Dr.Next();
+		G.TrotB = G.TrotA + TrotLen;
+		G.PeriodSec = ClockPeriodSec;
+		G.LengthCm = CycleWalkCm(G) * (ClockPeriodSec / G.CycleSec);
+		// Its loop: two or three lobes, a gentle meander, sized to the length the hour walks.
+		G.Lobes = 2 + FMath::Min((int32)(Dr.Next() * 2.0), 1);
+		G.Lobe = FMath::Lerp(0.08, 0.2, Dr.Next());
+		G.LobePhase = UE_DOUBLE_TWO_PI * Dr.Next();
+		const double Meander = FMath::Lerp(0.02, 0.05, Dr.Next());
+		G.MeanderK = G.Lobes + 2 + FMath::Min((int32)(Dr.Next() * 2.0), 1);
+		G.Turn = Dr.Next() < 0.5 ? -1.0 : 1.0;
+		const double StartShare = Dr.Next();
+		G.RadiusCm = 1.0;
+		G.MeanderCm = Meander;
+		double Unit = 0.0;
+		for (int32 k = 1; k <= NumArc; ++k) { Unit += FVector::Dist(LoopPoint(G, UE_DOUBLE_TWO_PI * k / NumArc), LoopPoint(G, UE_DOUBLE_TWO_PI * (k - 1) / NumArc)); }
+		G.RadiusCm = G.LengthCm / FMath::Max(Unit, 1e-6);
+		G.MeanderCm = Meander * G.RadiusCm;
+		G.ArcCm.SetNum(NumArc + 1);
+		G.ArcCm[0] = 0.f;
+		double Run = 0.0;
+		for (int32 k = 1; k <= NumArc; ++k)
+		{
+			Run += FVector::Dist(LoopPoint(G, UE_DOUBLE_TWO_PI * k / NumArc), LoopPoint(G, UE_DOUBLE_TWO_PI * (k - 1) / NumArc));
+			G.ArcCm[k] = (float)Run;
+		}
+		G.StartCm = StartShare * G.LengthCm;
+		G.SpeedCmS = G.LengthCm / G.PeriodSec;
+		// Its members: mostly the smaller herds, from 15 to 60; a grazer's length, its spacing as cattle graze.
+		const double Un = Dr.Next();
+		G.Members = FMath::Clamp(15 + (int32)(46.0 * Un * Un), FMath::Max(D.GroupMin, 1), D.GroupMax);
+		G.SpanM = FMath::Lerp(1.6f, 2.3f, (float)Dr.Next());
+		G.SpacingM = FMath::Lerp(4.5f, 7.f, (float)Dr.Next());
+		// Its formation wide enough for its circles' middles to lie that far apart (they fill under half of it).
+		G.FormationCm = FMath::Sqrt((double)G.Members) * FMath::Max(100.0 * G.SpacingM * 0.55, 0.75 * HerdKeepCm(G));
+		G.HerdRadiusCm = G.FormationCm + 100.0 * Walker::MaxCircleM + 0.6 * 110.0 * G.SpanM;
+		G.GroundHalfCm = G.HerdRadiusCm + 100.0;
+		G.CruiseCm = 0.0;
+		G.FlapHz = 0.f;
+		const double Tone = Dr.Next(), Vary = 0.85 + 0.3 * Dr.Next();
+		// Its grass along its loop (crossing a little rougher ground), clear of the water, off the towns and their roads; how
+		// much room the water leaves the crew to walk it off its path.
+		const FHerdHabitatRead H = ReadHerdLoop(W, G);
+		if (!H.bSuits) { return false; }
+		G.DryCm = H.DryCm;
+		// The ground along its loop, at full detail (the game stands it on the drawn ground).
+		G.Ground.SetNum(NumGround);
+		for (int32 k = 0; k < NumGround; ++k)
+		{
+			G.Ground[k] = (float)FMath::Max(SlonkTerrain::SurfaceHeightCm(W.P, (Centre * W.P.RadiusCm + LoopPoint(G, UE_DOUBLE_TWO_PI * k / NumGround)).GetSafeNormal()), 0.0);
+		}
+		G.Pigment = HerdPigment(W.Profile.Look, W.Palette, FMath::Clamp(1.0 - H.MeanWet * 1.3, 0.0, 1.0), Tone, Vary);
+		G.Glow = 0.f;
+		Out = MoveTemp(G);
+		return true;
+	}
+}
+
+SlonkFauna::FHerdHabitatRead SlonkFauna::HerdHabitatAt(const FFaunaWorld& W, const FFaunaGroup& G)
+{
+	return ReadHerdLoop(W, G);
+}
+
+double SlonkFauna::HerdWalkedCm(const FFaunaGroup& G, double Seconds)
+{
+	if (G.CycleSec <= 0.0) { return 0.0; }
+	const double T = WrapHour(Seconds);
+	const double N = FMath::FloorToDouble(T / G.CycleSec);
+	const double U = T - N * G.CycleSec;
+	return N * CycleWalkCm(G) + G.WalkCmS * WindowIntegral(U, G.WalkA, G.WalkB, G.RampSec) + (G.TrotCmS - G.WalkCmS) * WindowIntegral(U, G.TrotA, G.TrotB, G.RampSec);
+}
+
+double SlonkFauna::HerdSpeedCmS(const FFaunaGroup& G, double Seconds)
+{
+	if (G.CycleSec <= 0.0) { return 0.0; }
+	const double U = FMath::Fmod(WrapHour(Seconds), G.CycleSec);
+	return G.WalkCmS * Window(U, G.WalkA, G.WalkB, G.RampSec) + (G.TrotCmS - G.WalkCmS) * Window(U, G.TrotA, G.TrotB, G.RampSec);
+}
+
+double SlonkFauna::HerdIntent(const FFaunaGroup& G, double Seconds)
+{
+	if (G.CycleSec <= 0.0) { return 0.0; }
+	const double U = FMath::Fmod(WrapHour(Seconds), G.CycleSec);
+	return U >= G.WalkA - HerdLeadSec && U < G.WalkB + 0.5 ? 1.0 : 0.0;
+}
+
 bool SlonkFauna::GroupInCell(const FFaunaWorld& W, const FFaunaCell& C, FFaunaGroup& Out)
 {
-	if (!W.Spawns(C.Kind) || C.Kind != EFaunaKind::Flier) { return false; }
+	if (!W.Spawns(C.Kind) || (C.Kind != EFaunaKind::Flier && C.Kind != EFaunaKind::Herd)) { return false; }
 	const FFaunaKindDesc& D = KindDesc(C.Kind);
 	const int64 Across = CellsAcross(W.P, C.Kind);
 	if (C.X < 0 || C.Y < 0 || C.X >= Across || C.Y >= Across || C.Face < 0 || C.Face > 5) { return false; }
+	if (C.Kind == EFaunaKind::Herd) { return HerdInCell(W, C, Out); }
 	SlonkScatter::FDraw Dr(SlonkScatter::CellHash(C.Face, 40 + (int32)C.Kind, C.X, C.Y, W.Salt()));
 	// Where in the cell its middle lies, and whether the cell holds a group: at most half the cells where the habitat
 	// suits fully, on a world full of life, at the density asked for.
@@ -381,38 +734,175 @@ bool SlonkFauna::GroupInCell(const FFaunaWorld& W, const FFaunaCell& C, FFaunaGr
 	return true;
 }
 
-bool SlonkFauna::FindGroupNear(const FFaunaWorld& W, EFaunaKind K, const FVector& Dir, double MaxCm, int32 MaxCells, FFaunaGroup& Out)
+bool SlonkFauna::FindGroupNear(const FFaunaWorld& W, EFaunaKind K, const FVector& Dir, double MaxCm, int32 MaxCells, FFaunaGroup& Out, FGroupSearch* OutSearch)
 {
-	if (!W.Spawns(K)) { return false; }
-	const FVector Up = Dir.GetSafeNormal();
-	FVector E, N;
-	TangentAxes(Up, E, N);
-	const double Cell = KindDesc(K).CellCm;
-	const int32 Points = FMath::Max(MaxCells * 2, 1);
-	TSet<uint64> Seen;
-	double BestDist = TNumericLimits<double>::Max();
+	FGroupSearch Search;
 	bool bFound = false;
-	for (int32 i = 0; i < Points; ++i)
+	const FVector Up = Dir.GetSafeNormal();
+	if (W.Spawns(K) && !Up.IsNearlyZero())
 	{
-		const double R = MaxCm * FMath::Sqrt((i + 0.5) / Points);
-		// Nearest first: once one is found, nothing past it by more than a cell can be nearer.
-		if (bFound && R > BestDist + Cell) { break; }
-		const double A = i * 2.399963229728653;
-		const FFaunaCell C = CellOf(W.P, K, (Up + (E * FMath::Cos(A) + N * FMath::Sin(A)) * (R / W.P.RadiusCm)).GetSafeNormal());
-		bool bAlready = false;
-		Seen.Add(C.Id(), &bAlready);
-		if (bAlready) { continue; }
-		if (Seen.Num() > MaxCells) { break; }
-		FFaunaGroup G;
-		if (!GroupInCell(W, C, G)) { continue; }
-		const double Dist = FVector::Dist(G.Centre, Up) * W.P.RadiusCm;
-		if (Dist < BestDist) { BestDist = Dist; Out = MoveTemp(G); bFound = true; }
+		FVector E, N;
+		TangentAxes(Up, E, N);
+		const double Cell = KindDesc(K).CellCm, Step = Cell / 3.0;
+		const double Wd = 2.0 / (double)CellsAcross(W.P, K);
+		TSet<uint64> Seen;
+		TArray<TPair<double, FFaunaCell>> Ring;
+		double BestDist = TNumericLimits<double>::Max();
+		bool bFull = false;
+		// Ring by ring outward, a cell wide each: every cell under the ring (points a third of a cell apart) not read yet,
+		// nearest first by its middle. A group's middle lies in its cell, so once one is found no cell first met more than
+		// a cell further out can hold a nearer one.
+		for (double R0 = 0.0; R0 < MaxCm && !bFull && !(bFound && R0 - Cell > BestDist); R0 += Cell)
+		{
+			const double R1 = FMath::Min(R0 + Cell, MaxCm);
+			Ring.Reset();
+			for (double Rr = R0; Rr < R1; Rr += Step)
+			{
+				const int32 Round = FMath::Max(FMath::CeilToInt32(UE_DOUBLE_TWO_PI * Rr / Step), 1);
+				for (int32 k = 0; k < Round; ++k)
+				{
+					const double A = UE_DOUBLE_TWO_PI * (k + 0.5) / Round;
+					const FFaunaCell C = CellOf(W.P, K, (Up + (E * FMath::Cos(A) + N * FMath::Sin(A)) * (Rr / W.P.RadiusCm)).GetSafeNormal());
+					bool bAlready = false;
+					Seen.Add(C.Id(), &bAlready);
+					if (bAlready) { continue; }
+					const FVector Mid = SlonkTerrain::CubeDir(C.Face, -1.0 + Wd * (C.X + 0.5), -1.0 + Wd * (C.Y + 0.5)).GetSafeNormal();
+					Ring.Add({ FVector::Dist(Mid, Up) * W.P.RadiusCm, C });
+				}
+			}
+			Ring.Sort([](const TPair<double, FFaunaCell>& L, const TPair<double, FFaunaCell>& R) { return L.Key < R.Key || (L.Key == R.Key && L.Value.Id() < R.Value.Id()); });
+			for (const TPair<double, FFaunaCell>& Pr : Ring)
+			{
+				if (Search.Cells >= MaxCells) { bFull = true; break; }
+				++Search.Cells;
+				FFaunaGroup G;
+				if (!GroupInCell(W, Pr.Value, G)) { continue; }
+				const double Dist = FVector::Dist(G.Centre, Up) * W.P.RadiusCm;
+				if (Dist < BestDist) { BestDist = Dist; Out = MoveTemp(G); bFound = true; }
+			}
+			if (!bFull) { Search.ReachCm = R1; }
+		}
 	}
+	if (OutSearch) { *OutSearch = Search; }
 	return bFound;
+}
+
+namespace
+{
+	/** A herd's place on its loop a way along it (cm from theta 0, the loop's own way), on the field's ground. */
+	FVector HerdLoopAt(const FFaunaGroup& G, double RadiusCm, double AlongCm)
+	{
+		const double Th = ThetaAlong(G, AlongCm);
+		const FVector Dir = (G.Centre * RadiusCm + LoopPoint(G, Th)).GetSafeNormal();
+		return Dir * (RadiusCm + LoopGround(G, Th));
+	}
+	/** Where a herd's path has it at a time: its frame's place alone (HerdPathAt's PosCm). */
+	FVector HerdPathPos(const FFaunaGroup& G, double RadiusCm, double Seconds)
+	{
+		return HerdLoopAt(G, RadiusCm, HerdAlongCm(G, WrapHour(Seconds)));
+	}
+
+	/** A herd's frame on its loop at a time: on the field's ground, its own east and north laid level, the way it walks
+	 *  along the loop (which it faces when it walks), whether it is set to walk. */
+	SlonkFauna::FFaunaPose HerdPathAt(const FFaunaGroup& G, double RadiusCm, double Seconds)
+	{
+		auto At = [&](double S) { return HerdLoopAt(G, RadiusCm, HerdAlongCm(G, S)); };
+		SlonkFauna::FFaunaPose Pose;
+		const double T = WrapHour(Seconds);
+		Pose.PosCm = At(T);
+		constexpr double H = 0.25;
+		Pose.VelCmS = (At(T + H) - At(T - H)) / (2.0 * H);
+		const FVector Up = Pose.PosCm.GetSafeNormal();
+		const FVector East = (G.East - Up * FVector::DotProduct(G.East, Up)).GetSafeNormal();
+		Pose.Rot = FRotationMatrix::MakeFromXZ(East, Up).ToQuat();
+		// The way along the loop it walks, whether or not it is walking now (its tangent there, from half a metre either side).
+		const double Along = HerdAlongCm(G, T);
+		const FVector Ahead = LoopPoint(G, ThetaAlong(G, Along + G.Turn * 50.0)) - LoopPoint(G, ThetaAlong(G, Along - G.Turn * 50.0));
+		Pose.Ahead = (Ahead - Up * FVector::DotProduct(Ahead, Up)).GetSafeNormal();
+		Pose.Heading = FMath::Atan2(FVector::DotProduct(Ahead, Pose.Rot.GetAxisY()), FVector::DotProduct(Ahead, Pose.Rot.GetAxisX()));
+		Pose.Intent = SlonkFauna::HerdIntent(G, T);
+		double D = FMath::Fmod(Along, G.LengthCm);
+		Pose.DistCm = D < 0.0 ? D + G.LengthCm : D;
+		Pose.Bank = 0.0;
+		return Pose;
+	}
+
+	/** A herd's members: their grazing circles' middles spread over its formation, at least HerdKeepCm apart; each
+	 *  walker's length, stride (a whole number of them round its herd's loop) and circle (a whole number of strides round
+	 *  it, leaving its longest member's length between it and its nearest neighbour's, so no two walkers ever meet). */
+	void HerdMembersOf(const FFaunaGroup& G, TArray<FTransform>& OutXf, TArray<float>& OutCustom)
+	{
+		const int32 N = FMath::Max(G.Members, 0);
+		if (N == 0) { return; }
+		FRandomStream Rng((int32)G.Seed);
+		const double Rf = G.FormationCm, Keep = HerdKeepCm(G);
+		TArray<FVector> P;
+		P.Reserve(N);
+		// Each middle thrown into the formation until it lands Keep from every one before it: the formation is wide enough
+		// that one nearly always does within 48 throws, and is widened by a twentieth for each 48 more that miss, so one
+		// always does (the circles round them then always fit: HerdKeepCm).
+		for (int32 i = 0; i < N; ++i)
+		{
+			FVector Best = FVector::ZeroVector;
+			double BestGap = -1.0, Reach = Rf;
+			for (int32 Try = 0; BestGap < Keep; ++Try)
+			{
+				if (Try > 0 && Try % 48 == 0) { Reach *= 1.05; }
+				FVector B;
+				do { B = FVector(Rng.FRandRange(-1.f, 1.f), Rng.FRandRange(-1.f, 1.f), 0.0); } while (B.SizeSquared() > 1.0);
+				B *= Reach;
+				double Gap = TNumericLimits<double>::Max();
+				for (const FVector& Q : P) { Gap = FMath::Min(Gap, FVector::Dist2D(B, Q)); }
+				if (Gap > BestGap) { BestGap = Gap; Best = B; }
+			}
+			P.Add(Best);
+		}
+		// How far each middle is from its nearest neighbour's, m.
+		TArray<double> GapM;
+		GapM.Init(1.0e9, N);
+		for (int32 i = 0; i < N; ++i)
+		{
+			for (int32 j = i + 1; j < N; ++j)
+			{
+				const double L = FVector::Dist2D(P[i], P[j]) / 100.0;
+				GapM[i] = FMath::Min(GapM[i], L);
+				GapM[j] = FMath::Min(GapM[j], L);
+			}
+		}
+		const double BodyM = HerdBodyM(G);
+		const SlonkFauna::FFaunaKindDesc& D = SlonkFauna::KindDesc(G.Kind);
+		const double LoopM = G.LengthCm / 100.0;
+		OutXf.Reserve(N);
+		OutCustom.Reserve(N * SlonkFauna::Custom::Num);
+		for (int32 i = 0; i < N; ++i)
+		{
+			const FVector At = P[i];
+			const double Size = FMath::Clamp((double)G.SpanM * Rng.FRandRange(0.9f, 1.1f), SlonkFauna::Walker::MinSizeM, 2.6);
+			// A stride of about its share of its length, its herd's loop a whole number of them.
+			const double Laps = FMath::Max(FMath::RoundToDouble(LoopM / (SlonkFauna::Walker::StrideShare * Size)), 1.0);
+			const double Stride = LoopM / Laps;
+			// Its grazing circle, a whole number of strides round (at least three), no wider than the box allows, and
+			// keeping to its half of the room its nearest neighbour leaves it past the longest walker's length: any two
+			// circles then leave that length between the walkers going round them.
+			int32 K = FMath::Max(FMath::RoundToInt32(UE_DOUBLE_TWO_PI * Rng.FRandRange(1.2f, (float)SlonkFauna::Walker::MaxCircleM) / Stride), 3);
+			while (K > 3 && K * Stride / UE_DOUBLE_TWO_PI > SlonkFauna::Walker::MaxCircleM) { --K; }
+			while (K > 3 && K * Stride / UE_DOUBLE_TWO_PI > 0.5 * (GapM[i] - BodyM)) { --K; }
+			const double Rho = K * Stride / UE_DOUBLE_TWO_PI;
+			const float Way = Rng.FRand() < 0.5f ? -1.f : 1.f;
+			const float Shade = Rng.FRandRange(0.82f, 1.18f);
+			const float Seed = Rng.FRand();
+			const float Start = Rng.FRand();
+			OutXf.Add(FTransform(FQuat::Identity, FVector(At.X, At.Y, 0.0), FVector(Size)));
+			const float C[SlonkFauna::Custom::Num] = { G.Pigment.R * Shade, G.Pigment.G * Shade, G.Pigment.B * Shade, G.Glow, Seed, (float)Size, Start, (float)Stride,
+				Way * (float)Rho, (float)D.FadeCm };
+			OutCustom.Append(C, SlonkFauna::Custom::Num);
+		}
+	}
 }
 
 SlonkFauna::FFaunaPose SlonkFauna::PathAt(const FFaunaGroup& G, double RadiusCm, double Seconds)
 {
+	if (G.Kind == EFaunaKind::Herd) { return HerdPathAt(G, RadiusCm, Seconds); }
 	// The material's hour: every period divides it, so the wrap changes nothing.
 	double T = FMath::Fmod(Seconds, ClockPeriodSec);
 	if (T < 0.0) { T += ClockPeriodSec; }
@@ -445,6 +935,7 @@ void SlonkFauna::MembersOf(const FFaunaGroup& G, TArray<FTransform>& OutXf, TArr
 {
 	OutXf.Reset();
 	OutCustom.Reset();
+	if (G.Kind == EFaunaKind::Herd) { HerdMembersOf(G, OutXf, OutCustom); return; }
 	const int32 N = FMath::Max(G.Members, 0);
 	if (N == 0) { return; }
 	FRandomStream Rng((int32)G.Seed);
@@ -500,16 +991,170 @@ void SlonkFauna::MembersOf(const FFaunaGroup& G, TArray<FTransform>& OutXf, TArr
 	}
 }
 
+namespace
+{
+	/** smootherstep of V from A to B: its first and second derivatives 0 at both ends. */
+	double EaseC2(double A, double B, double V)
+	{
+		const double U = FMath::Clamp((V - A) / (B - A), 0.0, 1.0);
+		return U * U * U * (U * (U * 6.0 - 15.0) + 10.0);
+	}
+	/** A steady pace eased in and out, 0 at U 0 to 1 at U 1: its rate comes in smoothly over the first quarter to a steady
+	 *  4/3 and goes over the last, its first and second derivatives continuous throughout. */
+	double PaceEase(double U)
+	{
+		constexpr double W = 0.25, C = 1.0 / (1.0 - W);
+		U = FMath::Clamp(U, 0.0, 1.0);
+		if (U < W) { return C * W * RampIntegral(U / W); }
+		if (U > 1.0 - W) { return 1.0 - C * W * RampIntegral((1.0 - U) / W); }
+		return C * (0.5 * W + (U - W));
+	}
+	/** How far a galloping kind's gallop has come on, 0 to 1: from a stand at its FleeT0, at its fastest its rise's time in
+	 *  (FPanic::RiseSec: its kind's FleeRiseSec, or longer for a herd of smaller walkers). */
+	double GallopRise(const SlonkFauna::FPanic& P, const SlonkFauna::FFaunaKindDesc& D, double Now)
+	{
+		const double X = FMath::Max(Now - P.FleeT0, 0.0) / FMath::Max(P.RiseSec > 0.0 ? P.RiseSec : D.FleeRiseSec, 0.1);
+		return 1.0 - FMath::Exp(-X) * (1.0 + X);
+	}
+	/** How far a galloping kind has come back from its flight, 0 to 1, Age seconds after its startle: at a steady pace
+	 *  from its FleeBackSec to the fright's end. */
+	double ComeBack(const SlonkFauna::FPanic& P, const SlonkFauna::FFaunaKindDesc& D, double Age)
+	{
+		return PaceEase((Age - D.FleeBackSec) / FMath::Max(P.LiveSec - D.FleeBackSec, 1.0));
+	}
+}
+
+double SlonkFauna::HerdRiseSec(const FFaunaGroup& G, const FFaunaKindDesc& D)
+{
+	// At its fastest its gallop goes its kind's FleeCm over e times its rise's time.
+	const double FastestCmS = 100.0 * HerdGallopStridesHz * HerdShortStrideM(G);
+	return FMath::Max(D.FleeRiseSec, D.FleeCm / (FMath::Exp(1.0) * FMath::Max(FastestCmS, 1.0)));
+}
+
+double SlonkFauna::HerdTurnRateOf(const FFaunaGroup& G, bool bShaken)
+{
+	if (!bShaken) { return HerdTurnRate; }
+	return FMath::Min(HerdShakenTurnRate, HerdGallopStridesHz * HerdShortStrideM(G) / Walker::PivotM);
+}
+
 FVector SlonkFauna::PanicOffset(const FPanic& P, const FFaunaKindDesc& D, double Now)
 {
 	const double Age = Now - P.T0;
-	if (Age < 0.0 || Age >= PanicSec) { return FVector::ZeroVector; }
+	const double Live = P.LiveSec;
+	if (Age < 0.0 || Age >= Live) { return FVector::ZeroVector; }
+	const double Hold = 1.0 - SlonkScatter::SmoothStep(0.3 * Live, Live, Age);
+	const double CarryFade = 1.0 - SlonkScatter::SmoothStep(0.0, Live, Age);
+	if (D.bGallop)
+	{
+		// A walker turns to flee where it stands, then breaks into a gallop from a stand (at its FleeT0), at its fastest
+		// (FleeCm over e times its rise's time) that long in, and slows as it nears its flight's end; from FleeBackSec it comes
+		// back at a steady walking pace, eased in and out, onto its path by the fright's end. A second fright carries on
+		// the gallop it was in as it turns (slowing over a few seconds), and what was left of the last flight comes back
+		// with this one, at the same steady pace (its fright lengthened for the further way back: StartleHerd).
+		const double Rise = GallopRise(P, D, Now);
+		constexpr double Coast = SlonkFauna::HerdCoastSec;
+		// Its way eased in and out smoothly enough (to the second derivative) that its walkers' way never turns at a
+		// jump: back from its flight, and back round a loop rather than turning about where it stops: off to its side over
+		// the forty seconds its flight slows and turns back, held there as it walks back, and onto its path over the last
+		// half of its walk back.
+		const double Back = 1.0 - ComeBack(P, D, Age);
+		const double Loop = D.FleeLoopCm * EaseC2(D.FleeBackSec - 10.0, D.FleeBackSec + 30.0, Age) * (1.0 - EaseC2(0.5 * (D.FleeBackSec + Live), Live, Age));
+		return (P.Carry + P.CarryVel * (Coast * (1.0 - FMath::Exp(-Age / Coast)))) * Back + P.Dir * (D.FleeCm * Rise * Back) + P.Side * Loop;
+	}
 	// Away at a bird's escape speed (FleeCm over 8 s, at first), held for half a minute, then back over the rest; what
 	// was left of the last flight fades as this runs.
-	const double Rise = 1.0 - FMath::Exp(-Age / 8.0);
-	const double Hold = 1.0 - SlonkScatter::SmoothStep(0.3 * PanicSec, PanicSec, Age);
-	const double CarryFade = 1.0 - SlonkScatter::SmoothStep(0.0, PanicSec, Age);
+	const double Rise = 1.0 - FMath::Exp(-Age / D.FleeRiseSec);
 	return P.Carry * CarryFade + P.Dir * (D.FleeCm * Rise * Hold);
+}
+
+FVector SlonkFauna::HerdFrightOffset(const FFaunaGroup& G, const FFaunaKindDesc& D, const FPanic& P, double RadiusCm, double Now)
+{
+	FVector Off = PanicOffset(P, D, Now);
+	if (!P.IsLive(Now)) { return Off; }
+	if (P.LoopWay != 0 && D.bGallop)
+	{
+		// Fled along its own loop: as far along it from where its path has it now as its gallop has taken it and its walk
+		// back not yet brought it back.
+		const double Along = HerdAlongCm(G, Now);
+		const double Flown = D.FleeCm * GallopRise(P, D, Now) * (1.0 - ComeBack(P, D, Now - P.T0));
+		if (Flown > 0.0) { Off += HerdLoopAt(G, RadiusCm, Along + P.LoopWay * Flown) - HerdLoopAt(G, RadiusCm, Along); }
+	}
+	if (P.bHold)
+	{
+		// Its path's own walk since the startle, held back while its walkers turn to flee, let go as its gallop comes on
+		// (and what is left of it as it comes back), so it gallops off from where it stood.
+		const double Let = (1.0 - GallopRise(P, D, Now)) * (1.0 - ComeBack(P, D, Now - P.T0));
+		if (Let > 0.0) { Off += (HerdPathPos(G, RadiusCm, P.T0) - HerdPathPos(G, RadiusCm, Now)) * Let; }
+	}
+	return Off;
+}
+
+bool SlonkFauna::HerdFlightDry(const FFaunaGroup& G, const FFaunaKindDesc& D, const FPanic& P, double RadiusCm, double Now, const FVector& Avoid, FHerdWater& Water)
+{
+	if (!P.IsLive(Now)) { return true; }
+	// Its frame a second apart from now to its fright's end (a gallop goes 11 m in one at most), read wherever it has gone
+	// HerdFlightReadCm on from its last read and where its fright ends: dry about it, and as far on as its gallop would
+	// coast there were it frightened again.
+	const double End = P.T0 + P.LiveSec;
+	auto At = [&](double T) { return HerdPathPos(G, RadiusCm, T) + HerdFrightOffset(G, D, P, RadiusCm, T) + Avoid; };
+	FVector Prev = At(Now), LastRead = Prev;
+	for (double T = Now + 1.0; ; T += 1.0)
+	{
+		const double Tc = FMath::Min(T, End);
+		const FVector X = At(Tc);
+		const FVector Vel = X - Prev;
+		Prev = X;
+		if (FVector::Dist(X, LastRead) >= HerdFlightReadCm || Tc >= End)
+		{
+			LastRead = X;
+			if (!Water.DryAround(G, X, Vel, HerdFlightDryCm)) { return false; }
+			if (Vel.Size() > 100.0 && !Water.DryAround(G, X + Vel * HerdCoastSec, Vel, HerdFlightDryCm)) { return false; }
+		}
+		if (Tc >= End) { break; }
+	}
+	return true;
+}
+
+SlonkFauna::FHerdWater::FHerdWater(const FPlanetTerrainParams& P)
+	// Water, and any ground a herd never sets foot on (a dense wood, a cliff, steep ground, ice), barred alike: a flight or
+	// a walk out of the crew's way is never taken through either.
+	: IsWater([P](const FVector& Dir) { return SlonkTerrain::SampleStructure(P, Dir, 1000.0).bWater || !SlonkFauna::HerdCrosses(SlonkScatter::HabitatAt(P, Dir)); }), RadiusCm(P.RadiusCm)
+{
+}
+
+bool SlonkFauna::FHerdWater::WetAt(const FFaunaGroup& G, const FVector& PosCm)
+{
+	if (!IsWater || RadiusCm <= 0.0) { return false; }
+	// The lattice laid on its loop's tangent plane (the plane's own east and north, a point's place on it where the line
+	// from the planet's middle through it meets the plane), its nearest point read.
+	const FVector U = PosCm.GetSafeNormal();
+	const double Dc = FVector::DotProduct(U, G.Centre);
+	if (Dc < 0.5) { return false; }
+	const int64 Ix = FMath::RoundToInt64(FVector::DotProduct(U, G.East) / Dc * RadiusCm / HerdWaterStepCm);
+	const int64 Iy = FMath::RoundToInt64(FVector::DotProduct(U, G.North) / Dc * RadiusCm / HerdWaterStepCm);
+	const uint64 Key = ((uint64)(uint32)(int32)Ix << 32) | (uint64)(uint32)(int32)Iy;
+	if (const bool* Known = Wet.Find(Key)) { return *Known; }
+	const bool bWet = IsWater((G.Centre + (G.East * (double)Ix + G.North * (double)Iy) * (HerdWaterStepCm / RadiusCm)).GetSafeNormal());
+	Wet.Add(Key, bWet);
+	return bWet;
+}
+
+bool SlonkFauna::FHerdWater::DryAround(const FFaunaGroup& G, const FVector& PosCm, const FVector& Way, double MarginCm)
+{
+	const FVector Up = PosCm.GetSafeNormal();
+	FVector Fwd = Way - Up * FVector::DotProduct(Way, Up);
+	if (WetAt(G, PosCm)) { return false; }
+	const double Reach = G.HerdRadiusCm + MarginCm;
+	if (Fwd.Size() < 1.0)
+	{
+		// Standing: all round it.
+		FVector E, N;
+		TangentAxes(Up, E, N);
+		for (const FVector& A : { E, N, -E, -N }) { if (WetAt(G, PosCm + A * Reach)) { return false; } }
+		return true;
+	}
+	const FVector Side = FVector::CrossProduct(Up, Fwd.GetSafeNormal());
+	return !WetAt(G, PosCm + Side * Reach) && !WetAt(G, PosCm - Side * Reach);
 }
 
 SlonkFauna::FFaunaPose SlonkFauna::FlightAt(const FFaunaGroup& G, const FFaunaKindDesc& D, const FPanic& P, double RadiusCm, double Now, const FFaunaPose& Was, double Dt)
@@ -547,11 +1192,11 @@ SlonkFauna::FFaunaPose SlonkFauna::FlightAt(const FFaunaGroup& G, const FFaunaKi
 	return Pose;
 }
 
-bool SlonkFauna::Scares(const FFaunaKindDesc& D, const FVector& GroupPosCm, const FFaunaThreat& T)
+bool SlonkFauna::Scares(const FFaunaKindDesc& D, const FVector& GroupPosCm, const FFaunaThreat& T, double GroupRadiusCm)
 {
 	const double Dist = FVector::Dist(GroupPosCm, T.PosCm);
 	if (T.bCraft) { return !T.bLanded && T.AltitudeCm >= 0.0 && T.AltitudeCm < D.ScareAltitudeCm && Dist < D.ScareRadiusCm; }
-	return Dist < D.CrewScareCm;
+	return Dist - GroupRadiusCm < D.CrewScareCm;
 }
 
 namespace
@@ -579,9 +1224,9 @@ namespace
 	}
 }
 
-bool SlonkFauna::StartleGroup(FPanic& P, const FFaunaKindDesc& D, const FVector& GroupPosCm, const FFaunaThreat& T, double Now)
+bool SlonkFauna::StartleGroup(FPanic& P, const FFaunaKindDesc& D, const FVector& GroupPosCm, const FFaunaThreat& T, double Now, double GroupRadiusCm)
 {
-	if (!Scares(D, GroupPosCm, T)) { return false; }
+	if (!Scares(D, GroupPosCm, T, GroupRadiusCm)) { return false; }
 	if (P.IsLive(Now) && Now - P.T0 < RestartleSec) { return false; }
 	// A flock already chased half again its flight off its path keeps the flight it has: chased on, it would be driven
 	// off for ever.
@@ -605,15 +1250,146 @@ void SlonkFauna::StartleNow(FPanic& P, const FFaunaKindDesc& D, const FVector& G
 	// round to it); and on one whose fright has worn on and eased its beat, back up from there, its onset set where the
 	// coming-in reaches that.
 	const double Urge = WingUrge(P, Now);
-	P.Carry = PanicOffset(P, D, Now);
-	P.Dir = (Away.GetSafeNormal() + Up * 0.35).GetSafeNormal();
+	// Where its last flight has it now, and (a galloping kind) how fast it was going: it carries on from both as it
+	// turns (a calm one from none).
+	const FVector Was = PanicOffset(P, D, Now);
+	const FVector WasVel = D.bGallop && P.IsLive(Now) ? (Was - PanicOffset(P, D, Now - 0.05)) / 0.05 : FVector::ZeroVector;
+	if (D.bGallop) { P.CarryVel = WasVel; }
+	P.Carry = Was;
+	P.Dir = (Away.GetSafeNormal() + Up * D.FleeUp).GetSafeNormal();
+	// The side it loops round to come back (a galloping kind): away from the way the threat goes.
+	P.Side = FVector::CrossProduct(Up, Away).GetSafeNormal();
+	if (FVector::DotProduct(Level(T.VelCmS), P.Side) > 0.0) { P.Side = -P.Side; }
 	P.T0 = Now;
+	P.LiveSec = D.FrightSec;
+	P.FleeT0 = Now + D.FleeTurnSec;
+	P.bHold = false;
 	if (!bOpen)
 	{
 		P.ScatterT0 = Now;
 		P.ScatterDir = P.Dir;
 	}
 	P.OnsetT0 = Urge <= 0.0 ? Now : Now - (Urge >= 1.0 ? 1.0 : 0.3 * InverseSmoothStep(Urge));
+}
+
+bool SlonkFauna::StartleHerd(FPanic& P, FHerdState& S, const FFaunaGroup& G, const FFaunaKindDesc& D, double RadiusCm, const FFaunaThreat& T, double Now, bool bForce, FHerdWater* Water)
+{
+	if (!S.bStarted) { return false; }
+	// Where its fright has it now (its hold of its path among it) and how fast that is taking it.
+	const FVector Was = HerdFrightOffset(G, D, P, RadiusCm, Now);
+	if (!bForce)
+	{
+		if (!Scares(D, S.FramePos, T, T.bCraft ? 0.0 : G.HerdRadiusCm)) { return false; }
+		if (P.IsLive(Now) && Now - P.T0 < RestartleSec) { return false; }
+		// A herd that found no way it could take from where its last flight carried it tries again only after a
+		// re-startle's while, not every frame the threat stays near.
+		if (Now < S.NextStartleSec) { return false; }
+		// A herd already chased half again its flight off its path keeps the flight it has.
+		if (Was.Size() > 1.5 * D.FleeCm) { return false; }
+	}
+	const FVector WasVel = P.IsLive(Now) ? (Was - HerdFrightOffset(G, D, P, RadiusCm, Now - 0.05)) / 0.05 : FVector::ZeroVector;
+	const FVector Up = S.FramePos.GetSafeNormal();
+	auto Level = [&Up](const FVector& V) { return V - Up * FVector::DotProduct(V, Up); };
+	// How fast its frame goes over the ground (its path's own walk and its fright's), and the way it faces.
+	const double FrameCmS = Level(PathAt(G, RadiusCm, Now).VelCmS + WasVel).Size();
+	const FVector Facing = Level(S.FrameRot.GetAxisX() * FMath::Cos(S.Heading) + S.FrameRot.GetAxisY() * FMath::Sin(S.Heading)).GetSafeNormal();
+	const bool bGalloping = S.Travel >= 1.0 && FrameCmS > 100.0 * HerdGallopMS;
+	// As it was, should no dry way be found from where an earlier fright has carried it.
+	const FPanic Before = P;
+	const FHerdState StateBefore = S;
+	// Its alarm, its moment and the way away from the threat, as any group's; its gallop to come on as its walkers' strides
+	// allow.
+	StartleNow(P, D, S.FramePos, T, Now);
+	P.RiseSec = HerdRiseSec(G, D);
+	FVector Away = Level(P.Dir).GetSafeNormal();
+	if (Away.IsNearlyZero()) { Away = Facing; }
+	P.Carry = Was;
+	P.LoopWay = 0;
+	if (bGalloping)
+	{
+		// It cannot stop dead: it turns away on the run, carrying its speed, or (the fright ahead of it, more than it can
+		// turn on the run) flees on the way it is going.
+		if (FVector::DotProduct(Away, Facing) < FMath::Cos(TurnAroundRad)) { Away = Facing; }
+		P.CarryVel = WasVel;
+		P.bHold = false;
+		P.FleeT0 = Now + D.FleeTurnSec;
+	}
+	else
+	{
+		// Its path walking while it is frightened, it flees across the way its path goes (between a third of a turn and a
+		// sixth of one off it, on the side away from the threat): fled along that way or back against it, its flight and
+		// its path's walk would cancel as its gallop slows or as it comes back, its way swinging right round as it all but
+		// stood.
+		const FFaunaPose Path = PathAt(G, RadiusCm, Now);
+		bool bPathWalks = false;
+		for (double At = 0.0; At <= D.FrightSec && !bPathWalks; At += 5.0) { bPathWalks = HerdSpeedCmS(G, Now + At) > 1.0; }
+		const FVector PathWay = Level(Path.Ahead).GetSafeNormal();
+		if (bPathWalks && !PathWay.IsNearlyZero())
+		{
+			FVector Across = FVector::CrossProduct(Up, PathWay);
+			const double Side = FVector::DotProduct(Away, Across);
+			if (Side < 0.0 || (Side == 0.0 && FVector::DotProduct(Level(T.VelCmS), Across) > 0.0)) { Across = -Across; }
+			// Turned from straight across toward the way away from the threat, a twelfth of a turn at most.
+			const double Off = FMath::Atan2(FVector::DotProduct(Away, PathWay), FMath::Max(FVector::DotProduct(Away, Across), 0.0));
+			const double Turn = FMath::Clamp(Off, -UE_DOUBLE_PI / 6.0, UE_DOUBLE_PI / 6.0);
+			Away = (Across * FMath::Cos(Turn) + PathWay * FMath::Sin(Turn)).GetSafeNormal();
+		}
+		// It stops where it stands, its path held there (and its walk out of the crew's way), its walkers turning back and
+		// round to the way it flees before its gallop comes on: the rest of any turn under way, back to their grazing, and
+		// round to it.
+		P.CarryVel = FVector::ZeroVector;
+		P.bHold = true;
+		double Stand = 0.0;
+		const double Rate = HerdTurnRateOf(G, true);
+		if (S.Travel > 0.0)
+		{
+			Stand = (S.PivotSign > 0.0 ? 2.0 - S.Travel : S.Travel) / Rate;
+			S.bTurnAround = true;
+		}
+		S.AvoidPace = 0.0;
+		S.AvoidGoing = FVector::ZeroVector;
+		P.FleeT0 = Now + Stand + FMath::Max(D.FleeTurnSec, 1.0 / Rate);
+	}
+	// Its fright as long as its way back asks: what an earlier one left it carrying (and the gallop it coasts on) comes back
+	// with its own flight, at the same steady pace, over a walk back as much longer as the way is.
+	const double BackCm = P.Carry.Size() + HerdCoastSec * P.CarryVel.Size() + D.FleeCm;
+	P.LiveSec = D.FleeBackSec + (D.FrightSec - D.FleeBackSec) * FMath::Max(1.0, BackCm / FMath::Max(D.FleeCm, 1.0));
+	// Its flight's way, and the side it loops round to come back (away from the way the threat goes).
+	auto FleeOn = [&](const FVector& Way)
+	{
+		P.Dir = (Way + Up * D.FleeUp).GetSafeNormal();
+		P.Side = FVector::CrossProduct(Up, Way).GetSafeNormal();
+		if (FVector::DotProduct(Level(T.VelCmS), P.Side) > 0.0) { P.Side = -P.Side; }
+	};
+	FleeOn(Away);
+	if (!Water) { return true; }
+	// Kept dry: that way, else the ways turned from it by a twelfth, a sixth and a quarter of a turn, the nearer first and
+	// toward the side it would loop round first, the first whose flight and walk back find no water.
+	const FVector Toward = FVector::DotProduct(FVector::CrossProduct(Up, Away), P.Side) >= 0.0 ? FVector::CrossProduct(Up, Away) : -FVector::CrossProduct(Up, Away);
+	for (const double Twelfths : { 0.0, 1.0, -1.0, 2.0, -2.0, 3.0, -3.0 })
+	{
+		const double A = Twelfths * UE_DOUBLE_PI / 6.0;
+		FleeOn((Away * FMath::Cos(A) + Toward * FMath::Sin(A)).GetSafeNormal());
+		if (HerdFlightDry(G, D, P, RadiusCm, Now, S.Avoid, *Water)) { return true; }
+	}
+	// No dry way off its loop: it flees along its own loop (whose ground keeps clear of the water), the way along it nearer
+	// the way away.
+	const FVector Along = Level(PathAt(G, RadiusCm, Now).Ahead).GetSafeNormal();
+	const double Ahead = FVector::DotProduct(Along, Away) >= 0.0 ? 1.0 : -1.0;
+	P.LoopWay = Ahead * G.Turn >= 0.0 ? 1 : -1;
+	P.Dir = FVector::ZeroVector;
+	P.Side = FVector::ZeroVector;
+	// On its loop (nothing carried from an earlier fright) its ground keeps it dry; carried off it, its way along the loop
+	// is read like any other, either way along it.
+	if (P.Carry.IsNearlyZero() && P.CarryVel.IsNearlyZero()) { return true; }
+	if (HerdFlightDry(G, D, P, RadiusCm, Now, S.Avoid, *Water)) { return true; }
+	P.LoopWay = -P.LoopWay;
+	if (HerdFlightDry(G, D, P, RadiusCm, Now, S.Avoid, *Water)) { return true; }
+	// No dry way from where its last flight has carried it: it keeps the fright it has, whose way was read dry.
+	P = Before;
+	S = StateBefore;
+	S.NextStartleSec = Now + RestartleSec;
+	return false;
 }
 
 void SlonkFauna::FrightData(const FPanic& P, double Now, const FQuat& Rot, double ClockOffsetSec, float* Group)
@@ -680,6 +1456,673 @@ FVector3f SlonkFauna::FlierMotion(const FVector3f& LP, const FLinearColor& VC, f
 	const float Open = Live * SmoothStepF(0.f, 1.2f, ScatterAge - Delay) * (1.f - SmoothStepF(8.f, 40.f, ScatterAge));
 	const float SpreadUnits = FMath::Min(FMath::Max(Spread, 0.f), 2.f * FMath::Max(Size, 0.01f)) * 100.f / FMath::Max(Size, 0.01f);
 	P += Sv * (SpreadUnits * Open);
+	return P - LP;
+}
+
+namespace
+{
+	/** A herd's own east and north laid on the ground's tangent plane at a place, and the up there. */
+	void HerdAxes(const FFaunaGroup& G, const FVector& FramePos, FVector& OutUp, FVector& OutEast, FVector& OutNorth)
+	{
+		OutUp = FramePos.GetSafeNormal();
+		OutEast = (G.East - OutUp * FVector::DotProduct(G.East, OutUp)).GetSafeNormal();
+		if (OutEast.IsNearlyZero()) { FVector N; TangentAxes(OutUp, OutEast, N); }
+		OutNorth = FVector::CrossProduct(OutUp, OutEast);
+	}
+	/** The plane's normal from its rise over run along an east and a north. */
+	FVector PlaneNormal(const FVector& Up, const FVector& East, const FVector& North, double SlopeE, double SlopeN)
+	{
+		return (Up - East * SlopeE - North * SlopeN).GetSafeNormal();
+	}
+	/** The grid's node m (HerdData's order: row by row from the most negative y, the corners left out) as (i, j). */
+	FIntPoint GroundNodeAt(int32 M)
+	{
+		if (M < 3) { return FIntPoint(1 + M, 0); }
+		if (M < 18) { return FIntPoint((M - 3) % 5, 1 + (M - 3) / 5); }
+		return FIntPoint(1 + (M - 18), 4);
+	}
+	float SmoothF(float A, float B, float X) { const float T = FMath::Clamp((X - A) / (B - A), 0.f, 1.f); return T * T * (3.f - 2.f * T); }
+
+	/**
+	 * Where a herd's legs' walk stands as a turn begins, m: on a grid of 2^-10 m (about a millimetre), at or a hair past
+	 * where they have walked to, so HerdData's slot 1 (a turn back to graze carried HerdData::PivotBack on) holds it
+	 * exactly, and the turn's end, a whole PivotM on, as exactly where the next turn reads it back from. Rounded to the
+	 * float nearest instead, a turn could read back as begun up to half a millimetre before its legs stood there: a foot
+	 * put down just as it began would then read as put down during the turn rather than before it, and be drawn half a
+	 * stance from where it stood.
+	 */
+	double TurnStartM(double LegsM)
+	{
+		constexpr double Grid = 1.0 / 1024.0;
+		return FMath::CeilToDouble(LegsM / Grid) * Grid;
+	}
+}
+
+void SlonkFauna::SampleHerdGround(const FFaunaGroup& G, double RadiusCm, const FVector& GroundPos, TFunctionRef<double(const FVector&)> HeightAt, FHerdGround& Out)
+{
+	FVector Up, East, North;
+	HerdAxes(G, GroundPos, Up, East, North);
+	const double Half = FMath::Max(G.GroundHalfCm, 100.0), Sp = Half * 0.5;
+	FVector Ground[HerdData::GroundNodes];
+	// Twice: its nodes laid on the plane tangent at its place, then on the plane that first read fits (so each is read
+	// under about where the material puts it, and what was read before has no say), each about where the radial through
+	// its place meets the plane found so far; the ground at each node straight down the radial from it.
+	double SlopeE = 0.0, SlopeN = 0.0, Lift = 0.0;
+	FVector Z = Up;
+	for (int32 Pass = 0; Pass < 2; ++Pass)
+	{
+		const FVector Z0 = PlaneNormal(Up, East, North, SlopeE, SlopeN);
+		const FVector X0 = (East - Z0 * FVector::DotProduct(East, Z0)).GetSafeNormal();
+		const FVector Y0 = FVector::CrossProduct(Z0, X0);
+		const FVector Mid = GroundPos + Up * Lift;
+		double SumXZ = 0.0, SumXX = 0.0, SumYZ = 0.0, SumYY = 0.0, SumZ = 0.0;
+		for (int32 M = 0; M < HerdData::GroundNodes; ++M)
+		{
+			const FIntPoint Ij = GroundNodeAt(M);
+			const double X = (Ij.X - 2) * Sp, Y = (Ij.Y - 2) * Sp;
+			const FVector Dir = (Mid + X0 * X + Y0 * Y).GetSafeNormal();
+			Ground[M] = Dir * (RadiusCm + HeightAt(Dir));
+			const double Zn = FVector::DotProduct(Ground[M] - Mid, Z0);
+			SumXZ += X * Zn; SumXX += X * X; SumYZ += Y * Zn; SumYY += Y * Y; SumZ += Zn;
+		}
+		// The plane fitted to them: the nodes lie evenly either way of the middle, so its tilt along each axis and its height
+		// there are the least squares' alone.
+		const FVector N = (Z0 - X0 * (SumXZ / SumXX) - Y0 * (SumYZ / SumYY)).GetSafeNormal();
+		const double Nu = FMath::Max(FVector::DotProduct(N, Up), 0.2);
+		SlopeE = -FVector::DotProduct(N, East) / Nu;
+		SlopeN = -FVector::DotProduct(N, North) / Nu;
+		Z = PlaneNormal(Up, East, North, SlopeE, SlopeN);
+		// How high it stands over the ground under the herd's place, along the radial there.
+		const FVector OnPlane = Mid + Z0 * (SumZ / HerdData::GroundNodes);
+		Lift = FVector::DotProduct(OnPlane - GroundPos, Z) / FMath::Max(FVector::DotProduct(Up, Z), 0.2);
+	}
+	Out.SlopeE = SlopeE;
+	Out.SlopeN = SlopeN;
+	Out.PlanePt = GroundPos + Up * Lift;
+	for (int32 M = 0; M < HerdData::GroundNodes; ++M)
+	{
+		Out.Node[M] = (float)FMath::Clamp(FVector::DotProduct(Ground[M] - Out.PlanePt, Z), -HerdData::MaxGroundCm, HerdData::MaxGroundCm);
+	}
+	Out.HalfCm = Half;
+	Out.bValid = true;
+}
+
+FVector SlonkFauna::HerdFramePos(const FFaunaGroup& G, double RadiusCm, const FVector& Dir, const FHerdGround& Ground)
+{
+	const FVector U = Dir.GetSafeNormal();
+	if (!Ground.bValid) { return U * RadiusCm; }
+	FVector Up, East, North;
+	HerdAxes(G, U, Up, East, North);
+	const FVector Z = PlaneNormal(Up, East, North, Ground.SlopeE, Ground.SlopeN);
+	return U * (FVector::DotProduct(Ground.PlanePt, Z) / FMath::Max(FVector::DotProduct(U, Z), 0.2));
+}
+
+FQuat SlonkFauna::HerdFrameRot(const FFaunaGroup& G, const FVector& FramePos, const FHerdGround& Ground)
+{
+	FVector Up, East, North;
+	HerdAxes(G, FramePos, Up, East, North);
+	const FVector Z = Ground.bValid ? PlaneNormal(Up, East, North, Ground.SlopeE, Ground.SlopeN) : Up;
+	const FVector X = (East - Z * FVector::DotProduct(East, Z)).GetSafeNormal();
+	return FRotationMatrix::MakeFromXZ(X, Z).ToQuat();
+}
+
+float SlonkFauna::HerdGroundAt(const float* Gd, float X, float Y)
+{
+	// fauna_material.py's walker branch, line for line.
+	const float Half = FMath::Max(Gd[HerdData::GroundHalfCm], 100.f), Sp = Half * 0.5f;
+	float H[25];
+	for (int32 M = 0; M < HerdData::GroundNodes; ++M) { const FIntPoint Ij = GroundNodeAt(M); H[Ij.Y * 5 + Ij.X] = Gd[HerdData::Ground0 + M]; }
+	H[0] = H[1] + H[5] - H[6];
+	H[4] = H[3] + H[9] - H[8];
+	H[20] = H[21] + H[15] - H[16];
+	H[24] = H[23] + H[19] - H[18];
+	const float Gx = FMath::Clamp(X / Sp + 2.f, 0.f, 4.f), Gy = FMath::Clamp(Y / Sp + 2.f, 0.f, 4.f);
+	const int32 Ix = FMath::Min((int32)FMath::FloorToFloat(Gx), 3), Iy = FMath::Min((int32)FMath::FloorToFloat(Gy), 3);
+	const float Fx = Gx - Ix, Fy = Gy - Iy;
+	const float A = FMath::Lerp(H[Iy * 5 + Ix], H[Iy * 5 + Ix + 1], Fx), B = FMath::Lerp(H[(Iy + 1) * 5 + Ix], H[(Iy + 1) * 5 + Ix + 1], Fx);
+	return FMath::Clamp(FMath::Lerp(A, B, Fy), -(float)HerdData::MaxGroundCm, (float)HerdData::MaxGroundCm);
+}
+
+void SlonkFauna::HerdFrightData(const FPanic& P, double Now, double ClockOffsetSec, float* Group)
+{
+	const bool bLive = P.IsLive(Now);
+	Group[HerdData::Startled] = bLive ? 1.f : 0.f;
+	Group[HerdData::PanicT0] = bLive ? OnMaterialClock(P.T0, ClockOffsetSec) : 0.f;
+	Group[HerdData::OnsetT0] = bLive ? OnMaterialClock(P.OnsetT0, ClockOffsetSec) : 0.f;
+}
+
+void SlonkFauna::StartHerd(FHerdState& S, const FFaunaGroup& G, double Seconds)
+{
+	S = FHerdState();
+	// As far along its loop as the hour has walked it (whole strides round the loop, so any start will do but this one
+	// is the time's alone), as long grazed as the hour, turned to walk as its schedule has it; it faces the way along
+	// its loop at its first step. Its last turn long past, the way it now is (to walk on the move, back to graze if not).
+	S.DistM = FMath::Fmod(FMath::Max(HerdWalkedCm(G, Seconds), 0.0) / 100.0, FMath::Max(G.LengthCm / 100.0, 1.0));
+	S.GrazeSec = WrapHour(Seconds);
+	S.Travel = HerdIntent(G, Seconds);
+	S.SpeedMS = HerdSpeedCmS(G, Seconds) / 100.0;
+	S.GaitMS = S.Travel >= 1.0 ? S.SpeedMS : 0.0;
+	S.PivotSign = S.Travel >= 1.0 ? 1.0 : -1.0;
+	S.PivotStartM = S.DistM - 1000.0;
+	S.GrazeRef = S.GrazeSec - 900.0;
+	S.SinceLastTurn = S.PivotSign > 0.0 ? S.GrazeSec - 900.0 : 1000.0;
+	S.bStarted = false;
+}
+
+double SlonkFauna::CrewGapCm(const FFaunaGroup& G, const FVector& FramePos, const FVector& CrewPosCm)
+{
+	const FVector Up = FramePos.GetSafeNormal();
+	FVector D = CrewPosCm - FramePos;
+	D -= Up * FVector::DotProduct(D, Up);
+	return D.Size() - G.HerdRadiusCm;
+}
+
+double SlonkFauna::CrewRoomCm(const FFaunaGroup& G)
+{
+	if (G.DryCm >= HerdDryReadCm) { return 3.0e4; }
+	return FMath::Clamp(G.DryCm - G.HerdRadiusCm - HerdCrewDryCm, 0.0, 3.0e4);
+}
+
+bool SlonkFauna::KeepFromCrew(FHerdState& S, const FFaunaGroup& G, const FFaunaKindDesc& D, const TArray<FVector>& CrewPosCm, double Dt, FHerdWater* Water)
+{
+	if (!S.bStarted || Dt <= 0.0) { return false; }
+	const FVector Up = S.FramePos.GetSafeNormal();
+	auto Level = [&Up](const FVector& V) { return V - Up * FVector::DotProduct(V, Up); };
+	const double Keep = D.KeepFromCrewCm;
+	const double Room = CrewRoomCm(G);
+	// Whether the ground its edge would walk onto going a way, ahead and 40 degrees to either side, is dry.
+	auto DryAhead = [&](const FVector& Way)
+	{
+		if (!Water) { return true; }
+		const FVector Fwd = Level(Way).GetSafeNormal(), Side = FVector::CrossProduct(Up, Fwd);
+		const double Reach = G.HerdRadiusCm + HerdCrewDryCm;
+		for (const double A : { 0.0, 0.7, -0.7 })
+		{
+			if (Water->WetAt(G, S.FramePos + (Fwd * FMath::Cos(A) + Side * FMath::Sin(A)) * Reach)) { return false; }
+		}
+		return true;
+	};
+	FVector Push = FVector::ZeroVector;
+	double Nearest = TNumericLimits<double>::Max();
+	for (const FVector& C : CrewPosCm)
+	{
+		const FVector Away = Level(S.FramePos - C);
+		const double Gap = Away.Size() - G.HerdRadiusCm;
+		Nearest = FMath::Min(Nearest, Gap);
+		// Out to 10 m past its keeping distance, the nearer the harder.
+		if (Keep > 0.0 && Gap < Keep + 1000.0) { Push += Away.GetSafeNormal() * (Keep + 1000.0 - Gap); }
+	}
+	// It goes once all of it is on the move the way it means to go (its walkers having turned to it where they stood),
+	// coming up to its pace over a second, and eases off over half a second when it may not (or would go well off the way
+	// it faces: it turns about first).
+	const FVector Facing = S.FrameRot.GetAxisX() * FMath::Cos(S.Heading) + S.FrameRot.GetAxisY() * FMath::Sin(S.Heading);
+	const bool bOnTheMove = S.Travel >= 1.0 && !S.bTurnAround;
+	auto Pace = [&](const FVector& Way)
+	{
+		const bool bGo = bOnTheMove && FVector::DotProduct(Way.GetSafeNormal(), Facing) > FMath::Cos(TurnAroundRad) && DryAhead(Way);
+		S.AvoidPace = FMath::Clamp(S.AvoidPace + (bGo ? Dt : -2.0 * Dt), 0.0, 1.0);
+		// It walks the way it wants once it may; easing off, on along the way it was walking, so it stops going forward
+		// (its legs walking it down) and turns about only once it stands.
+		if (bGo || S.AvoidPace <= 0.0) { S.AvoidGoing = Way; }
+		FVector Go = S.AvoidGoing * (S.AvoidPace * Dt);
+		// Going further off its path, it slows as it comes to the most it may go (at half a metre a second each second, so
+		// it comes to a stand there rather than stopping dead).
+		const double Out = FVector::DotProduct(Go, S.Avoid.GetSafeNormal());
+		if (Out > 0.0 && Go.Size() > 0.0)
+		{
+			const double MostCmS = FMath::Sqrt(2.0 * 50.0 * FMath::Max(Room - S.Avoid.Size(), 0.0));
+			Go *= FMath::Min(1.0, MostCmS * Dt / Go.Size());
+		}
+		S.Avoid = (S.Avoid + Go).GetClampedToMaxSize(Room);
+	};
+	if (!Push.IsNearlyZero())
+	{
+		// Off at a walk, at a trot for anyone close in; never further than 300 m off its path, nor than its loop's dry
+		// ground leaves it room for.
+		S.AvoidWay = Push.GetSafeNormal() * (Nearest < Keep * 0.6 ? 260.0 : 140.0);
+		Pace(S.AvoidWay);
+		return true;
+	}
+	if (S.Avoid.IsNearlyZero(0.01)) { S.Avoid = FVector::ZeroVector; S.AvoidWay = FVector::ZeroVector; S.AvoidGoing = FVector::ZeroVector; S.AvoidPace = 0.0; return false; }
+	// Nobody near: back to its path at a stroll, unless that would walk it at someone.
+	const FVector Back = -S.Avoid.GetSafeNormal();
+	for (const FVector& C : CrewPosCm)
+	{
+		if (Level(S.FramePos + Back * 100.0 - C).Size() - G.HerdRadiusCm < Keep + 3000.0) { S.AvoidWay = FVector::ZeroVector; S.AvoidGoing = FVector::ZeroVector; S.AvoidPace = 0.0; return false; }
+	}
+	S.AvoidWay = Back * FMath::Min(60.0, S.Avoid.Size() / FMath::Max(Dt, 1e-3));
+	Pace(S.AvoidWay);
+	return true;
+}
+
+void SlonkFauna::StepHerd(FHerdState& S, const FFaunaGroup& G, double RadiusCm, double Now, double StepDt, const FVector& OffsetCm, bool bShaken, bool bMoving, bool bRefreshGround,
+	TFunctionRef<double(const FVector&)> HeightAt, double ClockOffsetSec, float* OutData, const FVector* OffsetAheadCm)
+{
+	// The time this step spans: since its last step (the caller holds a long frame's step short, but its path has run on
+	// the whole of it, so its speeds are read over that), else the step asked (its last step not known, or a second or
+	// more ago: the clock jumped).
+	const double Since = Now - S.LastStepSec;
+	const double Dt = StepDt > 0.0 && Since > StepDt * 1.001 && Since <= 1.0 ? Since : StepDt;
+	const FFaunaPose Pose = PathAt(G, RadiusCm, Now);
+	// Its place on its path, off it by its fright and the crew: the drawn ground under it read again as asked (and the
+	// first time), and its frame set where the radial there meets the plane fitted to that ground, which rises and falls
+	// with the ground under the whole herd rather than with whatever bump is under its middle.
+	const FVector Dir = (Pose.PosCm + OffsetCm).GetSafeNormal();
+	if (bRefreshGround || !S.Ground.bValid) { SampleHerdGround(G, RadiusCm, Dir * (RadiusCm + HeightAt(Dir)), HeightAt, S.Ground); }
+	const FVector Pos = HerdFramePos(G, RadiusCm, Dir, S.Ground);
+	const FQuat Rot = HerdFrameRot(G, Pos, S.Ground);
+	const FVector Ax = Rot.GetAxisX(), Ay = Rot.GetAxisY(), Az = Rot.GetAxisZ();
+	// A way over the ground (level) laid on its plane straight up or down, so it runs over the same ground.
+	auto LiftOnPlane = [&Dir, &Az](const FVector& V)
+	{
+		const FVector Level = V - Dir * FVector::DotProduct(V, Dir);
+		return Level - Dir * (FVector::DotProduct(Level, Az) / FMath::Max(FVector::DotProduct(Dir, Az), 0.2));
+	};
+	auto AngleOf = [&Ax, &Ay](const FVector& V) { return FMath::Atan2(FVector::DotProduct(V, Ay), FVector::DotProduct(V, Ax)); };
+	const bool bStep = S.bStarted && Dt > 0.0;
+	// How far its frame went along its plane since the last step, laid level first and then onto the plane (so the drawn
+	// ground's own rise or fall under it, as its chunks split, moves no feet), and how much of that was ahead, the way its
+	// walkers faced: only that walks their legs on.
+	double Moved = 0.0, Ahead = 0.0;
+	FVector Way = FVector::ZeroVector;
+	if (bStep)
+	{
+		Way = LiftOnPlane(Pos - S.FramePos);
+		Moved = Way.Size();
+		// A jump (the paths' clock moved): no walk.
+		if (Moved > 5000.0) { Moved = 0.0; Way = FVector::ZeroVector; }
+		Ahead = FMath::Max(FVector::DotProduct(Way, Ax * FMath::Cos(S.Heading) + Ay * FMath::Sin(S.Heading)), 0.0);
+	}
+	// The way it is going, on the move (its path's way now and its fright's and the crew's since the last step, once it
+	// goes faster than a creep); else the way it is about to go (its path and that offset a second on); else, its walk
+	// near, the way along its loop; else none (it holds the way it has). Standing grazing, only the way it is about to go:
+	// it turns to that before its frame moves.
+	const FVector Moving = bStep ? LiftOnPlane(Pose.VelCmS + (OffsetCm - S.LastOffset) / Dt) : FVector::ZeroVector;
+	const FVector Going = LiftOnPlane(PathAt(G, RadiusCm, Now + 1.0).PosCm - Pose.PosCm + ((OffsetAheadCm ? *OffsetAheadCm : OffsetCm) - OffsetCm));
+	double Target = S.Heading;
+	bool bTarget = true;
+	if (S.Travel > 0.0 && Moving.Size() > 10.0) { Target = AngleOf(Moving); }
+	else if (Going.Size() > 2.0) { Target = AngleOf(Going); }
+	else if (Pose.Intent > 0.0 || !S.bStarted) { Target = AngleOf(Pose.Ahead); }
+	else { bTarget = false; }
+	const double Off = FMath::UnwindRadians(Target - S.Heading);
+	// Asked, on the move, to go well off the way it walks (or, its frame all but standing, any way much off it): it stops,
+	// its walkers turn back to their grazing where they stand, the way is set while it stands grazing, and it sets off
+	// again (its walkers turning to it).
+	const double Travel0 = S.Travel;
+	const bool bStanding = Moving.Size() <= 10.0;
+	if (bStep && bTarget && Travel0 > 0.0 && FMath::Abs(Off) > (bStanding ? TurnStandingRad : TurnAroundRad)) { S.bTurnAround = true; }
+	if (Travel0 <= 0.0) { S.bTurnAround = false; }
+	// Turned to walk as its schedule, its fright or the crew ask (quickly when frightened), or back to graze; a turn under
+	// way runs on to its end the way it began, never turned back half way (its walkers' steps through it are one turn).
+	double Want = S.bTurnAround ? 0.0 : FMath::Max3(Pose.Intent, bShaken ? 1.0 : 0.0, bMoving ? 1.0 : 0.0);
+	if (Travel0 > 0.0 && Travel0 < 1.0) { Want = S.PivotSign > 0.0 ? 1.0 : 0.0; }
+	const double Rate = HerdTurnRateOf(G, bShaken);
+	const double Travel1 = bStep ? FMath::Clamp(Travel0 + FMath::Clamp(Want - Travel0, -Rate * Dt, Rate * Dt), 0.0, 1.0) : Travel0;
+	// Its way: set at once while it grazes (no walker faces it then), turned as it walks, and held while its walkers turn
+	// to walk or back to graze (so each of them turns the same way all through its turn). As it walks it turns by how
+	// sharply its way turned over the step (WalkKap, as the material ran it on) for how far it went ahead; how sharply it
+	// turns from here is steered toward the way it goes (as sharply as that way is turning, and more to close what is
+	// left of the gap over SteerM, or as sharply as it can still straighten out by the time it faces it if that is less),
+	// no more than MaxWalkKap a metre nor a few radians a second, and
+	// changes by no more than MaxKapRate a second: a planted hoof is carried round by how sharply its body turns now.
+	if (!S.bStarted)
+	{
+		// Come about on the move along its path alone, it faces the way its path goes now and turns as sharply as that way
+		// turns; taken off it as it comes (its fright or the crew moving it), it faces the way it goes (Going).
+		const FVector OffsetGoes = (OffsetAheadCm ? *OffsetAheadCm : OffsetCm) - OffsetCm;
+		if (Travel0 >= 1.0 && Pose.VelCmS.Size() > 10.0 && OffsetGoes.Size() < 1.0)
+		{
+			Target = AngleOf(LiftOnPlane(Pose.VelCmS));
+			const FVector Was = LiftOnPlane(PathAt(G, RadiusCm, Now - 0.5).VelCmS), Will = LiftOnPlane(PathAt(G, RadiusCm, Now + 0.5).VelCmS);
+			S.WalkKap = FMath::Clamp(FMath::UnwindRadians(AngleOf(Will) - AngleOf(Was)) / FMath::Max(Pose.VelCmS.Size() / 100.0, 0.1), -Walker::MaxWalkKap, Walker::MaxWalkKap);
+		}
+		S.Heading = Target; S.TurnHeading = Target; S.LastTurnHeading = Target;
+	}
+	else if (Travel0 <= 0.0) { if (bTarget) { S.Heading += Off; } }
+	else if (bStep && Travel0 >= 1.0)
+	{
+		// Turned on by how sharply its way turned over the step, as the material ran it on, on every step from a walk (a
+		// turn back to graze beginning on it too: its walkers are turned from where they were drawn); steered on only while
+		// it keeps walking.
+		const double AheadM = Ahead / 100.0;
+		S.Heading += S.WalkKap * AheadM;
+		if (Travel1 >= 1.0)
+		{
+			const double V = FMath::Max(AheadM / Dt, 0.1);
+			const double Left = bTarget ? FMath::UnwindRadians(Target - S.Heading) : 0.0;
+			const double Along = bTarget && S.bTargetWas && AheadM > 0.005 ? FMath::Clamp(FMath::UnwindRadians(Target - S.TargetWas) / AheadM, -Walker::MaxWalkKap, Walker::MaxWalkKap) : 0.0;
+			const double Cap = FMath::Min(Walker::MaxWalkKap, (bShaken ? 2.5 : 1.5) / V);
+			const double Close = FMath::Min(FMath::Abs(Left) / Walker::SteerM, FMath::Sqrt(2.0 * Walker::MaxKapRate * FMath::Abs(Left) / V));
+			const double Steer = FMath::Clamp(Along + FMath::Sign(Left) * Close, -Cap, Cap);
+			const double Most = Walker::MaxKapRate * Dt;
+			S.WalkKap = FMath::Clamp(S.WalkKap + FMath::Clamp(Steer - S.WalkKap, -Most, Most), -Walker::MaxWalkKap, Walker::MaxWalkKap);
+		}
+	}
+	S.TargetWas = Target;
+	S.bTargetWas = bTarget && Travel0 >= 1.0;
+	S.Heading = FMath::UnwindRadians(S.Heading);
+	// A new turn begins: what came between it and the last (the other way), so a walker's feet still down from the last are
+	// carried through the last, that and this one: to walk, the grazing clock the last stop left it at (it has grazed
+	// since by its own steps); back to graze, how far its legs have walked since it last set off. Its way through each.
+	const bool bNewTurn = Travel1 != Travel0 && (Travel0 <= 0.0 || Travel0 >= 1.0);
+	// It begins where its legs have walked to after this step's walk ahead, on the grid its turns are kept on.
+	const double NewStartM = bNewTurn ? TurnStartM(S.DistM + Ahead / 100.0) : 0.0;
+	if (bNewTurn)
+	{
+		// A walk sets off straight (no foot is carried by how sharply it turns until its walkers have turned to it).
+		if (Travel1 > Travel0) { S.SinceLastTurn = S.GrazeRef; S.WalkKap = 0.0; }
+		else { S.SinceLastTurn = FMath::Clamp(NewStartM - (S.PivotStartM + Walker::PivotM), 0.0, 1000.0); }
+		S.LastTurnHeading = S.TurnHeading;
+		S.TurnHeading = S.Heading;
+	}
+	// Its legs walked on by how far it went ahead and by its walkers' steps as they turn (PivotM a whole turn), wrapped
+	// to its loop (its last turn's start carried back with it); its grazing clock by the time it stood grazing (none on a
+	// step that sets off). Partway through a turn its legs walk its steps alone: its walkers step round where they stand
+	// (the material carries a foot put down then by the turn's steps, none of them ahead), and the turn stays begun where
+	// it began, so no foot put down about then is read as put down the other side of it. Any way its frame still goes then
+	// (the last of easing off as it turns about) its feet slide by, slower than it walks.
+	const double LoopM = FMath::Max(G.LengthCm / 100.0, 1.0);
+	const double Pivot = Walker::PivotM * FMath::Abs(Travel1 - Travel0);
+	const double WalkedM = Travel0 > 0.0 && Travel0 < 1.0 ? 0.0 : Ahead / 100.0;
+	S.DistM = bNewTurn ? NewStartM + Pivot : S.DistM + WalkedM + Pivot;
+	if (S.DistM >= LoopM)
+	{
+		const double Laps = FMath::FloorToDouble(S.DistM / LoopM);
+		S.DistM -= Laps * LoopM;
+		S.PivotStartM -= Laps * LoopM;
+	}
+	if (bStep && Travel0 <= 0.0 && Travel1 <= 0.0)
+	{
+		S.GrazeSec += Dt;
+		if (S.GrazeSec >= ClockPeriodSec)
+		{
+			S.GrazeSec -= ClockPeriodSec;
+			S.GrazeRef -= ClockPeriodSec;
+			if (S.PivotSign > 0.0) { S.SinceLastTurn -= ClockPeriodSec; }
+		}
+	}
+	// How fast its frame goes over the ground, and how fast its legs walk on until the next step: ahead, and its
+	// walkers' steps while they are still turning.
+	S.SpeedMS = bStep ? Moved / Dt / 100.0 : HerdSpeedCmS(G, Now) / 100.0;
+	S.VelCmS = bStep ? Way / Dt : FVector::ZeroVector;
+	const bool bTurning = Travel1 > 0.0 && Travel1 < 1.0;
+	S.GaitMS = bStep ? (bNewTurn ? 0.0 : WalkedM / Dt) + (bTurning ? Pivot / Dt : 0.0) : (Travel1 >= 1.0 ? S.SpeedMS : 0.0);
+	// Its latest turn: begun where its legs' walk less a whole turn's share of how far it has gone (so the share it is on
+	// the move runs on from it in step with its legs), the way it went, and the grazing clock it stood at (grazing stops
+	// while it turns); each kept within reach of now.
+	if (Travel1 != Travel0)
+	{
+		S.PivotSign = Travel1 > Travel0 ? 1.0 : -1.0;
+		S.PivotStartM = S.DistM - Walker::PivotM * (S.PivotSign > 0.0 ? Travel1 : 1.0 - Travel1);
+	}
+	if (Travel0 > 0.0 || Travel1 > 0.0) { S.GrazeRef = S.GrazeSec; }
+	S.PivotStartM = FMath::Max(S.PivotStartM, S.DistM - 1000.0);
+	S.GrazeRef = FMath::Max(S.GrazeRef, S.GrazeSec - 900.0);
+	if (S.PivotSign > 0.0) { S.SinceLastTurn = FMath::Max(S.SinceLastTurn, S.GrazeSec - 900.0); }
+	S.Travel = Travel1;
+	S.LastOffset = OffsetCm;
+	S.LastStepSec = Now;
+	S.FramePos = Pos;
+	S.FrameRot = Rot;
+	S.bStarted = true;
+	if (OutData)
+	{
+		OutData[HerdData::PivotRef] = (float)(S.PivotStartM + (S.PivotSign < 0.0 ? HerdData::PivotBack : 0.0));
+		// Through a turn to walk and the walk after it, its grazing clock stands in slot 11: slot 2 is the clock the stop
+		// before left it at; through a turn back to graze, how far it walked between; after it, its clock through it.
+		OutData[HerdData::GrazeRef] = (float)(S.PivotSign > 0.0 || S.Travel > 0.0 ? S.SinceLastTurn : S.GrazeRef);
+		OutData[HerdData::WalkKap] = (float)S.WalkKap;
+		OutData[HerdData::TurnHeading] = HerdData::PackTurns(S.LastTurnHeading, S.TurnHeading);
+		OutData[HerdData::Heading] = (float)S.Heading;
+		OutData[HerdData::SpeedMS] = (float)S.GaitMS;
+		OutData[HerdData::DistM] = (float)S.DistM;
+		OutData[HerdData::GrazeSec] = (float)S.GrazeSec;
+		OutData[HerdData::ClockT0] = OnMaterialClock(Now, ClockOffsetSec);
+		OutData[HerdData::Travel] = (float)S.Travel;
+		for (int32 M = 0; M < HerdData::GroundNodes; ++M) { OutData[HerdData::Ground0 + M] = S.Ground.Node[M]; }
+		OutData[HerdData::GroundHalfCm] = (float)S.Ground.HalfCm;
+	}
+}
+
+namespace
+{
+	/** The walker's grazing round its circle and its walk with the herd, as the material reckons them (fauna_material.py's
+	 *  walker branch): its yaw in its herd's frame, its strides walked, how fast it walks, m/s, its herd's share on the
+	 *  move, where on its circle it stands from its instance, frame cm; and the ways its body has gone lately, as its
+	 *  feet take them: the turn before the latest (P0), what came between (grazing before a turn to walk, walking before
+	 *  one back to graze), the latest turn (P1) and what came after it, each a stride of it so far ahead (metres) and round
+	 *  (radians); how many of its strides ago each of them ended (Ago: the latest turn's end (negative while it runs), its
+	 *  start, the turn before's end, its start) and its strides walked at each of those moments (At). */
+	struct FWalkerPace
+	{
+		float Yaw = 0.f, Strides = 0.f, SpeedMS = 0.f, Travel = 0.f, Gait = 0.f;
+		FVector2f Circle = FVector2f::ZeroVector;
+		float Ago[4] = {}, At[4] = {};
+		float StepAhead[4] = {}, StepRound[4] = {};
+		bool bBetween = false;
+	};
+	/** A grazing clock's steps round a walker's circle: its stair of whole strides, each step coming in and going
+	 *  smoothly. */
+	float GrazeStair(float Graze, float Ps, float Of)
+	{
+		const float U = Graze / Ps + Of;
+		const float Q = FMath::Clamp((FracF(U) - 0.15f) / 0.35f, 0.f, 1.f);
+		return FMath::FloorToFloat(U) + Q * Q * (3.f - 2.f * Q);
+	}
+	FWalkerPace WalkerPace(float T, const float* C, const float* Gd)
+	{
+		using namespace SlonkFauna;
+		FWalkerPace W;
+		const float Ls = FMath::Max(C[Custom::RateHz], 0.05f);
+		const float Rho = C[Custom::PerKind];
+		const float ARho = FMath::Clamp(FMath::Abs(Rho), 0.01f, (float)Walker::MaxCircleM);
+		const float Sgn = Rho < 0.f ? -1.f : 1.f;
+		const float Seed = C[Custom::Seed];
+		const float PivotM = (float)Walker::PivotM;
+		const float Age = FMath::Fmod(T - Gd[HerdData::ClockT0] + 7201.f, 3600.f) - 1.f;
+		const float Gait = FMath::Max(Gd[HerdData::SpeedMS], 0.f);
+		const float Dist = Gd[HerdData::DistM] + Gait * Age;
+		const float Travel0 = FMath::Clamp(Gd[HerdData::Travel], 0.f, 1.f);
+		// The latest turn: which way it went, where it began.
+		const float PKind = FMath::FloorToFloat((Gd[HerdData::PivotRef] + 0.5f * (float)HerdData::PivotBack) / (float)HerdData::PivotBack);
+		const float PSgn = FMath::Fmod(PKind, 2.f) > 0.5f ? -1.f : 1.f;
+		const float PStart = Gd[HerdData::PivotRef] - PKind * (float)HerdData::PivotBack;
+		const float Travel = Travel0 > 0.f && Travel0 < 1.f ? FMath::Clamp(Travel0 + PSgn * Gait * Age / PivotM, 0.f, 1.f) : Travel0;
+		const float Graze = Gd[HerdData::GrazeSec] + (Travel0 <= 0.f ? Age : 0.f);
+		const float K = FMath::Max(FMath::RoundToFloat(6.2831853f * ARho / Ls), 1.f);
+		const float Pw = 18.f + 16.f * FracF(Seed * 5.17f);
+		const float N = FMath::Max(FMath::RoundToFloat(3600.f / (K * Pw)), 1.f);
+		const float Ps = 3600.f / (N * K);
+		const float Of = FracF(Seed * 3.31f);
+		const float Stair = GrazeStair(Graze, Ps, Of);
+		const float T1 = FMath::Clamp((FracF(Graze / Ps + Of) - 0.15f) / 0.35f, 0.f, 1.f);
+		auto YawAt = [&](float St) { return 6.2831853f * (C[Custom::Phase] + Sgn * St / K) + Sgn * 1.5707963f; };
+		auto Wrap = [](float A) { return A - 6.2831853f * FMath::RoundToFloat(A / 6.2831853f); };
+		const float Th = 6.2831853f * (C[Custom::Phase] + Sgn * Stair / K);
+		W.Circle = FVector2f(FMath::Cos(Th), FMath::Sin(Th)) * (ARho * 100.f);
+		const float YawC = YawAt(Stair);
+		// Its ways through the latest turn and the one before, each to the turn's step (HerdData::PackTurns).
+		const float Steps = (float)HerdData::TurnSteps;
+		const float QLast = FMath::FloorToFloat((Gd[HerdData::TurnHeading] + 0.5f) / Steps);
+		const float Way1 = (Gd[HerdData::TurnHeading] - QLast * Steps) * (6.2831853f / Steps), Way0 = QLast * (6.2831853f / Steps);
+		// The grazing clock through the latest turn (it grazes no more till it stands grazing again: slot 11 while any of
+		// it is on the move, after a turn back to graze slot 2), so where it stood on its circle then; how far it turned.
+		const float StairRef = GrazeStair(Travel0 > 0.f ? Gd[HerdData::GrazeSec] : Gd[HerdData::GrazeRef], Ps, Of);
+		const float Dyp = Wrap(Way1 - YawAt(StairRef));
+		// Turned the way the herd walks by its share on the move; through a turn by the turn as its feet take it (Dyp: its
+		// stair then is the one it stands on now), so body and feet go the same way round however near a half turn it is.
+		const float Hd = Gd[HerdData::Heading] + (Travel0 >= 1.f ? Gd[HerdData::WalkKap] * Gait * Age : 0.f);
+		W.Yaw = YawC + Travel * (Travel0 > 0.f && Travel0 < 1.f ? Dyp : Wrap(Hd - YawC));
+		W.Strides = Stair + Dist / Ls;
+		W.SpeedMS = Gait + (Travel0 <= 0.f ? Ls * (6.f * T1 * (1.f - T1) / 0.35f) / Ps : 0.f);
+		W.Travel = Travel;
+		W.Gait = Gait;
+		// The turn before, the other way, and what came between: before a turn to walk, the last stop (from the herd's way
+		// then back to where it stood grazing at the clock it left it at) and its own steps grazing since; before one back
+		// to graze, the last set-off (from its circle's way to the herd's) and the herd's walk since (none once it grazes
+		// again: by then no foot is still down from it).
+		float Between = 0.f, AtLastEnd = 0.f, Dy0 = 0.f;
+		if (PSgn > 0.f)
+		{
+			const float StairOld = GrazeStair(Gd[HerdData::GrazeRef], Ps, Of);
+			Between = StairRef - StairOld;
+			AtLastEnd = StairOld + PStart / Ls;
+			Dy0 = -Wrap(Way0 - YawAt(StairOld));
+		}
+		else
+		{
+			const float WalkedM = Travel0 > 0.f ? Gd[HerdData::GrazeRef] : 1000.f;
+			Between = WalkedM / Ls;
+			AtLastEnd = StairRef + (PStart - WalkedM) / Ls;
+			Dy0 = Wrap(Way0 - YawAt(StairRef));
+		}
+		W.Ago[0] = (Dist - PStart - PivotM) / Ls + (Stair - StairRef);
+		W.Ago[1] = W.Ago[0] + PivotM / Ls;
+		W.Ago[2] = W.Ago[1] + Between;
+		W.Ago[3] = W.Ago[2] + PivotM / Ls;
+		W.At[1] = StairRef + PStart / Ls;
+		W.At[0] = W.At[1] + PivotM / Ls;
+		W.At[2] = AtLastEnd;
+		W.At[3] = AtLastEnd - PivotM / Ls;
+		W.bBetween = Between > 1e-4f;
+		// The ways: the turn before (stepping round where it stands), what came between, the latest turn, what came after
+		// (grazing round its circle, walking with the herd as its way turns).
+		const float Graz = Sgn * Ls / ARho, Walk = Gd[HerdData::WalkKap] * Ls;
+		W.StepAhead[0] = 0.f; W.StepAhead[1] = Ls; W.StepAhead[2] = 0.f; W.StepAhead[3] = Ls;
+		W.StepRound[0] = Dy0 * Ls / PivotM;
+		W.StepRound[1] = PSgn > 0.f ? Graz : Walk;
+		W.StepRound[2] = PSgn * Dyp * Ls / PivotM;
+		W.StepRound[3] = PSgn > 0.f ? Walk : Graz;
+		return W;
+	}
+
+	/** A point in a walker's body's frame (unit-mesh cm, xy) carried back by N of its strides of a way its body goes,
+	 *  each stride Ahead metres ahead and Round radians round: turned back by the turn and moved back by the way (a chord
+	 *  of its arc), as a foot planted on the ground is seen from the body going on over it. */
+	FVector2f MoveBack(const FVector2f& Q, float N, float Ahead, float Round, float Size)
+	{
+		const float A = Round * N;
+		const float Ca = FMath::Cos(A), Sa = FMath::Sin(A);
+		const FVector2f Ch = FMath::Abs(Round) < 1e-4f ? FVector2f(-Ahead * N, 0.5f * Ahead * N * A) : FVector2f(-Sa, 1.f - Ca) * (Ahead / Round);
+		return FVector2f(Q.X * Ca + Q.Y * Sa, -Q.X * Sa + Q.Y * Ca) + Ch * (100.f / Size);
+	}
+
+	/** Whether a foot of a leg's place in the gait, Lp of its walker's strides since it was put down, was put down before
+	 *  the moment Ago strides back (its strides walked then At): known by its phase then (Lp less Ago is that phase, not
+	 *  a stride less), however its strides are rounded, so a foot put down just as a turn began is so put down for good. */
+	bool DownBefore(float Lp, float Ago, float At, float Leg)
+	{
+		return FMath::RoundToFloat(Lp - Ago - FracF(At - Leg)) >= 0.f;
+	}
+
+	/** Where a foot put down is in its body's frame (unit-mesh cm, xy), Lp of its strides after it was put down and Shift
+	 *  strides ago (now for a planted foot; for one in the air, when it lifted): put down half a stance ahead of where it
+	 *  stands at its stance's middle (Vertex: its own place) by the way its body was then going, then carried back by each
+	 *  way its body has gone since, the vertex turned back by the body's turn and moved back by its way, a chord of its
+	 *  arc. */
+	FVector2f PlantedAt(const FWalkerPace& W, const FVector2f& Vertex, float Lp, float Shift, float Size, float Leg)
+	{
+		float B[4];
+		for (int32 i = 0; i < 4; ++i) { B[i] = W.Ago[i] - Shift; }
+		// How much of each way since it was put down: the turn before, between, the latest turn, after.
+		const float Am[4] = { FMath::Max(FMath::Min(Lp, B[3]) - FMath::Max(B[2], 0.f), 0.f), FMath::Max(FMath::Min(Lp, B[2]) - FMath::Max(B[1], 0.f), 0.f),
+			FMath::Max(FMath::Min(Lp, B[1]) - FMath::Max(B[0], 0.f), 0.f), FMath::Clamp(B[0], 0.f, Lp) };
+		const int32 Td = DownBefore(Lp, B[2], W.At[2], Leg) ? 0 : (DownBefore(Lp, B[1], W.At[1], Leg) ? 1 : (DownBefore(Lp, B[0], W.At[0], Leg) ? 2 : 3));
+		FVector2f Q = MoveBack(Vertex, -0.5f * SlonkFauna::Walker::Duty, W.StepAhead[Td], W.StepRound[Td], Size);
+		for (int32 i = 0; i < 4; ++i) { Q = MoveBack(Q, Am[i], W.StepAhead[i], W.StepRound[i], Size); }
+		return Q;
+	}
+}
+
+float SlonkFauna::WalkerYaw(float T, const float* Custom, const float* Group) { return WalkerPace(T, Custom, Group).Yaw; }
+float SlonkFauna::WalkerStrides(float T, const float* Custom, const float* Group) { return WalkerPace(T, Custom, Group).Strides; }
+float SlonkFauna::WalkerSpeedMS(float T, const float* Custom, const float* Group) { return WalkerPace(T, Custom, Group).SpeedMS; }
+
+FVector3f SlonkFauna::WalkerMotion(const FVector3f& LP, const FVector3f& LPP, const FLinearColor& VC, float T, const float* C, const float* Gd, float DistCm, float PxPerRad)
+{
+	// fauna_material.py's walker branch, line for line.
+	const FWalkerPace W = WalkerPace(T, C, Gd);
+	const float S = FMath::Max(C[Custom::SizeM], 0.1f);
+	const float Seed = C[Custom::Seed];
+	// Its head: down in the grass as it grazes, looking up now and then (a whole number of times an hour); carried as it
+	// walks, a little higher at a trot; up and alert while it is frightened.
+	const float PanicAge = FMath::Fmod(T - Gd[HerdData::PanicT0] + 7201.f, 3600.f) - 1.f;
+	const float OnsetAge = FMath::Fmod(T - Gd[HerdData::OnsetT0] + 7201.f, 3600.f) - 1.f;
+	const float Live = Gd[HerdData::Startled] > 0.5f ? 1.f : 0.f;
+	const float Alarm = Live * FMath::Clamp((1.f - SmoothStepF(20.f, 120.f, PanicAge)) * 3.f, 0.f, 1.f) * SmoothStepF(0.f, 0.3f, OnsetAge);
+	const float Nl = 60.f + FMath::FloorToFloat(FracF(Seed * 9.13f) * 90.f);
+	const float Lc = FracF(T * (Nl / 3600.f) + Seed * 7.7f);
+	const float Look = SmoothStepF(0.f, 0.03f, Lc) * (1.f - SmoothStepF(0.09f, 0.12f, Lc));
+	const float GrazeP = FMath::Lerp(Walker::GrazePitch, -0.35f, Look);
+	const float WalkP = FMath::Lerp(Walker::WalkPitch, Walker::TrotPitch, SmoothStepF(1.5f, 2.5f, W.Travel >= 1.f ? W.Gait : 0.f));
+	float Pitch = FMath::Lerp(GrazeP, WalkP, W.Travel);
+	Pitch = FMath::Lerp(Pitch, Walker::AlarmPitch, Alarm);
+	FVector3f P = LP;
+	const float Va = VC.A;
+	if (Va > 0.65f && Va < 0.85f)
+	{
+		// A leg, sheared from its hip: its foot planted where it was put down for Duty of each stride while the body goes
+		// on over it (walking, grazing round its circle, stepping round where it stands as the herd turns to walk or back
+		// to graze), then swung forward to where it will next be put down, lifted the more the faster it walks.
+		const float Lp = FracF(W.Strides - VC.B);
+		const bool bSwing = Lp >= Walker::Duty;
+		// The stance it is in, or for a foot in the air the one it lifted from, as it was then.
+		const float Sh = bSwing ? Lp - Walker::Duty : 0.f;
+		const FVector2f V(LP.X, LP.Y);
+		FVector2f Foot = PlantedAt(W, V, Lp - Sh, Sh, S, VC.B) - V;
+		float Zf = 0.f;
+		if (bSwing)
+		{
+			// Swung forward to where it will be put down: half a stance ahead of its place, as the way its body will then
+			// be going moves it (through the turn or after it, as the turn's end falls before or after); and, the turn
+			// having begun while it was in the air, from where it was to be put down before, its aim moving over as it
+			// comes down.
+			const float Q = Sh / (1.f - Walker::Duty);
+			const float Sq = Q * Q * (3.f - 2.f * Q);
+			const float AtStart = FracF(W.At[1] - VC.B);
+			// Put down next (1 less Lp strides on) before the latest turn's end, or after it.
+			const int32 New = DownBefore(Lp - 1.f, W.Ago[0], W.At[0], VC.B) ? 2 : 3;
+			const bool bLiftedFirst = DownBefore(Lp, W.Ago[1], W.At[1], VC.B) && AtStart >= Walker::Duty;
+			const int32 Old = bLiftedFirst ? (W.bBetween ? 1 : 0) : New;
+			const FVector2f AimOld = MoveBack(V, -0.5f * Walker::Duty, W.StepAhead[Old], W.StepRound[Old], S) - V;
+			const FVector2f AimNew = MoveBack(V, -0.5f * Walker::Duty, W.StepAhead[New], W.StepRound[New], S) - V;
+			const float Qb = FMath::Clamp((AtStart - Walker::Duty) / (1.f - Walker::Duty), 0.f, 1.f);
+			const float H = bLiftedFirst ? FMath::Clamp((Q - Qb) / FMath::Max(1.f - Qb, 1e-3f), 0.f, 1.f) : 1.f;
+			Foot = FMath::Lerp(Foot, FMath::Lerp(AimOld, AimNew, H * H * (3.f - 2.f * H)), Sq);
+			Zf = Walker::LiftCm * FMath::Sin(3.14159265f * Q) * SmoothStepF(0.03f, 0.25f, W.SpeedMS);
+		}
+		P.X += Foot.X * VC.G;
+		P.Y += Foot.Y * VC.G;
+		P.Z += Zf * VC.G;
+	}
+	else if (Va > 0.3f && Va < 0.45f)
+	{
+		// The neck and head, turned about the neck's root, the root itself held to the body.
+		const float A = Pitch * SmoothStepF(0.f, 0.3f, VC.G);
+		const float Rx = P.X - Walker::NeckRootX, Rz = P.Z - Walker::NeckRootZ;
+		const float Ca = FMath::Cos(A), Sa = FMath::Sin(A);
+		P.X = Walker::NeckRootX + Rx * Ca - Rz * Sa;
+		P.Z = Walker::NeckRootZ + Rx * Sa + Rz * Ca;
+	}
+	else if (Va > 0.15f && Va < 0.35f)
+	{
+		// The tail swishes, a whole number of times an hour.
+		const float Nt = 400.f + FMath::FloorToFloat(FracF(Seed * 2.71f) * 500.f);
+		P.Y += VC.G * 10.f * FMath::Sin(6.2831853f * FracF(T * (Nt / 3600.f) + Seed * 1.9f));
+	}
+	// The speck floor: no shorter than SpeckPx far off, at most SpeckMax times its size, grown from its feet.
+	const float Px = S * 100.f * PxPerRad / FMath::Max(DistCm, 1.f);
+	const float Kf = FMath::Clamp(Walker::SpeckPx / FMath::Max(Px, 0.001f), 1.f, Walker::SpeckMax);
+	P *= Kf;
+	// Turned the way it faces, and set where it stands on its grazing circle.
+	const float Cy = FMath::Cos(W.Yaw), Sy = FMath::Sin(W.Yaw);
+	P = FVector3f(P.X * Cy - P.Y * Sy, P.X * Sy + P.Y * Cy, P.Z);
+	P.X += W.Circle.X / S;
+	P.Y += W.Circle.Y / S;
+	// On the drawn ground under each vertex, over its herd's plane.
+	const float HomeX = LPP.X - S * LP.X, HomeY = LPP.Y - S * LP.Y;
+	P.Z += HerdGroundAt(Gd, HomeX + S * P.X, HomeY + S * P.Y) / S;
 	return P - LP;
 }
 

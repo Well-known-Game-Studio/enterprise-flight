@@ -2332,7 +2332,11 @@ void AStarshipPawn::ProcessDebugCommand()
 		// the animals the look of another strangeness; cells lists the groups of the last scan of the cells round you.
 		// fauna goto <kind> <alt m> [night]: park over the nearest group of the kind (searched from the middle of the
 		// night side with night), on its path 1.6 times its kind's scare radius ahead of it (400 m for a flock), out of
-		// the reach of its fright until it comes, facing it as it comes, the ground followed at that height.
+		// the reach of its fright until it comes, facing it as it comes, the ground followed at that height. A herd walks
+		// too slowly to wait for: the ship parks off to the side of where it is now (off its path if a fright or the crew
+		// has taken it there), out from the loop's middle, 1.6 times its scare radius off (240 m) when lower than its scare
+		// altitude and else half its height off (at least 80 m), so the craft does not startle it, facing it, the herd
+		// below and ahead for the chase camera.
 		// fauna goto mote <alt m> [night|dusk|day]: park over the densest mote country near (wet, level ground along a forest's
 		// edge, where the fireflies are thickest), searched from under the ship, from the middle of the night side with
 		// night, from the dusk side of the terminator nearest the ship with dusk (the sun 8 degrees down), or on the ship's
@@ -2360,7 +2364,8 @@ void AStarshipPawn::ProcessDebugCommand()
 		{
 			// fauna watch [distance m] [low] | fauna watch off: the view follows the drawn flock nearest the camera from that
 			// far behind and to one side of it (40 m), a little above it, or below it with low (the birds against the sky),
-			// as it flies, through a camera of its own; off gives the view back.
+			// as it flies, through a camera of its own; off gives the view back. A herd from behind and to one side of the way
+			// it walks (120 m unless asked), a third of that over the ground, or from where someone would stand with low.
 			APlayerController* PC = Cast<APlayerController>(GetController());
 			if (!PC) { PC = GetWorld()->GetFirstPlayerController(); }
 			if (ArgStr(2) == TEXT("off"))
@@ -2371,20 +2376,22 @@ void AStarshipPawn::ProcessDebugCommand()
 			}
 			else
 			{
-				FaunaWatchDistCm = FMath::Max(Arg(2, 40.f), 2.f) * 100.0;
-				bFaunaWatchLow = ArgStr(3) == TEXT("low");
+				bFaunaWatchLow = ArgStr(3) == TEXT("low") || ArgStr(2) == TEXT("low");
 				FVector View = GetActorLocation(); FRotator ViewRot;
 				if (PC) { PC->GetPlayerViewPoint(View, ViewRot); }
 				FaunaWatchId = F->NearestDrawnGroup(View);
+				const bool bGivenDist = Args.IsValidIndex(2) && ArgStr(2) != TEXT("low");
+				const float DefaultDist = FaunaWatchId && F->GetDrawnGroupKind(FaunaWatchId) == EFaunaKind::Herd ? 120.f : 40.f;
+				FaunaWatchDistCm = FMath::Max(bGivenDist ? Arg(2, DefaultDist) : DefaultDist, 2.f) * 100.0;
 				FVector Pos; FQuat Rot;
 				if (FaunaWatchId && F->GetDrawnGroupPose(FaunaWatchId, Pos, Rot))
 				{
 					if (!FaunaWatchCamera) { FaunaWatchCamera = GetWorld()->SpawnActor<ACameraActor>(); }
 					TickFaunaWatch();
 					if (PC && FaunaWatchCamera) { PC->SetViewTarget(FaunaWatchCamera); }
-					UE_LOG(LogTemp, Log, TEXT("Fauna watch: the flock %016llx, %.0f m from the view, followed from %.0f m"), FaunaWatchId, FVector::Dist(Pos, View) / 100.0, FaunaWatchDistCm / 100.0);
+					UE_LOG(LogTemp, Log, TEXT("Fauna watch: the %s %016llx, %.0f m from the view, followed from %.0f m%s"), F->GetDrawnGroupKind(FaunaWatchId) == EFaunaKind::Herd ? TEXT("herd") : TEXT("flock"), FaunaWatchId, FVector::Dist(Pos, View) / 100.0, FaunaWatchDistCm / 100.0, bFaunaWatchLow ? TEXT(" (low)") : TEXT(""));
 				}
-				else { FaunaWatchId = 0; UE_LOG(LogTemp, Log, TEXT("Fauna watch: no flock drawn")); }
+				else { FaunaWatchId = 0; UE_LOG(LogTemp, Log, TEXT("Fauna watch: no flock or herd drawn")); }
 			}
 		}
 		else if (Mode == TEXT("only"))
@@ -2420,6 +2427,42 @@ void AStarshipPawn::ProcessDebugCommand()
 			F->DescribeCells(Lines);
 			UE_LOG(LogTemp, Log, TEXT("Fauna groups of the last scan on %s: %d"), *Planet->GetDisplayName(), Lines.Num());
 			for (const FString& L : Lines) { UE_LOG(LogTemp, Log, TEXT("  %s"), *L); }
+		}
+		else if (Mode == TEXT("habitat") && Planet->Terrain)
+		{
+			// fauna habitat [km]: the ground within that far of the point under the ship (50 km), as the herds read it: how
+			// much is water, how much of the land is their grass (and their strict grass, which a herd's middle needs), and
+			// what keeps the rest from it, with the land's spread of level, wet and wooded.
+			const double ReachCm = FMath::Max(Arg(2, 50.f), 1.f) * 1.0e5;
+			const FPlanetTerrainParams& TP = Planet->Terrain->GetParams();
+			const FVector From = Planet->Terrain->GetComponentTransform().InverseTransformPositionNoScale(GetActorLocation()).GetSafeNormal();
+			const FVector E = FVector::CrossProduct(FMath::Abs(From.Z) < 0.95 ? FVector::ZAxisVector : FVector::XAxisVector, From).GetSafeNormal();
+			const FVector N = FVector::CrossProduct(From, E);
+			const int32 Count = 3000;
+			int32 Water = 0, Land = 0, Grass = 0, Strict = 0, NotFlat = 0, TooDry = 0, TooWet = 0, Wooded = 0, Iced = 0;
+			int32 FlatBins[5] = {}, WetBins[5] = {}, WoodBins[5] = {};
+			for (int32 i = 0; i < Count; ++i)
+			{
+				const double Rr = ReachCm * FMath::Sqrt((i + 0.5) / Count), A = i * UE_DOUBLE_PI * (3.0 - FMath::Sqrt(5.0));
+				const FVector Dir = (From + (E * FMath::Cos(A) + N * FMath::Sin(A)) * (Rr / TP.RadiusCm)).GetSafeNormal();
+				const SlonkScatter::FHabitat H = SlonkScatter::HabitatAt(TP, Dir);
+				if (H.bWater) { ++Water; continue; }
+				++Land;
+				Grass += SlonkFauna::HerdGrass(H, false) ? 1 : 0;
+				Strict += SlonkFauna::HerdGrass(H, true) ? 1 : 0;
+				NotFlat += H.Flat <= 0.85 ? 1 : 0;
+				TooDry += H.Wet < 0.2 ? 1 : 0;
+				TooWet += H.Wet > 0.6 ? 1 : 0;
+				Wooded += H.Forest >= 0.3 ? 1 : 0;
+				Iced += (H.Ice > 0.2 || H.Alpine > 0.7) ? 1 : 0;
+				++FlatBins[FMath::Clamp((int32)(H.Flat * 5.0), 0, 4)];
+				++WetBins[FMath::Clamp((int32)(H.Wet * 5.0), 0, 4)];
+				++WoodBins[FMath::Clamp((int32)(H.Forest * 5.0), 0, 4)];
+			}
+			auto Pct = [Land](int32 V) { return Land > 0 ? 100.0 * V / Land : 0.0; };
+			auto Bins = [&](const int32* B) { return FString::Printf(TEXT("%.0f/%.0f/%.0f/%.0f/%.0f%%"), Pct(B[0]), Pct(B[1]), Pct(B[2]), Pct(B[3]), Pct(B[4])); };
+			UE_LOG(LogTemp, Log, TEXT("Fauna habitat within %.0f km on %s: %.0f%% water; of the land, %.1f%% herd grass, %.1f%% strict (a herd's middle); not level %.0f%%, too dry %.0f%%, too wet %.0f%%, wooded %.0f%%, ice or alpine %.0f%%; level by fifths %s, wet %s, wooded %s"),
+				ReachCm / 1e5, *Planet->GetDisplayName(), 100.0 * Water / Count, Pct(Grass), Pct(Strict), Pct(NotFlat), Pct(TooDry), Pct(TooWet), Pct(Wooded), Pct(Iced), *Bins(FlatBins), *Bins(WetBins), *Bins(WoodBins));
 		}
 		else if (Mode == TEXT("goto") && Movement && Planet->Terrain)
 		{
@@ -2496,11 +2539,56 @@ void AStarshipPawn::ProcessDebugCommand()
 				const FTransform& TT = Planet->Terrain->GetComponentTransform();
 				const FVector SunLocal = TT.InverseTransformVectorNoScale(Planet->GetStarDirection()).GetSafeNormal();
 				const FVector From = bNight ? -SunLocal : TT.InverseTransformPositionNoScale(GetActorLocation()).GetSafeNormal();
-				const SlonkFauna::FFaunaWorld W = F->MakeFaunaWorld();
-				// Close by first (20 km, every cell), then further and coarser (400 km).
+				SlonkFauna::FFaunaWorld W = F->MakeFaunaWorld();
+				// The kind asked for is looked for whether or not it can be drawn yet (the line says so).
+				W.KindMask |= SlonkFauna::KindBit(Kind);
+				// Every cell ring by ring outward, nearest first (every one within 20 km, and on out to 400 km), until none
+				// further out could hold a nearer group than one found: at most 120,000 of the herds' 2 km cells (out to about
+				// 390 km), 20,000 of the fliers' (about 95 km: their habitat takes longer to read, and they are common).
 				SlonkFauna::FFaunaGroup G;
-				const bool bFound = SlonkFauna::FindGroupNear(W, Kind, From, 2.0e6, 1200, G) || SlonkFauna::FindGroupNear(W, Kind, From, 4.0e7, 4000, G);
-				if (!bFound) { UE_LOG(LogTemp, Log, TEXT("Fauna goto: no %s group found on %s"), SlonkFauna::KindName(Kind), *Planet->GetDisplayName()); }
+				SlonkFauna::FGroupSearch Search;
+				const bool bFound = SlonkFauna::FindGroupNear(W, Kind, From, 4.0e7, Kind == EFaunaKind::Herd ? 120000 : 20000, G, &Search);
+				UE_LOG(LogTemp, Log, TEXT("Fauna goto %s: looked at %d cells, every one within %.1f km of the search's start, on %s"), SlonkFauna::KindName(Kind), Search.Cells,
+					Search.ReachCm / 1e5, *Planet->GetDisplayName());
+				if (!bFound) { UE_LOG(LogTemp, Log, TEXT("Fauna goto: no %s group found within %.1f km on %s"), SlonkFauna::KindName(Kind), Search.ReachCm / 1e5, *Planet->GetDisplayName()); }
+				else if (Kind == EFaunaKind::Herd)
+				{
+					const double R = W.P.RadiusCm;
+					const double Now = F->ClockSeconds();
+					const SlonkFauna::FFaunaKindDesc& HD = SlonkFauna::KindDesc(Kind);
+					// Where it is now: its frame on the ground if it is drawn (off its path by a fright or the crew), else its path's
+					// place off by any fright it is still in.
+					const FVector HerePos = F->HerdPlaceNow(G);
+					// Off to the side of its loop, out from the loop's middle (its path runs across that way), out of its fright's
+					// reach: below its scare altitude its scare radius and more off, above it a little out from under it.
+					const FVector UpH = HerePos.GetSafeNormal();
+					FVector Out = HerePos - G.Centre * R;
+					Out = (Out - UpH * FVector::DotProduct(Out, UpH)).GetSafeNormal();
+					if (Out.IsNearlyZero()) { Out = (G.East - UpH * FVector::DotProduct(G.East, UpH)).GetSafeNormal(); }
+					const double SideCm = AltCm < HD.ScareAltitudeCm * 1.2 ? 1.6 * HD.ScareRadiusCm : FMath::Max(0.5 * AltCm, 8000.0);
+					const FVector UpL = (HerePos + Out * SideCm).GetSafeNormal();
+					const double Ground = FMath::Max(Planet->Terrain->SurfaceHeightAtWorld(TT.TransformPositionNoScale(UpL * R)), 0.0);
+					const FVector PosL = UpL * (R + Ground + AltCm);
+					const FVector Pos = TT.TransformPositionNoScale(PosL);
+					const FVector Up = TT.TransformVectorNoScale(UpL);
+					FVector Fwd = TT.TransformVectorNoScale(HerePos - PosL);
+					Fwd = (Fwd - Up * FVector::DotProduct(Fwd, Up)).GetSafeNormal();
+					if (Fwd.IsNearlyZero()) { Fwd = FVector::CrossProduct(Up, FVector::ZAxisVector).GetSafeNormal(); }
+					Movement->SetThrottle(0.0); Movement->Velocity = FVector::ZeroVector; Movement->AngularVelocity = FRotator::ZeroRotator;
+					SetActorLocationAndRotation(Pos, FRotationMatrix::MakeFromXZ(Fwd, Up).ToQuat(), false, nullptr, ETeleportType::TeleportPhysics);
+					Movement->SetTerrainFollow(AltCm);
+					static const IConsoleVariable* HoldSpin = IConsoleManager::Get().FindConsoleVariable(TEXT("slonk.Planet.HoldSpin"));
+					if (HoldSpin && HoldSpin->GetInt() == 0) { UE_LOG(LogTemp, Log, TEXT("Fauna goto herd: the world turns under the ship (slonk.Planet.HoldSpin 0); the ship rides the ground with it")); }
+					const double Speed = SlonkFauna::HerdSpeedCmS(G, Now) / 100.0;
+					const double U = FMath::Fmod(FMath::Fmod(Now, SlonkFauna::ClockPeriodSec) + SlonkFauna::ClockPeriodSec, SlonkFauna::ClockPeriodSec);
+					const double InCycle = FMath::Fmod(U, G.CycleSec);
+					const double ToWalk = InCycle < G.WalkA ? G.WalkA - InCycle : G.CycleSec - InCycle + G.WalkA;
+					UE_LOG(LogTemp, Log, TEXT("Fauna goto herd on %s: %d walkers of %.1f m (%016llx) %.1f km from the search's start, %s (%.1f m/s; it next sets off in %.0f s, trots %.0f s of each %.0f s); parked %.0f m off its side (%.0f m from it, its scare radius %.0f m below %.0f m), %.0f m up, facing it (nose.sun %.2f)%s"),
+						*Planet->GetDisplayName(), G.Members, G.SpanM, G.Id, FVector::Dist(G.Centre, From) * R / 1e5, Speed > 1.8 ? TEXT("trotting") : (Speed > 0.05 ? TEXT("walking") : TEXT("grazing")),
+						Speed, ToWalk, G.TrotB - G.TrotA, G.CycleSec, SideCm / 100.0, FVector::Dist(HerePos, PosL) / 100.0, HD.ScareRadiusCm / 100.0, HD.ScareAltitudeCm / 100.0,
+						AltCm / 100.0, FVector::DotProduct(Fwd, Planet->GetStarDirection()),
+						F->CanDrawHerds() ? TEXT("") : TEXT("; M_Fauna has no walker branch yet, so none is drawn"));
+				}
 				else
 				{
 					const double R = W.P.RadiusCm;
@@ -2912,7 +3000,7 @@ void AStarshipPawn::ProcessDebugCommand()
 			TEXT("ship camera [chase|bridge|cinematic|front|port|starboard|top|bottom] | zoom <x> | look <yaw> <pitch> [s]"),
 			TEXT("ship warpvis [classic|real] | cscale <0..1> | systems | shipwarp [km] [far]"),
 			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mesa|badlands|cliffs|city|mountain|coast|river|linea|green|land|substellar|ring|nightcap> <alt m> [across|sun|away|along|uphill|giant] [night] | terrain rocks [on|off|density <x>|check]"),
-			TEXT("ship fauna [status|on|off|density <x>|only <flier|herd|mote|leaper|floater|all>|startle|time <s>|strange <0..1>|cells] | fauna goto <kind> <alt m> [night] | fauna goto mote <alt m> [night|dusk|day] | fauna watch [m] [low|off]  (the animals of the world below)"),
+			TEXT("ship fauna [status|on|off|density <x>|only <flier|herd|mote|leaper|floater|all>|startle|time <s>|strange <0..1>|cells|habitat [km]] | fauna goto <flier|herd> <alt m> [night] | fauna goto mote <alt m> [night|dusk|day] | fauna watch [m] [low|off]  (the animals of the world below: flocks, herds, motes)"),
 			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km] [hazy] [strange <0..1>] [seed <n>] [locked] | people [none|stone|iron|industrial|modern|starfaring] [organic] [cliff]"),
 			TEXT("ship shuttle  (launch the shuttlecraft; aboard it, dock when the bay is within 500 m) | ship takeoff"),
 			TEXT("ship scan [stop]  (sensors on the locked / nav target; landed: survey the ground) | ship science [reset]"),
@@ -4320,7 +4408,16 @@ void AStarshipPawn::TickFaunaWatch()
 	}
 	const FVector Fwd = Rot.GetForwardVector(), Up = (Pos - Planet->GetActorLocation()).GetSafeNormal();
 	const FVector Side = FVector::CrossProduct(Up, Fwd).GetSafeNormal();
-	const FVector Cam = Pos - Fwd * FaunaWatchDistCm + Side * (FaunaWatchDistCm * 0.6) + Up * (FaunaWatchDistCm * (bFaunaWatchLow ? -0.25 : 0.2));
+	FVector Cam = Pos - Fwd * FaunaWatchDistCm + Side * (FaunaWatchDistCm * 0.6) + Up * (FaunaWatchDistCm * (bFaunaWatchLow ? -0.25 : 0.2));
+	if (F->GetDrawnGroupKind(FaunaWatchId) == EFaunaKind::Herd && Planet->Terrain)
+	{
+		// A herd from a third of the distance over the drawn ground there, or from a walker's eye height with low (as
+		// someone on foot would see it).
+		const FVector Centre = Planet->GetActorLocation();
+		const FVector Flat = Pos - Fwd * FaunaWatchDistCm + Side * (FaunaWatchDistCm * 0.6);
+		const double Ground = Planet->Terrain->SurfaceHeightAtWorld(Flat);
+		Cam = Centre + (Flat - Centre).GetSafeNormal() * (Planet->GetRadiusCm() + FMath::Max(Ground, 0.0) + (bFaunaWatchLow ? 170.0 : FaunaWatchDistCm * 0.33));
+	}
 	FaunaWatchCamera->SetActorLocationAndRotation(Cam, FRotationMatrix::MakeFromXZ(Pos - Cam, Up).ToQuat());
 }
 

@@ -136,6 +136,11 @@ public:
 	 *  origin. For tests. */
 	static void BuildChunkMotesForTest(const FPlanetTerrainParams& P, const FScatterSettings& S, const SlonkScatter::FMoteSettings& M, int32 Face, int32 Depth, int64 X, int64 Y,
 		int32 Steps, TArray<FTransform>& OutPlanetLocal, TArray<float>& OutCustom, TArray<double>& OutDrawnHeightCm, FVector* OutOrigin = nullptr);
+	/** A chunk's height grid as a chunk build makes it (the heights of its drawn triangles' corners, cm above sea level,
+	 *  (Steps + 1)^2), and the drawn height in such a grid at a planet-local direction, from its triangles, as
+	 *  DrawnHeightAtLocalDir reads a chunk on screen. For tests. */
+	static void BuildChunkHeightsForTest(const FPlanetTerrainParams& P, int32 Face, int32 Depth, int64 X, int64 Y, int32 Steps, TArray<float>& OutHeights);
+	static double ChunkHeightAtForTest(const TArray<float>& Heights, int32 Steps, int32 Depth, int64 X, int64 Y, const FVector& Dir);
 
 	/** Pick LOD for this view (world space), launch builds, swap finished meshes in. Call a few times a second. */
 	/** Refine for the camera and for the pawn (the ground it stands on matters a chase camera's length away). */

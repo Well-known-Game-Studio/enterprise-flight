@@ -171,11 +171,184 @@ namespace
 	}
 }
 
+namespace
+{
+	/** A walker's colour at a point of it: the surface, the flex from its joint, its side (or a leg's place in the gait),
+	 *  its joint. */
+	FVector4f WalkerCol(float Surface, float Flex, float SideOrPhase, float Joint) { return FVector4f(Surface, Flex, SideOrPhase, Joint); }
+	float SideOf(double Y) { return Y > 0.5 ? Vc::SideRight : (Y < -0.5 ? Vc::SideLeft : Vc::SideMiddle); }
+	/** Its UV: along the body from the rump (U) and up it (V), for the coat's shading. */
+	FVector2f WalkerUV(const FVector& P) { return FVector2f((float)((P.X + 50.0) / 100.0), (float)(P.Z / 60.0)); }
+
+	/** A ring of Sides about a centre in the plane square to Along (whose own up is Ax2, its side Ax1), radii R1 and R2,
+	 *  starting StartA round, its normals out from the centre. */
+	TArray<int32> WalkerRing(FBuild& B, const FVector& Centre, const FVector& Ax1, const FVector& Ax2, double R1, double R2, int32 Sides, double StartA,
+		TFunctionRef<FVector4f(const FVector&)> Col)
+	{
+		TArray<int32> Ring;
+		for (int32 k = 0; k < Sides; ++k)
+		{
+			const double A = UE_DOUBLE_TWO_PI * k / Sides + StartA;
+			const FVector Off = Ax1 * (FMath::Cos(A) * R1) + Ax2 * (FMath::Sin(A) * R2);
+			const FVector P = Centre + Off;
+			Ring.Add(B.Vert(P, Off.GetSafeNormal(), WalkerUV(P), Col(P)));
+		}
+		return Ring;
+	}
+	/** The quads between two rings of a tube, each face wound to show the side its normals point to (out from its axis). */
+	void WalkerBand(FBuild& B, const TArray<int32>& A, const TArray<int32>& C, const FVector& CentreA, const FVector& CentreC)
+	{
+		const int32 Sides = A.Num();
+		for (int32 k = 0; k < Sides; ++k)
+		{
+			const int32 V0 = A[k], V1 = A[(k + 1) % Sides], V2 = C[(k + 1) % Sides], V3 = C[k];
+			const FVector Mid = ((FVector)B.Mesh.GetVertex(V0) + (FVector)B.Mesh.GetVertex(V1) + (FVector)B.Mesh.GetVertex(V2) + (FVector)B.Mesh.GetVertex(V3)) * 0.25;
+			const FVector Axis = (CentreA + CentreC) * 0.5;
+			TriFacing(B, V0, V1, V2, Mid - Axis);
+			TriFacing(B, V0, V2, V3, Mid - Axis);
+		}
+	}
+	/** A ring closed facing Out: a triangle or a quad over a ring of three or four, else a fan to a point (Tip). Its own
+	 *  vertices, lit as the cap they close (their normals Out), in the ring's places and colours. */
+	void WalkerCap(FBuild& B, const TArray<int32>& Ring, const FVector& Tip, const FVector& Out, const FVector4f& Col)
+	{
+		TArray<int32> Cap;
+		for (const int32 V : Ring) { Cap.Add(B.Vert((FVector)B.Mesh.GetVertex(V), Out, B.UV->GetElement(V), B.C->GetElement(V))); }
+		if (Cap.Num() == 3) { TriFacing(B, Cap[0], Cap[1], Cap[2], Out); return; }
+		if (Cap.Num() == 4)
+		{
+			TriFacing(B, Cap[0], Cap[1], Cap[2], Out);
+			TriFacing(B, Cap[0], Cap[2], Cap[3], Out);
+			return;
+		}
+		const int32 C = B.Vert(Tip, Out, WalkerUV(Tip), Col);
+		for (int32 k = 0; k < Cap.Num(); ++k) { TriFacing(B, Cap[k], Cap[(k + 1) % Cap.Num()], C, Out); }
+	}
+
+	/**
+	 * A walker of the plan (an Earth grazer, four legs), at a LOD: 150, 30 or 2 triangles, a metre from its tail's tip to
+	 * its muzzle, its feet on z 0. LOD 0: a six-sided torso of five rings capped at the rump and the chest, the neck and
+	 * head a four-sided tube of five rings from inside the chest to the muzzle, two horns, four three-sided legs from inside
+	 * the torso to the hoof, a tail; LOD 1: a four-sided torso, a three-sided neck and head, a triangle a leg, the tail; LOD
+	 * 2: one triangle standing along it and one lying over its back. The neck and head's flex runs from 0 at their root to 1
+	 * at the muzzle, a leg's from 0 at its hip to 1 at its hoof (straight down it, so the material shears it straight).
+	 */
+	void BuildWalker(FBuild& B, const FFaunaBodyPlan& Plan, int32 Lod)
+	{
+		const float Joint = Vc::JointRigid;
+		auto BodyCol = [&](const FVector& P) { return WalkerCol(Vc::SurfaceBody, 0.f, SideOf(P.Y), Joint); };
+		const double Girth = FMath::Clamp((double)Plan.Girth, 0.2, 0.5) / 0.35;
+		const FVector YAx = FVector::YAxisVector, ZAx = FVector::ZAxisVector;
+		if (Lod >= 2)
+		{
+			// A speck: its side standing along it, its back over it.
+			const FVector S0(-46.0, 0.0, 30.0), S1(50.0, 0.0, 42.0), S2(-6.0, 0.0, 58.0);
+			const int32 A = B.Vert(S0, YAx, WalkerUV(S0), BodyCol(S0)), Bv = B.Vert(S1, YAx, WalkerUV(S1), BodyCol(S1)), Cv = B.Vert(S2, YAx, WalkerUV(S2), BodyCol(S2));
+			TriFacing(B, A, Bv, Cv, YAx);
+			const FVector T0(-46.0, -12.0 * Girth, 54.0), T1(-46.0, 12.0 * Girth, 54.0), T2(40.0, 0.0, 50.0);
+			const int32 D = B.Vert(T0, ZAx, WalkerUV(T0), BodyCol(T0)), E = B.Vert(T1, ZAx, WalkerUV(T1), BodyCol(T1)), F = B.Vert(T2, ZAx, WalkerUV(T2), BodyCol(T2));
+			TriFacing(B, D, E, F, ZAx);
+			return;
+		}
+		const bool bFine = Lod == 0;
+		// The torso.
+		{
+			const int32 Sides = bFine ? 6 : 4;
+			const TArray<double> X = bFine ? TArray<double>{ -46.0, -32.0, -12.0, 6.0, 20.0 } : TArray<double>{ -44.0, 18.0 };
+			const TArray<double> Zc = bFine ? TArray<double>{ 46.0, 47.0, 45.0, 46.0, 46.0 } : TArray<double>{ 46.0, 46.0 };
+			const TArray<double> Rz = bFine ? TArray<double>{ 11.0, 13.0, 14.0, 13.5, 12.0 } : TArray<double>{ 12.5, 12.5 };
+			const TArray<double> Ry = bFine ? TArray<double>{ 10.0, 13.0, 14.0, 13.0, 11.0 } : TArray<double>{ 12.0, 12.0 };
+			const double StartA = bFine ? UE_DOUBLE_HALF_PI : UE_DOUBLE_HALF_PI * 0.5;
+			TArray<TArray<int32>> Rings;
+			for (int32 r = 0; r < X.Num(); ++r) { Rings.Add(WalkerRing(B, FVector(X[r], 0.0, Zc[r]), YAx, ZAx, Ry[r] * Girth, Rz[r] * Girth, Sides, StartA, BodyCol)); }
+			for (int32 r = 0; r + 1 < Rings.Num(); ++r) { WalkerBand(B, Rings[r], Rings[r + 1], FVector(X[r], 0.0, Zc[r]), FVector(X[r + 1], 0.0, Zc[r + 1])); }
+			const FVector4f Mid = WalkerCol(Vc::SurfaceBody, 0.f, Vc::SideMiddle, Joint);
+			WalkerCap(B, Rings[0], FVector(X[0] - 3.0, 0.0, Zc[0]), -FVector::XAxisVector, Mid);
+			WalkerCap(B, Rings.Last(), FVector(X.Last() + 4.0, 0.0, Zc.Last() - 1.0), FVector::XAxisVector, Mid);
+		}
+		// The neck and head: a tube from inside the chest up to the poll and down to the muzzle, each ring square to it.
+		{
+			const int32 Sides = bFine ? 4 : 3;
+			const TArray<FVector> C = bFine ? TArray<FVector>{ FVector(14.0, 0.0, 40.0), FVector(24.0, 0.0, 47.0), FVector(34.0, 0.0, 53.0), FVector(43.0, 0.0, 47.0), FVector(48.5, 0.0, 42.0) }
+				: TArray<FVector>{ FVector(14.0, 0.0, 40.0), FVector(34.0, 0.0, 53.0), FVector(48.5, 0.0, 42.0) };
+			const TArray<double> R = bFine ? TArray<double>{ 8.0, 7.5, 6.5, 5.5, 4.0 } : TArray<double>{ 7.0, 6.0, 3.5 };
+			TArray<TArray<int32>> Rings;
+			for (int32 r = 0; r < C.Num(); ++r)
+			{
+				const FVector Along = (C[FMath::Min(r + 1, C.Num() - 1)] - C[FMath::Max(r - 1, 0)]).GetSafeNormal();
+				const FVector Up = FVector::CrossProduct(Along, YAx).GetSafeNormal() * -1.0;
+				const float Flex = (float)r / (C.Num() - 1);
+				// The muzzle's ring is dark.
+				const float Surface = r == C.Num() - 1 ? Vc::SurfaceBeak : Vc::SurfaceBody;
+				Rings.Add(WalkerRing(B, C[r], YAx, Up.Z < 0.0 ? -Up : Up, R[r] * Girth, R[r], Sides, bFine ? UE_DOUBLE_PI * 0.25 : UE_DOUBLE_HALF_PI,
+					[&](const FVector& P) { return WalkerCol(Surface, Flex, SideOf(P.Y), Vc::JointNeck); }));
+			}
+			for (int32 r = 0; r + 1 < Rings.Num(); ++r) { WalkerBand(B, Rings[r], Rings[r + 1], C[r], C[r + 1]); }
+			if (bFine)
+			{
+				WalkerCap(B, Rings.Last(), C.Last(), (C.Last() - C[C.Num() - 2]).GetSafeNormal(), WalkerCol(Vc::SurfaceBeak, 1.f, Vc::SideMiddle, Vc::JointNeck));
+				// Two horns from the poll, out and up.
+				for (const double S : { -1.0, 1.0 })
+				{
+					const FVector H0(33.0, S * 4.0, 57.5), H1(36.0, S * 3.5, 57.0), H2(32.0, S * 11.0, 61.0);
+					const FVector4f Hc = WalkerCol(Vc::SurfaceBeak, 0.5f, S > 0.0 ? Vc::SideRight : Vc::SideLeft, Vc::JointNeck);
+					const int32 A = B.Vert(H0, ZAx, WalkerUV(H0), Hc), Bv = B.Vert(H1, ZAx, WalkerUV(H1), Hc), Cv = B.Vert(H2, ZAx, WalkerUV(H2), Hc);
+					TriFacing(B, A, Bv, Cv, ZAx);
+				}
+			}
+		}
+		// The legs: from inside the torso to the hoof, the hind left, fore left, hind right and fore right a quarter of a
+		// stride apart.
+		{
+			constexpr double Top = 38.0;
+			struct FLeg { double X, Y; float Phase; };
+			const FLeg Legs[4] = { { -33.0, -8.0, 0.f }, { 10.0, -8.0, 0.25f }, { -33.0, 8.0, 0.5f }, { 10.0, 8.0, 0.75f } };
+			for (const FLeg& L : Legs)
+			{
+				const double Y = L.Y * Girth;
+				auto LegCol = [&](const FVector& P)
+				{
+					const float Flex = (float)FMath::Clamp((Top - P.Z) / Top, 0.0, 1.0);
+					return WalkerCol(Flex > 0.99f ? Vc::SurfaceBeak : Vc::SurfaceBody, Flex, L.Phase, Vc::JointLeg);
+				};
+				if (bFine)
+				{
+					const TArray<double> Z = { Top, 17.0, 0.0 };
+					const TArray<double> R = { 3.8, 2.6, 2.4 };
+					TArray<TArray<int32>> Rings;
+					for (int32 r = 0; r < 3; ++r) { Rings.Add(WalkerRing(B, FVector(L.X, Y, Z[r]), FVector::XAxisVector, YAx, R[r], R[r], 3, 0.0, LegCol)); }
+					for (int32 r = 0; r < 2; ++r) { WalkerBand(B, Rings[r], Rings[r + 1], FVector(L.X, Y, Z[r]), FVector(L.X, Y, Z[r + 1])); }
+					WalkerCap(B, Rings.Last(), FVector(L.X, Y, 0.0), -ZAx, LegCol(FVector(L.X, Y, 0.0)));
+				}
+				else
+				{
+					const FVector Out(0.0, Y > 0.0 ? 1.0 : -1.0, 0.0);
+					const FVector P0(L.X - 4.0, Y, Top), P1(L.X + 4.0, Y, Top), P2(L.X, Y, 0.0);
+					const int32 A = B.Vert(P0, Out, WalkerUV(P0), LegCol(P0)), Bv = B.Vert(P1, Out, WalkerUV(P1), LegCol(P1)), Cv = B.Vert(P2, Out, WalkerUV(P2), LegCol(P2));
+					TriFacing(B, A, Bv, Cv, Out);
+				}
+			}
+		}
+		// The tail: a strip hanging from the rump, flexing from its root.
+		{
+			auto TailCol = [](double Flex) { return WalkerCol(Vc::SurfaceTail, (float)Flex, Vc::SideMiddle, Vc::JointTail); };
+			const FVector R0(-45.0, -1.5, 52.0), R1(-45.0, 1.5, 52.0), T0(-50.0, -1.0, 22.0), T1(-50.0, 1.0, 22.0);
+			const FVector Back = -FVector::XAxisVector;
+			const int32 A = B.Vert(R0, Back, WalkerUV(R0), TailCol(0.0)), Bv = B.Vert(R1, Back, WalkerUV(R1), TailCol(0.0));
+			const int32 C = B.Vert(T1, Back, WalkerUV(T1), TailCol(1.0)), D = B.Vert(T0, Back, WalkerUV(T0), TailCol(1.0));
+			TriFacing(B, A, Bv, C, Back);
+			TriFacing(B, A, C, D, Back);
+		}
+	}
+}
+
 bool SlonkFaunaMeshes::BuildLod(const FFaunaBodyPlan& Plan, int32 Lod, FDynamicMesh3& Out)
 {
-	if (Plan.Wings == EFaunaWings::None) { return false; }
+	const bool bWalker = Plan.Wings == EFaunaWings::None && Plan.Limbs == EFaunaLimbs::Legs && Plan.LimbPairs == 2;
+	if (Plan.Wings == EFaunaWings::None && !bWalker) { return false; }
 	FBuild B;
-	BuildBird(B, Plan, FMath::Clamp(Lod, 0, NumLods - 1));
+	if (bWalker) { BuildWalker(B, Plan, FMath::Clamp(Lod, 0, NumLods - 1)); }
+	else { BuildBird(B, Plan, FMath::Clamp(Lod, 0, NumLods - 1)); }
 	Out = MoveTemp(B.Mesh);
 	return true;
 }
@@ -194,10 +367,11 @@ UStaticMesh* SlonkFaunaMeshes::GetMesh(const FFaunaBodyPlan& Plan, EFaunaKind Ki
 	}
 	// The material moves the vertices past the mesh's box by up to the kind's padding, which the instances' boxes take in
 	// (UPlanetInstancesComponent::SetCullPadding): the mesh's own bounds stay its own, and its LOD screen sizes are the
-	// kind's, set for the padded box the GPU picks them by.
+	// kind's, set for the padded box the GPU picks them by. A walker's mesh has a tangent basis, as the material turns its
+	// normals the way it faces in tangent space; the birds' normals are the mesh's own, whatever their tangents.
 	const SlonkFauna::FFaunaKindDesc& D = SlonkFauna::KindDesc(Kind);
 	UStaticMesh* Mesh = SlonkProcMesh::MakeStaticMesh(*FString::Printf(TEXT("SlonkFauna_%s_%08x"), SlonkFauna::KindName(Kind), Key), TEXT("Fauna"),
-		TArrayView<const FDynamicMesh3>(Lods, NumLods), TArrayView<const float>(D.LodScreenSize, NumLods), FVector::ZeroVector);
+		TArrayView<const FDynamicMesh3>(Lods, NumLods), TArrayView<const float>(D.LodScreenSize, NumLods), FVector::ZeroVector, Kind == EFaunaKind::Herd);
 	GFaunaMeshes.Add(Key, Mesh);
 	return Mesh;
 }
