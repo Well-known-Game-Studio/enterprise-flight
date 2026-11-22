@@ -36,7 +36,7 @@ FLinearColor SlonkFauna::HerdDustColor(const FScatterPalette& Pal, double Wet, d
 	// light goes.
 	FLinearColor C = FMath::Lerp(Pal.Land2, Pal.Land, (float)FMath::Clamp(Wet * 0.4, 0.0, 0.4));
 	C = FMath::Lerp(C, FLinearColor::White, 0.35f);
-	C.A = (float)(0.45 * (1.0 - 0.7 * FMath::Clamp(Night, 0.0, 1.0)));
+	C.A = (float)(0.6 * (1.0 - 0.7 * FMath::Clamp(Night, 0.0, 1.0)));
 	return C;
 }
 

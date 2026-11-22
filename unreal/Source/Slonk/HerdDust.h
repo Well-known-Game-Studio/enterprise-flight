@@ -54,7 +54,7 @@ namespace SlonkFauna
 	constexpr double DustMaxRate = 200.0;
 	/** A puff's starting size, cm for each metre of the walkers' length, and the longest a puff lives, s: a component
 	 *  given back rests that long before it is lent again, so its last puffs fade where they were left. */
-	constexpr double DustPuffCmPerM = 45.0;
+	constexpr double DustPuffCmPerM = 110.0;
 	constexpr double DustPuffLifeSec = 6.0;
 
 	/** What a herd's dust is worked out from: how fast its frame goes over the ground (m/s, smoothed: FDustGate) and its

@@ -2482,11 +2482,13 @@ bool FSlonkFaunaHerdHabitatTest::RunTest(const FString& Parameters)
 			Out.MinLoop = FMath::Min(Out.MinLoop, G.LengthCm);
 			Out.MaxLoop = FMath::Max(Out.MaxLoop, G.LengthCm);
 			bool bOk = true;
-			// Where its walkers stand about a place on its loop's line: across it a third, two thirds and all of its radius
+			// Where its walkers stand about a place on its loop's line: across it a sixth, a half, five sixths and all of its radius
 			// either side.
 			auto Across = [&](TFunctionRef<FVector(double)> At)
 			{
-				for (const double Share : { 1.0 / 3.0, -1.0 / 3.0, 2.0 / 3.0, -2.0 / 3.0, 1.0, -1.0 })
+				// Between the habitat read's own offsets (a third, two thirds, all of the radius), out to the full radius, so it
+				// reads ground the cell never read.
+				for (const double Share : { 1.0 / 6.0, -1.0 / 6.0, 0.5, -0.5, 5.0 / 6.0, -5.0 / 6.0, 1.0, -1.0 })
 				{
 					const SlonkScatter::FHabitat H = SlonkScatter::HabitatAt(Wd.P, At(Share * G.HerdRadiusCm));
 					Note(H);
@@ -2509,7 +2511,8 @@ bool FSlonkFaunaHerdHabitatTest::RunTest(const FString& Parameters)
 			int32 Off = 0;
 			for (int32 k = 0; k < 480; ++k)
 			{
-				const double Th = UE_DOUBLE_TWO_PI * k / 480.0;
+				// Midway between the habitat read's own 480 points, which it has already gated.
+				const double Th = UE_DOUBLE_TWO_PI * (k + 0.5) / 480.0;
 				const SlonkScatter::FHabitat H = SlonkScatter::HabitatAt(Wd.P, HerdLoopDir(G, Rad, Th));
 				Note(H);
 				bOk &= Tolerant(H);

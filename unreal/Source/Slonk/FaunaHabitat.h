@@ -324,6 +324,9 @@ namespace SlonkFauna
 		double DistM = 0.0, GrazeSec = 0.0, Travel = 0.0, Heading = 0.0, SpeedMS = 0.0, GaitMS = 0.0;
 		double PivotStartM = -1000.0, PivotSign = -1.0, GrazeRef = -900.0, TurnHeading = 0.0, LastTurnHeading = 0.0, SinceLastTurn = 1000.0, WalkKap = 0.0;
 		bool bTurnAround = false;
+		/** When a frightened herd may next be startled again, after a fright that found no way it could take (the paths'
+		 *  clock, s). */
+		double NextStartleSec = -1.0e9;
 		FVector Avoid = FVector::ZeroVector;
 		FVector AvoidWay = FVector::ZeroVector;
 		FVector AvoidGoing = FVector::ZeroVector;
@@ -364,7 +367,8 @@ namespace SlonkFauna
 
 	/**
 	 * The water about a herd as it flees or walks out of the crew's way: whether the field is water (as SlonkTerrain's
-	 * structure has it, the water the loop's own read finds) at the point of a lattice HerdWaterStepCm apart on its loop's
+	 * structure has it, the water the loop's own read finds), or ground it never sets foot on (SlonkFauna::HerdCrosses: a
+	 * dense wood, a cliff, steep ground, ice), at the point of a lattice HerdWaterStepCm apart on its loop's
 	 * tangent plane nearest a place, each point read once and kept, so what is found never hangs on the order or the
 	 * frame it is asked in. Made for a world (or, for the tests, from any reading of the water at a planet-local unit
 	 * direction).

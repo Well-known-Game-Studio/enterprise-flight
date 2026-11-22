@@ -1116,7 +1116,9 @@ bool SlonkFauna::HerdFlightDry(const FFaunaGroup& G, const FFaunaKindDesc& D, co
 }
 
 SlonkFauna::FHerdWater::FHerdWater(const FPlanetTerrainParams& P)
-	: IsWater([P](const FVector& Dir) { return SlonkTerrain::SampleStructure(P, Dir, 1000.0).bWater; }), RadiusCm(P.RadiusCm)
+	// Water, and any ground a herd never sets foot on (a dense wood, a cliff, steep ground, ice), barred alike: a flight or
+	// a walk out of the crew's way is never taken through either.
+	: IsWater([P](const FVector& Dir) { return SlonkTerrain::SampleStructure(P, Dir, 1000.0).bWater || !SlonkFauna::HerdCrosses(SlonkScatter::HabitatAt(P, Dir)); }), RadiusCm(P.RadiusCm)
 {
 }
 
@@ -1279,6 +1281,9 @@ bool SlonkFauna::StartleHerd(FPanic& P, FHerdState& S, const FFaunaGroup& G, con
 	{
 		if (!Scares(D, S.FramePos, T, T.bCraft ? 0.0 : G.HerdRadiusCm)) { return false; }
 		if (P.IsLive(Now) && Now - P.T0 < RestartleSec) { return false; }
+		// A herd that found no way it could take from where its last flight carried it tries again only after a
+		// re-startle's while, not every frame the threat stays near.
+		if (Now < S.NextStartleSec) { return false; }
 		// A herd already chased half again its flight off its path keeps the flight it has.
 		if (Was.Size() > 1.5 * D.FleeCm) { return false; }
 	}
@@ -1383,6 +1388,7 @@ bool SlonkFauna::StartleHerd(FPanic& P, FHerdState& S, const FFaunaGroup& G, con
 	// No dry way from where its last flight has carried it: it keeps the fright it has, whose way was read dry.
 	P = Before;
 	S = StateBefore;
+	S.NextStartleSec = Now + RestartleSec;
 	return false;
 }
 
