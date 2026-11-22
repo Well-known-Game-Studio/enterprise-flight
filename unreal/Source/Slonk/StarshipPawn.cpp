@@ -2330,8 +2330,11 @@ void AStarshipPawn::ProcessDebugCommand()
 		// off leaves each as it was before it had any, its seas' plankton and shoals too); only keeps one kind; startle
 		// startles every group about from the ship (a sky-jelly only as a craft passing it would: not again within 8 s, nor
 		// once 150 m off its loop); time moves the paths' clock (where the flocks will be); strange gives
-		// the animals the look of another strangeness; cells lists the groups of the last scan of the cells round you.
-		// fauna goto <kind> <alt m> [night]: park over the nearest group of the kind (searched from the middle of the
+		// the animals the look of another strangeness; cells lists the groups of the last scan of the cells round you; plans
+		// lists the world's species of each kind (its plan in words, its share of the kind's cells, its size), and status
+		// counts the groups drawn of each species of a kind of more than one.
+		// fauna goto <kind> <alt m> [night] [species <n>]: park over the nearest group of the kind (of its species n alone,
+		// as fauna plans numbers them, when asked; searched from the middle of the
 		// night side with night), on its path 1.6 times its kind's scare radius ahead of it (400 m for a flock), out of
 		// the reach of its fright until it comes, facing it as it comes, the ground followed at that height. A herd walks
 		// too slowly to wait for: the ship parks off to the side of where it is now (off its path if a fright or the crew
@@ -2369,19 +2372,22 @@ void AStarshipPawn::ProcessDebugCommand()
 		else if (!F || !F->IsConfigured()) { UE_LOG(LogTemp, Log, TEXT("Fauna: no world with terrain near")); }
 		else if (Mode == TEXT("watch"))
 		{
-			// fauna watch [kind|any] [distance m] [low] | fauna watch off: the view follows the drawn flock nearest the camera
-			// (of the kind asked for, kept until another or any is asked for; fauna goto floater asks for a sky-jelly, every
-			// other goto for any) from that far behind and to one side of it (40 m), a little above it, or below it with low
-			// (the birds against the sky), as it flies, through a camera of its own; off gives the view back. A herd from behind
-			// and to one side of the way it walks (120 m unless asked), a third of that over the ground, or from where someone
-			// would stand with low. A leaping shoal from behind and to one side of the way it swims (25 m), a third of that
-			// over the sea, or from a wader's eye height with low. A sky-jelly from four of its spans off, a little above it, or
-			// below it with low (its tentacles against the sky).
+			// fauna watch [kind|any] [distance m] [low] | fauna watch off: the view follows the group the last fauna goto found
+			// while it is drawn and of the kind asked for (the first watch to take it only: it is forgotten then, and by off),
+			// else the drawn flock nearest the camera (of the kind asked for, kept until another or any is asked for; fauna goto
+			// floater asks for a sky-jelly, every other goto for any) from that far behind and to one side of it (40 m), a little
+			// above it, or below it with low (the birds against the sky), as it flies, through a camera of its own; off gives
+			// the view back. A herd from behind and to one side of the way it walks (120 m unless asked), a third of that over
+			// the ground, or from where someone would stand with low. A leaping shoal from behind and to one side of the way it
+			// swims (25 m), a third of that over the sea, or from a wader's eye height with low. A sky-jelly from four of its
+			// spans off, a little above it, or below it with low (its tentacles against the sky).
 			APlayerController* PC = Cast<APlayerController>(GetController());
 			if (!PC) { PC = GetWorld()->GetFirstPlayerController(); }
 			if (ArgStr(2) == TEXT("off"))
 			{
+				// The last goto's group forgotten too: the next watch follows the nearest.
 				FaunaWatchId = 0;
+				FaunaGotoId = 0;
 				if (PC && PC->GetPawn()) { PC->SetViewTarget(PC->GetPawn()); }
 				UE_LOG(LogTemp, Log, TEXT("Fauna watch: off"));
 			}
@@ -2395,7 +2401,8 @@ void AStarshipPawn::ProcessDebugCommand()
 				bFaunaWatchLow = ArgStr(At + 1) == TEXT("low") || ArgStr(At) == TEXT("low");
 				FVector View = GetActorLocation(); FRotator ViewRot;
 				if (PC) { PC->GetPlayerViewPoint(View, ViewRot); }
-				FaunaWatchId = F->NearestDrawnGroup(View, FaunaWatchKind);
+				// The goto's group first, forgotten once this watch has taken it.
+				FaunaWatchId = F->NearestDrawnGroup(View, FaunaWatchKind, &FaunaGotoId);
 				const bool bGivenDist = Args.IsValidIndex(At) && ArgStr(At) != TEXT("low");
 				const EFaunaKind WatchKind = FaunaWatchId ? F->GetDrawnGroupKind(FaunaWatchId) : EFaunaKind::Flier;
 				// A jelly from four of its spans off.
@@ -2443,8 +2450,16 @@ void AStarshipPawn::ProcessDebugCommand()
 			const SlonkFauna::FFaunaProfile& Was = F->GetProfile();
 			const FWorldGenome G = FMath::IsNearlyEqual(S, Planet->Genome.Strangeness) ? Planet->Genome : SlonkGenome::Roll(Planet->ResolvedArchetype, S, Was.Hash);
 			F->SetProfile(SlonkFauna::Roll(G, Planet->ResolvedArchetype, Was.Hash));
-			UE_LOG(LogTemp, Log, TEXT("Fauna on %s at strangeness %.2f: pigments turned %.0f deg, %.0f%% of the way to the ground's own colour; sky-jellies in %.0f%% of its cells (its air %s)"), *Planet->GetDisplayName(), S,
-				F->GetProfile().Look.HueTurnDeg, F->GetProfile().Look.Vivid * 100.f, F->GetProfile().FloaterShare * 100.f, F->GetProfile().bThickAir ? TEXT("thick") : TEXT("thin"));
+			UE_LOG(LogTemp, Log, TEXT("Fauna on %s at strangeness %.2f: pigments turned %.0f deg, %.0f%% of the way to the ground's own colour; sky-jellies in %.0f%% of its cells (its air %s); %d species of flier, %d of herd, %d of leaper (fauna plans for them)"),
+				*Planet->GetDisplayName(), S, F->GetProfile().Look.HueTurnDeg, F->GetProfile().Look.Vivid * 100.f, F->GetProfile().FloaterShare * 100.f, F->GetProfile().bThickAir ? TEXT("thick") : TEXT("thin"),
+				F->GetProfile().Species[(int32)EFaunaKind::Flier].Num, F->GetProfile().Species[(int32)EFaunaKind::Herd].Num, F->GetProfile().Species[(int32)EFaunaKind::Leaper].Num);
+		}
+		else if (Mode == TEXT("plans"))
+		{
+			TArray<FString> Lines;
+			F->DescribePlans(Lines);
+			UE_LOG(LogTemp, Log, TEXT("Fauna species on %s at strangeness %.2f: %d"), *Planet->GetDisplayName(), F->GetProfile().Strangeness, Lines.Num());
+			for (const FString& L : Lines) { UE_LOG(LogTemp, Log, TEXT("  %s"), *L); }
 		}
 		else if (Mode == TEXT("cells"))
 		{
@@ -2496,6 +2511,18 @@ void AStarshipPawn::ProcessDebugCommand()
 			// What fauna watch looks for next: a sky-jelly after goto floater (a flock under the ship may be nearer than the
 			// jelly it parked by), any kind after the others, as before.
 			if (bKind) { FaunaWatchKind = Kind == EFaunaKind::Floater ? (int32)EFaunaKind::Floater : -1; }
+			// Any watch dropped and the view given back to the craft, which the goto moves (so the next shots, and the groups
+			// the field keeps about the view, are where it parks, not about the group watched before); the group it finds is
+			// the one a watch after it follows first.
+			FaunaGotoId = 0;
+			if (FaunaWatchId != 0)
+			{
+				FaunaWatchId = 0;
+				APlayerController* WPC = Cast<APlayerController>(GetController());
+				if (!WPC) { WPC = GetWorld()->GetFirstPlayerController(); }
+				if (WPC && WPC->GetPawn()) { WPC->SetViewTarget(WPC->GetPawn()); }
+				UE_LOG(LogTemp, Log, TEXT("Fauna goto: the watch dropped, the view back to the craft"));
+			}
 			if (!bKind) { UE_LOG(LogTemp, Warning, TEXT("fauna goto: %s is no kind (flier, herd, mote, leaper, floater)"), *ArgStr(2)); }
 			else if (Kind == EFaunaKind::Mote)
 			{
@@ -2564,7 +2591,14 @@ void AStarshipPawn::ProcessDebugCommand()
 			else
 			{
 				const double AltCm = FMath::Max(Arg(3, 40.f), 2.f) * 100.0;
-				const bool bNight = ArgStr(4) == TEXT("night");
+				// Night and a species asked for, in either order after the height.
+				bool bNight = false;
+				int32 Species = -1;
+				for (int32 a = 4; a < Args.Num(); ++a)
+				{
+					if (ArgStr(a) == TEXT("night")) { bNight = true; }
+					else if (ArgStr(a) == TEXT("species") && Args.IsValidIndex(a + 1)) { Species = FMath::Max(FCString::Atoi(*Args[a + 1]), 0); ++a; }
+				}
 				const FTransform& TT = Planet->Terrain->GetComponentTransform();
 				const FVector SunLocal = TT.InverseTransformVectorNoScale(Planet->GetStarDirection()).GetSafeNormal();
 				const FVector From = bNight ? -SunLocal : TT.InverseTransformPositionNoScale(GetActorLocation()).GetSafeNormal();
@@ -2578,9 +2612,18 @@ void AStarshipPawn::ProcessDebugCommand()
 				SlonkFauna::FGroupSearch Search;
 				// The leapers' cells are the shoals' 200 m ones: 60,000 of them reach about 28 km.
 				const int32 MaxCells = Kind == EFaunaKind::Herd ? 120000 : (Kind == EFaunaKind::Leaper ? 60000 : 20000);
-				const bool bFound = SlonkFauna::FindGroupNear(W, Kind, From, 4.0e7, MaxCells, G, &Search);
-				UE_LOG(LogTemp, Log, TEXT("Fauna goto %s: looked at %d cells, every one within %.1f km of the search's start, on %s"), SlonkFauna::KindName(Kind), Search.Cells,
-					Search.ReachCm / 1e5, *Planet->GetDisplayName());
+				const int32 NumSpecies = W.Profile.Species[(int32)Kind].Num;
+				if (Species >= NumSpecies)
+				{
+					UE_LOG(LogTemp, Warning, TEXT("Fauna goto %s: species %d asked for, but %s has %d of the kind (fauna plans lists them); any species then"), SlonkFauna::KindName(Kind), Species,
+						*Planet->GetDisplayName(), NumSpecies);
+					Species = -1;
+				}
+				const bool bFound = SlonkFauna::FindGroupNear(W, Kind, From, 4.0e7, MaxCells, G, &Search, Species);
+				if (bFound) { FaunaGotoId = G.Id; }
+				UE_LOG(LogTemp, Log, TEXT("Fauna goto %s%s: looked at %d cells, every one within %.1f km of the search's start, on %s%s"), SlonkFauna::KindName(Kind),
+					Species >= 0 ? *FString::Printf(TEXT(" (species #%d)"), Species) : TEXT(""), Search.Cells, Search.ReachCm / 1e5, *Planet->GetDisplayName(),
+					bFound ? *FString::Printf(TEXT("; found one of species #%d, %s"), G.Species, *SlonkFauna::DescribePlan(Kind, G.Plan)) : TEXT(""));
 				if (!bFound && Kind == EFaunaKind::Floater)
 				{
 					// Most worlds have none: say why (or how few its cells hold).
@@ -3109,7 +3152,7 @@ void AStarshipPawn::ProcessDebugCommand()
 			TEXT("ship camera [chase|bridge|cinematic|front|port|starboard|top|bottom] | zoom <x> | look <yaw> <pitch> [s]"),
 			TEXT("ship warpvis [classic|real] | cscale <0..1> | systems | shipwarp [km] [far]"),
 			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mesa|badlands|cliffs|city|mountain|coast|river|linea|green|land|substellar|ring|nightcap> <alt m> [across|sun|away|along|uphill|giant] [night] | terrain rocks [on|off|density <x>|check]"),
-			TEXT("ship fauna [status|on|off|density <x>|only <flier|herd|mote|leaper|floater|all>|startle|time <s>|strange <0..1>|cells|habitat [km]] | fauna goto <flier|herd|leaper|floater> <alt m> [night] | fauna goto mote <alt m> [night|dusk|day] | fauna watch [kind|any] [m] [low|off]  (the animals of the world below: flocks, herds, motes, leaping fish, the strange worlds' sky-jellies; slonk.Fauna.Splash 0 throws no splashes)"),
+			TEXT("ship fauna [status|on|off|density <x>|only <flier|herd|mote|leaper|floater|all>|startle|time <s>|strange <0..1>|cells|plans|habitat [km]] | fauna goto <flier|herd|leaper|floater> <alt m> [night] [species <n>] | fauna goto mote <alt m> [night|dusk|day] | fauna watch [kind|any] [m] [low|off]  (the animals of the world below: flocks, herds, motes, leaping fish, the strange worlds' sky-jellies; slonk.Fauna.Splash 0 throws no splashes)"),
 			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km] [hazy] [strange <0..1>] [seed <n>] [locked] | people [none|stone|iron|industrial|modern|starfaring] [organic] [cliff]"),
 			TEXT("ship shuttle  (launch the shuttlecraft; aboard it, dock when the bay is within 500 m) | ship takeoff"),
 			TEXT("ship scan [stop]  (sensors on the locked / nav target; landed: survey the ground) | ship science [reset]"),

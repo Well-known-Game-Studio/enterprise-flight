@@ -6,6 +6,7 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "FaunaMeshes.h"
+#include "FaunaProfile.h"
 #include "GameClock.h"
 #include "GameFramework/PlayerController.h"
 #include "HAL/IConsoleManager.h"
@@ -49,13 +50,78 @@ void UPlanetFaunaComponent::Configure(UPlanetTerrainComponent* InTerrain, const 
 {
 	Terrain = InTerrain;
 	Params = P;
-	Profile = InProfile;
+	AdoptProfile(InProfile);
 	Life = FMath::Clamp(InLife, 0.f, 1.f);
 	Palette = InPalette;
 	bTowns = bInTowns;
 	People = InPeople;
 	bConfigured = true;
 	RefreshWorld();
+}
+
+void UPlanetFaunaComponent::SetProfile(const SlonkFauna::FFaunaProfile& InProfile)
+{
+	AdoptProfile(InProfile);
+}
+
+TArray<TPair<FFaunaBodyPlan, EFaunaKind>> SlonkFauna::PlansOf(const FFaunaProfile& Profile)
+{
+	TArray<TPair<FFaunaBodyPlan, EFaunaKind>> Out;
+	for (const EFaunaKind K : { EFaunaKind::Flier, EFaunaKind::Herd, EFaunaKind::Leaper, EFaunaKind::Floater })
+	{
+		const FFaunaKindSpecies& Sp = Profile.Species[(int32)K];
+		for (int32 i = 0; i < Sp.Num; ++i) { Out.Add(TPair<FFaunaBodyPlan, EFaunaKind>(Sp[i].Plan, K)); }
+	}
+	return Out;
+}
+
+void UPlanetFaunaComponent::AdoptProfile(const SlonkFauna::FFaunaProfile& InProfile)
+{
+	Profile = InProfile;
+	// Its species' meshes held (in place of the profile's before; a world suspended lets them go until it draws again:
+	// Suspend, HoldOwnPlans), and the material instances of the plans it no longer has let go, so none of them is kept or
+	// written to each frame.
+	const TArray<TPair<FFaunaBodyPlan, EFaunaKind>> Plans = SlonkFauna::PlansOf(Profile);
+	SlonkFaunaMeshes::HoldPlans(this, Plans);
+	bHoldingPlans = true;
+	TSet<uint32> Live;
+	for (const TPair<FFaunaBodyPlan, EFaunaKind>& P : Plans) { Live.Add(P.Key.Hash()); }
+	for (TMap<uint32, TObjectPtr<UMaterialInstanceDynamic>>* Plan : { &HerdPlanMIDs, &FlierPlanMIDs, &LeaperPlanMIDs })
+	{
+		for (auto It = Plan->CreateIterator(); It; ++It) { if (!Live.Contains(It.Key())) { It.RemoveCurrent(); } }
+	}
+}
+
+void UPlanetFaunaComponent::OnComponentDestroyed(bool bDestroyingHierarchy)
+{
+	// Its plans' meshes no longer held by it.
+	SlonkFaunaMeshes::HoldPlans(this, {});
+	Super::OnComponentDestroyed(bDestroyingHierarchy);
+}
+
+void UPlanetFaunaComponent::BeginDestroy()
+{
+	// Gone without being destroyed as a component (collected): its plans forgotten, their meshes let go at the next hold.
+	SlonkFaunaMeshes::HoldPlans(this, {}, false);
+	Super::BeginDestroy();
+}
+
+void UPlanetFaunaComponent::HoldOwnPlans()
+{
+	// Drawn again after a suspension: its species' meshes held once more (each made anew as a group of it comes), once.
+	if (bHoldingPlans) { return; }
+	SlonkFaunaMeshes::HoldPlans(this, SlonkFauna::PlansOf(Profile));
+	bHoldingPlans = true;
+}
+
+UMaterialInstanceDynamic* UPlanetFaunaComponent::MaterialForPlan(EFaunaKind Kind, const FFaunaBodyPlan& Plan)
+{
+	HoldOwnPlans();
+	if (Kind == EFaunaKind::Herd) { EnsureHerdMaterial(); return HerdMaterialFor(Plan); }
+	if (Kind == EFaunaKind::Leaper) { EnsureLeaperMaterial(); return LeaperMaterialFor(Plan); }
+	if (Kind == EFaunaKind::Floater) { EnsureFloaterMaterial(); return FloaterMID.Get(); }
+	EnsureMaterial();
+	return FlierMaterialFor(Plan);
 }
 
 void UPlanetFaunaComponent::SetSea(const SlonkFauna::FFaunaSea& InSea)
@@ -167,6 +233,11 @@ void UPlanetFaunaComponent::EnsureMaterial()
 	bFaunaMaterial = Mat != nullptr;
 	MID = nullptr;
 	LastPxPerRad = -1.f;
+	// The alien plans' fliers are drawn in instances of their own, made from it as their flocks come (FlierMaterialFor):
+	// only when M_Fauna has their wings (its WingForm parameter); else in the fliers' own, their wings beaten as a bird's.
+	FlierPlanMIDs.Reset();
+	float Probe = 0.f;
+	bAlienFlierMaterial = Mat && Mat->GetScalarParameterValue(FHashedMaterialParameterInfo(TEXT("WingForm")), Probe);
 	if (!Mat)
 	{
 		static bool bWarned = false;
@@ -199,6 +270,7 @@ void UPlanetFaunaComponent::EnsureHerdMaterial()
 	if (bWalkers == bWalkerMaterial && HerdMID && Debug == 0) { return; }
 	bWalkerMaterial = bWalkers;
 	HerdMID = nullptr;
+	HerdPlanMIDs.Reset();
 	if (bWalkers)
 	{
 		HerdMID = UMaterialInstanceDynamic::Create(Mat, this);
@@ -217,15 +289,80 @@ void UPlanetFaunaComponent::EnsureHerdMaterial()
 			UE_LOG(LogTemp, Warning, TEXT("Fauna: %s has no walker branch yet (tools/planet_materials/fauna_material.py builds it): no herds until it does"), SlonkFauna::MaterialPath);
 		}
 	}
-	// The herds already drawn take the new instance, so every herd is drawn in the one the camera's view is given to (with
-	// none, the world keeps no herds and lets them go: RefreshWorld).
+	// The herds already drawn take the new instance (or their plan's, made from it), so every herd is drawn in one the
+	// camera's view is given to (with none, the world keeps no herds and lets them go: RefreshWorld).
 	if (HerdMID)
 	{
 		for (TPair<uint64, FGroupSet>& Pair : Sets)
 		{
-			if (Pair.Value.Herd.IsValid() && Pair.Value.Set && Pair.Value.Set->GetMaterial(0) != HerdMID) { Pair.Value.Set->SetMaterial(0, HerdMID); }
+			if (!Pair.Value.Herd.IsValid() || !Pair.Value.Set) { continue; }
+			UMaterialInstanceDynamic* PlanMat = HerdMaterialFor(Pair.Value.Group->Plan);
+			if (Pair.Value.Set->GetMaterial(0) != PlanMat) { Pair.Value.Set->SetMaterial(0, PlanMat); }
 		}
 	}
+}
+
+UMaterialInstanceDynamic* UPlanetFaunaComponent::HerdMaterialFor(const FFaunaBodyPlan& Plan)
+{
+	if (!HerdMID) { return nullptr; }
+	const SlonkFauna::Walker::FRig Rig = SlonkFauna::Walker::ShapeOf(Plan).Rig;
+	if (!bWalkerMaterial || Rig == SlonkFauna::Walker::FRig() || !HerdMID->Parent) { return HerdMID; }
+	const uint32 Key = Plan.Hash();
+	if (const TObjectPtr<UMaterialInstanceDynamic>* Found = HerdPlanMIDs.Find(Key)) { return Found->Get(); }
+	// Its walker branch given its plan's rig: its neck's pivot, its feet's lift, its head's swing, its carapace. Constant
+	// for the plan, so nothing of it moves from frame to frame.
+	UMaterialInstanceDynamic* M = UMaterialInstanceDynamic::Create(HerdMID->Parent, this);
+	M->SetScalarParameterValue(TEXT("Walkers"), 1.f);
+	M->SetScalarParameterValue(TEXT("WalkerNeckX"), Rig.NeckX);
+	M->SetScalarParameterValue(TEXT("WalkerNeckZ"), Rig.NeckZ);
+	M->SetScalarParameterValue(TEXT("WalkerLift"), Rig.LiftCm);
+	M->SetScalarParameterValue(TEXT("WalkerPitch"), Rig.PitchScale);
+	M->SetScalarParameterValue(TEXT("WalkerCarapace"), Rig.Carapace);
+	if (LastHerdPxPerRad > 0.f) { M->SetScalarParameterValue(TEXT("PxPerRad"), LastHerdPxPerRad); }
+	SetGlowParams(M, Plan);
+	HerdPlanMIDs.Add(Key, M);
+	return M;
+}
+
+void UPlanetFaunaComponent::SetGlowParams(UMaterialInstanceDynamic* M, const FFaunaBodyPlan& Plan) const
+{
+	// Its glow organs' row along its flanks, and the world's glow they light in (none on a plan without them).
+	const SlonkFauna::GlowOrgan::FRow Row = SlonkFaunaMeshes::GlowRowOf(Plan);
+	M->SetScalarParameterValue(TEXT("GlowSpots"), (float)Row.Spots);
+	M->SetVectorParameterValue(TEXT("GlowRow"), FLinearColor(Row.U0, Row.U1, Row.V, 0.f));
+	M->SetVectorParameterValue(TEXT("GlowSize"), FLinearColor(Row.RU, Row.RV, 0.f, 0.f));
+	M->SetVectorParameterValue(TEXT("GlowColor"), Profile.Look.Glow);
+}
+
+UMaterialInstanceDynamic* UPlanetFaunaComponent::FlierMaterialFor(const FFaunaBodyPlan& Plan)
+{
+	if (!MID) { return nullptr; }
+	if (!bFaunaMaterial || !bAlienFlierMaterial || SlonkFauna::IsEarthPlan(EFaunaKind::Flier, Plan) || !MID->Parent) { return MID; }
+	const uint32 Key = Plan.Hash();
+	if (const TObjectPtr<UMaterialInstanceDynamic>* Found = FlierPlanMIDs.Find(Key)) { return Found->Get(); }
+	// Its wings (SlonkFauna::Wings) and its glow organs, constant for the plan, so nothing of it moves from frame to frame.
+	UMaterialInstanceDynamic* M = UMaterialInstanceDynamic::Create(MID->Parent, this);
+	M->SetScalarParameterValue(TEXT("WingForm"), (float)SlonkFauna::Wings::FormOf(Plan));
+	if (LastPxPerRad > 0.f) { M->SetScalarParameterValue(TEXT("PxPerRad"), LastPxPerRad); }
+	SetGlowParams(M, Plan);
+	FlierPlanMIDs.Add(Key, M);
+	return M;
+}
+
+UMaterialInstanceDynamic* UPlanetFaunaComponent::LeaperMaterialFor(const FFaunaBodyPlan& Plan)
+{
+	if (!LeaperMID) { return nullptr; }
+	if (!bLeaperMaterial || !bAlienLeaperMaterial || SlonkFauna::IsEarthPlan(EFaunaKind::Leaper, Plan) || !LeaperMID->Parent) { return LeaperMID; }
+	const uint32 Key = Plan.Hash();
+	if (const TObjectPtr<UMaterialInstanceDynamic>* Found = LeaperPlanMIDs.Find(Key)) { return Found->Get(); }
+	// Its form (SlonkFauna::FishForm) and its glow organs, constant for the plan.
+	UMaterialInstanceDynamic* M = UMaterialInstanceDynamic::Create(LeaperMID->Parent, this);
+	M->SetScalarParameterValue(TEXT("Leapers"), 1.f);
+	M->SetScalarParameterValue(TEXT("FishForm"), (float)SlonkFauna::FishForm::FormOf(Plan));
+	if (LastLeaperPxPerRad > 0.f) { M->SetScalarParameterValue(TEXT("PxPerRad"), LastLeaperPxPerRad); }
+	SetGlowParams(M, Plan);
+	LeaperPlanMIDs.Add(Key, M);
+	return M;
 }
 
 void UPlanetFaunaComponent::EnsureLeaperMaterial()
@@ -246,6 +383,8 @@ void UPlanetFaunaComponent::EnsureLeaperMaterial()
 	if (bLeapers == bLeaperMaterial && LeaperMID && Debug == 0) { return; }
 	bLeaperMaterial = bLeapers;
 	LeaperMID = nullptr;
+	LeaperPlanMIDs.Reset();
+	bAlienLeaperMaterial = bLeapers && Mat->GetScalarParameterValue(FHashedMaterialParameterInfo(TEXT("FishForm")), Probe);
 	if (bLeapers)
 	{
 		LeaperMID = UMaterialInstanceDynamic::Create(Mat, this);
@@ -268,7 +407,9 @@ void UPlanetFaunaComponent::EnsureLeaperMaterial()
 	{
 		for (TPair<uint64, FGroupSet>& Pair : Sets)
 		{
-			if (Pair.Value.Leaper.IsValid() && Pair.Value.Set && Pair.Value.Set->GetMaterial(0) != LeaperMID) { Pair.Value.Set->SetMaterial(0, LeaperMID); }
+			if (!Pair.Value.Leaper.IsValid() || !Pair.Value.Set) { continue; }
+			UMaterialInstanceDynamic* PlanMat = LeaperMaterialFor(Pair.Value.Group->Plan);
+			if (Pair.Value.Set->GetMaterial(0) != PlanMat) { Pair.Value.Set->SetMaterial(0, PlanMat); }
 		}
 	}
 }
@@ -363,13 +504,16 @@ UPlanetInstancesComponent* UPlanetFaunaComponent::AcquireSet()
 void UPlanetFaunaComponent::SpawnSet(const SlonkFauna::FFaunaField::FGroupRef& G)
 {
 	if (!G.IsValid() || Sets.Contains(G->Id)) { return; }
-	UStaticMesh* Mesh = SlonkFaunaMeshes::GetMesh(Profile.Plans[(int32)G->Kind], G->Kind);
+	// Its species' mesh (made once a process for each plan, so a world makes one for each of its species), held by its
+	// world again if it was suspended.
+	HoldOwnPlans();
+	UStaticMesh* Mesh = SlonkFaunaMeshes::GetMesh(G->Plan, G->Kind);
 	if (!Mesh) { return; }
 	EnsureMaterial();
 	const bool bHerd = G->Kind == EFaunaKind::Herd;
 	const bool bLeaper = G->Kind == EFaunaKind::Leaper;
 	const bool bFloater = G->Kind == EFaunaKind::Floater;
-	UMaterialInstanceDynamic* Mat = bHerd ? HerdMID.Get() : (bLeaper ? LeaperMID.Get() : (bFloater ? FloaterMID.Get() : MID.Get()));
+	UMaterialInstanceDynamic* Mat = bHerd ? HerdMaterialFor(G->Plan) : (bLeaper ? LeaperMaterialFor(G->Plan) : (bFloater ? FloaterMID.Get() : FlierMaterialFor(G->Plan)));
 	// A herd only in its own material (M_Fauna's walker branch, or the debug's): drawn as birds, they would fly apart. A
 	// group of leapers likewise (its leaper branch), and a jelly (its floater branch).
 	if ((bHerd || bLeaper || bFloater) && !Mat) { return; }
@@ -451,12 +595,31 @@ void UPlanetFaunaComponent::ReleaseAllSets()
 	for (const uint64 Id : Ids) { ReleaseSet(Id); }
 }
 
-void UPlanetFaunaComponent::Suspend()
+void UPlanetFaunaComponent::Suspend(bool bKeepPlans)
 {
-	if (Sets.Num() == 0 && !Field.GetActive().Num()) { return; }
-	ReleaseAllSets();
-	// The cells read are kept: back in view, the same groups come back at once.
-	Field.Clear(false);
+	if (Sets.Num() > 0 || Field.GetActive().Num() > 0)
+	{
+		ReleaseAllSets();
+		// The cells read are kept: back in view, the same groups come back at once.
+		Field.Clear(false);
+	}
+	// A world no longer drawn (its terrain put away, beyond the horizon, or seen from too high for any of its animals) lets
+	// its species' meshes and its plans' material instances go, once: so a strange world left behind, or each one a
+	// spawnplanet run leaves about, keeps none of them. Each is made again as a group of it comes, once it draws again
+	// (HoldOwnPlans).
+	if (bKeepPlans || !bHoldingPlans) { return; }
+	bHoldingPlans = false;
+	SlonkFaunaMeshes::HoldPlans(this, {});
+	HerdPlanMIDs.Reset();
+	FlierPlanMIDs.Reset();
+	LeaperPlanMIDs.Reset();
+	// Its pool's sets, empty and hidden, drew them last: they draw nothing until they are taken again, and so keep nothing.
+	for (UPlanetInstancesComponent* C : FreeSets)
+	{
+		if (!C) { continue; }
+		C->SetStaticMesh(nullptr);
+		C->EmptyOverrideMaterials();
+	}
 }
 
 void UPlanetFaunaComponent::GatherThreats(const APlayerController* PC, TArray<SlonkFauna::FFaunaThreat>& Out) const
@@ -499,12 +662,13 @@ void UPlanetFaunaComponent::UpdateView(const APlayerController* PC, const FVecto
 {
 	if (!bConfigured || !Terrain) { return; }
 	// The world as the settings have it now was taken by the planet's tick (RefreshWorld) before its chunks were chosen.
-	// slonk.Fauna.Debug changed: every group goes, and comes back drawn as it now asks.
+	// slonk.Fauna.Debug changed: every group goes, and comes back drawn as it now asks (its species' meshes kept, so none
+	// is made again).
 	const int32 Debug = CVarFaunaDebug.GetValueOnGameThread();
 	if (Debug != DebugDrawn)
 	{
 		DebugDrawn = Debug;
-		Suspend();
+		Suspend(true);
 	}
 	const SlonkFauna::FFaunaWorld& W = Field.GetWorld();
 	if (!SlonkFauna::IsEnabled() || !W.SpawnsAny())
@@ -632,12 +796,15 @@ void UPlanetFaunaComponent::UpdateView(const APlayerController* PC, const FVecto
 		// The bank to a two-hundredth of a radian, so a steady turn sends nothing new each frame.
 		Gd[SlonkFauna::GroupData::Bank] = FMath::RoundToFloat((float)Pose.Bank * 200.f) / 200.f;
 		Gd[SlonkFauna::GroupData::SpreadM] = G.SpacingM;
+		// A four-winged flock's own number for its darts and its span, which every member of it darts together on.
+		Gd[SlonkFauna::GroupData::DartSeed] = SlonkFauna::DartSeedOf(G);
+		Gd[SlonkFauna::GroupData::DartSpanM] = Gd[SlonkFauna::GroupData::DartSeed] > 0.f ? G.SpanM : 0.f;
 		SlonkFauna::FrightData(Panic, Now, Pose.Rot, TimeOffset, Gd);
-		// Slot by slot: 0 to 3, 4 to 7, and 8 and 9.
-		static_assert(SlonkFauna::GroupData::Num == 10, "a group's custom primitive data is sent as slots 0 to 3, 4 to 7, and 8 and 9");
+		// Slot by slot: 0 to 3, 4 to 7, and 8 to 11.
+		static_assert(SlonkFauna::GroupData::Num == 12, "a group's custom primitive data is sent as slots 0 to 3, 4 to 7, and 8 to 11");
 		S.Set->SetCustomPrimitiveDataVector4(0, FVector4(Gd[0], Gd[1], Gd[2], Gd[3]));
 		S.Set->SetCustomPrimitiveDataVector4(4, FVector4(Gd[4], Gd[5], Gd[6], Gd[7]));
-		S.Set->SetCustomPrimitiveDataVector2(8, FVector2D(Gd[8], Gd[9]));
+		S.Set->SetCustomPrimitiveDataVector4(8, FVector4(Gd[8], Gd[9], Gd[10], Gd[11]));
 		// Shadows within the kind's reach for them, let go a fifth further out.
 		if (D.ShadowReachCm > 0.0)
 		{
@@ -650,23 +817,60 @@ void UPlanetFaunaComponent::UpdateView(const APlayerController* PC, const FVecto
 	{
 		// The material's view of the camera, the same in the shadow passes as in the view: where it stands, for the fade
 		// and the speck floor, and how many pixels a radian is to it.
+		// The world's glow, which the alien plans' glow organs light in, given again as the look changes (fauna strange).
+		const bool bGlow = PlanGlowSet != Profile.Look.Glow;
+		PlanGlowSet = Profile.Look.Glow;
+		for (TMap<uint32, TObjectPtr<UMaterialInstanceDynamic>>* Plans : { &HerdPlanMIDs, &FlierPlanMIDs, &LeaperPlanMIDs })
+		{
+			for (const TPair<uint32, TObjectPtr<UMaterialInstanceDynamic>>& P : *Plans) { if (P.Value && bGlow) { P.Value->SetVectorParameterValue(TEXT("GlowColor"), Profile.Look.Glow); } }
+		}
 		if (MID)
 		{
+			// The fliers' own instance and each of their plans' alike.
 			const float PxPerRad = SlonkFauna::PixelsPerRadian(PC);
-			MID->SetVectorParameterValue(TEXT("ViewPos"), FLinearColor((float)ViewLocationWorld.X, (float)ViewLocationWorld.Y, (float)ViewLocationWorld.Z, 0.f));
-			if (!FMath::IsNearlyEqual(PxPerRad, LastPxPerRad, 0.5f)) { LastPxPerRad = PxPerRad; MID->SetScalarParameterValue(TEXT("PxPerRad"), PxPerRad); }
+			const FLinearColor View((float)ViewLocationWorld.X, (float)ViewLocationWorld.Y, (float)ViewLocationWorld.Z, 0.f);
+			const bool bPx = !FMath::IsNearlyEqual(PxPerRad, LastPxPerRad, 0.5f);
+			if (bPx) { LastPxPerRad = PxPerRad; }
+			MID->SetVectorParameterValue(TEXT("ViewPos"), View);
+			if (bPx) { MID->SetScalarParameterValue(TEXT("PxPerRad"), PxPerRad); }
+			for (const TPair<uint32, TObjectPtr<UMaterialInstanceDynamic>>& P : FlierPlanMIDs)
+			{
+				if (!P.Value) { continue; }
+				P.Value->SetVectorParameterValue(TEXT("ViewPos"), View);
+				if (bPx) { P.Value->SetScalarParameterValue(TEXT("PxPerRad"), PxPerRad); }
+			}
 		}
 		if (HerdMID)
 		{
+			// The herds' own instance and each of their plans' alike.
 			const float PxPerRad = SlonkFauna::PixelsPerRadian(PC);
-			HerdMID->SetVectorParameterValue(TEXT("ViewPos"), FLinearColor((float)ViewLocationWorld.X, (float)ViewLocationWorld.Y, (float)ViewLocationWorld.Z, 0.f));
-			if (!FMath::IsNearlyEqual(PxPerRad, LastHerdPxPerRad, 0.5f)) { LastHerdPxPerRad = PxPerRad; HerdMID->SetScalarParameterValue(TEXT("PxPerRad"), PxPerRad); }
+			const bool bPx = !FMath::IsNearlyEqual(PxPerRad, LastHerdPxPerRad, 0.5f);
+			if (bPx) { LastHerdPxPerRad = PxPerRad; }
+			const FLinearColor View((float)ViewLocationWorld.X, (float)ViewLocationWorld.Y, (float)ViewLocationWorld.Z, 0.f);
+			HerdMID->SetVectorParameterValue(TEXT("ViewPos"), View);
+			if (bPx) { HerdMID->SetScalarParameterValue(TEXT("PxPerRad"), PxPerRad); }
+			for (const TPair<uint32, TObjectPtr<UMaterialInstanceDynamic>>& P : HerdPlanMIDs)
+			{
+				if (!P.Value) { continue; }
+				P.Value->SetVectorParameterValue(TEXT("ViewPos"), View);
+				if (bPx) { P.Value->SetScalarParameterValue(TEXT("PxPerRad"), PxPerRad); }
+			}
 		}
 		if (LeaperMID)
 		{
+			// The leapers' own instance and each of their plans' alike.
 			const float PxPerRad = SlonkFauna::PixelsPerRadian(PC);
-			LeaperMID->SetVectorParameterValue(TEXT("ViewPos"), FLinearColor((float)ViewLocationWorld.X, (float)ViewLocationWorld.Y, (float)ViewLocationWorld.Z, 0.f));
-			if (!FMath::IsNearlyEqual(PxPerRad, LastLeaperPxPerRad, 0.5f)) { LastLeaperPxPerRad = PxPerRad; LeaperMID->SetScalarParameterValue(TEXT("PxPerRad"), PxPerRad); }
+			const FLinearColor View((float)ViewLocationWorld.X, (float)ViewLocationWorld.Y, (float)ViewLocationWorld.Z, 0.f);
+			const bool bPx = !FMath::IsNearlyEqual(PxPerRad, LastLeaperPxPerRad, 0.5f);
+			if (bPx) { LastLeaperPxPerRad = PxPerRad; }
+			LeaperMID->SetVectorParameterValue(TEXT("ViewPos"), View);
+			if (bPx) { LeaperMID->SetScalarParameterValue(TEXT("PxPerRad"), PxPerRad); }
+			for (const TPair<uint32, TObjectPtr<UMaterialInstanceDynamic>>& P : LeaperPlanMIDs)
+			{
+				if (!P.Value) { continue; }
+				P.Value->SetVectorParameterValue(TEXT("ViewPos"), View);
+				if (bPx) { P.Value->SetScalarParameterValue(TEXT("PxPerRad"), PxPerRad); }
+			}
 		}
 		if (FloaterMID)
 		{
@@ -893,7 +1097,8 @@ void UPlanetFaunaComponent::UpdateLeaper(uint64 Id, FGroupSet& S, const TArray<S
 		if (LeapDived(Dive, E.Leap.T0)) { continue; }
 		const FVector Place = LeapCrossing(G, R, Sea.SwellCm, Fade, L.Home[E.Member], E.Leap, E.bEntry);
 		if (FVector::Dist(Place, CamLocal) > SplashReachCm) { continue; }
-		ThrowSplash(Place, 100.0 * L.Custom[E.Member * Custom::Num + Custom::SizeM], E.bEntry, Night);
+		// As big as its fish (a slim eel's smaller, a spinefin's, its fins spread, bigger).
+		ThrowSplash(Place, 100.0 * L.Custom[E.Member * Custom::Num + Custom::SizeM] * SplashScaleOf(G.Plan), E.bEntry, Night);
 	}
 }
 
@@ -1102,17 +1307,40 @@ int32 UPlanetFaunaComponent::StartleAll(const AActor* Craft)
 	return N;
 }
 
-uint64 UPlanetFaunaComponent::NearestDrawnGroup(const FVector& WorldPos, int32 Kind) const
+uint64 SlonkFauna::PickWatched(TConstArrayView<FDrawnGroupAt> Drawn, const FVector& View, int32 Kind, uint64 Preferred)
 {
-	uint64 Best = 0; double BestD = TNumericLimits<double>::Max();
-	for (const TPair<uint64, FGroupSet>& Pair : Sets)
+	// The group a goto found, while it is drawn and of the kind asked for, before any nearer the view.
+	if (Preferred != 0)
 	{
-		if (!Pair.Value.Set) { continue; }
-		if (Kind >= 0 && (!Pair.Value.Group.IsValid() || (int32)Pair.Value.Group->Kind != Kind)) { continue; }
-		const double D = FVector::DistSquared(Pair.Value.Set->GetComponentLocation(), WorldPos);
-		if (D < BestD) { BestD = D; Best = Pair.Key; }
+		for (const FDrawnGroupAt& G : Drawn) { if (G.Id == Preferred && (Kind < 0 || (int32)G.Kind == Kind)) { return Preferred; } }
+	}
+	uint64 Best = 0; double BestD = TNumericLimits<double>::Max();
+	for (const FDrawnGroupAt& G : Drawn)
+	{
+		if (Kind >= 0 && (int32)G.Kind != Kind) { continue; }
+		const double D = FVector::DistSquared(G.Pos, View);
+		if (D < BestD) { BestD = D; Best = G.Id; }
 	}
 	return Best;
+}
+
+uint64 SlonkFauna::TakeWatched(TConstArrayView<FDrawnGroupAt> Drawn, const FVector& View, int32 Kind, uint64& GotoId)
+{
+	const uint64 Picked = PickWatched(Drawn, View, Kind, GotoId);
+	if (Picked != 0 && Picked == GotoId) { GotoId = 0; }
+	return Picked;
+}
+
+uint64 UPlanetFaunaComponent::NearestDrawnGroup(const FVector& WorldPos, int32 Kind, uint64* GotoId) const
+{
+	TArray<SlonkFauna::FDrawnGroupAt> Drawn;
+	Drawn.Reserve(Sets.Num());
+	for (const TPair<uint64, FGroupSet>& Pair : Sets)
+	{
+		if (!Pair.Value.Set || !Pair.Value.Group.IsValid()) { continue; }
+		Drawn.Add({ Pair.Key, Pair.Value.Group->Kind, Pair.Value.Set->GetComponentLocation() });
+	}
+	return GotoId ? SlonkFauna::TakeWatched(Drawn, WorldPos, Kind, *GotoId) : SlonkFauna::PickWatched(Drawn, WorldPos, Kind, 0);
 }
 
 bool UPlanetFaunaComponent::GetDrawnGroupPose(uint64 Id, FVector& OutWorldPos, FQuat& OutWorldRot) const
@@ -1159,7 +1387,28 @@ FString UPlanetFaunaComponent::Describe() const
 			: FString::Printf(TEXT("%d raising dust (%d components, %d resting)"), DustPool.NumLive(), DustPool.NumMade(), DustPool.NumResting()));
 	const FString Herds = !CanDrawHerds() ? FString(TEXT("no herds (M_Fauna has no walker branch yet)"))
 		: FString::Printf(TEXT("%d herds drawn (%d walkers: %d grazing, %d walking, %d fleeing; %s) in %s"), Grazing + Walking + Fleeing, Walkers, Grazing, Walking, Fleeing, *Dust,
-			bWalkerMaterial ? TEXT("M_Fauna's walker branch") : TEXT("the basic material (slonk.Fauna.Debug)"));
+			bWalkerMaterial ? (HerdPlanMIDs.Num() > 0 ? *FString::Printf(TEXT("M_Fauna's walker branch (%d instances of alien plans)"), HerdPlanMIDs.Num()) : TEXT("M_Fauna's walker branch"))
+				: TEXT("the basic material (slonk.Fauna.Debug)"));
+	// The groups drawn of each species of a kind of more than one (fauna plans says what each is).
+	FString BySpecies;
+	for (int32 K = 0; K < SlonkFauna::NumKinds; ++K)
+	{
+		const SlonkFauna::FFaunaKindSpecies& Sp = Profile.Species[K];
+		if (Sp.Num <= 1) { continue; }
+		FString Each;
+		for (int32 i = 0; i < Sp.Num; ++i)
+		{
+			int32 Groups = 0, Members = 0;
+			for (const TPair<uint64, FGroupSet>& S : Sets)
+			{
+				if ((int32)S.Value.Group->Kind != K || S.Value.Group->Species != i) { continue; }
+				++Groups;
+				Members += S.Value.Group->Members;
+			}
+			Each += FString::Printf(TEXT("%s#%d %d (%d)"), Each.IsEmpty() ? TEXT("") : TEXT(", "), i, Groups, Members);
+		}
+		BySpecies += FString::Printf(TEXT("%s%s species drawn %s"), BySpecies.IsEmpty() ? TEXT("; ") : TEXT(", "), SlonkFauna::KindName((EFaunaKind)K), *Each);
+	}
 	// The leapers about: how many groups and fish, how many fish are out of the water (or rising or diving under it) now, how
 	// many groups are diving; and the splashes in the air.
 	int32 LeaperGroups = 0, Fish = 0, Diving = 0;
@@ -1178,7 +1427,8 @@ FString UPlanetFaunaComponent::Describe() const
 	const FString Leapers = Sea.ShoalDensity <= 0.f ? FString(TEXT("no leapers (no shoals in these seas)"))
 		: (!CanDrawLeapers() ? FString(TEXT("no leapers (M_Fauna has no leaper branch yet)"))
 			: FString::Printf(TEXT("%d leaper groups drawn (%d fish, %d leaping now, %d groups diving; %s) in %s"), LeaperGroups, Fish, GetLeapingCount(), Diving, *Splashes,
-				bLeaperMaterial ? TEXT("M_Fauna's leaper branch") : TEXT("the basic material (slonk.Fauna.Debug)")));
+				bLeaperMaterial ? (LeaperPlanMIDs.Num() > 0 ? *FString::Printf(TEXT("M_Fauna's leaper branch (%d instances of alien plans)"), LeaperPlanMIDs.Num())
+					: (bAlienLeaperMaterial ? TEXT("M_Fauna's leaper branch") : TEXT("M_Fauna's leaper branch (no FishForm yet: alien fish drawn as Earth fish)"))) : TEXT("the basic material (slonk.Fauna.Debug)")));
 	// The jellies about: how many, how many shaken and casting shadows; and why a world has none (read as if they could be
 	// drawn, then whether they can).
 	int32 Jellies = 0, JelliesShaken = 0, JelliesShadowed = 0;
@@ -1196,11 +1446,55 @@ FString UPlanetFaunaComponent::Describe() const
 		: (!CanDrawFloaters() ? FString(TEXT("no jellies (M_Fauna has no floater branch yet)"))
 			: FString::Printf(TEXT("%d jellies drawn (%d shaken, %d casting shadows; %.0f%% of its cells hold one at its life and density) in %s"), Jellies, JelliesShaken, JelliesShadowed,
 				100.f * FMath::Min(Profile.FloaterShare * W.Life * W.Density, 1.f), bFloaterMaterial ? TEXT("M_Fauna's floater branch") : TEXT("the basic material (slonk.Fauna.Debug)")));
-	return FString::Printf(TEXT("%s, life %.2f, density %.2f, strangeness %.2f: %s; %s; %s; %s; %d groups in the last scan of %d cells (%d read anew, %.1f ms), %d shaken, %d startles, clock %+.0f s, %s; %s"),
-		SlonkFauna::IsEnabled() ? TEXT("on") : TEXT("off"), W.Life, W.Density, Profile.Strangeness, Kinds.IsEmpty() ? TEXT("none live here") : *Kinds, *Herds, *Leapers, *Floaters,
+	return FString::Printf(TEXT("%s, life %.2f, density %.2f, strangeness %.2f: %s%s; %s; %s; %s; %d groups in the last scan of %d cells (%d read anew, %.1f ms), %d shaken, %d startles, clock %+.0f s, %s; %s"),
+		SlonkFauna::IsEnabled() ? TEXT("on") : TEXT("off"), W.Life, W.Density, Profile.Strangeness, Kinds.IsEmpty() ? TEXT("none live here") : *Kinds, *BySpecies, *Herds, *Leapers, *Floaters,
 		Field.GetCandidates().Num(), LastScanCells, LastScanEvaluated, LastScanMs, Shaken, Startles, TimeOffset,
-		MID ? (bFaunaMaterial ? TEXT("M_Fauna") : (bPlainAsked ? TEXT("the basic material (slonk.Fauna.Debug)") : TEXT("the basic material (M_Fauna missing)"))) : TEXT("no material yet"),
+		MID ? (bFaunaMaterial ? (FlierPlanMIDs.Num() > 0 ? *FString::Printf(TEXT("M_Fauna (%d instances of alien fliers' plans)"), FlierPlanMIDs.Num())
+			: (bAlienFlierMaterial ? TEXT("M_Fauna") : TEXT("M_Fauna (no WingForm yet: alien fliers beat their wings as birds)")))
+			: (bPlainAsked ? TEXT("the basic material (slonk.Fauna.Debug)") : TEXT("the basic material (M_Fauna missing)"))) : TEXT("no material yet"),
 		Terrain ? *Terrain->DescribeMotes() : TEXT("no motes"));
+}
+
+void UPlanetFaunaComponent::DescribePlans(TArray<FString>& OutLines) const
+{
+	OutLines.Reset();
+	for (int32 K = 0; K < SlonkFauna::NumKinds; ++K)
+	{
+		const EFaunaKind Kind = (EFaunaKind)K;
+		if (Kind == EFaunaKind::Mote) { continue; }
+		const SlonkFauna::FFaunaKindSpecies& Sp = Profile.Species[K];
+		for (int32 i = 0; i < Sp.Num; ++i)
+		{
+			const SlonkFauna::FFaunaSpecies& S = Sp.List[i];
+			// Its size: the kind's own range times the species' (a herd's walkers a tenth either way of its span; a leaper's
+			// fish of 0.35 to 0.8 m, an eel's of a metre to 1.8 m; a flock's span its habitat's; a jelly's bell 20 to 80 m).
+			FString Size;
+			if (Kind == EFaunaKind::Herd)
+			{
+				const SlonkFauna::Walker::FShape Shape = SlonkFauna::Walker::ShapeOf(S.Plan);
+				const double Lo = FMath::Clamp(FMath::Clamp(1.6 * S.SizeScale, Shape.MinSizeM, Shape.MaxSizeM / 1.1) * 0.9, Shape.MinSizeM, Shape.MaxSizeM);
+				const double Hi = FMath::Clamp(FMath::Clamp(2.3 * S.SizeScale, Shape.MinSizeM, Shape.MaxSizeM / 1.1) * 1.1, Shape.MinSizeM, Shape.MaxSizeM);
+				Size = FString::Printf(TEXT("%.1f to %.1f m long"), Lo, Hi);
+			}
+			else if (Kind == EFaunaKind::Leaper && SlonkFauna::FishForm::FormOf(S.Plan) == SlonkFauna::FishForm::Eel)
+			{
+				// An eel's as its groups' spans are drawn (LeaperSpanM, LeaperInCell's own), its fish a tenth either way.
+				const double Longest = SlonkFauna::LeaperMaxSizeM(S.Plan);
+				Size = FString::Printf(TEXT("%.2f to %.2f m long"), FMath::Max((double)SlonkFauna::LeaperSpanM(S.Plan, S.SizeScale, 0.35f) * 0.9, SlonkFauna::Leaper::MinSizeM),
+					FMath::Min((double)SlonkFauna::LeaperSpanM(S.Plan, S.SizeScale, 0.8f) * 1.1, Longest));
+			}
+			else if (Kind == EFaunaKind::Leaper)
+			{
+				const double Longest = SlonkFauna::LeaperMaxSizeM(S.Plan);
+				Size = FString::Printf(TEXT("%.2f to %.2f m long"), FMath::Clamp(0.35 * S.SizeScale, SlonkFauna::Leaper::MinSizeM, Longest / 1.1) * 0.9,
+					FMath::Min(FMath::Clamp(0.8 * S.SizeScale, SlonkFauna::Leaper::MinSizeM, Longest / 1.1) * 1.1, Longest));
+			}
+			else if (Kind == EFaunaKind::Floater) { Size = FString::Printf(TEXT("%.0f to %.0f m across"), SlonkFauna::Floater::MinSpanM * S.SizeScale, SlonkFauna::Floater::MaxSpanM * S.SizeScale); }
+			else { Size = FString::Printf(TEXT("%.2f times its habitat's span"), S.SizeScale); }
+			const TCHAR* Here = Kind == EFaunaKind::Floater && Profile.FloaterShare <= 0.f ? TEXT(" (none live here)") : TEXT("");
+			OutLines.Add(FString::Printf(TEXT("%s #%d: %s; %.0f%% of its cells; %s%s"), SlonkFauna::KindName(Kind), i, *SlonkFauna::DescribePlan(Kind, S.Plan), 100.f * S.Share, *Size, Here));
+		}
+	}
 }
 
 void UPlanetFaunaComponent::DescribeCells(TArray<FString>& OutLines) const
@@ -1234,8 +1528,8 @@ void UPlanetFaunaComponent::DescribeCells(TArray<FString>& OutLines) const
 			const FGroupSet* S = Sets.Find(G->Id);
 			const double Speed = SlonkFauna::HerdSpeedCmS(*G, Now) / 100.0;
 			const TCHAR* Doing = Panics.Contains(G->Id) && Panics[G->Id].IsLive(Now) ? TEXT("fleeing") : (Speed > 1.8 ? TEXT("trotting") : (Speed > 0.05 ? TEXT("walking") : TEXT("grazing")));
-			OutLines.Add(FString::Printf(TEXT("%016llx herd: %d walkers of %.1f m within %.0f m, %.1f km off, loop %.1f km a lap an hour, every %.0f s walking %.0f s at %.1f m/s (trotting %.0f s of it at %.1f m/s); now %s%s%s"),
-				G->Id, G->Members, G->SpanM, G->HerdRadiusCm / 100.0, Dist / 1e5, G->LengthCm / 1e5, G->CycleSec, G->WalkB - G->WalkA, G->WalkCmS / 100.0, G->TrotB - G->TrotA,
+			OutLines.Add(FString::Printf(TEXT("%016llx herd (species #%d): %d walkers of %.1f m within %.0f m, %.1f km off, loop %.1f km a lap an hour, every %.0f s walking %.0f s at %.1f m/s (trotting %.0f s of it at %.1f m/s); now %s%s%s"),
+				G->Id, G->Species, G->Members, G->SpanM, G->HerdRadiusCm / 100.0, Dist / 1e5, G->LengthCm / 1e5, G->CycleSec, G->WalkB - G->WalkA, G->WalkCmS / 100.0, G->TrotB - G->TrotA,
 				G->TrotCmS / 100.0, Doing, S ? TEXT(", about") : TEXT(""),
 				S && S->Herd.IsValid() ? *FString::Printf(TEXT(" (%.1f m/s, %.0f m off its path for the crew)"), S->Herd->SpeedMS, S->Herd->Avoid.Size() / 100.0) : TEXT("")));
 			continue;

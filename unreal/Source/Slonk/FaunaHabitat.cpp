@@ -259,6 +259,15 @@ namespace
 	}
 	float FracF(float X) { return X - FMath::FloorToFloat(X); }
 	FVector3f NormalizeF(const FVector3f& V) { const float L = FMath::Sqrt(V.X * V.X + V.Y * V.Y + V.Z * V.Z); return L > 0.f ? V / L : V; }
+
+	/** A group's glow at night: none unless its plan carries glow organs (no Earth plan does), else GlowOrgan::GlowLo to
+	 *  GlowHi by its seed. */
+	float GlowOf(const FFaunaGroup& G)
+	{
+		if (G.Plan.GlowOrgans == 0) { return 0.f; }
+		const float U = (float)((G.Seed >> 5) & 0xffffu) / 65535.f;
+		return FMath::Lerp(SlonkFauna::GlowOrgan::GlowLo, SlonkFauna::GlowOrgan::GlowHi, U);
+	}
 }
 
 uint64 SlonkFauna::FFaunaWorld::Salt() const
@@ -285,7 +294,7 @@ bool SlonkFauna::FFaunaWorld::operator==(const FFaunaWorld& O) const
 
 bool SlonkFauna::FFaunaGroup::operator==(const FFaunaGroup& O) const
 {
-	return Id == O.Id && Kind == O.Kind && Habitat == O.Habitat && Seed == O.Seed && Centre == O.Centre && East == O.East && North == O.North
+	return Id == O.Id && Kind == O.Kind && Habitat == O.Habitat && Seed == O.Seed && Species == O.Species && Plan == O.Plan && Centre == O.Centre && East == O.East && North == O.North
 		&& RadiusCm == O.RadiusCm && Lobe == O.Lobe && LobePhase == O.LobePhase && MeanderCm == O.MeanderCm && Lobes == O.Lobes && MeanderK == O.MeanderK
 		&& BobK == O.BobK && PeriodSec == O.PeriodSec && Phase0 == O.Phase0 && Turn == O.Turn && CruiseCm == O.CruiseCm && BobCm == O.BobCm
 		&& LengthCm == O.LengthCm && SpeedCmS == O.SpeedCmS && Ground == O.Ground && Members == O.Members && SpanM == O.SpanM && SpacingM == O.SpacingM
@@ -514,22 +523,24 @@ namespace
 	{
 		return G.StartCm + G.Turn * SlonkFauna::HerdWalkedCm(G, Seconds);
 	}
-	/** A herd's longest member, head and all, m: its walkers are at most a tenth longer than its span. */
+	/** A herd's longest member, head and all, m (its footprint's whole reach, for a walker whose legs or antennae reach
+	 *  past its length: Walker::FShape::Reach): its walkers are at most a tenth longer than its span. */
 	double HerdBodyM(const FFaunaGroup& G)
 	{
-		return 1.1 * 1.15 * (double)G.SpanM;
+		return 1.1 * 1.15 * (double)G.SpanM * SlonkFauna::Walker::ShapeOf(G.Plan).Reach;
 	}
 	/** A herd's shortest walkers' stride, m: their share of the shortest length its span gives a walker (HerdMembersOf),
 	 *  to within the rounding that fits a whole number of them round its loop. */
 	double HerdShortStrideM(const FFaunaGroup& G)
 	{
-		return SlonkFauna::Walker::StrideShare * FMath::Clamp(0.9 * (double)G.SpanM, SlonkFauna::Walker::MinSizeM, 2.6);
+		const SlonkFauna::Walker::FShape S = SlonkFauna::Walker::ShapeOf(G.Plan);
+		return S.StrideShare * FMath::Clamp(0.9 * (double)G.SpanM, S.MinSizeM, S.MaxSizeM);
 	}
 	/** How far apart a herd's walkers' grazing circles' middles are kept, cm: its spacing, but never less than the longest
 	 *  of them and the two smallest circles they amble round (three of the longest one's strides round) between them. */
 	double HerdKeepCm(const FFaunaGroup& G)
 	{
-		const double SmallCircleM = 3.0 * SlonkFauna::Walker::StrideShare * 1.1 * (double)G.SpanM / UE_DOUBLE_TWO_PI;
+		const double SmallCircleM = 3.0 * SlonkFauna::Walker::ShapeOf(G.Plan).StrideShare * 1.1 * (double)G.SpanM / UE_DOUBLE_TWO_PI;
 		return 100.0 * FMath::Max(0.8 * (double)G.SpacingM, HerdBodyM(G) + 2.0 * SmallCircleM);
 	}
 
@@ -691,6 +702,12 @@ namespace
 		G.Seed = ((uint32)(Dr.Next() * 65536.0) << 16) | (uint32)(Dr.Next() * 65536.0);
 		G.Centre = Centre;
 		TangentAxes(Centre, G.East, G.North);
+		// Its species: the cell's own (a number of its own, apart from these draws), its plan and its size against an Earth
+		// grazer's; its walkers' shape from the plan.
+		G.Species = SpeciesInCell(W, C);
+		const FFaunaSpecies& Sp = W.Profile.Species[(int32)EFaunaKind::Herd][G.Species];
+		G.Plan = Sp.Plan;
+		const Walker::FShape Shape = Walker::ShapeOf(G.Plan);
 		// Its schedule: grazing most of the cycle, walking a little over a quarter to a third of it, trotting a tenth
 		// within the walk: about 2 km an hour.
 		G.CycleSec = HerdCycles[FMath::Min((int32)(Dr.Next() * UE_ARRAY_COUNT(HerdCycles)), (int32)UE_ARRAY_COUNT(HerdCycles) - 1)];
@@ -729,14 +746,20 @@ namespace
 		}
 		G.StartCm = StartShare * G.LengthCm;
 		G.SpeedCmS = G.LengthCm / G.PeriodSec;
-		// Its members: mostly the smaller herds, from 15 to 60; a grazer's length, its spacing as cattle graze.
+		// Its members: mostly the smaller herds, from 15 to 60; a grazer's length, its spacing as cattle graze (each the
+		// species' size against a grazer's: a six-legged grazer's larger, an insectoid's from a little smaller to half again).
 		const double Un = Dr.Next();
 		G.Members = FMath::Clamp(15 + (int32)(46.0 * Un * Un), FMath::Max(D.GroupMin, 1), D.GroupMax);
 		G.SpanM = FMath::Lerp(1.6f, 2.3f, (float)Dr.Next());
 		G.SpacingM = FMath::Lerp(4.5f, 7.f, (float)Dr.Next());
+		if (Sp.SizeScale != 1.f)
+		{
+			G.SpanM = FMath::Clamp(G.SpanM * Sp.SizeScale, (float)Shape.MinSizeM, (float)(Shape.MaxSizeM / 1.1));
+			G.SpacingM *= Sp.SizeScale;
+		}
 		// Its formation wide enough for its circles' middles to lie that far apart (they fill under half of it).
 		G.FormationCm = FMath::Sqrt((double)G.Members) * FMath::Max(100.0 * G.SpacingM * 0.55, 0.75 * HerdKeepCm(G));
-		G.HerdRadiusCm = G.FormationCm + 100.0 * Walker::MaxCircleM + 0.6 * 110.0 * G.SpanM;
+		G.HerdRadiusCm = G.FormationCm + 100.0 * Walker::MaxCircleM + 0.6 * 110.0 * G.SpanM * Shape.Reach;
 		G.GroundHalfCm = G.HerdRadiusCm + 100.0;
 		G.CruiseCm = 0.0;
 		G.FlapHz = 0.f;
@@ -752,11 +775,22 @@ namespace
 		{
 			G.Ground[k] = (float)FMath::Max(SlonkTerrain::SurfaceHeightCm(W.P, (Centre * W.P.RadiusCm + LoopPoint(G, UE_DOUBLE_TWO_PI * k / NumGround)).GetSafeNormal()), 0.0);
 		}
-		G.Pigment = HerdPigment(W.Profile.Look, W.Palette, FMath::Clamp(1.0 - H.MeanWet * 1.3, 0.0, 1.0), Tone, Vary);
-		G.Glow = 0.f;
+		// A coat, or an insectoid's carapace, from the world's look.
+		const double Dry = FMath::Clamp(1.0 - H.MeanWet * 1.3, 0.0, 1.0);
+		G.Pigment = Shape.Rig.Carapace > 0.5f ? CarapacePigment(W.Profile.Look, W.Palette, Dry, Tone, Vary) : HerdPigment(W.Profile.Look, W.Palette, Dry, Tone, Vary);
+		G.Glow = GlowOf(G);
 		Out = MoveTemp(G);
 		return true;
 	}
+}
+
+int32 SlonkFauna::SpeciesInCell(const FFaunaWorld& W, const FFaunaCell& C)
+{
+	const FFaunaKindSpecies& S = W.Profile.Species[FMath::Clamp((int32)C.Kind, 0, NumKinds - 1)];
+	if (S.Num <= 1) { return 0; }
+	// The cell's own number, salted apart from its group's draws (40 and the kind's).
+	SlonkScatter::FDraw Dr(SlonkScatter::CellHash(C.Face, 70 + (int32)C.Kind, C.X, C.Y, W.Salt()));
+	return S.Pick(Dr.Next());
 }
 
 SlonkFauna::FHerdHabitatRead SlonkFauna::HerdHabitatAt(const FFaunaWorld& W, const FFaunaGroup& G)
@@ -787,15 +821,45 @@ double SlonkFauna::HerdIntent(const FFaunaGroup& G, double Seconds)
 	return U >= G.WalkA - HerdLeadSec && U < G.WalkB + 0.5 ? 1.0 : 0.0;
 }
 
-double SlonkFauna::LeaperReachCm(const FShoal& S)
+double SlonkFauna::LeaperReachCm(const FShoal& S, double LongestM)
 {
 	// Its fish's homes within 0.55 of its painted shape; each leap out from its home up to Jitter of the longest fish's
 	// lengths either way and RangeLo + RangeSpan on, and half of it past that.
-	const double Longest = 100.0 * Leaper::MaxSizeM;
+	const double Longest = 100.0 * LongestM;
 	return 0.55 * FMath::Max(S.HalfLengthCm, S.HalfWidthCm) + Longest * (UE_DOUBLE_SQRT_2 * Leaper::Jitter + Leaper::RangeLo + Leaper::RangeSpan + 0.5);
 }
 
-SlonkFauna::FLeaperHabitatRead SlonkFauna::LeaperHabitatAt(const FFaunaWorld& W, const FFaunaCell& C)
+double SlonkFauna::LeaperMaxSizeM(const FFaunaBodyPlan& Plan)
+{
+	switch (FishForm::FormOf(Plan))
+	{
+	case FishForm::Eel: return FishForm::EelMaxSizeM;
+	case FishForm::Spinefin: return Leaper::MaxSizeM * 10.0 / 9.0;
+	default: return Leaper::MaxSizeM;
+	}
+}
+
+float SlonkFauna::LeaperSpanM(const FFaunaBodyPlan& Plan, float SizeScale, float Drawn)
+{
+	// An eel's lengths its own, the cell's same draw laid over them (a metre to 1.5 m, its species a tenth either way, its
+	// fish on to 1.8 m); any other strange species of its own size.
+	const double Longest = LeaperMaxSizeM(Plan);
+	if (FishForm::FormOf(Plan) == FishForm::Eel) { return FMath::Clamp(FMath::Lerp(FishForm::EelSpanLoM, FishForm::EelSpanHiM, (Drawn - 0.35f) / 0.45f) * SizeScale, FishForm::EelSpanLoM, (float)(Longest / 1.1)); }
+	if (SizeScale != 1.f) { return FMath::Clamp(Drawn * SizeScale, (float)Leaper::MinSizeM, (float)(Longest / 1.1)); }
+	return Drawn;
+}
+
+double SlonkFauna::SplashScaleOf(const FFaunaBodyPlan& Plan)
+{
+	switch (FishForm::FormOf(Plan))
+	{
+	case FishForm::Eel: return 0.6;
+	case FishForm::Spinefin: return 1.35;
+	default: return 1.0;
+	}
+}
+
+SlonkFauna::FLeaperHabitatRead SlonkFauna::LeaperHabitatAt(const FFaunaWorld& W, const FFaunaCell& C, double LongestM)
 {
 	FLeaperHabitatRead R;
 	if (C.Kind != EFaunaKind::Leaper) { return R; }
@@ -814,7 +878,7 @@ SlonkFauna::FLeaperHabitatRead SlonkFauna::LeaperHabitatAt(const FFaunaWorld& W,
 	// Wholly on its plane: its loop and its fish's reach past it, all round, nowhere another plane's (the material lays
 	// both its swell and its shoals by the plane at each pixel).
 	const double Lu = S.LoopCentreCm[Iu], Lv = S.LoopCentreCm[Iv];
-	const double Out = S.LoopRadiusCm + LeaperReachCm(S);
+	const double Out = S.LoopRadiusCm + LeaperReachCm(S, LongestM);
 	R.bOnePlane = true;
 	for (int32 k = 0; k < 8 && R.bOnePlane; ++k)
 	{
@@ -863,7 +927,11 @@ namespace
 	bool LeaperInCell(const SlonkFauna::FFaunaWorld& W, const SlonkFauna::FFaunaCell& C, FFaunaGroup& Out)
 	{
 		using namespace SlonkFauna;
-		const FLeaperHabitatRead H = LeaperHabitatAt(W, C);
+		// Its species, the cell's own: the habitat read out as far as its longest fish leap.
+		const int32 Species = SpeciesInCell(W, C);
+		const FFaunaSpecies& Sp = W.Profile.Species[(int32)EFaunaKind::Leaper][Species];
+		const double Longest = LeaperMaxSizeM(Sp.Plan);
+		const FLeaperHabitatRead H = LeaperHabitatAt(W, C, Longest);
 		if (!H.bSuits) { return false; }
 		const FShoal& S = H.Shoal;
 		const FFaunaKindDesc& D = KindDesc(EFaunaKind::Leaper);
@@ -874,13 +942,18 @@ namespace
 		G.Id = C.Id();
 		G.Kind = EFaunaKind::Leaper;
 		G.Habitat = EFlierHabitat::Coast;
+		// Its species, the cell's own (the Earth's fish at strangeness 0; on a strange world an eel or a spinefin too).
+		G.Species = Species;
+		G.Plan = Sp.Plan;
 		G.Seed = ((uint32)(Dr.Next() * 65536.0) << 16) | (uint32)(Dr.Next() * 65536.0);
 		G.Centre = S.LoopCentreCm.GetSafeNormal();
 		TangentAxes(G.Centre, G.East, G.North);
 		// One to five fish, of 35 to 80 cm (each a tenth either way of it), leaping in turn on a cycle of about four seconds
 		// to each of them (the hour's divisor nearest, 10 to 24 s).
 		G.Members = FMath::Clamp(1 + (int32)(Dr.Next() * Leaper::MaxPerGroup), FMath::Max(D.GroupMin, 1), FMath::Min(D.GroupMax, Leaper::MaxPerGroup));
-		G.SpanM = FMath::Lerp(0.35f, 0.8f, (float)Dr.Next());
+		// An eel's lengths its own, the cell's same draw laid over them; any other strange species of its own size
+		// (LeaperSpanM, which fauna plans reads out too).
+		G.SpanM = LeaperSpanM(Sp.Plan, Sp.SizeScale, FMath::Lerp(0.35f, 0.8f, (float)Dr.Next()));
 		const double Want = Leaper::SlotSec * G.Members + Leaper::SlotSpread * Dr.Next();
 		G.CycleSec = Leaper::Cycles[0];
 		for (const double Cyc : Leaper::Cycles) { if (FMath::Abs(Cyc - Want) < FMath::Abs(G.CycleSec - Want)) { G.CycleSec = Cyc; } }
@@ -892,14 +965,14 @@ namespace
 		G.ShoalDensity = W.Sea.ShoalDensity;
 		G.RadiusCm = S.LoopRadiusCm;
 		G.Lobe = 0.0;
-		G.MeanderCm = LeaperReachCm(S);
+		G.MeanderCm = LeaperReachCm(S, Longest);
 		G.ShoalHalfLengthCm = S.HalfLengthCm;
 		G.ShoalHalfWidthCm = S.HalfWidthCm;
 		G.ShoalDepthCm = S.DepthCm;
 		G.WaterCm = H.MinDepthCm;
 		G.SpacingM = (float)(S.HalfWidthCm / 100.0);
 		G.Pigment = LeaperPigment(W.Profile.Look, W.Sea.Shallow, 0.85 + 0.3 * Dr.Next());
-		G.Glow = 0.f;
+		G.Glow = GlowOf(G);
 		Out = MoveTemp(G);
 		return true;
 	}
@@ -943,10 +1016,13 @@ namespace
 		const double V = -1.0 + Wd * ((double)C.Y + 0.25 + 0.5 * Dr.Next());
 		const double Gate = Dr.Next();
 		if (Gate >= FMath::Min((double)W.Profile.FloaterShare * (double)W.Life * (double)W.Density, 1.0)) { return false; }
-		const FFaunaBodyPlan& Plan = W.Profile.Plans[(int32)EFaunaKind::Floater];
 		FFaunaGroup G;
 		G.Id = C.Id();
 		G.Kind = EFaunaKind::Floater;
+		// Its species (the jellies keep a plan of their own, one species of it) and that plan.
+		G.Species = SpeciesInCell(W, C);
+		G.Plan = W.Profile.Species[(int32)EFaunaKind::Floater][G.Species].Plan;
+		const FFaunaBodyPlan& Plan = G.Plan;
 		G.Seed = ((uint32)(Dr.Next() * 65536.0) << 16) | (uint32)(Dr.Next() * 65536.0);
 		G.Centre = SlonkTerrain::CubeDir(C.Face, U, V).GetSafeNormal();
 		TangentAxes(G.Centre, G.East, G.North);
@@ -1064,6 +1140,12 @@ bool SlonkFauna::GroupInCell(const FFaunaWorld& W, const FFaunaCell& C, FFaunaGr
 	G.Id = C.Id();
 	G.Kind = C.Kind;
 	G.Habitat = H.Best;
+	// Its species: the cell's own (the Earth's bird at strangeness 0; on a strange world four-winged and membrane-winged
+	// fliers too), and its plan.
+	G.Species = SpeciesInCell(W, C);
+	const FFaunaSpecies& Spc = W.Profile.Species[(int32)C.Kind][G.Species];
+	G.Plan = Spc.Plan;
+	const int32 Form = Wings::FormOf(G.Plan);
 	G.Seed = ((uint32)(Dr.Next() * 65536.0) << 16) | (uint32)(Dr.Next() * 65536.0);
 	G.Centre = Centre;
 	TangentAxes(Centre, G.East, G.North);
@@ -1074,6 +1156,14 @@ bool SlonkFauna::GroupInCell(const FFaunaWorld& W, const FFaunaCell& C, FFaunaGr
 	G.SpanM = FMath::Lerp(Sp.SpanLo, Sp.SpanHi, (float)Dr.Next());
 	G.SpacingM = G.SpanM * FMath::Lerp(Sp.SpacingLo, Sp.SpacingHi, (float)Dr.Next());
 	G.FlapHz = FMath::Lerp(Sp.FlapLo, Sp.FlapHi, (float)Dr.Next());
+	if (Form != Wings::Bird)
+	{
+		// A strange world's flier: its species' size against its habitat's bird's, its flock as far apart for it, its beat a
+		// four-winged one's faster and a membrane-winged one's slower.
+		G.SpanM = FMath::Clamp(G.SpanM * Spc.SizeScale, 0.25f, 2.6f);
+		G.SpacingM *= Spc.SizeScale;
+		G.FlapHz = Form == Wings::Four ? FMath::Min(G.FlapHz * Wings::FourFlapK, Wings::FourFlapMax) : G.FlapHz * Wings::MembraneFlapK;
+	}
 	// Its loop: 300 to 600 m round its middle, two to four lobes, a meander of a few dozen metres along it.
 	G.RadiusCm = FMath::Lerp(3.0e4, 6.0e4, Dr.Next());
 	G.Lobes = 2 + FMath::Min((int32)(Dr.Next() * 3.0), 2);
@@ -1086,7 +1176,9 @@ bool SlonkFauna::GroupInCell(const FFaunaWorld& W, const FFaunaCell& C, FFaunaGr
 	G.Turn = Dr.Next() < 0.5 ? -1.0 : 1.0;
 	G.Phase0 = UE_DOUBLE_TWO_PI * Dr.Next();
 	G.CruiseCm = 100.0 * FMath::Lerp((double)Sp.CruiseLo, (double)Sp.CruiseHi, Dr.Next());
-	const double WantSpeed = 100.0 * FMath::Lerp((double)Sp.SpeedLo, (double)Sp.SpeedHi, Dr.Next());
+	double WantSpeed = 100.0 * FMath::Lerp((double)Sp.SpeedLo, (double)Sp.SpeedHi, Dr.Next());
+	// A four-winged flock flies its loop slower than a bird's (it hovers and darts as it goes), a membrane-winged one a little.
+	if (Form != Wings::Bird) { WantSpeed *= Form == Wings::Four ? Wings::FourSpeedK : Wings::MembraneSpeedK; }
 	const double Vary = 0.85 + 0.3 * Dr.Next();
 	// The loop's length, and the period of the hour's divisors nearest the one its speed asks for.
 	double Len = 0.0;
@@ -1122,12 +1214,12 @@ bool SlonkFauna::GroupInCell(const FFaunaWorld& W, const FFaunaCell& C, FFaunaGr
 		G.Ground[k] = M;
 	}
 	G.Pigment = FlierPigment(W.Profile.Look, W.Palette, G.Habitat, FMath::Clamp(1.0 - H.MeanWet * 1.3, 0.0, 1.0), Vary);
-	G.Glow = 0.f;
+	G.Glow = GlowOf(G);
 	Out = MoveTemp(G);
 	return true;
 }
 
-bool SlonkFauna::FindGroupNear(const FFaunaWorld& W, EFaunaKind K, const FVector& Dir, double MaxCm, int32 MaxCells, FFaunaGroup& Out, FGroupSearch* OutSearch)
+bool SlonkFauna::FindGroupNear(const FFaunaWorld& W, EFaunaKind K, const FVector& Dir, double MaxCm, int32 MaxCells, FFaunaGroup& Out, FGroupSearch* OutSearch, int32 Species)
 {
 	FGroupSearch Search;
 	bool bFound = false;
@@ -1173,6 +1265,7 @@ bool SlonkFauna::FindGroupNear(const FFaunaWorld& W, EFaunaKind K, const FVector
 			{
 				if (Search.Cells >= MaxCells) { bFull = true; break; }
 				++Search.Cells;
+				if (Species >= 0 && SpeciesInCell(W, Pr.Value) != Species) { continue; }
 				FFaunaGroup G;
 				if (!GroupInCell(W, Pr.Value, G)) { continue; }
 				const double Dist = FVector::Dist(G.Centre, Up) * W.P.RadiusCm;
@@ -1269,21 +1362,25 @@ namespace
 		}
 		const double BodyM = HerdBodyM(G);
 		const SlonkFauna::FFaunaKindDesc& D = SlonkFauna::KindDesc(G.Kind);
+		const SlonkFauna::Walker::FShape Shape = SlonkFauna::Walker::ShapeOf(G.Plan);
 		const double LoopM = G.LengthCm / 100.0;
 		OutXf.Reserve(N);
 		OutCustom.Reserve(N * SlonkFauna::Custom::Num);
 		for (int32 i = 0; i < N; ++i)
 		{
 			const FVector At = P[i];
-			const double Size = FMath::Clamp((double)G.SpanM * Rng.FRandRange(0.9f, 1.1f), SlonkFauna::Walker::MinSizeM, 2.6);
-			// A stride of about its share of its length, its herd's loop a whole number of them.
-			const double Laps = FMath::Max(FMath::RoundToDouble(LoopM / (SlonkFauna::Walker::StrideShare * Size)), 1.0);
+			const double Size = FMath::Clamp((double)G.SpanM * Rng.FRandRange(0.9f, 1.1f), Shape.MinSizeM, Shape.MaxSizeM);
+			// A stride of about its form's share of its length, its herd's loop a whole number of them.
+			const double Laps = FMath::Max(FMath::RoundToDouble(LoopM / (Shape.StrideShare * Size)), 1.0);
 			const double Stride = LoopM / Laps;
 			// Its grazing circle, a whole number of strides round (at least three), no wider than the box allows, and
 			// keeping to its half of the room its nearest neighbour leaves it past the longest walker's length: any two
 			// circles then leave that length between the walkers going round them.
 			int32 K = FMath::Max(FMath::RoundToInt32(UE_DOUBLE_TWO_PI * Rng.FRandRange(1.2f, (float)SlonkFauna::Walker::MaxCircleM) / Stride), 3);
 			while (K > 3 && K * Stride / UE_DOUBLE_TWO_PI > SlonkFauna::Walker::MaxCircleM) { --K; }
+			// No wider than its form lets the speck floor's growth and its circle stay in its instance's box together (an
+			// insectoid's: Walker::FShape::CircleShare; no bound on the Earth's grazer).
+			while (K > 3 && K * Stride / UE_DOUBLE_TWO_PI > Size * Shape.CircleShare) { --K; }
 			while (K > 3 && K * Stride / UE_DOUBLE_TWO_PI > 0.5 * (GapM[i] - BodyM)) { --K; }
 			const double Rho = K * Stride / UE_DOUBLE_TWO_PI;
 			const float Way = Rng.FRand() < 0.5f ? -1.f : 1.f;
@@ -1354,7 +1451,7 @@ namespace
 		OutCustom.Reserve(N * SlonkFauna::Custom::Num);
 		for (int32 i = 0; i < N; ++i)
 		{
-			const double Size = FMath::Clamp((double)G.SpanM * Rng.FRandRange(0.9f, 1.1f), SlonkFauna::Leaper::MinSizeM, SlonkFauna::Leaper::MaxSizeM);
+			const double Size = FMath::Clamp((double)G.SpanM * Rng.FRandRange(0.9f, 1.1f), SlonkFauna::Leaper::MinSizeM, SlonkFauna::LeaperMaxSizeM(G.Plan));
 			const float Shade = Rng.FRandRange(0.9f, 1.1f);
 			const float Seed = Rng.FRand();
 			// Its slot in the group's cycle: the group's offset and its place in the order, so the group's fish leap in turn,
@@ -1462,8 +1559,9 @@ void SlonkFauna::MembersOf(const FFaunaGroup& G, TArray<FTransform>& OutXf, TArr
 	for (int32 i = 0; i < N; ++i)
 	{
 		const float Scale = G.SpanM * Rng.FRandRange(0.92f, 1.08f);
+		// Turned a little from the flock's way (a four-winged flier not: it darts with its flock, the same way in its frame).
 		const float Yaw = Rng.FRandRange(-0.1f, 0.1f);
-		OutXf.Add(FTransform(FQuat(FVector::ZAxisVector, Yaw), P[i], FVector(Scale)));
+		OutXf.Add(FTransform(FQuat(FVector::ZAxisVector, G.Kind == EFaunaKind::Flier && Wings::FormOf(G.Plan) == Wings::Four ? 0.f : Yaw), P[i], FVector(Scale)));
 		const float Shade = Rng.FRandRange(0.9f, 1.1f);
 		const float Seed = Rng.FRand();
 		const float PhaseJitter = Rng.FRand();
@@ -1517,6 +1615,20 @@ double SlonkFauna::HerdRiseSec(const FFaunaGroup& G, const FFaunaKindDesc& D)
 	// At its fastest its gallop goes its kind's FleeCm over e times its rise's time.
 	const double FastestCmS = 100.0 * HerdGallopStridesHz * HerdShortStrideM(G);
 	return FMath::Max(D.FleeRiseSec, D.FleeCm / (FMath::Exp(1.0) * FMath::Max(FastestCmS, 1.0)));
+}
+
+double SlonkFauna::HerdKapRate(const FFaunaGroup& G)
+{
+	const Walker::FShape S = Walker::ShapeOf(G.Plan);
+	if (S.Form == Walker::EForm::Grazer || S.NumLegs <= 0) { return Walker::MaxKapRate; }
+	// Its longest walker's farthest foot's reach from its body's middle and its stance (how far it walks on each foot), m,
+	// against an Earth grazer's of 2 m (its hooves 0.34 of its length out, its stance 0.6 of its stride).
+	const double Longest = FMath::Min(1.1 * (double)G.SpanM, S.MaxSizeM);
+	double Foot = 0.0;
+	for (int32 i = 0; i < S.NumLegs; ++i) { Foot = FMath::Max(Foot, (double)FVector2f(S.Legs[i].Foot.X, S.Legs[i].Foot.Y).Size() / 100.0); }
+	const double Carried = Foot * Longest * Walker::Duty * S.StrideShare * Longest;
+	const double Earth = (FVector2D(33.0, 8.0).Size() / 100.0 * 2.0) * (Walker::Duty * Walker::StrideShare * 2.0);
+	return Walker::MaxKapRate * FMath::Min(1.0, Earth / FMath::Max(Carried, 1e-6));
 }
 
 double SlonkFauna::HerdTurnRateOf(const FFaunaGroup& G, bool bShaken)
@@ -1926,7 +2038,58 @@ void SlonkFauna::FrightData(const FPanic& P, double Now, const FQuat& Rot, doubl
 	Group[GroupData::OnsetT0] = bLive ? OnMaterialClock(P.OnsetT0, ClockOffsetSec) : 0.f;
 }
 
-FVector3f SlonkFauna::FlierMotion(const FVector3f& LP, const FLinearColor& VC, float T, const float* C, const float* Gd, float DistCm, float PxPerRad)
+namespace
+{
+	/** The hash a four-winged flier's darts are drawn by, uint for uint as the material's. */
+	float DartU(uint32 Cycle, uint32 Seed, uint32 K)
+	{
+		uint32 X = Cycle * 0x9E3779B1u + Seed * 0x85EBCA77u + K * 0xC2B2AE3Du + 0x165667B1u;
+		X ^= X >> 16;
+		X *= 0x7FEB352Du;
+		X ^= X >> 15;
+		X *= 0x846CA68Bu;
+		X ^= X >> 16;
+		return (float)(X >> 8) * (1.f / 16777216.f);
+	}
+}
+
+float SlonkFauna::MembraneLinesAt(const FVector2f& UV, const FVector2f& UVPerPixel)
+{
+	// fauna_material.py's CODE, its alien fliers' branch, a membrane's lines.
+	const float Avw = FMath::Max(UVPerPixel.Y, 1e-4f), Auw = FMath::Max(UVPerPixel.X, 1e-4f);
+	const float Asw = FMath::Max(0.05f, 0.75f * Avw), Alw = FMath::Max(0.07f, 0.75f * Auw);
+	const float Au = FracF(UV.X);
+	const float Strut = (1.f - SmoothStepF(Asw - 0.5f * Avw, Asw + 0.5f * Avw, FMath::Abs(FracF(UV.Y + 0.5f) - 0.5f))) * FMath::Min(0.05f / FMath::Min(Asw, 0.5f), 1.f);
+	const float Lead = (1.f - SmoothStepF(Alw - 0.5f * Auw, Alw + 0.5f * Auw, Au)) * FMath::Min(0.07f / FMath::Min(Alw, 1.f), 1.f);
+	return FMath::Max(Strut, Lead);
+}
+
+float SlonkFauna::DartSeedOf(const FFaunaGroup& G)
+{
+	if (G.Kind != EFaunaKind::Flier || Wings::FormOf(G.Plan) != Wings::Four) { return 0.f; }
+	return (float)((G.Seed * 2654435761u) >> 8) / 16777216.f;
+}
+
+FVector3f SlonkFauna::FlierDart(float T, const float* Gd)
+{
+	// The flock's own number, so every member darts together.
+	const float Seed = Gd[GroupData::DartSeed];
+	const float Dn = Wings::DartLo + FMath::FloorToFloat(FracF(Seed * 5.93f) * Wings::DartSpan);
+	const float Du = T * (Dn / 3600.f) + FracF(Seed * 2.37f);
+	const float Di = FMath::FloorToFloat(Du);
+	const float Dt = SmoothStepF(1.f - Wings::DashShare, 1.f, Du - Di);
+	const uint32 Sd = (uint32)(Seed * 65536.f);
+	FVector3f Dp[2];
+	for (int32 Dk = 0; Dk < 2; ++Dk)
+	{
+		const float Dc = Di + (float)Dk;
+		const uint32 Dcu = (uint32)(Dc - Dn * FMath::FloorToFloat(Dc / Dn));
+		for (int32 Dj = 0; Dj < 3; ++Dj) { Dp[Dk][Dj] = (DartU(Dcu, Sd, (uint32)Dj) * 2.f - 1.f) * Wings::DashCm[Dj]; }
+	}
+	return FMath::Lerp(Dp[0], Dp[1], Dt);
+}
+
+FVector3f SlonkFauna::FlierMotion(const FVector3f& LP, const FLinearColor& VC, float T, const float* C, const float* Gd, float DistCm, float PxPerRad, const FVector2f& UV, int32 WingForm)
 {
 	// fauna_material.py's WPO_CODE, line for line.
 	const float Size = C[Custom::SizeM], Seed = C[Custom::Seed], Phase = C[Custom::Phase], Rate = C[Custom::RateHz], Bearing = C[Custom::PerKind];
@@ -1941,17 +2104,22 @@ FVector3f SlonkFauna::FlierMotion(const FVector3f& LP, const FLinearColor& VC, f
 	const float Panic = Live * (1.f - SmoothStepF(20.f, 120.f, PanicAge));
 	const float Dist = FMath::Max(DistCm, 1.f);
 	const float Px = FMath::Max(Size, 0.01f) * 100.f * PxPerRad / Dist;
-	const float K = FMath::Clamp(2.f / FMath::Max(Px, 0.001f), 1.f, 4.f);
-	const float Nb = 514.f + FMath::FloorToFloat(FracF(Seed * 7.31f) * 686.f);
+	const float K = FMath::Clamp(2.f / FMath::Max(Px, 0.001f), 1.f, WingForm != Wings::Bird ? Wings::SpeckMax : 4.f);
+	// Its plan's wings: a bird's as they always were.
+	const bool bFour = WingForm == Wings::Four, bMemb = WingForm == Wings::Membrane;
+	const float Nb = bMemb ? Wings::GlideLo + FMath::FloorToFloat(FracF(Seed * 7.31f) * Wings::GlideSpan) : 514.f + FMath::FloorToFloat(FracF(Seed * 7.31f) * 686.f);
 	const float Cyc = FracF(T * (Nb / 3600.f) + Seed);
-	const float Share = 0.45f + 0.35f * FracF(Seed * 3.77f);
-	const float Burst = SmoothStepF(0.f, 0.08f, Cyc) * (1.f - SmoothStepF(Share, Share + 0.08f, Cyc));
+	const float Share = bMemb ? Wings::MembraneShare + 0.15f * FracF(Seed * 3.77f) : 0.45f + 0.35f * FracF(Seed * 3.77f);
+	const float Burst = bFour ? 1.f : SmoothStepF(0.f, 0.08f, Cyc) * (1.f - SmoothStepF(Share, Share + 0.08f, Cyc));
 	const float Urge = FMath::Clamp(Panic * 3.f, 0.f, 1.f) * SmoothStepF(0.f, 0.3f, OnsetAge);
 	const float FlapOn = FMath::Max(Burst, Urge);
-	const float BeatCalm = FMath::Sin(6.2831853f * FracF(T * Rate + Seed * 5.f));
-	const float BeatFast = FMath::Sin(6.2831853f * FracF(T * Rate * 1.5f + Seed * 5.f));
+	const float Lag = bFour && UV.X > 1.5f ? Wings::HindLag : 0.f;
+	const float BeatCalm = FMath::Sin(6.2831853f * FracF(T * Rate + Seed * 5.f - Lag));
+	const float BeatFast = FMath::Sin(6.2831853f * FracF(T * Rate * 1.5f + Seed * 5.f - Lag));
 	const float Beat = FMath::Lerp(BeatCalm, BeatFast, Urge);
-	const float Ang = FMath::Lerp(0.12f, 0.9f * Beat, FlapOn) / K;
+	const float Swing = bFour ? Wings::FourSwing : (bMemb ? Wings::MembraneSwing : 0.9f);
+	const float Raise = bMemb ? Wings::MembraneRaise : 0.12f;
+	const float Ang = FMath::Lerp(Raise, Swing * Beat, FlapOn) / K;
 	FVector3f P = LP;
 	const float Va = VC.A;
 	if (Va > 0.4f && Va < 0.6f)
@@ -1959,8 +2127,19 @@ FVector3f SlonkFauna::FlierMotion(const FVector3f& LP, const FLinearColor& VC, f
 		const float S = VC.B > 0.5f ? 1.f : -1.f;
 		const float D = FMath::Max(FMath::Abs(LP.Y) - 4.f, 0.f);
 		const float A = Ang * (0.8f + 0.4f * VC.G);
-		P.Y = S * (4.f + D * FMath::Cos(A));
-		P.Z = LP.Z + D * FMath::Sin(A);
+		if (bMemb)
+		{
+			const float Wu = FMath::Clamp(UV.X, 0.f, 1.f);
+			const float Wz = Wings::WaveCm * (D / 46.f) * (0.35f + 0.65f * Wu) * FMath::Lerp(Wings::GlideWave, 1.f, FlapOn)
+				* FMath::Sin(6.2831853f * (FracF(T * Rate * Wings::WaveRate + Seed * 3.f) - 0.9f * D / 46.f - 0.6f * Wu));
+			P.Y = S * (4.f + D * FMath::Cos(A) - Wz * FMath::Sin(A));
+			P.Z = LP.Z + D * FMath::Sin(A) + Wz * FMath::Cos(A);
+		}
+		else
+		{
+			P.Y = S * (4.f + D * FMath::Cos(A));
+			P.Z = LP.Z + D * FMath::Sin(A);
+		}
 	}
 	else if (Va > 0.15f && Va < 0.35f)
 	{
@@ -1971,6 +2150,13 @@ FVector3f SlonkFauna::FlierMotion(const FVector3f& LP, const FLinearColor& VC, f
 	P = FVector3f(P.X, P.Y * Cb - P.Z * Sb, P.Y * Sb + P.Z * Cb) * K;
 	P.Z += 100.f * FMath::Sin(6.2831853f * FracF(T * (600.f / 3600.f) + Phase));
 	P.X += 50.f * FMath::Sin(6.2831853f * FracF(T * (420.f / 3600.f) + Phase * 1.3f + Seed));
+	// A four-winged flier's darts, fading as the speck floor grows it.
+	if (bFour)
+	{
+		// The flock's dart, as far in its frame for every member whatever its own size.
+		const float Sc = Gd[GroupData::DartSpanM] > 0.f ? Gd[GroupData::DartSpanM] / FMath::Max(Size, 0.01f) : 1.f;
+		P += FlierDart(T, Gd) * Sc / (K * K);
+	}
 	const FVector3f Out = NormalizeF(FVector3f(FMath::Cos(Bearing), FMath::Sin(Bearing), 0.25f));
 	const FVector3f Sv = NormalizeF(Out + SDir * 0.8f);
 	const float Delay = 0.6f * FMath::Clamp(0.5f + 0.5f * (Out | SDir), 0.f, 1.f);
@@ -2462,7 +2648,8 @@ void SlonkFauna::StepHerd(FHerdState& S, const FFaunaGroup& G, double RadiusCm, 
 	// turns from here is steered toward the way it goes (as sharply as that way is turning, and more to close what is
 	// left of the gap over SteerM, or as sharply as it can still straighten out by the time it faces it if that is less),
 	// no more than MaxWalkKap a metre nor a few radians a second, and
-	// changes by no more than MaxKapRate a second: a planted hoof is carried round by how sharply its body turns now.
+	// changes by no more than its herd's KapRate a second (Walker::MaxKapRate for the Earth's grazers): a planted hoof is
+	// carried round by how sharply its body turns now.
 	if (!S.bStarted)
 	{
 		// Come about on the move along its path alone, it faces the way its path goes now and turns as sharply as that way
@@ -2490,9 +2677,10 @@ void SlonkFauna::StepHerd(FHerdState& S, const FFaunaGroup& G, double RadiusCm, 
 			const double Left = bTarget ? FMath::UnwindRadians(Target - S.Heading) : 0.0;
 			const double Along = bTarget && S.bTargetWas && AheadM > 0.005 ? FMath::Clamp(FMath::UnwindRadians(Target - S.TargetWas) / AheadM, -Walker::MaxWalkKap, Walker::MaxWalkKap) : 0.0;
 			const double Cap = FMath::Min(Walker::MaxWalkKap, (bShaken ? 2.5 : 1.5) / V);
-			const double Close = FMath::Min(FMath::Abs(Left) / Walker::SteerM, FMath::Sqrt(2.0 * Walker::MaxKapRate * FMath::Abs(Left) / V));
+			const double KapRate = HerdKapRate(G);
+			const double Close = FMath::Min(FMath::Abs(Left) / Walker::SteerM, FMath::Sqrt(2.0 * KapRate * FMath::Abs(Left) / V));
 			const double Steer = FMath::Clamp(Along + FMath::Sign(Left) * Close, -Cap, Cap);
-			const double Most = Walker::MaxKapRate * Dt;
+			const double Most = KapRate * Dt;
 			S.WalkKap = FMath::Clamp(S.WalkKap + FMath::Clamp(Steer - S.WalkKap, -Most, Most), -Walker::MaxWalkKap, Walker::MaxWalkKap);
 		}
 	}
@@ -2736,7 +2924,8 @@ float SlonkFauna::WalkerYaw(float T, const float* Custom, const float* Group) { 
 float SlonkFauna::WalkerStrides(float T, const float* Custom, const float* Group) { return WalkerPace(T, Custom, Group).Strides; }
 float SlonkFauna::WalkerSpeedMS(float T, const float* Custom, const float* Group) { return WalkerPace(T, Custom, Group).SpeedMS; }
 
-FVector3f SlonkFauna::WalkerMotion(const FVector3f& LP, const FVector3f& LPP, const FLinearColor& VC, float T, const float* C, const float* Gd, float DistCm, float PxPerRad)
+FVector3f SlonkFauna::WalkerMotion(const FVector3f& LP, const FVector3f& LPP, const FLinearColor& VC, float T, const float* C, const float* Gd, float DistCm, float PxPerRad,
+	const Walker::FRig& Rig)
 {
 	// fauna_material.py's walker branch, line for line.
 	const FWalkerPace W = WalkerPace(T, C, Gd);
@@ -2787,7 +2976,7 @@ FVector3f SlonkFauna::WalkerMotion(const FVector3f& LP, const FVector3f& LPP, co
 			const float Qb = FMath::Clamp((AtStart - Walker::Duty) / (1.f - Walker::Duty), 0.f, 1.f);
 			const float H = bLiftedFirst ? FMath::Clamp((Q - Qb) / FMath::Max(1.f - Qb, 1e-3f), 0.f, 1.f) : 1.f;
 			Foot = FMath::Lerp(Foot, FMath::Lerp(AimOld, AimNew, H * H * (3.f - 2.f * H)), Sq);
-			Zf = Walker::LiftCm * FMath::Sin(3.14159265f * Q) * SmoothStepF(0.03f, 0.25f, W.SpeedMS);
+			Zf = Rig.LiftCm * FMath::Sin(3.14159265f * Q) * SmoothStepF(0.03f, 0.25f, W.SpeedMS);
 		}
 		P.X += Foot.X * VC.G;
 		P.Y += Foot.Y * VC.G;
@@ -2795,12 +2984,13 @@ FVector3f SlonkFauna::WalkerMotion(const FVector3f& LP, const FVector3f& LPP, co
 	}
 	else if (Va > 0.3f && Va < 0.45f)
 	{
-		// The neck and head, turned about the neck's root, the root itself held to the body.
-		const float A = Pitch * SmoothStepF(0.f, 0.3f, VC.G);
-		const float Rx = P.X - Walker::NeckRootX, Rz = P.Z - Walker::NeckRootZ;
+		// The neck and head, turned about the neck's root (its plan's), the root itself held to the body, by its plan's share
+		// of the Earth grazer's swing.
+		const float A = Pitch * Rig.PitchScale * SmoothStepF(0.f, 0.3f, VC.G);
+		const float Rx = P.X - Rig.NeckX, Rz = P.Z - Rig.NeckZ;
 		const float Ca = FMath::Cos(A), Sa = FMath::Sin(A);
-		P.X = Walker::NeckRootX + Rx * Ca - Rz * Sa;
-		P.Z = Walker::NeckRootZ + Rx * Sa + Rz * Ca;
+		P.X = Rig.NeckX + Rx * Ca - Rz * Sa;
+		P.Z = Rig.NeckZ + Rx * Sa + Rz * Ca;
 	}
 	else if (Va > 0.15f && Va < 0.35f)
 	{
@@ -3084,6 +3274,42 @@ namespace
 	}
 }
 
+float SlonkFauna::GlowSpotAt(const FVector2f& UV, const FLinearColor& VC, const GlowOrgan::FRow& Row)
+{
+	// fauna_material.py's CODE, its glow organs' block, line for line.
+	if (Row.Spots <= 0) { return 0.f; }
+	const float Spots = (float)Row.Spots;
+	const float Gw = FMath::Max(Row.U1 - Row.U0, 1e-3f);
+	const float Gi = FMath::Clamp(FMath::FloorToFloat((UV.X - Row.U0) / Gw * Spots), 0.f, Spots - 1.f);
+	const FVector2f Gd((UV.X - (Row.U0 + (Gi + 0.5f) * Gw / Spots)) / FMath::Max(Row.RU, 1e-4f), (UV.Y - Row.V) / FMath::Max(Row.RV, 1e-4f));
+	const float Body = (VC.R < 0.2f && (VC.A < 0.1f || VC.A > 0.9f)) ? 1.f : 0.f;
+	return Body * (1.f - SmoothStepF(0.75f, 1.f, Gd.Size()));
+}
+
+float SlonkFauna::GlowBreath(float T, const float* C)
+{
+	const float Seed = C[Custom::Seed];
+	const float N = GlowOrgan::BreathLo + FMath::FloorToFloat(FracF(Seed * 3.3f) * GlowOrgan::BreathSpan);
+	return GlowOrgan::Breath + (1.f - GlowOrgan::Breath) * (0.5f + 0.5f * FMath::Sin(6.2831853f * FracF(T * (N / 3600.f) + Seed * 2.1f)));
+}
+
+float SlonkFauna::GlowSpeckDim(EFaunaKind Kind, float SizeM, float DistCm, float PxPerRad, int32 WingForm, float ShareOfLeap)
+{
+	// fauna_material.py's CODE, each branch's light of its glow organs: over the square of how many times its size the
+	// vertex shader's speck floor draws the animal there.
+	const float D = FMath::Max(DistCm, 1.f);
+	float K = 1.f;
+	if (Kind == EFaunaKind::Herd) { K = FMath::Clamp(Walker::SpeckPx / FMath::Max(FMath::Max(SizeM, 0.1f) * 100.f * PxPerRad / D, 0.001f), 1.f, Walker::SpeckMax); }
+	else if (Kind == EFaunaKind::Leaper)
+	{
+		// From its own size where it crosses the surface to its full growth at the top of its leap, as its body grows.
+		const float Gr = FMath::Clamp(Leaper::SpeckPx / FMath::Max(FMath::Max(SizeM, 0.1f) * 100.f * PxPerRad / D, 0.001f), 1.f, Leaper::SpeckMax);
+		K = 1.f + (Gr - 1.f) * FMath::Sin(3.14159265f * FMath::Clamp(ShareOfLeap, 0.f, 1.f));
+	}
+	else if (Kind == EFaunaKind::Flier) { K = FMath::Clamp(2.f / FMath::Max(FMath::Max(SizeM, 0.01f) * 100.f * PxPerRad / D, 0.001f), 1.f, WingForm != Wings::Bird ? Wings::SpeckMax : 4.f); }
+	return 1.f / (K * K);
+}
+
 bool SlonkFauna::LeaperShown(float T, const float* Custom, const float* Group)
 {
 	return ReadLeap(T, Custom, Group).bShown;
@@ -3098,7 +3324,7 @@ FVector2f SlonkFauna::LeaperTurn(float T, const float* Custom, const float* Grou
 	return FVector2f(FMath::Atan2(Vz, Vh), R.Yaw);
 }
 
-FVector3f SlonkFauna::LeaperMotion(const FVector3f& LP, const FLinearColor& VC, float T, const float* C, const float* Gd, float DistCm, float PxPerRad)
+FVector3f SlonkFauna::LeaperMotion(const FVector3f& LP, const FLinearColor& VC, float T, const float* C, const float* Gd, float DistCm, float PxPerRad, int32 Form)
 {
 	// fauna_material.py's leaper branch, line for line.
 	const FLeaperRead R = ReadLeap(T, C, Gd);
@@ -3117,7 +3343,28 @@ FVector3f SlonkFauna::LeaperMotion(const FVector3f& LP, const FLinearColor& VC, 
 	const float Beat = FMath::RoundToFloat((6.f + 4.f * FracF(Seed * 3.7f)) * 60.f) / 60.f;
 	const float Air = FMath::Clamp(4.f * Sh * (1.f - Sh), 0.f, 1.f);
 	FVector3f P = LP;
-	P.Y += 12.f * VC.G * VC.G * Air * FMath::Sin(6.2831853f * FracF(T * Beat + Seed * 5.f));
+	if (Form == FishForm::Eel)
+	{
+		// An eel's wave running back along all of it, less the wave at its middle (which stays on its arc).
+		const float Swing = FMath::Lerp(FishForm::EelSwim, 1.f, Air) * FishForm::EelWaveCm;
+		const float Ph = FracF(T * Beat * FishForm::EelWaveK + Seed * 5.f);
+		const float Mid = FishForm::EelHead + (1.f - FishForm::EelHead) * 0.5f;
+		P.Y += Swing * ((FishForm::EelHead + (1.f - FishForm::EelHead) * VC.G) * FMath::Sin(6.2831853f * (Ph - (50.f - LP.X) / FishForm::EelWaveLen))
+			- Mid * FMath::Sin(6.2831853f * (Ph - 50.f / FishForm::EelWaveLen)));
+	}
+	else if (Form == FishForm::Spinefin && VC.R > 0.75f)
+	{
+		// A spinefin's fin, folded down in the water, spread as it leaves it, fluttering in the air.
+		const float Fs = VC.B > 0.5f ? 1.f : -1.f;
+		const float Fd = FMath::Max(FMath::Abs(LP.Y) - FishForm::FinRootCm, 0.f);
+		const float Fa = -FishForm::FinFold * (1.f - SmoothStepF(0.f, FishForm::FinOpen, Air)) + FishForm::FinFlutter * Air * (0.5f + 0.5f * VC.G) * FMath::Sin(6.2831853f * FracF(T * Beat * 2.f + Seed * 3.f));
+		P.Y = Fs * (FishForm::FinRootCm + Fd * FMath::Cos(Fa));
+		P.Z = LP.Z + Fd * FMath::Sin(Fa);
+	}
+	else
+	{
+		P.Y += 12.f * VC.G * VC.G * Air * FMath::Sin(6.2831853f * FracF(T * Beat + Seed * 5.f));
+	}
 	// Pitched along its arc (nose up), turned the way it leaps.
 	const float Cp = FMath::Cos(Pitch), Sp = FMath::Sin(Pitch);
 	P = FVector3f(P.X * Cp - P.Z * Sp, P.Y, P.X * Sp + P.Z * Cp);

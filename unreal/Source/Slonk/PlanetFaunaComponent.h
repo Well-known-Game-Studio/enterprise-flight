@@ -6,7 +6,11 @@
 // material's own clock (M_Fauna, tools/planet_materials/fauna_material.py). Groups come and go by their distance from
 // the camera alone, read off a scan of the habitat cells round it made on a task, so a flock looked away from and back
 // at is still there. A craft passing low by a flock, or someone walking under it, startles it: it flees, scatters and
-// drifts back to its path over a couple of minutes, and is still shaken if left and come back to within that time.
+// drifts back to its path over a couple of minutes, and is still shaken if left and come back to within that time. A
+// strange world's flocks are of its species too (four-winged fliers that hover and dart, membrane-winged ones that glide
+// long), and its fish (eels, spinefins), each alien plan's groups drawn in an instance of M_Fauna of their own that gives
+// it the plan's wings or form and its glow organs' row (SlonkFauna::Wings, FishForm, GlowOrgan), lit in the world's glow;
+// the Earth's bird and fish in the fliers' and the leapers' own instances, as before.
 //
 // The herds are sets too, one a herd, moved the same way: each frame its frame is set on the drawn ground on its loop,
 // tilted to the plane fitted to the ground under it (read again each frame for a herd near the camera, every sixth
@@ -14,7 +18,11 @@
 // over the plane, turns it the way it walks and swings its legs from how far it has walked (SlonkFauna::StepHerd). A herd
 // walks out of the way of the crew on foot, and bolts from a craft passing low or someone running in on it. They are
 // drawn in M_Fauna's walker branch (its Walkers parameter, set on a material instance of their own): while M_Fauna has
-// none (built before it) there are no herds, and the line the status gives says so. A herd going faster than a walk near
+// none (built before it) there are no herds, and the line the status gives says so. A strange world's herds are of its
+// species (SlonkFauna::FFaunaProfile::Species: six-legged grazers, insectoids), each herd's mesh its species' plan's, and
+// each alien plan's herds drawn in an instance of their own that gives the walker branch the plan's rig (its neck's pivot,
+// its feet's lift, its head's swing, its carapace: SlonkFauna::Walker::FRig); the Earth grazer's in the herds' own, as
+// before. A herd going faster than a walk near
 // the camera raises dust off dry ground by day (HerdDust.h: a Niagara system, one pooled component on each such herd's
 // set; none without the asset, or with slonk.Fauna.Dust 0).
 //
@@ -72,6 +80,24 @@ namespace SlonkFauna
 	SLONK_API float PixelsPerRadian(const APlayerController* PC);
 	/** The material the animals are drawn in. */
 	inline const TCHAR* MaterialPath = TEXT("/Game/Slonk/Materials/M_Fauna.M_Fauna");
+	/** A group drawn: its id, its kind and where it is (fauna watch picks among them: PickWatched). */
+	struct FDrawnGroupAt
+	{
+		uint64 Id = 0;
+		EFaunaKind Kind = EFaunaKind::Flier;
+		FVector Pos = FVector::ZeroVector;
+	};
+	/** The group a watch follows: Preferred (the group the last fauna goto found) while it is drawn and of the kind asked
+	 *  for (EFaunaKind as an int, or -1 for any), else the drawn group of that kind nearest View; 0 for none. */
+	SLONK_API uint64 PickWatched(TConstArrayView<FDrawnGroupAt> Drawn, const FVector& View, int32 Kind, uint64 Preferred);
+	/** A watch's pick (PickWatched) after a fauna goto, GotoId the group it found (0 for none): once a watch has taken it, it
+	 *  is forgotten (as fauna watch off forgets it, StarshipPawn), so only the watch after the goto follows its group first,
+	 *  and every later one the nearest of the kind asked for again. A watch that has not taken it (another kind asked for,
+	 *  or the group not drawn yet) leaves it for the next. */
+	SLONK_API uint64 TakeWatched(TConstArrayView<FDrawnGroupAt> Drawn, const FVector& View, int32 Kind, uint64& GotoId);
+	/** Each plan a profile's species draw (their meshes and their material instances): the fliers', the herds', the
+	 *  leapers' and the jellies'. */
+	SLONK_API TArray<TPair<FFaunaBodyPlan, EFaunaKind>> PlansOf(const FFaunaProfile& Profile);
 }
 
 UCLASS(ClassGroup = (Slonk))
@@ -94,8 +120,10 @@ public:
 	 *  its path (and off it, turned the way it flies, while it is shaken: SlonkFauna::FlightAt), and a craft in the air
 	 *  or someone on foot near one startles it. SunDirectionWorld is the way to the star. */
 	void UpdateView(const APlayerController* PC, const FVector& ViewLocationWorld, const FVector& SunDirectionWorld);
-	/** Lets every group go (the world hidden, or not updated this frame): they come back on their paths. */
-	void Suspend();
+	/** Lets every group go (the world hidden, or not updated this frame): they come back on their paths. And, unless
+	 *  bKeepPlans (the debug setting changed, the world drawn on), its species' meshes and its plans' material instances
+	 *  let go too, once, until it draws a group again (HoldOwnPlans): a world not drawn keeps none of them. */
+	void Suspend(bool bKeepPlans = false);
 
 	/** Debug: the kinds allowed (SlonkFauna::KindBit), the path clock's offset from the world's (a look at where the
 	 *  flocks will be), another profile (another strangeness), a startle of every group by a craft where it is and as it
@@ -104,7 +132,9 @@ public:
 	uint32 GetKindMask() const { return KindMask; }
 	void SetTimeOffset(double Seconds);
 	double GetTimeOffset() const { return TimeOffset; }
-	void SetProfile(const SlonkFauna::FFaunaProfile& InProfile) { Profile = InProfile; }
+	/** Another profile: its species' meshes held (SlonkFaunaMeshes::HoldPlans: those of a profile left behind, or of a
+	 *  world suspended, are let go) and the material instances of plans it no longer has let go. */
+	void SetProfile(const SlonkFauna::FFaunaProfile& InProfile);
 	const SlonkFauna::FFaunaProfile& GetProfile() const { return Profile; }
 	int32 StartleAll(const AActor* Craft);
 	/** The paths' clock: the world's seconds and the offset. */
@@ -137,9 +167,10 @@ public:
 	int32 GetSplashCount() const { return SplashPool.NumLive(); }
 	int32 GetLeapingCount() const;
 	/** Debug (fauna watch): the group drawn nearest a point in the world (of a kind, EFaunaKind as an int, or of any for
-	 *  -1), and where a drawn group is and how it is turned (its frame, its flight along X), in the world; false when it
+	 *  -1), or, given the group the last fauna goto found, the watch's pick (SlonkFauna::TakeWatched, which forgets it once
+	 *  taken); and where a drawn group is and how it is turned (its frame, its flight along X), in the world; false when it
 	 *  is not drawn. */
-	uint64 NearestDrawnGroup(const FVector& WorldPos, int32 Kind = -1) const;
+	uint64 NearestDrawnGroup(const FVector& WorldPos, int32 Kind = -1, uint64* GotoId = nullptr) const;
 	/** A herd's pose is its frame turned the way it walks. */
 	bool GetDrawnGroupPose(uint64 Id, FVector& OutWorldPos, FQuat& OutWorldRot) const;
 	/** The kind of a drawn group (a flier for one not drawn). */
@@ -152,12 +183,30 @@ public:
 	/** One line for the debug readout, and one a candidate group of the last scan. */
 	FString Describe() const;
 	void DescribeCells(TArray<FString>& OutLines) const;
+	/** The world's species, a line each, kind by kind: its plan in words, its share of its kind's cells, its size (fauna
+	 *  plans). */
+	void DescribePlans(TArray<FString>& OutLines) const;
 	/** The world as the settings have it now, given to the field (a change lets every group go) and the motes' to the
 	 *  terrain: each view update does it, and a debug command that changed a setting does it at once, so the line it reads
 	 *  out after is the settings' as they now stand. */
 	void RefreshWorld();
+	/** The material instance a group of a plan of a kind is drawn in (the kind's own for an Earth plan, else its plan's,
+	 *  made the first time it is asked for, its world's meshes held again if it was suspended), and how many instances of
+	 *  plans are kept: one for each alien plan of the profile that has been drawn, none of a profile left behind nor of a
+	 *  world suspended. */
+	UMaterialInstanceDynamic* MaterialForPlan(EFaunaKind Kind, const FFaunaBodyPlan& Plan);
+	int32 NumPlanMaterials() const { return HerdPlanMIDs.Num() + FlierPlanMIDs.Num() + LeaperPlanMIDs.Num(); }
+
+	virtual void OnComponentDestroyed(bool bDestroyingHierarchy) override;
+	virtual void BeginDestroy() override;
 
 private:
+	/** A profile taken: its plans' meshes held, its predecessor's plans' material instances let go. */
+	void AdoptProfile(const SlonkFauna::FFaunaProfile& InProfile);
+	/** Its profile's plans' meshes held again if a suspension let them go (before a group is drawn or its material asked
+	 *  for), and whether they are held now. */
+	void HoldOwnPlans();
+	bool bHoldingPlans = false;
 	/** A group of leapers as it is drawn: each fish's custom floats (as its set was given them) and home in the group's
 	 *  frame; and the sea's surface each fish's leap to read crosses, as last read (SlonkFauna::LeaperGroupData). */
 	struct FLeaperState
@@ -192,6 +241,22 @@ private:
 	/** The herds' material instance (M_Fauna, its Walkers on), looked for again every few seconds while M_Fauna has no
 	 *  walker branch, so one built during play is taken up. */
 	void EnsureHerdMaterial();
+	/** The material instance a herd of a plan is drawn in: the herds' own for the Earth grazer (the walker branch's
+	 *  defaults are its rig), else one of the plan's own, made from M_Fauna the first time a herd of it comes and kept
+	 *  while the herds' is (its walker branch given the plan's rig: Walker::FRig). The herds' own while they are drawn in
+	 *  the debug's basic material. */
+	UMaterialInstanceDynamic* HerdMaterialFor(const FFaunaBodyPlan& Plan);
+	/** The material instance a flock of a plan is drawn in: the fliers' own for the Earth's bird, else one of the plan's
+	 *  own made from M_Fauna the first time a flock of it comes (its wings, SlonkFauna::Wings, and its glow organs given),
+	 *  kept while the fliers' is; the fliers' own while M_Fauna has no WingForm (built before the alien fliers: their wings
+	 *  then beat as a bird's) or they are drawn in the debug's basic material. */
+	UMaterialInstanceDynamic* FlierMaterialFor(const FFaunaBodyPlan& Plan);
+	/** As the fliers', a group of leapers' (its form, SlonkFauna::FishForm, and its glow organs given): the leapers' own for
+	 *  the Earth's fish, or while M_Fauna has no FishForm. */
+	UMaterialInstanceDynamic* LeaperMaterialFor(const FFaunaBodyPlan& Plan);
+	/** Gives a plan's instance the row of its glow organs (SlonkFaunaMeshes::GlowRowOf: none for a plan without them) and
+	 *  the world's glow they light in. */
+	void SetGlowParams(UMaterialInstanceDynamic* M, const FFaunaBodyPlan& Plan) const;
 	/** A herd's step this frame: its frame on the drawn ground, its fright, the crew, its material's data, its dust. */
 	void UpdateHerd(uint64 Id, FGroupSet& S, const TArray<SlonkFauna::FFaunaThreat>& Threats, const FVector& CamLocal, const FVector& Sun, double Now, double Dt);
 	/** A herd's dust this frame (how deep in the night it stands, and the frame's step, s): raised, kept up or given back
@@ -262,11 +327,18 @@ private:
 	TArray<UPlanetInstancesComponent*> FreeSets;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> MID;
 	bool bFaunaMaterial = false;
+	/** The alien fliers' material instances, one to a plan (by its hash), and whether M_Fauna has their wings. */
+	UPROPERTY() TMap<uint32, TObjectPtr<UMaterialInstanceDynamic>> FlierPlanMIDs;
+	bool bAlienFlierMaterial = false;
+	/** The world's glow as last given to the alien plans' instances (their glow organs'). */
+	FLinearColor PlanGlowSet = FLinearColor::Transparent;
 	/** slonk.Fauna.Debug as the groups drawn have it, and whether MID is the basic material it asked for. */
 	int32 DebugDrawn = 0;
 	bool bPlainAsked = false;
 	float LastPxPerRad = -1.f;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> HerdMID;
+	/** The alien walkers' material instances, one to a plan (by its hash): a world's few. */
+	UPROPERTY() TMap<uint32, TObjectPtr<UMaterialInstanceDynamic>> HerdPlanMIDs;
 	bool bWalkerMaterial = false;
 	bool bHerdDebug = false;
 	int32 HerdMIDDebug = -1;
@@ -286,6 +358,9 @@ private:
 	/** The leapers' material instance, as the herds' is kept. */
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> LeaperMID;
 	bool bLeaperMaterial = false;
+	/** The alien fish's material instances, one to a plan, and whether M_Fauna has their forms (its FishForm). */
+	UPROPERTY() TMap<uint32, TObjectPtr<UMaterialInstanceDynamic>> LeaperPlanMIDs;
+	bool bAlienLeaperMaterial = false;
 	bool bLeaperDebug = false;
 	int32 LeaperMIDDebug = -1;
 	double LeaperProbedAt = -1.0e9;

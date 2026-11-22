@@ -51,22 +51,35 @@ struct FFaunaBodyPlan
 {
 	/** 2 for a body with a left and a right side; more for a radial one. */
 	uint8 Symmetry = 2;
-	/** Body segments along its length. */
+	/** Body segments along its length (an insectoid's three: its head, its thorax and its abdomen). */
 	uint8 Segments = 1;
-	/** Pairs of limbs, and what they are. */
+	/** Pairs of limbs, and what they are (a membrane-winged flier's: the finger struts in each wing, 3 or 4). */
 	uint8 LimbPairs = 0;
 	EFaunaLimbs Limbs = EFaunaLimbs::None;
 	EFaunaWings Wings = EFaunaWings::None;
 	/** Its proportions, as shares of its span (a flier's wingspan, a walker's length): the body's length and girth, the
-	 *  tail's length and the wing's chord at its root. */
+	 *  tail's length and the wing's chord at its root. A walker of another form reads them its own way (Walker::ShapeOf):
+	 *  a six-legged grazer's barrel, its girth, its tail and its legs' height; an insectoid's abdomen, its girth, its
+	 *  antennae and how far out to its sides its feet stand. A four-winged flier's Tail is its abdomen's share of its body,
+	 *  a membrane-winged one's its whip of a tail; a fish's alien forms read them as an Earth fish's. */
 	float Length = 0.45f;
 	float Girth = 0.1f;
 	float Tail = 0.2f;
 	float Chord = 0.24f;
-	/** Spots that glow at night (0: none, as on the Earth's). */
+	/** Spots that glow at night: how many in the row along each of its flanks (0: none, as on the Earth's; the material
+	 *  draws them, SlonkFauna::Glow). */
 	uint8 GlowOrgans = 0;
+	/** What else a walker's form takes from its plan, as a share of its length (0 for the Earth's grazer, which has its
+	 *  own): a six-legged grazer's neck and head's heft, an insectoid's head; a four-winged flier's head, a membrane-winged
+	 *  one's head and crest, a spinefin's spines' height, as shares of its span or length. */
+	float Neck = 0.f;
+	/** What it wears (0, nothing past its form's own), a bit each: a six-legged grazer's horns (1) and crest (2), an
+	 *  insectoid's mandibles (1) and horn (2); a four-winged flier's forked tail (1) and antennae (2), a membrane-winged
+	 *  one's crest (1) and tail vane (2); an eel's barbels (1), a spinefin's second dorsal spines (1). */
+	uint8 Ornament = 0;
 
-	/** Every field, so two plans that differ in anything have different meshes. */
+	/** Every field, so two plans that differ in anything have different meshes. The fields that came with the alien plans
+	 *  are taken in only when they are set, so every plan that came before keeps its hash (and its mesh its name). */
 	uint32 Hash() const
 	{
 		uint32 H = HashCombine(GetTypeHash(Symmetry), GetTypeHash(Segments));
@@ -77,12 +90,14 @@ struct FFaunaBodyPlan
 		H = HashCombine(H, GetTypeHash(Girth));
 		H = HashCombine(H, GetTypeHash(Tail));
 		H = HashCombine(H, GetTypeHash(Chord));
-		return HashCombine(H, GetTypeHash(GlowOrgans));
+		H = HashCombine(H, GetTypeHash(GlowOrgans));
+		if (Neck != 0.f || Ornament != 0) { H = HashCombine(HashCombine(H, GetTypeHash(Neck)), GetTypeHash(Ornament)); }
+		return H;
 	}
 	bool operator==(const FFaunaBodyPlan& O) const
 	{
 		return Symmetry == O.Symmetry && Segments == O.Segments && LimbPairs == O.LimbPairs && Limbs == O.Limbs && Wings == O.Wings
-			&& Length == O.Length && Girth == O.Girth && Tail == O.Tail && Chord == O.Chord && GlowOrgans == O.GlowOrgans;
+			&& Length == O.Length && Girth == O.Girth && Tail == O.Tail && Chord == O.Chord && GlowOrgans == O.GlowOrgans && Neck == O.Neck && Ornament == O.Ornament;
 	}
 	bool operator!=(const FFaunaBodyPlan& O) const { return !(*this == O); }
 };
@@ -240,7 +255,45 @@ namespace SlonkFauna
 	 */
 	namespace GroupData
 	{
-		enum : int32 { Night = 0, ScatterT0 = 1, ScatterDirX = 2, ScatterDirY = 3, ScatterDirZ = 4, Bank = 5, Startled = 6, SpreadM = 7, PanicT0 = 8, OnsetT0 = 9, Num = 10 };
+		/** And a four-winged flock's darts (0 for every other group): 10 its own number for them and 11 its span, m, so every
+		 *  member of it darts together, the same way and as far in the flock's frame, and none dashes into its neighbour. */
+		enum : int32 { Night = 0, ScatterT0 = 1, ScatterDirX = 2, ScatterDirY = 3, ScatterDirZ = 4, Bank = 5, Startled = 6, SpreadM = 7, PanicT0 = 8, OnsetT0 = 9, DartSeed = 10,
+			DartSpanM = 11, Num = 12 };
+	}
+	/**
+	 * A strange world's fliers' wings as the material beats them (the fliers' part of its motion, given WingForm by the
+	 * material instance of each alien plan's flocks: UPlanetFaunaComponent; the Earth bird's 0). A four-winged flier (1): a
+	 * long, slim body and two pairs of narrow wings, the hind pair HindLag of a beat behind the fore, beating all the time,
+	 * faster than a bird (its habitat's beat FourFlapK times, at most FourFlapMax), FourSwing either way; it hovers in its
+	 * flock and darts with it: once a cycle of the flock's own (DartLo to DartLo + DartSpan a hour, a whole number, from
+	 * its GroupData::DartSeed) every member dashes together, over the last DashShare of the cycle, to a new place up to
+	 * DashCm of a unit mesh of the flock's span (GroupData::DartSpanM) either way of its own, its members standing unturned
+	 * in the flock, so the flock shifts as one and no member dashes into the next (they keep the gaps the formation gave
+	 * them), the dash fading as the speck floor grows it. A membrane-winged flier (2):
+	 * wings of skin over finger struts (its plan's
+	 * LimbPairs, 3 or 4), their trailing edge scalloped between them, beating slower and deeper (MembraneFlapK of its
+	 * habitat's beat, MembraneSwing either way) in bursts over a long glide (GlideLo to GlideLo + GlideSpan cycles an hour,
+	 * MembraneShare to MembraneShare + 0.15 of each beating), its wings raised MembraneRaise in the glide, a wave running out
+	 * along them and back across them at its beat (WaveRate of it), WaveCm of the unit mesh at the tip's trailing edge at
+	 * full flap and GlideWave of that while it glides. Each is its habitat's flock, flying its loop SpeedK of a bird's
+	 * speed; its mesh's wings hinged as a bird's, on Vc::WingRootCm, their flex from the hinge to the tip, its body (longer
+	 * than a bird's) laid about the mesh's middle, and its speck floor growing it at most SpeckMax times (a bird's four), so
+	 * the box a bird's instance is padded by holds it.
+	 */
+	namespace Wings
+	{
+		enum : int32 { Bird = 0, Four = 1, Membrane = 2 };
+		constexpr float HindLag = 0.3f;
+		constexpr float FourFlapK = 2.f, FourFlapMax = 14.f, FourSwing = 0.6f;
+		constexpr float DartLo = 1000.f, DartSpan = 800.f, DashShare = 0.2f;
+		constexpr float DashCm[3] = { 150.f, 110.f, 50.f };
+		constexpr float MembraneFlapK = 0.6f, MembraneSwing = 1.15f, MembraneRaise = 0.06f;
+		constexpr float GlideLo = 240.f, GlideSpan = 240.f, MembraneShare = 0.2f;
+		constexpr float WaveRate = 0.6f, WaveCm = 7.f, GlideWave = 0.3f;
+		constexpr double FourSpeedK = 0.75, MembraneSpeedK = 0.9;
+		constexpr float SpeckMax = 3.f;
+		/** The form of a flier's plan (Bird for the Earth's, and for any plan of feathered wings). */
+		inline int32 FormOf(const FFaunaBodyPlan& P) { return P.Wings == EFaunaWings::FourWings ? Four : (P.Wings == EFaunaWings::Membrane ? Membrane : Bird); }
 	}
 	/**
 	 * A herd's custom primitive data, every slot the engine has (36), set each frame (SlonkFauna::StepHerd). The fright's
@@ -319,6 +372,67 @@ namespace SlonkFauna
 		constexpr double MaxKapRate = 0.3;
 		/** A herd on the move closes the gap between the way it faces and the way it goes over about this many metres. */
 		constexpr double SteerM = 0.5;
+
+		/**
+		 * The forms a walker's body plan builds (ShapeOf): the Earth's grazer on four legs (two pairs); a six-legged grazer, a
+		 * longer, lower barrel on three pairs of legs, its neck and head heavier and carried low, horns or a crest of its
+		 * plan's own (three pairs, one segment); an insectoid, its head, thorax and big abdomen slung low between six legs
+		 * splayed out to its sides, each knee high over its body and each foot well out from it, antennae forward of its head
+		 * (three pairs, three segments).
+		 */
+		enum class EForm : uint8 { None, Grazer, Hexapod, Insectoid };
+		/** The gait of six legs: a tripod, the fore and hind legs of one side and the middle one of the other down together,
+		 *  the two tripods half a stride apart, each leg of a tripod a little after the one behind it (Ripple of a stride,
+		 *  hind to fore). The places in the gait, by leg: the hind, middle and fore left, then the hind, middle and fore
+		 *  right. */
+		constexpr float Ripple = 0.04f;
+		constexpr float TripodPhase[6] = { 0.f, 0.5f + Ripple, 2.f * Ripple, 0.5f, Ripple, 0.5f + 2.f * Ripple };
+		/** An insectoid's knee flexes this share of the way its foot does (its leg's G there). */
+		constexpr float InsectKneeFlex = 0.45f;
+		/**
+		 * What the material's walker branch takes of a walker's body plan, from its herd's material instance (one to each
+		 * plan: UPlanetFaunaComponent): the pivot its neck and head turn about, unit-mesh cm along x and up z; how high a
+		 * foot lifts as it swings, unit-mesh cm; its head's swing as a share of the Earth grazer's (its pitches times this);
+		 * and whether it wears a carapace (1, the pixel shader's banded, glossy look) or a coat (0). The defaults are the
+		 * Earth grazer's, the material's own defaults (WalkerNeckX, WalkerNeckZ, WalkerLift, WalkerPitch, WalkerCarapace).
+		 */
+		struct FRig
+		{
+			float NeckX = NeckRootX, NeckZ = NeckRootZ, LiftCm = Walker::LiftCm, PitchScale = 1.f, Carapace = 0.f;
+			bool operator==(const FRig& O) const { return NeckX == O.NeckX && NeckZ == O.NeckZ && LiftCm == O.LiftCm && PitchScale == O.PitchScale && Carapace == O.Carapace; }
+		};
+		/** A leg as its walker's mesh is built: its hip (inside the body), its knee and its foot (on z 0), unit-mesh cm, and
+		 *  its place in the gait (the blue its vertices carry). */
+		struct FLeg
+		{
+			FVector3f Hip = FVector3f::ZeroVector, Knee = FVector3f::ZeroVector, Foot = FVector3f::ZeroVector;
+			float Phase = 0.f;
+		};
+		/**
+		 * What a walker's body plan is to the code that moves it and the material that draws it: its form, its legs (four or
+		 * six), its rig (the material's); its stride, a share of its length (each member's a whole number of them round its
+		 * herd's loop); how far its footprint reaches from its middle, over half its length (1 for the Earth grazer, its muzzle
+		 * and its rump half a length out; more for legs splayed out and antennae: its herd keeps its members that much further
+		 * apart, and reads the ground that much further out); and how long its members are at the least and the most, m.
+		 */
+		struct FShape
+		{
+			EForm Form = EForm::None;
+			int32 NumLegs = 0;
+			FLeg Legs[6];
+			FRig Rig;
+			double StrideShare = Walker::StrideShare;
+			double Reach = 1.0;
+			double MinSizeM = Walker::MinSizeM, MaxSizeM = 2.6;
+			/** How wide its grazing circle may be, in its own lengths: so the speck floor's growth of its farthest-reaching
+			 *  part (an insectoid's antennae and splayed feet, out to SpeckMax times) and its circle, lined up the same way,
+			 *  stay inside the box its instance is culled by (a bound by arithmetic: Walker::ShapeOf). No bound for the
+			 *  Earth's grazer and the six-legged one, which the box holds at any circle (MaxCircleM bounds them). */
+			double CircleShare = 1.0e9;
+		};
+		/** The shape of a walker of a plan (FaunaMeshes.cpp builds its mesh from it): the Earth grazer's for its own plan, a
+		 *  form of None for a plan that is no walker. */
+		SLONK_API FShape ShapeOf(const FFaunaBodyPlan& P);
 	}
 	/**
 	 * A leaping fish's custom floats, in the same slots (SlonkFauna::MembersOf writes them for a group of leapers): its
@@ -397,6 +511,31 @@ namespace SlonkFauna
 	namespace LeaperData
 	{
 		enum : int32 { Night = 0, DiveT0 = 1, Diving = 6, DiveLen = 7, Surface0 = 14, Num = 24 };
+	}
+	/**
+	 * A strange world's leaping fish as the material moves them (its leaper branch, given FishForm by the material instance
+	 * of each alien plan's groups: UPlanetFaunaComponent; the Earth fish's 0): every form leaps the Earth fish's arcs, its
+	 * middle on them, and only its body moves otherwise. An eel (1): long and slim, a ribbon of fin along its back and belly
+	 * to its tail, a wave running back along all of it (EelWaveLen of the unit mesh long, at EelWaveK times its tail's beat),
+	 * EelSwim of its swing as it comes up and goes back under the water and all of it in the air, up to EelWaveCm either way
+	 * at its tail's tip and EelHead of that at its nose, its middle held on its arc (it pivots about it as the Earth fish
+	 * does); EelMaxSizeM long at the most. A spinefin (2): deep-bodied and spined along its back, four broad fins (two
+	 * pectoral, two pelvic, Vc::SurfaceWing, their G their flex from a hinge FinRootCm out from its axis) folded FinFold
+	 * radians down against its flanks in the water and spread as it leaves it (by FinOpen of the way to its leap's top),
+	 * fluttering FinFlutter either way in the air; its tail flicking as the Earth fish's. A fish's G is how far it bends,
+	 * an eel's from its nose (0) to its tail's tip (1).
+	 */
+	namespace FishForm
+	{
+		enum : int32 { Earth = 0, Eel = 1, Spinefin = 2 };
+		constexpr float EelWaveLen = 60.f, EelWaveK = 1.4f, EelWaveCm = 16.f, EelHead = 0.25f, EelSwim = 0.35f;
+		constexpr double EelMaxSizeM = 1.8;
+		/** An eel group's span, m, from the cell's draw (before its species' tenth either way of it). */
+		constexpr float EelSpanLoM = 1.f, EelSpanHiM = 1.5f;
+		constexpr float FinRootCm = 4.f, FinFold = 1.25f, FinOpen = 0.35f, FinFlutter = 0.12f;
+		/** The form of a fish's plan (Earth for any of fins and the Earth's shape; its alien forms are told by their segments:
+		 *  an eel's 2, a spinefin's 3). */
+		inline int32 FormOf(const FFaunaBodyPlan& P) { return P.Limbs != EFaunaLimbs::Fins ? Earth : (P.Segments == 2 ? Eel : (P.Segments == 3 ? Spinefin : Earth)); }
 	}
 	/**
 	 * A sky-jelly (a floater): a translucent bell 20 to 80 m across, a dome lathed round its axis with a scalloped rim, its
@@ -480,6 +619,29 @@ namespace SlonkFauna
 		enum : int32 { Night = 0, SqueezeT0 = 1, TrailX = 2, TrailY = 3, Startled = 6, PanicT0 = 8, OnsetT0 = 9, TrailRateX = 10, TrailRateY = 11, ClockT0 = 12, Num = 13 };
 	}
 	/**
+	 * A strange plan's glow organs (FFaunaBodyPlan::GlowOrgans; none on any Earth plan): a row of round spots along each of
+	 * its flanks, fixed in its mesh's UV (FRow, SlonkFaunaMeshes::GlowRowOf: the same on both flanks, its UV its place along
+	 * it and up it at every LOD, its speck's side standing over the row so it glows about as much as its finer LODs), on
+	 * its body's own surface alone (rigid, or a fish's undulating body: none on a wing, a leg, a neck or a tail). The
+	 * material lights them at night in the world's glow colour (FFaunaLook::Glow) by the group's glow (Custom::Glow, GlowLo
+	 * to GlowHi) times SpotBright, breathing from Breath to 1 on a cycle of each animal's own (BreathLo to BreathLo +
+	 * BreathSpan a hour, a whole number); by day each is a pale spot. Far off, where the speck floor draws the animal
+	 * bigger than it is, its spots are drawn bigger with it and lit the fainter by the square of that growth
+	 * (SlonkFauna::GlowSpeckDim), so all the light an animal gives falls with distance as it would without the floor. The
+	 * plan's material instance gives the row (its GlowSpots, GlowRow and GlowSize: UPlanetFaunaComponent).
+	 */
+	namespace GlowOrgan
+	{
+		constexpr float SpotBright = 3.f, Breath = 0.7f, BreathLo = 600.f, BreathSpan = 600.f;
+		constexpr float GlowLo = 1.5f, GlowHi = 3.f;
+		/** A row: along the mesh's U from U0 to U1 at its V, each spot RU across either way in U and RV in V, Spots of them. */
+		struct FRow
+		{
+			float U0 = 0.f, U1 = 0.f, V = 0.f, RU = 0.f, RV = 0.f;
+			int32 Spots = 0;
+		};
+	}
+	/**
 	 * A fauna mesh's vertex colour: R the surface (0 body, 0.25 a bill or a beak, 0.5 a tail, 0.75 a mote's card, 1 a
 	 * wing), G how far it flexes (0 at its joint, rising to 1 at the tip), B its side (0 left, 0.5 the middle, 1 right) and
 	 * A the kind of joint the material moves it by (0 rigid, 0.25 a tail, 0.375 a neck, 0.5 a wing hinged along the body,
@@ -490,11 +652,25 @@ namespace SlonkFauna
 	 * surface (dark), a leg's G is 0 at the hip and 1 at the hoof and its B the leg's place in the gait (Walker: 0 the hind
 	 * left, 0.25 the fore left, 0.5 the hind right, 0.75 the fore right), and the neck's and head's G is 0 at its root and 1
 	 * at the muzzle; its UV is its place along the body (U 0 at the rump, 1 at the muzzle) and up it (V, z over 60 cm).
+	 * A strange world's walker keeps that contract on six legs (Walker::ShapeOf): each leg's B its place in the tripod gait
+	 * (Walker::TripodPhase), its G 0 at the hip to 1 at the foot (dark), an insectoid's InsectKneeFlex at its knee (each
+	 * foot's ring level on z 0); an insectoid's head flexes as a neck (its back ring at G 0.3, the rest 1), its antennae,
+	 * mandibles and horn dark and flexing with it; a six-legged grazer's horns flex with its head and its crest's plates are
+	 * rigid and dark (the beak's surface, its B the middle). The material reads no count of legs.
 	 * A fish is drawn by its leaper branch alone (its Leapers parameter, which the leapers' sets set): R its surface (0 its
 	 * body, 0.5 its fins and tail), G how far it bends as its tail flicks (0 from its nose to FishBendFromCm, rising to 1
 	 * at its tail's tip), B its side, A JointUndulate; its UV its place along it (U 0 at the tail's tip, 1 at its nose) and
 	 * up it (V 0 at its belly, 1 at its back), for its countershading. Its nose is along +x at 50, its middle the mesh's
-	 * origin.
+	 * origin. A strange world's fish keeps that contract (FishForm): an eel's G how far it bends from its nose (0) to its
+	 * tail's tip (1), its ribbon fins the fins' surface; a spinefin's four broad fins the wing's surface, their G their flex
+	 * from their hinge FishForm::FinRootCm out from its axis (0) to their tips (1), their B its side; its spines the fins'.
+	 * A strange world's flier keeps the bird's (its wings' G their flex from their hinge on WingRootCm to their tips, B its
+	 * side, A JointWing; its body rigid; a membrane-winged flier's whip of a tail JointTail): a four-winged flier's wings'
+	 * UV their place across them (U 0 at the leading edge to 1 at the trailing; its hind wings' 2 to 3, which the material
+	 * beats behind the fore) and out along them (V 0 at the hinge to 1 at the tip); a membrane-winged one's across them (U)
+	 * and out along its struts (V 0 at its root, 1 at its first strut, its strut count at its tip, so each strut is drawn
+	 * where V is whole); its body's UV its place along it (U 0 at the unit mesh's x of -50 to 1 at +50) and round it (V 0
+	 * under it to 1 over it, 0.5 along its flanks), as the glow organs' rows read it (GlowOrgan).
 	 * A jelly is drawn by its floater branch alone (its Floaters parameter, which the jellies' sets set): R its surface (0
 	 * its bell, 0.5 a tentacle), G how far down it a vertex is (the bell's from 0 at its crown to 1 at its rim, a
 	 * tentacle's from 0 at its root to 1 at its tip), B its place round the bell, a share of a turn (a tentacle's root's),
