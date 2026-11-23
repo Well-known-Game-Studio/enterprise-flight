@@ -1,8 +1,8 @@
 // Slonk - what lives on a world, beside what grows there: how its animals look, and what its seas carry. Rolled from
 // the world's genome (WorldGenome.h), so a world's life is the same on every visit, and at strangeness 0 it is the
 // Earth-like version's: the blue-green glow of plankton stirred at night, shoals of fish under the surface by day,
-// and birds over the woods, the meadows, the coasts and the cliffs. The herds and the drifting things of the later
-// phases are rolled here too.
+// and birds over the woods, the meadows, the coasts and the cliffs. The herds are rolled here too, and on a strange
+// world whose air is thick, the sky-jellies drifting high over its ground.
 
 #pragma once
 
@@ -24,6 +24,8 @@ namespace SlonkFauna
 		FLinearColor Firefly = FLinearColor(0.55f, 1.f, 0.08f);
 		/** The pollen drifting in the sun by day: an Earth's gold, turned with the rest. */
 		FLinearColor Pollen = FLinearColor(0.9f, 0.62f, 0.16f);
+		/** A sky-jelly's bell by day: a pale blue-lilac, turned with the rest (there are none on an Earth-like world). */
+		FLinearColor Jelly = FLinearColor(0.56f, 0.66f, 0.86f);
 		/** How far round the colour wheel its animals' pigments turn from the Earth's, degrees: the sky's turn times the
 		 *  strangeness, as the glow's. */
 		float HueTurnDeg = 0.f;
@@ -46,6 +48,10 @@ namespace SlonkFauna
 		uint32 Seed = 0;
 		FFaunaBodyPlan Plans[NumKinds];
 		FFaunaLook Look;
+		/** Whether its air is thick (SlonkFauna::ThickAir), and the share of its floaters' cells holding a jelly
+		 *  (0: there are none, as at strangeness 0, under thin air or below Floater::MinStrangeness). */
+		bool bThickAir = false;
+		float FloaterShare = 0.f;
 	};
 	/**
 	 * A world's fauna from its genome and its hash: the same world always rolls the same, and at strangeness 0 it is the
@@ -56,6 +62,26 @@ namespace SlonkFauna
 	SLONK_API FFaunaProfile Roll(const FWorldGenome& G, EPlanetArchetype Type, uint32 Hash);
 	/** Whether two profiles are the same in everything they draw. */
 	SLONK_API bool SameProfile(const FFaunaProfile& A, const FFaunaProfile& B);
+
+	/**
+	 * Whether a world's air is thick: its genome lays a haze in its lowlands (FWorldGenome::LowHazeDensity over 0, which on
+	 * a living world is just when its style's Haze stands over its archetype's own). The sky-jellies drift only in thick
+	 * air, and only on a world at least Floater::MinStrangeness strange (FloatersLive): never at strangeness 0, so none on
+	 * the home worlds or the charted neighbours.
+	 */
+	SLONK_API bool ThickAir(const FWorldGenome& G);
+	SLONK_API bool FloatersLive(const FWorldGenome& G);
+	/** The share of a world's floater cells holding a jelly (at full life and density), from its genome and the floaters'
+	 *  own draw of its fauna's stream (0..1): Floater::MinShare to MinShare + ShareSpan by the draw squared, three fifths of
+	 *  that under the thinnest haze and all of it under one of Floater::HazeFull; 0 where they do not live. */
+	SLONK_API float FloaterShareOf(const FWorldGenome& G, float Draw);
+	/** A world's jellies' body plan, from its hash on a stream of its own: 6, 8 or 12 ribs, 6 to 12 tentacles, its bell
+	 *  Floater::MinBell to MaxBell of its span high, its tentacles 1 to 3 times that long, its rim's scallops cut 4 to 10% of
+	 *  its radius deep, its ribs glowing at night. */
+	SLONK_API FFaunaBodyPlan FloaterPlan(uint32 Hash);
+	/** A jelly's pigment: the look's pale bell colour, turned up to 12 degrees either way by Turn (-1..1) and of its own
+	 *  shade Vary (about 0.9 to 1.1). */
+	SLONK_API FLinearColor FloaterPigment(const FFaunaLook& L, double Turn, double Vary);
 
 	/**
 	 * A flock's pigment where it lives: the living ground's colour there (SlonkScatter::FoliageAt, as the plants are

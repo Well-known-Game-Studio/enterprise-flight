@@ -2328,7 +2328,8 @@ void AStarshipPawn::ProcessDebugCommand()
 		// fauna [status|on|off|density <x>|only <kind|all>|startle|time <s>|strange <0..1>|cells]: the animals of the world
 		// below, and how many are about. on/off and density set slonk.Fauna.Enable and slonk.Fauna.Density (every world;
 		// off leaves each as it was before it had any, its seas' plankton and shoals too); only keeps one kind; startle
-		// startles every group about from the ship; time moves the paths' clock (where the flocks will be); strange gives
+		// startles every group about from the ship (a sky-jelly only as a craft passing it would: not again within 8 s, nor
+		// once 150 m off its loop); time moves the paths' clock (where the flocks will be); strange gives
 		// the animals the look of another strangeness; cells lists the groups of the last scan of the cells round you.
 		// fauna goto <kind> <alt m> [night]: park over the nearest group of the kind (searched from the middle of the
 		// night side with night), on its path 1.6 times its kind's scare radius ahead of it (400 m for a flock), out of
@@ -2339,7 +2340,10 @@ void AStarshipPawn::ProcessDebugCommand()
 		// below and ahead for the chase camera. Leaping fish (goto leaper) likewise off to the side of the shoal they leap
 		// from, out from its loop's middle and past all of its loop: 80 m past it when lower than 60 m (out of reach of
 		// their dive wherever round its loop the shoal swims), else 0.6 of its height past it (at least 30 m), over the
-		// sea's level.
+		// sea's level. A sky-jelly (goto floater, or jelly) likewise off to the side of where it drifts now, out from its
+		// loop's middle, its scare radius and a half and its span off (out of its fright's reach), at the height over the
+		// ground asked for or else its own, facing it; searched far (its 3 km cells, and a world rolls jellies into only some
+		// of them), and on a world with none the line says why (most worlds: too tame, or their air too thin).
 		// fauna goto mote <alt m> [night|dusk|day]: park over the densest mote country near (wet, level ground along a forest's
 		// edge, where the fireflies are thickest), searched from under the ship, from the middle of the night side with
 		// night, from the dusk side of the terminator nearest the ship with dusk (the sun 8 degrees down), or on the ship's
@@ -2365,12 +2369,14 @@ void AStarshipPawn::ProcessDebugCommand()
 		else if (!F || !F->IsConfigured()) { UE_LOG(LogTemp, Log, TEXT("Fauna: no world with terrain near")); }
 		else if (Mode == TEXT("watch"))
 		{
-			// fauna watch [distance m] [low] | fauna watch off: the view follows the drawn flock nearest the camera from that
-			// far behind and to one side of it (40 m), a little above it, or below it with low (the birds against the sky),
-			// as it flies, through a camera of its own; off gives the view back. A herd from behind and to one side of the way
-			// it walks (120 m unless asked), a third of that over the ground, or from where someone would stand with low. A
-			// leaping shoal from behind and to one side of the way it swims (25 m), a third of that over the sea, or from a
-			// wader's eye height with low.
+			// fauna watch [kind|any] [distance m] [low] | fauna watch off: the view follows the drawn flock nearest the camera
+			// (of the kind asked for, kept until another or any is asked for; fauna goto floater asks for a sky-jelly, every
+			// other goto for any) from that far behind and to one side of it (40 m), a little above it, or below it with low
+			// (the birds against the sky), as it flies, through a camera of its own; off gives the view back. A herd from behind
+			// and to one side of the way it walks (120 m unless asked), a third of that over the ground, or from where someone
+			// would stand with low. A leaping shoal from behind and to one side of the way it swims (25 m), a third of that
+			// over the sea, or from a wader's eye height with low. A sky-jelly from four of its spans off, a little above it, or
+			// below it with low (its tentacles against the sky).
 			APlayerController* PC = Cast<APlayerController>(GetController());
 			if (!PC) { PC = GetWorld()->GetFirstPlayerController(); }
 			if (ArgStr(2) == TEXT("off"))
@@ -2381,14 +2387,21 @@ void AStarshipPawn::ProcessDebugCommand()
 			}
 			else
 			{
-				bFaunaWatchLow = ArgStr(3) == TEXT("low") || ArgStr(2) == TEXT("low");
+				// A kind asked for (or any) comes first; the distance and low after it.
+				int32 At = 2;
+				EFaunaKind Asked = EFaunaKind::Flier;
+				if (ArgStr(2) == TEXT("any")) { FaunaWatchKind = -1; At = 3; }
+				else if (SlonkFauna::KindFromName(ArgStr(2), Asked)) { FaunaWatchKind = (int32)Asked; At = 3; }
+				bFaunaWatchLow = ArgStr(At + 1) == TEXT("low") || ArgStr(At) == TEXT("low");
 				FVector View = GetActorLocation(); FRotator ViewRot;
 				if (PC) { PC->GetPlayerViewPoint(View, ViewRot); }
-				FaunaWatchId = F->NearestDrawnGroup(View);
-				const bool bGivenDist = Args.IsValidIndex(2) && ArgStr(2) != TEXT("low");
+				FaunaWatchId = F->NearestDrawnGroup(View, FaunaWatchKind);
+				const bool bGivenDist = Args.IsValidIndex(At) && ArgStr(At) != TEXT("low");
 				const EFaunaKind WatchKind = FaunaWatchId ? F->GetDrawnGroupKind(FaunaWatchId) : EFaunaKind::Flier;
-				const float DefaultDist = WatchKind == EFaunaKind::Herd ? 120.f : (WatchKind == EFaunaKind::Leaper ? 25.f : 40.f);
-				FaunaWatchDistCm = FMath::Max(bGivenDist ? Arg(2, DefaultDist) : DefaultDist, 2.f) * 100.0;
+				// A jelly from four of its spans off.
+				const SlonkFauna::FFaunaGroup* Watched = FaunaWatchId ? F->GetDrawnGroup(FaunaWatchId) : nullptr;
+				const float DefaultDist = WatchKind == EFaunaKind::Herd ? 120.f : (WatchKind == EFaunaKind::Leaper ? 25.f : (WatchKind == EFaunaKind::Floater && Watched ? 4.f * Watched->SpanM : 40.f));
+				FaunaWatchDistCm = FMath::Max(bGivenDist ? Arg(At, DefaultDist) : DefaultDist, 2.f) * 100.0;
 				FVector Pos; FQuat Rot;
 				if (FaunaWatchId && F->GetDrawnGroupPose(FaunaWatchId, Pos, Rot))
 				{
@@ -2396,10 +2409,13 @@ void AStarshipPawn::ProcessDebugCommand()
 					TickFaunaWatch();
 					if (PC && FaunaWatchCamera) { PC->SetViewTarget(FaunaWatchCamera); }
 					UE_LOG(LogTemp, Log, TEXT("Fauna watch: the %s %016llx, %.0f m from the view, followed from %.0f m%s"),
-						WatchKind == EFaunaKind::Herd ? TEXT("herd") : (WatchKind == EFaunaKind::Leaper ? TEXT("leaping shoal") : TEXT("flock")), FaunaWatchId, FVector::Dist(Pos, View) / 100.0,
-						FaunaWatchDistCm / 100.0, bFaunaWatchLow ? TEXT(" (low)") : TEXT(""));
+						WatchKind == EFaunaKind::Herd ? TEXT("herd") : (WatchKind == EFaunaKind::Leaper ? TEXT("leaping shoal") : (WatchKind == EFaunaKind::Floater ? TEXT("sky-jelly") : TEXT("flock"))),
+						FaunaWatchId, FVector::Dist(Pos, View) / 100.0, FaunaWatchDistCm / 100.0, bFaunaWatchLow ? TEXT(" (low)") : TEXT(""));
 				}
-				else { FaunaWatchId = 0; UE_LOG(LogTemp, Log, TEXT("Fauna watch: no flock, herd or leaping shoal drawn")); }
+				else if (FaunaWatchKind >= 0) { FaunaWatchId = 0; UE_LOG(LogTemp, Log, TEXT("Fauna watch: no %s drawn (fauna watch any for the nearest of any kind)"), SlonkFauna::KindName((EFaunaKind)FaunaWatchKind)); }
+				else { FaunaWatchId = 0; UE_LOG(LogTemp, Log, TEXT("Fauna watch: no flock, herd, leaping shoal or sky-jelly drawn")); }
+				// Nothing to follow: the view back to the craft, not left on a watch camera that no longer moves.
+				if (!FaunaWatchId && PC && PC->GetPawn()) { PC->SetViewTarget(PC->GetPawn()); }
 			}
 		}
 		else if (Mode == TEXT("only"))
@@ -2427,7 +2443,8 @@ void AStarshipPawn::ProcessDebugCommand()
 			const SlonkFauna::FFaunaProfile& Was = F->GetProfile();
 			const FWorldGenome G = FMath::IsNearlyEqual(S, Planet->Genome.Strangeness) ? Planet->Genome : SlonkGenome::Roll(Planet->ResolvedArchetype, S, Was.Hash);
 			F->SetProfile(SlonkFauna::Roll(G, Planet->ResolvedArchetype, Was.Hash));
-			UE_LOG(LogTemp, Log, TEXT("Fauna on %s at strangeness %.2f: pigments turned %.0f deg, %.0f%% of the way to the ground's own colour"), *Planet->GetDisplayName(), S, F->GetProfile().Look.HueTurnDeg, F->GetProfile().Look.Vivid * 100.f);
+			UE_LOG(LogTemp, Log, TEXT("Fauna on %s at strangeness %.2f: pigments turned %.0f deg, %.0f%% of the way to the ground's own colour; sky-jellies in %.0f%% of its cells (its air %s)"), *Planet->GetDisplayName(), S,
+				F->GetProfile().Look.HueTurnDeg, F->GetProfile().Look.Vivid * 100.f, F->GetProfile().FloaterShare * 100.f, F->GetProfile().bThickAir ? TEXT("thick") : TEXT("thin"));
 		}
 		else if (Mode == TEXT("cells"))
 		{
@@ -2475,7 +2492,11 @@ void AStarshipPawn::ProcessDebugCommand()
 		else if (Mode == TEXT("goto") && Movement && Planet->Terrain)
 		{
 			EFaunaKind Kind = EFaunaKind::Flier;
-			if (!SlonkFauna::KindFromName(ArgStr(2), Kind)) { UE_LOG(LogTemp, Warning, TEXT("fauna goto: %s is no kind (flier, herd, mote, leaper, floater)"), *ArgStr(2)); }
+			const bool bKind = SlonkFauna::KindFromName(ArgStr(2), Kind);
+			// What fauna watch looks for next: a sky-jelly after goto floater (a flock under the ship may be nearer than the
+			// jelly it parked by), any kind after the others, as before.
+			if (bKind) { FaunaWatchKind = Kind == EFaunaKind::Floater ? (int32)EFaunaKind::Floater : -1; }
+			if (!bKind) { UE_LOG(LogTemp, Warning, TEXT("fauna goto: %s is no kind (flier, herd, mote, leaper, floater)"), *ArgStr(2)); }
 			else if (Kind == EFaunaKind::Mote)
 			{
 				// The motes are the chunks' (SlonkScatter::PlaceMotes): the field's densest mote country near the start.
@@ -2560,10 +2581,56 @@ void AStarshipPawn::ProcessDebugCommand()
 				const bool bFound = SlonkFauna::FindGroupNear(W, Kind, From, 4.0e7, MaxCells, G, &Search);
 				UE_LOG(LogTemp, Log, TEXT("Fauna goto %s: looked at %d cells, every one within %.1f km of the search's start, on %s"), SlonkFauna::KindName(Kind), Search.Cells,
 					Search.ReachCm / 1e5, *Planet->GetDisplayName());
-				if (!bFound)
+				if (!bFound && Kind == EFaunaKind::Floater)
+				{
+					// Most worlds have none: say why (or how few its cells hold).
+					const FString Why = SlonkFauna::FloaterAbsence(W);
+					if (!Why.IsEmpty()) { UE_LOG(LogTemp, Log, TEXT("Fauna goto floater: %s has no sky-jellies: %s (they drift only on a living world at least %.1f strange whose air is thick, a haze in its lowlands)"), *Planet->GetDisplayName(), *Why, SlonkFauna::Floater::MinStrangeness); }
+					else
+					{
+						UE_LOG(LogTemp, Log, TEXT("Fauna goto floater: no jelly found within %.1f km on %s (%.0f%% of its 3 km cells hold one)"), Search.ReachCm / 1e5, *Planet->GetDisplayName(),
+							100.f * FMath::Min(W.Profile.FloaterShare * W.Life * W.Density, 1.f));
+					}
+				}
+				else if (!bFound)
 				{
 					UE_LOG(LogTemp, Log, TEXT("Fauna goto: no %s group found within %.1f km on %s%s"), SlonkFauna::KindName(Kind), Search.ReachCm / 1e5, *Planet->GetDisplayName(),
 						Kind == EFaunaKind::Leaper && W.Sea.ShoalDensity <= 0.f ? TEXT(" (its seas hold no shoals)") : TEXT(""));
+				}
+				else if (Kind == EFaunaKind::Floater)
+				{
+					// A jelly drifts too slowly to wait for: the ship parks off to the side of where it is now (off its loop if a
+					// fright has it there), out from its loop's middle, its scare radius and a half and its span off (out of its
+					// fright's reach as it drifts on), AltCm over the ground there (at the jelly's own height over it when no
+					// height is asked), facing it.
+					const double R = W.P.RadiusCm;
+					const SlonkFauna::FFaunaKindDesc& FD = SlonkFauna::KindDesc(Kind);
+					const FVector HerePos = F->FloaterPlaceNow(G);
+					const FVector UpH = HerePos.GetSafeNormal();
+					FVector Out = HerePos - G.Centre * R;
+					Out = (Out - UpH * FVector::DotProduct(Out, UpH)).GetSafeNormal();
+					if (Out.IsNearlyZero()) { Out = (G.East - UpH * FVector::DotProduct(G.East, UpH)).GetSafeNormal(); }
+					const double SideCm = 1.6 * FD.ScareRadiusCm + 100.0 * G.SpanM;
+					const FVector UpL = (HerePos + Out * SideCm).GetSafeNormal();
+					const double Ground = FMath::Max(Planet->Terrain->SurfaceHeightAtWorld(TT.TransformPositionNoScale(UpL * R)), 0.0);
+					const double GroundUnder = FMath::Max(Planet->Terrain->SurfaceHeightAtWorld(TT.TransformPositionNoScale(UpH * R)), 0.0);
+					const double JellyUpCm = HerePos.Size() - R - GroundUnder;
+					const double ParkCm = Args.IsValidIndex(3) ? AltCm : FMath::Max(JellyUpCm + GroundUnder - Ground, 2000.0);
+					const FVector PosL = UpL * (R + Ground + ParkCm);
+					const FVector Pos = TT.TransformPositionNoScale(PosL);
+					const FVector Up = TT.TransformVectorNoScale(UpL);
+					FVector Fwd = TT.TransformVectorNoScale(HerePos - PosL);
+					Fwd = (Fwd - Up * FVector::DotProduct(Fwd, Up)).GetSafeNormal();
+					if (Fwd.IsNearlyZero()) { Fwd = FVector::CrossProduct(Up, FVector::ZAxisVector).GetSafeNormal(); }
+					Movement->SetThrottle(0.0); Movement->Velocity = FVector::ZeroVector; Movement->AngularVelocity = FRotator::ZeroRotator;
+					SetActorLocationAndRotation(Pos, FRotationMatrix::MakeFromXZ(Fwd, Up).ToQuat(), false, nullptr, ETeleportType::TeleportPhysics);
+					Movement->SetTerrainFollow(ParkCm);
+					static const IConsoleVariable* HoldSpin = IConsoleManager::Get().FindConsoleVariable(TEXT("slonk.Planet.HoldSpin"));
+					if (HoldSpin && HoldSpin->GetInt() == 0) { UE_LOG(LogTemp, Log, TEXT("Fauna goto floater: the world turns under the ship (slonk.Planet.HoldSpin 0); the ship rides the ground with it")); }
+					UE_LOG(LogTemp, Log, TEXT("Fauna goto floater on %s: a jelly of %.0f m (%016llx, %d ribs, pulsing every %.1f s) %.1f km from the search's start, drifting %.1f m/s round a loop of %.1f km, %.0f m over the ground under it (its tentacles' tips %.0f m); parked %.0f m from it (its scare radius %.0f m), %.0f m over the ground, facing it (nose.sun %.2f); %.0f%% of the world's 3 km cells hold one%s"),
+						*Planet->GetDisplayName(), G.SpanM, G.Id, G.Ribs, G.FlapHz > 0.f ? 1.0 / G.FlapHz : 0.0, FVector::Dist(G.Centre, From) * R / 1e5, G.SpeedCmS / 100.0, G.LengthCm / 1e5,
+						JellyUpCm / 100.0, (JellyUpCm - G.HangCm) / 100.0, FVector::Dist(HerePos, PosL) / 100.0, FD.ScareRadiusCm / 100.0, ParkCm / 100.0, FVector::DotProduct(Fwd, Planet->GetStarDirection()),
+						100.f * FMath::Min(W.Profile.FloaterShare * W.Life * W.Density, 1.f), F->CanDrawFloaters() ? TEXT("") : TEXT("; M_Fauna has no floater branch yet, so none is drawn"));
 				}
 				else if (Kind == EFaunaKind::Leaper)
 				{
@@ -3042,7 +3109,7 @@ void AStarshipPawn::ProcessDebugCommand()
 			TEXT("ship camera [chase|bridge|cinematic|front|port|starboard|top|bottom] | zoom <x> | look <yaw> <pitch> [s]"),
 			TEXT("ship warpvis [classic|real] | cscale <0..1> | systems | shipwarp [km] [far]"),
 			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mesa|badlands|cliffs|city|mountain|coast|river|linea|green|land|substellar|ring|nightcap> <alt m> [across|sun|away|along|uphill|giant] [night] | terrain rocks [on|off|density <x>|check]"),
-			TEXT("ship fauna [status|on|off|density <x>|only <flier|herd|mote|leaper|floater|all>|startle|time <s>|strange <0..1>|cells|habitat [km]] | fauna goto <flier|herd|leaper> <alt m> [night] | fauna goto mote <alt m> [night|dusk|day] | fauna watch [m] [low|off]  (the animals of the world below: flocks, herds, motes, leaping fish; slonk.Fauna.Splash 0 throws no splashes)"),
+			TEXT("ship fauna [status|on|off|density <x>|only <flier|herd|mote|leaper|floater|all>|startle|time <s>|strange <0..1>|cells|habitat [km]] | fauna goto <flier|herd|leaper|floater> <alt m> [night] | fauna goto mote <alt m> [night|dusk|day] | fauna watch [kind|any] [m] [low|off]  (the animals of the world below: flocks, herds, motes, leaping fish, the strange worlds' sky-jellies; slonk.Fauna.Splash 0 throws no splashes)"),
 			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km] [hazy] [strange <0..1>] [seed <n>] [locked] | people [none|stone|iron|industrial|modern|starfaring] [organic] [cliff]"),
 			TEXT("ship shuttle  (launch the shuttlecraft; aboard it, dock when the bay is within 500 m) | ship takeoff"),
 			TEXT("ship scan [stop]  (sensors on the locked / nav target; landed: survey the ground) | ship science [reset]"),

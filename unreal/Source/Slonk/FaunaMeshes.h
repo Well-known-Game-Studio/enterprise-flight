@@ -4,7 +4,9 @@
 // last a couple of triangles for a speck. The vertex colours follow FaunaTypes.h's contract (SlonkFauna::Vc): a wing's
 // green rises from 0 on its hinge, which stands Vc::WingRootCm out from the body's axis, to 1 at its tip, and the material
 // beats the wing about that hinge by it; a walker's legs, neck and tail flex from their roots, its legs' blue their place
-// in the gait (SlonkFauna::Walker); a fish bends from its middle to its tail's tip as its tail flicks.
+// in the gait (SlonkFauna::Walker); a fish bends from its middle to its tail's tip as its tail flicks; a sky-jelly is its
+// span across and its middle the origin, its bell pulsing from its crown down and its tentacles waving from their roots
+// (SlonkFauna::Floater).
 
 #pragma once
 
@@ -18,12 +20,23 @@ namespace SlonkFaunaMeshes
 {
 	constexpr int32 NumLods = 3;
 	/** The mesh for a kind's body plan, its LOD screen sizes the kind's (SlonkFauna::FFaunaKindDesc::LodScreenSize):
-	 *  nullptr for a plan nothing is built for yet (only the winged fliers', the four-legged walkers' and the finned
-	 *  fish's so far: a bird of 60, 12 and 2 triangles, a walker of 150, 30 and 2, a fish of 55, 19 and 2). Transient and
-	 *  rooted, so it survives PIE sessions; never reference it from anything saved. */
+	 *  nullptr for a plan nothing is built for yet (only the winged fliers', the four-legged walkers', the finned fish's and
+	 *  the radial, tentacled jellies' so far: a bird of 60, 12 and 2 triangles, a walker of 150, 30 and 2, a fish of 55, 19
+	 *  and 2, a jelly of 308 to 312, 56 to 68 and 16: JellyTriangles). Transient and rooted, so it survives PIE sessions;
+	 *  never reference it from anything saved. */
 	SLONK_API UStaticMesh* GetMesh(const FFaunaBodyPlan& Plan, EFaunaKind Kind);
 	/** A plan's LOD as built, for the tests: false if nothing is built for the plan. */
 	SLONK_API bool BuildLod(const FFaunaBodyPlan& Plan, int32 Lod, UE::Geometry::FDynamicMesh3& Out);
+	/** How many triangles a jelly of the plan has at a LOD: its bell's (24 sides of a fan and three bands at LOD 0, 12 of a
+	 *  fan and one at LOD 1) and its tentacles' (72 quads among them at LOD 0, 12 at LOD 1, at least one each); or at LOD 2
+	 *  16 (two crossed planes of a pentagon's 3, its ring canal's strip's 2 and a quad's 2, and a level diamond's 2). */
+	inline int32 JellyTriangles(const FFaunaBodyPlan& Plan, int32 Lod)
+	{
+		if (Lod >= 2) { return 16; }
+		const int32 T = SlonkFauna::Floater::TentacleCount(Plan);
+		const int32 Quads = FMath::Max(FMath::RoundToInt32((Lod == 0 ? 72.0 : 12.0) / T), 1);
+		return (Lod == 0 ? 24 + 3 * 48 : 12 + 24) + 2 * T * Quads;
+	}
 
 	/**
 	 * The LOD screen sizes of a mote cloud (the engine's: the diameter over the screen's of the sphere round the box an

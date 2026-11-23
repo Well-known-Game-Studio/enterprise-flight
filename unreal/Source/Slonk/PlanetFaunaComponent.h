@@ -29,6 +29,14 @@
 // asset, or with slonk.Fauna.Splash 0), by day and dimmer through dusk; none once the sun cannot light it (past
 // SplashNightMax).
 //
+// The sky-jellies (on a strange world whose air is thick) are sets too, one a jelly, its frame moved each frame along its
+// loop high over the ground (and off it while a startle has it squeezing away and down: SlonkFauna::FlightAt), never
+// turned; the material pulses its bell, waves its tentacles and trails them back from the way it drifts through the air
+// (given it each frame with how fast that changes, so its trail runs on in closed form), and at night runs light down its
+// ribs and tentacles in the world's glow colour. They are drawn in M_Fauna's floater branch (its Floaters parameter, on a
+// material instance of their own): while M_Fauna has none there are no jellies, and the status line says so; it says too
+// why a world has none.
+//
 // The motes (pollen and gnats by day, fireflies at night) are the terrain's chunks' to carry, as the plants are
 // (SlonkScatter::PlaceMotes): this component says what they are (FMoteSettings) and the terrain places and draws them.
 //
@@ -118,12 +126,20 @@ public:
 	/** Whether the leapers can be drawn: M_Fauna has its leaper branch, or slonk.Fauna.Debug draws them in the basic
 	 *  material (each fish still at its home on the sea). While they cannot, the world keeps none. */
 	bool CanDrawLeapers() const { return bLeaperMaterial || bLeaperDebug; }
+	/** Whether the jellies can be drawn: M_Fauna has its floater branch, or slonk.Fauna.Debug draws them in the basic
+	 *  material (each still, its tentacles hanging). While they cannot, the world keeps none. */
+	bool CanDrawFloaters() const { return bFloaterMaterial || bFloaterDebug; }
+	/** The group drawn by an id (none if it is not drawn). */
+	const SlonkFauna::FFaunaGroup* GetDrawnGroup(uint64 Id) const;
+	/** Where a jelly is now, planet-local: its path's place off by any fright it is still in. */
+	FVector FloaterPlaceNow(const SlonkFauna::FFaunaGroup& G) const;
 	/** How many splashes are in the air now, and how many fish are out of the water (or about to be, under it) now. */
 	int32 GetSplashCount() const { return SplashPool.NumLive(); }
 	int32 GetLeapingCount() const;
-	/** Debug (fauna watch): the group drawn nearest a point in the world, and where a drawn group is and how it is turned
-	 *  (its frame, its flight along X), in the world; false when it is not drawn. */
-	uint64 NearestDrawnGroup(const FVector& WorldPos) const;
+	/** Debug (fauna watch): the group drawn nearest a point in the world (of a kind, EFaunaKind as an int, or of any for
+	 *  -1), and where a drawn group is and how it is turned (its frame, its flight along X), in the world; false when it
+	 *  is not drawn. */
+	uint64 NearestDrawnGroup(const FVector& WorldPos, int32 Kind = -1) const;
 	/** A herd's pose is its frame turned the way it walks. */
 	bool GetDrawnGroupPose(uint64 Id, FVector& OutWorldPos, FQuat& OutWorldRot) const;
 	/** The kind of a drawn group (a flier for one not drawn). */
@@ -191,6 +207,11 @@ private:
 	/** A group of leapers' step this frame (the world's seconds, and the last frame's): its frame with its shoal, its dive,
 	 *  the sea's surface its fish's leaps cross, and the splashes of the leaps that crossed it since the last frame. */
 	void UpdateLeaper(uint64 Id, FGroupSet& S, const TArray<SlonkFauna::FFaunaThreat>& Threats, const FVector& CamLocal, const FVector& Sun, double WorldNow, double WorldFrom);
+	/** The jellies' material instance (M_Fauna, its Floaters on, its GlowColor the world's), looked for as the herds' is. */
+	void EnsureFloaterMaterial();
+	/** A jelly's step this frame (the paths' clock): its frame on its loop or squeezing away from a fright, the threats to
+	 *  it, what its material reads (its fright, its drift through the air), its shadow. */
+	void UpdateFloater(uint64 Id, FGroupSet& S, const TArray<SlonkFauna::FFaunaThreat>& Threats, const FVector& CamLocal, const FVector& Sun, double Now);
 	/** A splash where a leap crossed the sea's surface (planet-local), of a fish of that length; an entry or not; how deep
 	 *  in the night it is there. */
 	void ThrowSplash(const FVector& PlaceLocal, double SizeCm, bool bEntry, float Night);
@@ -280,4 +301,13 @@ private:
 	bool bSplashMissing = false;
 	UPROPERTY() TArray<TObjectPtr<UNiagaraComponent>> SplashComponents;
 	SlonkFauna::FSplashPool SplashPool;
+
+	/** The jellies' material instance, as the herds' is kept, and the glow colour it was last given (the profile's). */
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> FloaterMID;
+	bool bFloaterMaterial = false;
+	bool bFloaterDebug = false;
+	int32 FloaterMIDDebug = -1;
+	double FloaterProbedAt = -1.0e9;
+	float LastFloaterPxPerRad = -1.f;
+	FLinearColor FloaterGlowSet = FLinearColor::Transparent;
 };

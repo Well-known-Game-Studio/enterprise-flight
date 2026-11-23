@@ -31,7 +31,7 @@ static_assert(SlonkFauna::Custom::Num == SlonkScatter::NumCustomFloats, "every p
 // The animals on the worlds with life. 0 takes every one away, the seas' plankton and shoals (APlanetBody) and the motes
 // over the ground with them, so a world looks as it did before it had any (for captures to compare with).
 static TAutoConsoleVariable<int32> CVarFaunaEnable(TEXT("slonk.Fauna.Enable"), 1,
-	TEXT("The animals on the worlds with life: the flocks, the herds, the leaping fish and their splashes, the seas' plankton and shoals, the pollen, gnats and fireflies over the ground (1, the default), or none, every world as it was before them (0)"));
+	TEXT("The animals on the worlds with life: the flocks, the herds, the leaping fish and their splashes, the sky-jellies of the strange worlds, the seas' plankton and shoals, the pollen, gnats and fireflies over the ground (1, the default), or none, every world as it was before them (0)"));
 static TAutoConsoleVariable<float> CVarFaunaDensity(TEXT("slonk.Fauna.Density"), 1.f,
 	TEXT("Scales the share of the habitat's cells holding a group of animals, and of the ground's cells holding a cloud of motes (1 as designed, 0 none; the caps on groups and members still hold)"));
 
@@ -92,15 +92,18 @@ SlonkFauna::FFaunaWorld UPlanetFaunaComponent::MakeFaunaWorld() const
 	// likewise (its leaper branch).
 	if (!CanDrawHerds()) { W.KindMask &= ~SlonkFauna::KindBit(EFaunaKind::Herd); }
 	if (!CanDrawLeapers()) { W.KindMask &= ~SlonkFauna::KindBit(EFaunaKind::Leaper); }
+	// And the jellies (its floater branch).
+	if (!CanDrawFloaters()) { W.KindMask &= ~SlonkFauna::KindBit(EFaunaKind::Floater); }
 	return W;
 }
 
 void UPlanetFaunaComponent::RefreshWorld()
 {
 	if (!bConfigured || !Terrain) { return; }
-	// Whether the herds and the leapers can be drawn, before the world they are in is made.
+	// Whether the herds, the leapers and the jellies can be drawn, before the world they are in is made.
 	EnsureHerdMaterial();
 	EnsureLeaperMaterial();
+	EnsureFloaterMaterial();
 	// The motes on the terrain's chunks, as the settings have them now (nothing is built again unless they moved).
 	Terrain->SetMoteOptions(MakeMoteSettings());
 	const SlonkFauna::FFaunaWorld W = MakeFaunaWorld();
@@ -270,6 +273,62 @@ void UPlanetFaunaComponent::EnsureLeaperMaterial()
 	}
 }
 
+void UPlanetFaunaComponent::EnsureFloaterMaterial()
+{
+	// As the leapers' (EnsureLeaperMaterial): looked for again when the debug setting changes, and every few seconds while
+	// M_Fauna has no floater branch (its Floaters parameter); one built before it would draw the jellies as birds, so then
+	// there are none. slonk.Fauna.Debug draws them in the engine's basic material, still. Its glow the world's own colour,
+	// given again whenever the profile's changes (fauna strange).
+	const int32 Debug = CVarFaunaDebug.GetValueOnGameThread();
+	const double Now = FPlatformTime::Seconds();
+	if (!(FloaterMIDDebug == Debug && (bFloaterMaterial || Debug > 0 || Now - FloaterProbedAt < 5.0)))
+	{
+		FloaterMIDDebug = Debug;
+		FloaterProbedAt = Now;
+		LastFloaterPxPerRad = -1.f;
+		bFloaterDebug = Debug > 0;
+		UMaterialInterface* Mat = Debug > 0 ? nullptr : LoadObject<UMaterialInterface>(nullptr, SlonkFauna::MaterialPath, nullptr, LOAD_Quiet | LOAD_NoWarn);
+		float Probe = 0.f;
+		const bool bFloaters = Mat && Mat->GetScalarParameterValue(FHashedMaterialParameterInfo(TEXT("Floaters")), Probe);
+		if (!(bFloaters == bFloaterMaterial && FloaterMID && Debug == 0))
+		{
+			bFloaterMaterial = bFloaters;
+			FloaterMID = nullptr;
+			FloaterGlowSet = FLinearColor::Transparent;
+			if (bFloaters)
+			{
+				FloaterMID = UMaterialInstanceDynamic::Create(Mat, this);
+				FloaterMID->SetScalarParameterValue(TEXT("Floaters"), 1.f);
+			}
+			else if (Debug > 0)
+			{
+				if (UMaterialInterface* Basic = LoadObject<UMaterialInterface>(nullptr, SlonkMaterials::FallbackLitPath)) { FloaterMID = UMaterialInstanceDynamic::Create(Basic, this); }
+			}
+			else
+			{
+				static bool bWarned = false;
+				if (!bWarned)
+				{
+					bWarned = true;
+					UE_LOG(LogTemp, Warning, TEXT("Fauna: %s has no floater branch yet (tools/planet_materials/fauna_material.py builds it): no sky-jellies until it does"), SlonkFauna::MaterialPath);
+				}
+			}
+			if (FloaterMID)
+			{
+				for (TPair<uint64, FGroupSet>& Pair : Sets)
+				{
+					if (Pair.Value.Group->Kind == EFaunaKind::Floater && Pair.Value.Set && Pair.Value.Set->GetMaterial(0) != FloaterMID) { Pair.Value.Set->SetMaterial(0, FloaterMID); }
+				}
+			}
+		}
+	}
+	if (FloaterMID && bFloaterMaterial && FloaterGlowSet != Profile.Look.Glow)
+	{
+		FloaterGlowSet = Profile.Look.Glow;
+		FloaterMID->SetVectorParameterValue(TEXT("GlowColor"), Profile.Look.Glow);
+	}
+}
+
 double UPlanetFaunaComponent::GroundHeightAt(const FVector& Dir) const
 {
 	double H = 0.0;
@@ -309,10 +368,11 @@ void UPlanetFaunaComponent::SpawnSet(const SlonkFauna::FFaunaField::FGroupRef& G
 	EnsureMaterial();
 	const bool bHerd = G->Kind == EFaunaKind::Herd;
 	const bool bLeaper = G->Kind == EFaunaKind::Leaper;
-	UMaterialInstanceDynamic* Mat = bHerd ? HerdMID.Get() : (bLeaper ? LeaperMID.Get() : MID.Get());
+	const bool bFloater = G->Kind == EFaunaKind::Floater;
+	UMaterialInstanceDynamic* Mat = bHerd ? HerdMID.Get() : (bLeaper ? LeaperMID.Get() : (bFloater ? FloaterMID.Get() : MID.Get()));
 	// A herd only in its own material (M_Fauna's walker branch, or the debug's): drawn as birds, they would fly apart. A
-	// group of leapers likewise (its leaper branch).
-	if ((bHerd || bLeaper) && !Mat) { return; }
+	// group of leapers likewise (its leaper branch), and a jelly (its floater branch).
+	if ((bHerd || bLeaper || bFloater) && !Mat) { return; }
 	const SlonkFauna::FFaunaKindDesc& D = SlonkFauna::KindDesc(G->Kind);
 	UPlanetInstancesComponent* C = AcquireSet();
 	if (C->GetStaticMesh() != Mesh) { C->SetStaticMesh(Mesh); }
@@ -348,7 +408,8 @@ void UPlanetFaunaComponent::SpawnSet(const SlonkFauna::FFaunaField::FGroupRef& G
 	TArray<FTransform> Xf;
 	TArray<float> Custom;
 	SlonkFauna::MembersOf(*G, Xf, Custom);
-	if (DebugDrawn >= 2) { for (FTransform& T : Xf) { T.SetScale3D(T.GetScale3D() * 20.0); } }
+	// (A jelly is big enough to see as it is.)
+	if (DebugDrawn >= 2 && !bFloater) { for (FTransform& T : Xf) { T.SetScale3D(T.GetScale3D() * 20.0); } }
 	C->SetPieces(Xf, Custom);
 	if (C->CastShadow) { C->SetCastShadow(false); }
 	C->SetVisibility(true);
@@ -480,19 +541,27 @@ void UPlanetFaunaComponent::UpdateView(const APlayerController* PC, const FVecto
 	}
 	const double Ceiling = MaxAltitude + 1.0e5;
 	const double OverSea = CamLocal.Size() - Params.RadiusCm;
-	if (OverSea > Ceiling + FMath::Max(Params.ReliefCm, 0.0) || OverSea - FMath::Max(Terrain->SurfaceHeightAtWorld(ViewLocationWorld), 0.0) > Ceiling)
+	if (OverSea > Ceiling + FMath::Max(Params.ReliefCm, 0.0))
 	{
 		Suspend();
 		return;
 	}
-	if (!bScanning && Field.WantsScan(CamDir))
+	const double CamAltitude = OverSea - FMath::Max(Terrain->SurfaceHeightAtWorld(ViewLocationWorld), 0.0);
+	if (CamAltitude > Ceiling)
 	{
-		// The cells round the camera's ground point, read on a task from what the last scan read.
+		Suspend();
+		return;
+	}
+	if (!bScanning && Field.WantsScan(CamDir, CamAltitude))
+	{
+		// The cells round the camera's ground point, read on a task from what the last scan read: of the kinds that can be
+		// kept at the camera's height (high over a strange world, the jellies alone).
 		ScanGeneration = Generation;
 		bScanning = true;
-		ScanTask = UE::Tasks::Launch(UE_SOURCE_LOCATION, [Wc = SlonkFauna::FFaunaWorld(W), CamDir, Radius = Field.ScanRadiusCm(), Cache = Field.GetCache()]()
+		const uint32 Kinds = Field.ScanKinds(CamAltitude);
+		ScanTask = UE::Tasks::Launch(UE_SOURCE_LOCATION, [Wc = SlonkFauna::FFaunaWorld(W), CamDir, Kinds, Radius = Field.ScanRadiusCm(Kinds), Cache = Field.GetCache()]()
 		{
-			return FScanRef(SlonkFauna::FFaunaField::Scan(Wc, CamDir, Radius, Cache));
+			return FScanRef(SlonkFauna::FFaunaField::Scan(Wc, CamDir, Radius, Cache, Kinds));
 		});
 	}
 	TArray<SlonkFauna::FFaunaField::FGroupRef> Spawned;
@@ -526,9 +595,11 @@ void UPlanetFaunaComponent::UpdateView(const APlayerController* PC, const FVecto
 	for (TPair<uint64, FGroupSet>& Pair : Sets)
 	{
 		FGroupSet& S = Pair.Value;
-		// A herd walks on the drawn ground (UpdateHerd); a group of leapers leaps from its shoal (UpdateLeaper).
+		// A herd walks on the drawn ground (UpdateHerd); a group of leapers leaps from its shoal (UpdateLeaper); a jelly drifts
+		// high over the ground (UpdateFloater).
 		if (S.Herd.IsValid()) { UpdateHerd(Pair.Key, S, Threats, CamLocal, Sun, Now, Dt); continue; }
 		if (S.Leaper.IsValid()) { UpdateLeaper(Pair.Key, S, Threats, CamLocal, Sun, WorldNow, WorldFrom); continue; }
+		if (S.Group->Kind == EFaunaKind::Floater) { UpdateFloater(Pair.Key, S, Threats, CamLocal, Sun, Now); continue; }
 		const SlonkFauna::FFaunaGroup& G = *S.Group;
 		const SlonkFauna::FFaunaKindDesc& D = SlonkFauna::KindDesc(G.Kind);
 		// Its frame as it flies, on its path or shaken off it, turning from the frame it had.
@@ -596,6 +667,12 @@ void UPlanetFaunaComponent::UpdateView(const APlayerController* PC, const FVecto
 			const float PxPerRad = SlonkFauna::PixelsPerRadian(PC);
 			LeaperMID->SetVectorParameterValue(TEXT("ViewPos"), FLinearColor((float)ViewLocationWorld.X, (float)ViewLocationWorld.Y, (float)ViewLocationWorld.Z, 0.f));
 			if (!FMath::IsNearlyEqual(PxPerRad, LastLeaperPxPerRad, 0.5f)) { LastLeaperPxPerRad = PxPerRad; LeaperMID->SetScalarParameterValue(TEXT("PxPerRad"), PxPerRad); }
+		}
+		if (FloaterMID)
+		{
+			const float PxPerRad = SlonkFauna::PixelsPerRadian(PC);
+			FloaterMID->SetVectorParameterValue(TEXT("ViewPos"), FLinearColor((float)ViewLocationWorld.X, (float)ViewLocationWorld.Y, (float)ViewLocationWorld.Z, 0.f));
+			if (!FMath::IsNearlyEqual(PxPerRad, LastFloaterPxPerRad, 0.5f)) { LastFloaterPxPerRad = PxPerRad; FloaterMID->SetScalarParameterValue(TEXT("PxPerRad"), PxPerRad); }
 		}
 		// Every group's members are written with its frame of this frame, whether or not the rocks and plants are.
 		Terrain->QueuePlanetInstanceWrites();
@@ -905,6 +982,68 @@ FVector UPlanetFaunaComponent::HerdPlaceNow(const SlonkFauna::FFaunaGroup& G) co
 	return SlonkFauna::PathAt(G, Params.RadiusCm, Now).PosCm + SlonkFauna::HerdFrightOffset(G, SlonkFauna::KindDesc(G.Kind), Panic, Params.RadiusCm, Now);
 }
 
+FVector UPlanetFaunaComponent::FloaterPlaceNow(const SlonkFauna::FFaunaGroup& G) const
+{
+	const double Now = ClockSeconds();
+	return SlonkFauna::PathAt(G, Params.RadiusCm, Now).PosCm + SlonkFauna::PanicOffset(Panics.FindRef(G.Id), SlonkFauna::KindDesc(G.Kind), Now);
+}
+
+const SlonkFauna::FFaunaGroup* UPlanetFaunaComponent::GetDrawnGroup(uint64 Id) const
+{
+	const FGroupSet* S = Sets.Find(Id);
+	return S && S->Group.IsValid() ? S->Group.Get() : nullptr;
+}
+
+void UPlanetFaunaComponent::UpdateFloater(uint64 Id, FGroupSet& S, const TArray<SlonkFauna::FFaunaThreat>& Threats, const FVector& CamLocal, const FVector& Sun, double Now)
+{
+	using namespace SlonkFauna;
+	const FFaunaGroup& G = *S.Group;
+	const FFaunaKindDesc& D = KindDesc(G.Kind);
+	// Its frame where its loop and any fright have it, never turned.
+	FPanic Panic = Panics.FindRef(Id);
+	FFaunaPose Pose = FlightAt(G, D, Panic, Params.RadiusCm, Now, S.Pose, 0.0);
+	// Startled by a craft passing close by its middle (someone on foot, far under it, is nothing to it): it squeezes itself
+	// away and down, carrying on the drift a fright before left it.
+	for (const FFaunaThreat& T : Threats)
+	{
+		if (StartleGroup(Panic, D, Pose.PosCm, T, Now))
+		{
+			Panics.Add(Id, Panic);
+			Pose = FlightAt(G, D, Panic, Params.RadiusCm, Now, S.Pose, 0.0);
+			++Startles;
+			break;
+		}
+	}
+	S.Pose = Pose;
+	S.PoseAt = Now;
+	// The whole jelly moves as its frame: the velocity pass sees its drift in the transform, its pulse and its tentacles'
+	// waves and trail in the material's clock.
+	S.Set->SetRelativeLocationAndRotation(Pose.PosCm, Pose.Rot);
+	// What the material reads of it: the night where it is, its fright, and the way it drifts through the air in its frame
+	// and how fast that changes, each as of now on the material's clock (every slot at once).
+	float Gd[FloaterData::Num] = {};
+	const double SunUp = FVector::DotProduct(GetComponentTransform().TransformVectorNoScale(Pose.PosCm.GetSafeNormal()), Sun);
+	Gd[FloaterData::Night] = FMath::RoundToFloat((float)(1.0 - SlonkScatter::SmoothStep(-0.12, 0.08, SunUp)) * 100.f) / 100.f;
+	FloaterGroupData(G, D, Panic, Params.RadiusCm, Now, Pose.Rot, TimeOffset, Gd);
+	S.Set->SetCustomPrimitiveDataFloatArray(0, TConstArrayView<float>(Gd, FloaterData::Num));
+	// Shadows while it, or its shadow, is within the kind's reach for them (a jelly overhead dapples the ground; a high
+	// one's shadow falls kilometres off at a low sun), let go a fifth further out. Where its shadow lands hangs on the
+	// ground it meets (a valley below its loop's ridge, a slope rising to it, the world's curve), so the camera is measured
+	// to the nearest point of the line its shadow is cast along, from the jelly out to twice as far as flat ground at its
+	// loop's height would stop it: crew standing in its shadow are on that line wherever the ground stops it.
+	const FVector SunLocal = GetComponentTransform().InverseTransformVectorNoScale(Sun).GetSafeNormal();
+	const FVector Fall = FloaterShadowFall(Pose.PosCm, Params.RadiusCm, FloaterGroundAt(G, Now), SunLocal);
+	double Dist = FMath::Min(FVector::Dist(Pose.PosCm, CamLocal), FVector::Dist(Fall, CamLocal));
+	const double Along = FVector::Dist(Fall, Pose.PosCm);
+	if (Along > 1.0)
+	{
+		const double T = FMath::Clamp(FVector::DotProduct(CamLocal - Pose.PosCm, -SunLocal), 0.0, 2.0 * Along);
+		Dist = FMath::Min(Dist, FVector::Dist(Pose.PosCm - SunLocal * T, CamLocal));
+	}
+	const bool bShadow = S.bShadow ? Dist < D.ShadowReachCm * 1.2 : Dist < D.ShadowReachCm;
+	if (bShadow != S.bShadow) { S.bShadow = bShadow; S.Set->SetCastShadow(bShadow); }
+}
+
 int32 UPlanetFaunaComponent::StartleAll(const AActor* Craft)
 {
 	const double Now = ClockSeconds();
@@ -952,9 +1091,10 @@ int32 UPlanetFaunaComponent::StartleAll(const AActor* Craft)
 		if (!SlonkFauna::Scares(D, Pos, T)) { continue; }
 		// However lately it was startled, as any startle leaves it: what is left of its last flight carried, its members'
 		// scatter kept if still open, its wingbeat going on from where it stands; a herd stopping and turning to flee where
-		// it stands, unless it is galloping.
+		// it stands, unless it is galloping. A jelly only as a craft passing would (StartleByCommand), so asked again and
+		// again it is never pushed off past the ground read round its loop.
 		if (Pair.Value.Herd.IsValid()) { SlonkFauna::StartleHerd(Panic, *Pair.Value.Herd, G, D, Params.RadiusCm, T, Now, true, Pair.Value.Water.Get()); }
-		else { SlonkFauna::StartleNow(Panic, D, Pos, T, Now); }
+		else if (!SlonkFauna::StartleByCommand(Panic, D, Pos, T, Now)) { continue; }
 		Panics.Add(Pair.Key, Panic);
 		++N;
 		++Startles;
@@ -962,12 +1102,13 @@ int32 UPlanetFaunaComponent::StartleAll(const AActor* Craft)
 	return N;
 }
 
-uint64 UPlanetFaunaComponent::NearestDrawnGroup(const FVector& WorldPos) const
+uint64 UPlanetFaunaComponent::NearestDrawnGroup(const FVector& WorldPos, int32 Kind) const
 {
 	uint64 Best = 0; double BestD = TNumericLimits<double>::Max();
 	for (const TPair<uint64, FGroupSet>& Pair : Sets)
 	{
 		if (!Pair.Value.Set) { continue; }
+		if (Kind >= 0 && (!Pair.Value.Group.IsValid() || (int32)Pair.Value.Group->Kind != Kind)) { continue; }
 		const double D = FVector::DistSquared(Pair.Value.Set->GetComponentLocation(), WorldPos);
 		if (D < BestD) { BestD = D; Best = Pair.Key; }
 	}
@@ -1038,8 +1179,25 @@ FString UPlanetFaunaComponent::Describe() const
 		: (!CanDrawLeapers() ? FString(TEXT("no leapers (M_Fauna has no leaper branch yet)"))
 			: FString::Printf(TEXT("%d leaper groups drawn (%d fish, %d leaping now, %d groups diving; %s) in %s"), LeaperGroups, Fish, GetLeapingCount(), Diving, *Splashes,
 				bLeaperMaterial ? TEXT("M_Fauna's leaper branch") : TEXT("the basic material (slonk.Fauna.Debug)")));
-	return FString::Printf(TEXT("%s, life %.2f, density %.2f, strangeness %.2f: %s; %s; %s; %d groups in the last scan of %d cells (%d read anew, %.1f ms), %d shaken, %d startles, clock %+.0f s, %s; %s"),
-		SlonkFauna::IsEnabled() ? TEXT("on") : TEXT("off"), W.Life, W.Density, Profile.Strangeness, Kinds.IsEmpty() ? TEXT("none live here") : *Kinds, *Herds, *Leapers,
+	// The jellies about: how many, how many shaken and casting shadows; and why a world has none (read as if they could be
+	// drawn, then whether they can).
+	int32 Jellies = 0, JelliesShaken = 0, JelliesShadowed = 0;
+	for (const TPair<uint64, FGroupSet>& S : Sets)
+	{
+		if (S.Value.Group->Kind != EFaunaKind::Floater) { continue; }
+		++Jellies;
+		JelliesShaken += Panics.Contains(S.Key) && Panics[S.Key].IsLive(Now) ? 1 : 0;
+		JelliesShadowed += S.Value.bShadow ? 1 : 0;
+	}
+	SlonkFauna::FFaunaWorld Wf = W;
+	if ((KindMask & SlonkFauna::KindBit(EFaunaKind::Floater)) != 0u) { Wf.KindMask |= SlonkFauna::KindBit(EFaunaKind::Floater); }
+	const FString Absent = SlonkFauna::FloaterAbsence(Wf);
+	const FString Floaters = !Absent.IsEmpty() ? FString::Printf(TEXT("no jellies (%s)"), *Absent)
+		: (!CanDrawFloaters() ? FString(TEXT("no jellies (M_Fauna has no floater branch yet)"))
+			: FString::Printf(TEXT("%d jellies drawn (%d shaken, %d casting shadows; %.0f%% of its cells hold one at its life and density) in %s"), Jellies, JelliesShaken, JelliesShadowed,
+				100.f * FMath::Min(Profile.FloaterShare * W.Life * W.Density, 1.f), bFloaterMaterial ? TEXT("M_Fauna's floater branch") : TEXT("the basic material (slonk.Fauna.Debug)")));
+	return FString::Printf(TEXT("%s, life %.2f, density %.2f, strangeness %.2f: %s; %s; %s; %s; %d groups in the last scan of %d cells (%d read anew, %.1f ms), %d shaken, %d startles, clock %+.0f s, %s; %s"),
+		SlonkFauna::IsEnabled() ? TEXT("on") : TEXT("off"), W.Life, W.Density, Profile.Strangeness, Kinds.IsEmpty() ? TEXT("none live here") : *Kinds, *Herds, *Leapers, *Floaters,
 		Field.GetCandidates().Num(), LastScanCells, LastScanEvaluated, LastScanMs, Shaken, Startles, TimeOffset,
 		MID ? (bFaunaMaterial ? TEXT("M_Fauna") : (bPlainAsked ? TEXT("the basic material (slonk.Fauna.Debug)") : TEXT("the basic material (M_Fauna missing)"))) : TEXT("no material yet"),
 		Terrain ? *Terrain->DescribeMotes() : TEXT("no motes"));
@@ -1063,6 +1221,14 @@ void UPlanetFaunaComponent::DescribeCells(TArray<FString>& OutLines) const
 			continue;
 		}
 		const SlonkFauna::FFaunaPose Pose = SlonkFauna::PathAt(*G, Params.RadiusCm, Now);
+		if (G->Kind == EFaunaKind::Floater)
+		{
+			OutLines.Add(FString::Printf(TEXT("%016llx floater: a jelly of %.0f m (%d ribs, pulsing every %.1f s), %.1f km off, loop %.1f km in %.0f s (%.1f m/s), cruising %.0f m over the highest ground near its loop (its tentacles' tips %.0f m over it), now %.0f m over the sea's level%s%s"),
+				G->Id, G->SpanM, G->Ribs, G->FlapHz > 0.f ? 1.0 / G->FlapHz : 0.0, Dist / 1e5, G->LengthCm / 1e5, G->PeriodSec, G->SpeedCmS / 100.0, G->CruiseCm / 100.0,
+				(G->CruiseCm - G->HangCm) / 100.0, (Pose.PosCm.Size() - Params.RadiusCm) / 100.0, Sets.Contains(G->Id) ? TEXT(", about") : TEXT(""),
+				Panics.Contains(G->Id) && Panics[G->Id].IsLive(Now) ? TEXT(", shaken") : TEXT("")));
+			continue;
+		}
 		if (G->Kind == EFaunaKind::Herd)
 		{
 			const FGroupSet* S = Sets.Find(G->Id);

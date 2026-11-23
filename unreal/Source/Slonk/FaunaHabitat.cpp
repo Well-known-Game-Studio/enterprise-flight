@@ -200,6 +200,15 @@ namespace
 		return 0.5 * ((2.0 * P1) + (-P0 + P2) * T + (2.0 * P0 - 5.0 * P1 + 4.0 * P2 - P3) * T * T + (-P0 + 3.0 * P1 - 3.0 * P2 + P3) * T * T * T);
 	}
 
+	/** The highest of the ground along a loop, cm over the sea-level sphere: its samples' highest (the curve through them
+	 *  rises a few metres past them at the most, a jelly's ground rising and falling gently along its loop). */
+	double LoopGroundTop(const FFaunaGroup& G)
+	{
+		double Top = G.Ground.Num() > 0 ? (double)G.Ground[0] : 0.0;
+		for (const float H : G.Ground) { Top = FMath::Max(Top, (double)H); }
+		return Top;
+	}
+
 	/** What an Earth's flock of each habitat is: how many, how big (span, m), how far apart (in spans), how high over the
 	 *  ground (m), how fast (m/s) and how fast its wings beat (Hz). */
 	struct FFlierSpecies
@@ -284,7 +293,7 @@ bool SlonkFauna::FFaunaGroup::operator==(const FFaunaGroup& O) const
 		&& CycleSec == O.CycleSec && WalkCmS == O.WalkCmS && TrotCmS == O.TrotCmS && WalkA == O.WalkA && WalkB == O.WalkB && TrotA == O.TrotA && TrotB == O.TrotB
 		&& RampSec == O.RampSec && StartCm == O.StartCm && ArcCm == O.ArcCm && FormationCm == O.FormationCm && HerdRadiusCm == O.HerdRadiusCm && GroundHalfCm == O.GroundHalfCm
 		&& DryCm == O.DryCm && ShoalDensity == O.ShoalDensity && ShoalHalfLengthCm == O.ShoalHalfLengthCm && ShoalHalfWidthCm == O.ShoalHalfWidthCm && ShoalDepthCm == O.ShoalDepthCm
-		&& WaterCm == O.WaterCm;
+		&& WaterCm == O.WaterCm && Ribs == O.Ribs && HangCm == O.HangCm;
 }
 
 int64 SlonkFauna::CellsAcross(const FPlanetTerrainParams& P, EFaunaKind K)
@@ -894,16 +903,150 @@ namespace
 		Out = MoveTemp(G);
 		return true;
 	}
+
+	/** The ground a jelly drifts over at a place on its loop: the highest within Floater::GroundReachCm of it (the place,
+	 *  six points half that far out and six that far, the outer turned half a step), the sea's surface over water, the
+	 *  field without the detail under 100 m (its margin clears that). */
+	double FloaterGroundCm(const FPlanetTerrainParams& P, const FVector& Dir)
+	{
+		const FVector Up = Dir.GetSafeNormal();
+		FVector E, N;
+		TangentAxes(Up, E, N);
+		auto At = [&P](const FVector& D)
+		{
+			const FPlanetTerrainSample S = SlonkTerrain::Sample(P, D, 1.0e4);
+			return S.bWater ? FMath::Max(S.WaterCm, S.HeightCm) : S.HeightCm;
+		};
+		double H = At(Up);
+		for (const double Ring : { 0.5, 1.0 })
+		{
+			for (int32 k = 0; k < 6; ++k)
+			{
+				const double A = UE_DOUBLE_TWO_PI * (k + (Ring > 0.75 ? 0.5 : 0.0)) / 6.0;
+				H = FMath::Max(H, At((Up + (E * FMath::Cos(A) + N * FMath::Sin(A)) * (Ring * SlonkFauna::Floater::GroundReachCm / P.RadiusCm)).GetSafeNormal()));
+			}
+		}
+		return H;
+	}
+
+	/** A jelly in a floater cell: false where the cell holds none (the share of the cells its world rolled, at its life and
+	 *  the density asked for; nothing else about the place matters to it, over land or sea). */
+	bool FloaterInCell(const SlonkFauna::FFaunaWorld& W, const SlonkFauna::FFaunaCell& C, FFaunaGroup& Out)
+	{
+		using namespace SlonkFauna;
+		const int64 Across = CellsAcross(W.P, C.Kind);
+		SlonkScatter::FDraw Dr(SlonkScatter::CellHash(C.Face, 40 + (int32)C.Kind, C.X, C.Y, W.Salt()));
+		// Where in the cell its loop's middle lies (its middle half, so its loop of under a kilometre keeps to it), and
+		// whether the cell holds one.
+		const double Wd = 2.0 / (double)Across;
+		const double U = -1.0 + Wd * ((double)C.X + 0.25 + 0.5 * Dr.Next());
+		const double V = -1.0 + Wd * ((double)C.Y + 0.25 + 0.5 * Dr.Next());
+		const double Gate = Dr.Next();
+		if (Gate >= FMath::Min((double)W.Profile.FloaterShare * (double)W.Life * (double)W.Density, 1.0)) { return false; }
+		const FFaunaBodyPlan& Plan = W.Profile.Plans[(int32)EFaunaKind::Floater];
+		FFaunaGroup G;
+		G.Id = C.Id();
+		G.Kind = EFaunaKind::Floater;
+		G.Seed = ((uint32)(Dr.Next() * 65536.0) << 16) | (uint32)(Dr.Next() * 65536.0);
+		G.Centre = SlonkTerrain::CubeDir(C.Face, U, V).GetSafeNormal();
+		TangentAxes(G.Centre, G.East, G.North);
+		G.Members = 1;
+		// Its bell, mostly the smaller of 20 to 80 m across; its pulse 3 to 6 s apart (the bigger the slower, half a second
+		// either way of that), a whole number of pulses an hour; its ribs and how far its tentacles hang under its middle.
+		const double Sz = Dr.Next();
+		G.SpanM = (float)FMath::Lerp(Floater::MinSpanM, Floater::MaxSpanM, Sz * Sz);
+		const double BySize = ((double)G.SpanM - Floater::MinSpanM) / (Floater::MaxSpanM - Floater::MinSpanM);
+		const double PulseSec = FMath::Clamp(FMath::Lerp(Floater::PulseLoSec, Floater::PulseHiSec, BySize) + Dr.Next() - 0.5, Floater::PulseLoSec, Floater::PulseHiSec);
+		G.FlapHz = (float)(FMath::RoundToDouble(ClockPeriodSec / PulseSec) / ClockPeriodSec);
+		G.Ribs = Plan.Symmetry;
+		G.HangCm = Floater::HalfHeightCm(Plan) * (double)G.SpanM;
+		G.SpacingM = G.SpanM;
+		// Its loop: 400 to 700 m round its middle, two to four lobes, a meander of 10 to 50 m along it; rising and sinking 20
+		// to 60 m over it once to three times a lap.
+		G.RadiusCm = FMath::Lerp(4.0e4, 7.0e4, Dr.Next());
+		G.Lobes = 2 + FMath::Min((int32)(Dr.Next() * 3.0), 2);
+		G.Lobe = FMath::Lerp(0.1, 0.25, Dr.Next());
+		G.LobePhase = UE_DOUBLE_TWO_PI * Dr.Next();
+		G.MeanderCm = FMath::Lerp(1.0e3, 5.0e3, Dr.Next());
+		G.MeanderK = G.Lobes + 2 + FMath::Min((int32)(Dr.Next() * 3.0), 2);
+		G.BobK = 1 + FMath::Min((int32)(Dr.Next() * 3.0), 2);
+		G.BobCm = FMath::Lerp(2.0e3, 6.0e3, Dr.Next());
+		G.Turn = Dr.Next() < 0.5 ? -1.0 : 1.0;
+		G.Phase0 = UE_DOUBLE_TWO_PI * Dr.Next();
+		// Its middle 300 m to 3 km over that ground, mostly the lower; never so low that its tentacles' tips, drawn twice
+		// their size far off (the speck floor) and sunk as far as startles sink it, come within ClearCm of the ground.
+		const double Cr = Dr.Next();
+		G.CruiseCm = FMath::Max(FMath::Lerp(Floater::MinCruiseCm, Floater::MaxCruiseCm, Cr * Cr), 2.0 * G.HangCm + Floater::SinkAllowCm + Floater::ClearCm);
+		const double WantSpeed = 100.0 * FMath::Lerp(1.5, 4.0, Dr.Next());
+		const double Hue = 2.0 * Dr.Next() - 1.0;
+		const double Vary = 0.9 + 0.2 * Dr.Next();
+		G.Glow = (float)FMath::Lerp(1.5, 3.0, Dr.Next());
+		// The loop's length, and the period of the hour's divisors nearest the one its drift asks for (a few m/s).
+		double Len = 0.0;
+		FVector Prev = LoopPoint(G, 0.0);
+		for (int32 k = 1; k <= 96; ++k)
+		{
+			const FVector Q = LoopPoint(G, UE_DOUBLE_TWO_PI * k / 96.0);
+			Len += FVector::Dist(Q, Prev);
+			Prev = Q;
+		}
+		G.LengthCm = Len;
+		const double Want = Len / FMath::Max(WantSpeed, 1.0);
+		double Best = PeriodChoices[0];
+		for (const double Pc : PeriodChoices)
+		{
+			if (FMath::Abs(FMath::Loge(Pc / Want)) < FMath::Abs(FMath::Loge(Best / Want))) { Best = Pc; }
+		}
+		G.PeriodSec = Best;
+		G.SpeedCmS = Len / G.PeriodSec;
+		// The ground along it, each sample the highest near it, laid under an envelope that rises and falls no steeper than
+		// Floater::GroundSlope along the loop (a sample's spacing its share of the loop's length), so it climbs ahead of a
+		// ridge and sinks after it gently.
+		TArray<float> Raw;
+		Raw.SetNum(NumGround);
+		for (int32 k = 0; k < NumGround; ++k)
+		{
+			const FVector Q = LoopPoint(G, UE_DOUBLE_TWO_PI * k / NumGround);
+			Raw[k] = (float)FloaterGroundCm(W.P, (G.Centre * W.P.RadiusCm + Q).GetSafeNormal());
+		}
+		const double StepCm = Len / NumGround;
+		G.Ground.SetNum(NumGround);
+		for (int32 k = 0; k < NumGround; ++k)
+		{
+			double M = Raw[k];
+			for (int32 j = 0; j < NumGround; ++j)
+			{
+				const int32 Apart = FMath::Min(FMath::Abs(k - j), NumGround - FMath::Abs(k - j));
+				M = FMath::Max(M, (double)Raw[j] - Floater::GroundSlope * StepCm * Apart);
+			}
+			G.Ground[k] = (float)M;
+		}
+		G.Pigment = FloaterPigment(W.Profile.Look, Hue, Vary);
+		Out = MoveTemp(G);
+		return true;
+	}
+}
+
+FString SlonkFauna::FloaterAbsence(const FFaunaWorld& W)
+{
+	if (W.Life <= 0.f) { return TEXT("nothing lives here"); }
+	if (W.P.bAirless) { return TEXT("it has no air"); }
+	if (W.Profile.Strangeness < Floater::MinStrangeness) { return FString::Printf(TEXT("its strangeness %.2f is under %.1f"), W.Profile.Strangeness, Floater::MinStrangeness); }
+	if (!W.Profile.bThickAir) { return TEXT("its air is thin (no haze in its lowlands)"); }
+	if (W.Density <= 0.f) { return TEXT("slonk.Fauna.Density is 0"); }
+	if ((W.KindMask & KindBit(EFaunaKind::Floater)) == 0u) { return TEXT("the kind is switched off"); }
+	return W.Spawns(EFaunaKind::Floater) ? FString() : FString(TEXT("none were rolled"));
 }
 
 bool SlonkFauna::GroupInCell(const FFaunaWorld& W, const FFaunaCell& C, FFaunaGroup& Out)
 {
-	if (!W.Spawns(C.Kind) || (C.Kind != EFaunaKind::Flier && C.Kind != EFaunaKind::Herd && C.Kind != EFaunaKind::Leaper)) { return false; }
+	if (!W.Spawns(C.Kind) || (C.Kind != EFaunaKind::Flier && C.Kind != EFaunaKind::Herd && C.Kind != EFaunaKind::Leaper && C.Kind != EFaunaKind::Floater)) { return false; }
 	if (C.Kind == EFaunaKind::Leaper) { return LeaperInCell(W, C, Out); }
 	const FFaunaKindDesc& D = KindDesc(C.Kind);
 	const int64 Across = CellsAcross(W.P, C.Kind);
 	if (C.X < 0 || C.Y < 0 || C.X >= Across || C.Y >= Across || C.Face < 0 || C.Face > 5) { return false; }
 	if (C.Kind == EFaunaKind::Herd) { return HerdInCell(W, C, Out); }
+	if (C.Kind == EFaunaKind::Floater) { return FloaterInCell(W, C, Out); }
 	SlonkScatter::FDraw Dr(SlonkScatter::CellHash(C.Face, 40 + (int32)C.Kind, C.X, C.Y, W.Salt()));
 	// Where in the cell its middle lies, and whether the cell holds a group: at most half the cells where the habitat
 	// suits fully, on a world full of life, at the density asked for.
@@ -1247,6 +1390,12 @@ SlonkFauna::FFaunaPose SlonkFauna::PathAt(const FFaunaGroup& G, double RadiusCm,
 	Pose.VelCmS = (Pp - Pm) / (2.0 * H);
 	const FVector Up = P0.GetSafeNormal();
 	auto Level = [&Up](const FVector& V) { return V - Up * FVector::DotProduct(V, Up); };
+	if (G.Kind == EFaunaKind::Floater)
+	{
+		// A jelly turns no way as it drifts (its body is round): its loop's own east and north laid level where it is.
+		Pose.Rot = FRotationMatrix::MakeFromXZ(Level(G.East).GetSafeNormal(), Up).ToQuat();
+		return Pose;
+	}
 	FVector Heading = Level(Pose.VelCmS).GetSafeNormal();
 	if (Heading.IsNearlyZero()) { Heading = Level(G.East).GetSafeNormal(); }
 	Pose.Rot = FRotationMatrix::MakeFromXZ(Heading, Up).ToQuat();
@@ -1266,6 +1415,17 @@ void SlonkFauna::MembersOf(const FFaunaGroup& G, TArray<FTransform>& OutXf, TArr
 	if (G.Kind == EFaunaKind::Leaper) { LeaperMembersOf(G, OutXf, OutCustom); return; }
 	const int32 N = FMath::Max(G.Members, 0);
 	if (N == 0) { return; }
+	if (G.Kind == EFaunaKind::Floater)
+	{
+		// A jelly alone at its group's middle, unturned, its span its scale; its pulse's phase its own.
+		FRandomStream Rng((int32)G.Seed);
+		const float Seed = Rng.FRand();
+		const float Ph = Rng.FRand();
+		OutXf.Add(FTransform(FQuat::Identity, FVector::ZeroVector, FVector(G.SpanM)));
+		const float C[Custom::Num] = { G.Pigment.R, G.Pigment.G, G.Pigment.B, G.Glow, Seed, G.SpanM, Ph, G.FlapHz, (float)G.Ribs, (float)KindDesc(G.Kind).FadeCm };
+		OutCustom.Append(C, Custom::Num);
+		return;
+	}
 	FRandomStream Rng((int32)G.Seed);
 	const double Sp = G.SpacingM * 100.0;
 	// The formation: a cloud for the starlings, a looser, flatter spread for the rest, of about the volume their spacing
@@ -1372,6 +1532,17 @@ FVector SlonkFauna::PanicOffset(const FPanic& P, const FFaunaKindDesc& D, double
 	if (Age < 0.0 || Age >= Live) { return FVector::ZeroVector; }
 	const double Hold = 1.0 - SlonkScatter::SmoothStep(0.3 * Live, Live, Age);
 	const double CarryFade = 1.0 - SlonkScatter::SmoothStep(0.0, Live, Age);
+	if (D.Kind == EFaunaKind::Floater)
+	{
+		// A jelly squeezes itself away and down from the drift it had (none if it was calm; a fright before left it the
+		// drift it carries, which coasts off over Floater::CoastSec), its pace coming up from nothing to its fastest
+		// FleeRiseSec in (FleeCm over e times that), held a while and back over the rest; what was left of the last flight
+		// fades as this runs. So its frame's velocity never jumps.
+		const double X = Age / FMath::Max(D.FleeRiseSec, 0.1);
+		const double Rise = 1.0 - FMath::Exp(-X) * (1.0 + X);
+		constexpr double Coast = Floater::CoastSec;
+		return (P.Carry + P.CarryVel * (Coast * (1.0 - FMath::Exp(-Age / Coast)))) * CarryFade + P.Dir * (D.FleeCm * Rise * Hold);
+	}
 	if (D.bGallop)
 	{
 		// A walker turns to flee where it stands, then breaks into a gallop from a stand (at its FleeT0), at its fastest
@@ -1489,6 +1660,16 @@ SlonkFauna::FFaunaPose SlonkFauna::FlightAt(const FFaunaGroup& G, const FFaunaKi
 {
 	const FFaunaPose Path = PathAt(G, RadiusCm, Now);
 	if (!P.IsLive(Now)) { return Path; }
+	if (G.Kind == EFaunaKind::Floater)
+	{
+		// A jelly turns no way as it flees: where its path and its flight put it, its loop's east and north laid level there.
+		FFaunaPose Pose = Path;
+		Pose.PosCm = Path.PosCm + PanicOffset(P, D, Now);
+		Pose.VelCmS = FloaterVelocity(G, D, P, RadiusCm, Now);
+		const FVector Up = Pose.PosCm.GetSafeNormal();
+		Pose.Rot = FRotationMatrix::MakeFromXZ((G.East - Up * FVector::DotProduct(G.East, Up)).GetSafeNormal(), Up).ToQuat();
+		return Pose;
+	}
 	// Where its path and its flight put it now, a moment on and twice that (on from now: before its latest startle it
 	// was on another flight).
 	constexpr double H = 0.25, Hv = 0.05;
@@ -1578,13 +1759,17 @@ void SlonkFauna::StartleNow(FPanic& P, const FFaunaKindDesc& D, const FVector& G
 	// round to it); and on one whose fright has worn on and eased its beat, back up from there, its onset set where the
 	// coming-in reaches that.
 	const double Urge = WingUrge(P, Now);
-	// Where its last flight has it now, and (a galloping kind) how fast it was going: it carries on from both as it
-	// turns (a calm one from none).
+	// Where its last flight has it now, and (a galloping kind, a jelly) how fast it was going: it carries on from both as
+	// it turns (a calm one from none).
 	const FVector Was = PanicOffset(P, D, Now);
-	const FVector WasVel = D.bGallop && P.IsLive(Now) ? (Was - PanicOffset(P, D, Now - 0.05)) / 0.05 : FVector::ZeroVector;
-	if (D.bGallop) { P.CarryVel = WasVel; }
+	const bool bCarriesPace = D.bGallop || D.Kind == EFaunaKind::Floater;
+	const FVector WasVel = bCarriesPace && P.IsLive(Now) ? (Was - PanicOffset(P, D, Now - 0.05)) / 0.05 : FVector::ZeroVector;
+	if (bCarriesPace) { P.CarryVel = WasVel; }
 	P.Carry = Was;
-	P.Dir = (Away.GetSafeNormal() + Up * D.FleeUp).GetSafeNormal();
+	// A jelly sinks as it flees, the less the further a fright before has sunk it (level from half the sinking its loop
+	// allows for): chased again and again, it is never driven down onto the ground.
+	const double DownShare = D.Kind == EFaunaKind::Floater ? FMath::Clamp(1.0 + FVector::DotProduct(Was, Up) / (0.5 * Floater::SinkAllowCm), 0.0, 1.0) : 1.0;
+	P.Dir = (Away.GetSafeNormal() + Up * (D.FleeUp * DownShare)).GetSafeNormal();
 	// The side it loops round to come back (a galloping kind): away from the way the threat goes.
 	P.Side = FVector::CrossProduct(Up, Away).GetSafeNormal();
 	if (FVector::DotProduct(Level(T.VelCmS), P.Side) > 0.0) { P.Side = -P.Side; }
@@ -1598,6 +1783,14 @@ void SlonkFauna::StartleNow(FPanic& P, const FFaunaKindDesc& D, const FVector& G
 		P.ScatterDir = P.Dir;
 	}
 	P.OnsetT0 = Urge <= 0.0 ? Now : Now - (Urge >= 1.0 ? 1.0 : 0.3 * InverseSmoothStep(Urge));
+}
+
+bool SlonkFauna::StartleByCommand(FPanic& P, const FFaunaKindDesc& D, const FVector& GroupPosCm, const FFaunaThreat& T, double Now)
+{
+	// A jelly asked again and again, from the same side, would be pushed off its loop past the ground read round it.
+	if (D.Kind == EFaunaKind::Floater) { return StartleGroup(P, D, GroupPosCm, T, Now); }
+	StartleNow(P, D, GroupPosCm, T, Now);
+	return true;
 }
 
 bool SlonkFauna::StartleHerd(FPanic& P, FHerdState& S, const FFaunaGroup& G, const FFaunaKindDesc& D, double RadiusCm, const FFaunaThreat& T, double Now, bool bForce, FHerdWater* Water)
@@ -1917,6 +2110,182 @@ void SlonkFauna::HerdFrightData(const FPanic& P, double Now, double ClockOffsetS
 	Group[HerdData::Startled] = bLive ? 1.f : 0.f;
 	Group[HerdData::PanicT0] = bLive ? OnMaterialClock(P.T0, ClockOffsetSec) : 0.f;
 	Group[HerdData::OnsetT0] = bLive ? OnMaterialClock(P.OnsetT0, ClockOffsetSec) : 0.f;
+}
+
+FVector SlonkFauna::FloaterVelocity(const FFaunaGroup& G, const FFaunaKindDesc& D, const FPanic& P, double RadiusCm, double Now)
+{
+	const FVector Path = PathAt(G, RadiusCm, Now).VelCmS;
+	if (!P.IsLive(Now)) { return Path; }
+	// Its flight's rate from a moment either way (from its startle at the earliest: before it, it was on another flight).
+	constexpr double H = 0.05;
+	const double A = FMath::Max(Now - H, P.T0), B = Now + H;
+	return Path + (PanicOffset(P, D, B) - PanicOffset(P, D, A)) / (B - A);
+}
+
+double SlonkFauna::FloaterGroundAt(const FFaunaGroup& G, double Seconds)
+{
+	double T = FMath::Fmod(Seconds, ClockPeriodSec);
+	if (T < 0.0) { T += ClockPeriodSec; }
+	return LoopGround(G, G.Phase0 + G.Turn * UE_DOUBLE_TWO_PI * T / FMath::Max(G.PeriodSec, 1.0));
+}
+
+FVector SlonkFauna::FloaterShadowFall(const FVector& PosCm, double RadiusCm, double GroundCm, const FVector& SunLocal)
+{
+	const FVector Sun = SunLocal.GetSafeNormal();
+	const double SunUp = FVector::DotProduct(Sun, PosCm.GetSafeNormal());
+	const double Over = PosCm.Size() - RadiusCm - GroundCm;
+	if (SunUp < 0.05 || Over <= 0.0) { return PosCm; }
+	return PosCm - Sun * (Over / SunUp);
+}
+
+void SlonkFauna::FloaterGroupData(const FFaunaGroup& G, const FFaunaKindDesc& D, const FPanic& P, double RadiusCm, double Now, const FQuat& Rot, double ClockOffsetSec, float* Group)
+{
+	// Its fright as a flock's: when a startle squeezed it (slot 1), whether it is live, when it was last startled and when
+	// its frightened pulse began to come in.
+	FrightData(P, Now, Rot, ClockOffsetSec, Group);
+	// The way it drifts through the air in its own frame, m/s, and how fast that changes, as of now on the material's clock,
+	// which runs it on from there (the scatter's way, slot 4, unused). The change from a moment either way, but from its
+	// latest startle at the earliest while that fright is live: before it, it was on another flight, which this one carries
+	// on from (FloaterVelocity before it is its path's alone, so a difference across it would send a false change).
+	constexpr double H = 0.1;
+	const double Lo = P.IsLive(Now) ? FMath::Max(Now - H, P.T0) : Now - H;
+	const FVector V0 = Rot.UnrotateVector(FloaterVelocity(G, D, P, RadiusCm, Now)) / 100.0;
+	const FVector Vm = Rot.UnrotateVector(FloaterVelocity(G, D, P, RadiusCm, Lo)) / 100.0;
+	const FVector Vp = Rot.UnrotateVector(FloaterVelocity(G, D, P, RadiusCm, Now + H)) / 100.0;
+	const FVector Acc = (Vp - Vm) / (Now + H - Lo);
+	Group[FloaterData::TrailX] = (float)V0.X;
+	Group[FloaterData::TrailY] = (float)V0.Y;
+	Group[GroupData::ScatterDirZ] = 0.f;
+	Group[FloaterData::TrailRateX] = (float)Acc.X;
+	Group[FloaterData::TrailRateY] = (float)Acc.Y;
+	Group[FloaterData::ClockT0] = OnMaterialClock(Now, ClockOffsetSec);
+}
+
+namespace
+{
+	/** How far a jelly's bell has contracted in its pulse at a share of it (0 relaxed): quickly, then relaxing slowly. */
+	float JellyContract(float X)
+	{
+		return SmoothStepF(0.f, 0.3f, X) * (1.f - SmoothStepF(0.35f, 1.f, X));
+	}
+	/** The light running down a jelly at night at a share of its pulse. */
+	float JellyFlash(float X)
+	{
+		return SmoothStepF(0.f, 0.05f, X) * (1.f - SmoothStepF(0.08f, 0.3f, X));
+	}
+	/** A jelly's fright as its material reads it: how far its frightened pulse has come in, and how hard a startle squeezes
+	 *  it now. */
+	void JellyFright(float T, const float* Gd, float& OutUrge, float& OutSqueeze)
+	{
+		using namespace SlonkFauna;
+		const float Jpa = FMath::Fmod(T - Gd[FloaterData::PanicT0] + 7201.f, 3600.f) - 1.f;
+		const float Joa = FMath::Fmod(T - Gd[FloaterData::OnsetT0] + 7201.f, 3600.f) - 1.f;
+		const float Jsa = FMath::Fmod(T - Gd[FloaterData::SqueezeT0] + 7201.f, 3600.f) - 1.f;
+		const float Jlive = Gd[FloaterData::Startled] > 0.5f ? 1.f : 0.f;
+		OutUrge = FMath::Clamp(Jlive * (1.f - SmoothStepF(20.f, 120.f, Jpa)) * 3.f, 0.f, 1.f) * SmoothStepF(0.f, 0.3f, Joa);
+		OutSqueeze = Jlive * SmoothStepF(0.f, 0.4f, Jsa) * (1.f - SmoothStepF(3.f, 7.f, Jsa));
+	}
+	/** Its bell's ribs and ring canal at a point of it, as its pixel shader draws them. */
+	void JellyLines(const FVector2f& UV, float Ribs, float& OutRib, float& OutRing)
+	{
+		const float Sym = FMath::Clamp(FMath::RoundToFloat(Ribs), 3.f, 16.f);
+		const float V = FMath::Clamp(UV.Y, 0.f, 1.f);
+		OutRib = 1.f - SmoothStepF(0.035f, 0.06f, FMath::Abs(FracF(UV.X * Sym + 0.5f) - 0.5f));
+		OutRing = 1.f - SmoothStepF(0.012f, 0.025f, FMath::Abs(V - 0.93f));
+	}
+}
+
+FVector3f SlonkFauna::FloaterMotion(const FVector3f& LP, const FLinearColor& VC, const FVector2f& UV, float T, const float* C, const float* Gd, float DistCm, float PxPerRad)
+{
+	// fauna_material.py's floater branch of WPO_CODE, line for line.
+	const float Size = C[Custom::SizeM], Seed = C[Custom::Seed], Phase = C[Custom::Phase], Rate = C[Custom::RateHz];
+	float Jurge = 0.f, Jsq = 0.f;
+	JellyFright(T, Gd, Jurge, Jsq);
+	const float Jtent = VC.R > 0.25f ? 1.f : 0.f;
+	const float Jdown = Jtent > 0.5f ? 1.f + VC.G : VC.G;
+	const float Jpc = FracF(T * Rate + Phase - 0.12f * Jdown);
+	const float Jpf = FracF(T * Rate * 2.f + Phase - 0.12f * Jdown);
+	const float Jc = FMath::Max(FMath::Lerp(0.16f * JellyContract(Jpc), 0.24f * JellyContract(Jpf), Jurge), 0.34f * Jsq);
+	const float Jrc = FracF(T * Rate + Phase - 0.12f);
+	const float Jrf = FracF(T * Rate * 2.f + Phase - 0.12f);
+	const float Jr = FMath::Max(FMath::Lerp(0.16f * JellyContract(Jrc), 0.24f * JellyContract(Jrf), Jurge), 0.34f * Jsq);
+	FVector3f Jp = LP;
+	if (Jtent > 0.5f)
+	{
+		const float S = 1.f - Jr * (1.f - 0.5f * VC.G);
+		Jp.X *= S;
+		Jp.Y *= S;
+		Jp.Z -= 20.f * Jr;
+	}
+	else
+	{
+		const float Jg2 = VC.G * VC.G;
+		const float S = 1.f - Jc * Jg2;
+		Jp.X *= S;
+		Jp.Y *= S;
+		Jp.Z -= 20.f * Jc * Jg2;
+	}
+	const float Jal = FMath::Max(UV.Y - 1.f, 0.f) * 100.f;
+	const float Jamp = Jal * VC.G * Jtent;
+	const float Jrl = FMath::Sqrt(LP.X * LP.X + LP.Y * LP.Y);
+	const FVector2f Jout = Jrl > 0.001f ? FVector2f(LP.X, LP.Y) / Jrl : FVector2f(1.f, 0.f);
+	const FVector2f Jacr(-Jout.Y, Jout.X);
+	const float Jw1 = 540.f + FMath::FloorToFloat(FracF(Seed * 4.37f + VC.B * 7.13f) * 360.f);
+	const float Jw2 = 420.f + FMath::FloorToFloat(FracF(Seed * 2.91f + VC.B * 5.77f) * 300.f);
+	const float Js1 = FMath::Sin(6.2831853f * (FracF(T * (Jw1 / 3600.f) + VC.B * 3.7f + Seed) - 1.5f * VC.G));
+	const float Js2 = FMath::Sin(6.2831853f * (FracF(T * (Jw2 / 3600.f) + VC.B * 1.9f + Seed * 3.f) - 1.1f * VC.G));
+	const FVector2f Jwave = (Jacr * (0.07f * Js1) + Jout * (0.035f * Js2)) * Jamp;
+	const float Jta = FMath::Clamp(FMath::Fmod(T - Gd[FloaterData::ClockT0] + 7201.f, 3600.f) - 1.f, -1.f, 1.f);
+	const FVector2f Jvel = FVector2f(Gd[FloaterData::TrailX], Gd[FloaterData::TrailY]) + FVector2f(Gd[FloaterData::TrailRateX], Gd[FloaterData::TrailRateY]) * Jta;
+	const float Jspd = Jvel.Size();
+	const FVector2f Jbend = Jspd > 0.001f ? Jvel * (-0.4f * FMath::Min(Jspd / 6.f, 1.f) / Jspd) * Jamp : FVector2f(0.f, 0.f);
+	const float Jlift = 0.6667f * FVector2f::DotProduct(Jbend, Jbend) / FMath::Max(Jal, 1.f);
+	const FVector3f Jm(Jwave.X + Jbend.X, Jwave.Y + Jbend.Y, Jlift + 4.f * Jc);
+	const float Jpx = FMath::Max(Size, 1.f) * 100.f * PxPerRad / FMath::Max(DistCm, 1.f);
+	const float Jk = FMath::Clamp(4.f / FMath::Max(Jpx, 0.001f), 1.f, 2.f);
+	return Jp * Jk + Jm * (2.f - Jk) - LP;
+}
+
+bool SlonkFauna::FloaterCover(const FVector2f& UV, const FLinearColor& VC, const float* C)
+{
+	// fauna_material.py's floater branch of CODE, its membrane, line for line: a pore in each cell of the bell's own
+	// surface, none on its ribs, its ring canal or its crown.
+	float Rib = 0.f, Ring = 0.f;
+	JellyLines(UV, C[Custom::PerKind], Rib, Ring);
+	const bool bBell = VC.R < 0.25f;
+	const float V = FMath::Clamp(UV.Y, 0.f, 1.f);
+	const float Vr = FMath::Min(V, 0.9999f);
+	const float Row = FMath::FloorToFloat(Vr * 16.f);
+	const float Nu = 16.f * FMath::Max(FMath::RoundToFloat(4.f * FMath::Sin((Row + 0.5f) / 16.f * 1.5707963f)), 1.f);
+	const FVector2f Cl(FracF(UV.X) * Nu, Vr * 16.f);
+	const FVector2f Cf(FMath::FloorToFloat(Cl.X), FMath::FloorToFloat(Cl.Y));
+	uint32 H = ((uint32)Cf.X * 73856093u) ^ ((uint32)Cf.Y * 19349663u) ^ ((uint32)(C[Custom::Seed] * 65536.f) * 83492791u);
+	H = (H ^ (H >> 13)) * 0x5bd1e995u;
+	H ^= H >> 15;
+	const FVector2f Ctr = FVector2f(0.5f, 0.5f) + (FVector2f((float)(H & 0xffu), (float)((H >> 8) & 0xffu)) / 255.f - FVector2f(0.5f, 0.5f)) * 0.2f;
+	float Cover = V < 0.28f ? 1.f : FMath::Lerp(0.6f, 0.38f, FMath::Clamp((V - 0.28f) / 0.62f, 0.f, 1.f));
+	Cover = FMath::Max(Cover, FMath::Max(Rib, Ring));
+	const float Open = FMath::Sqrt(FMath::Clamp(1.f - Cover, 0.f, 1.f) / 3.14159265f);
+	const bool bPore = bBell && (Cl - Cf - Ctr).Size() < Open;
+	return !bPore;
+}
+
+float SlonkFauna::FloaterLight(const FVector2f& UV, const FLinearColor& VC, float T, const float* C, const float* Gd)
+{
+	// fauna_material.py's floater branch of CODE, its light, line for line.
+	float Rib = 0.f, Ring = 0.f;
+	JellyLines(UV, C[Custom::PerKind], Rib, Ring);
+	const bool bBell = VC.R < 0.25f;
+	const float V = FMath::Clamp(UV.Y, 0.f, 1.f);
+	float Jurge = 0.f, Jsq = 0.f;
+	JellyFright(T, Gd, Jurge, Jsq);
+	const float Phase = C[Custom::Phase], Rate = C[Custom::RateHz];
+	const float Jdown = bBell ? V : 1.f + VC.G;
+	const float Jxc = FracF(T * Rate + Phase - 0.3f * Jdown);
+	const float Jxf = FracF(T * Rate * 2.f + Phase - 0.3f * Jdown);
+	const float Jwave = FMath::Lerp(JellyFlash(Jxc), JellyFlash(Jxf), Jurge);
+	const float Jlines = bBell ? FMath::Max(Rib * (V >= 0.1f ? 1.f : 0.f), Ring) : 1.f;
+	return Jlines * (0.2f + 1.8f * Jwave + 1.5f * Jsq);
 }
 
 void SlonkFauna::StartHerd(FHerdState& S, const FFaunaGroup& G, double Seconds)
@@ -2799,40 +3168,63 @@ bool SlonkFauna::FFaunaField::SetWorld(const FFaunaWorld& W)
 	return false;
 }
 
-double SlonkFauna::FFaunaField::ScanRadiusCm() const
+uint32 SlonkFauna::FFaunaField::ScanKinds(double CameraAltitudeCm) const
+{
+	uint32 Kinds = 0u;
+	for (int32 K = 0; K < NumKinds; ++K)
+	{
+		if (!World.Spawns((EFaunaKind)K)) { continue; }
+		// Read from a kilometre over the height its groups can be kept at; one the last scan read stays read until the camera
+		// is a kilometre higher still, so a camera flying about that height over rolling ground asks for no scan at each rise
+		// and dip.
+		const bool bWasRead = bScanned && (LastScanKinds & KindBit((EFaunaKind)K)) != 0u;
+		const double Top = KindDesc((EFaunaKind)K).MaxAltitudeCm * SpawnHysteresis + ScanKindsMarginCm + (bWasRead ? ScanKindsBandCm : 0.0);
+		if (CameraAltitudeCm <= Top) { Kinds |= KindBit((EFaunaKind)K); }
+	}
+	return Kinds;
+}
+
+double SlonkFauna::FFaunaField::ScanRadiusCm(uint32 Kinds) const
 {
 	double R = 0.0;
 	for (int32 K = 0; K < NumKinds; ++K)
 	{
-		if (!World.Spawns((EFaunaKind)K)) { continue; }
+		if (!World.Spawns((EFaunaKind)K) || (Kinds & KindBit((EFaunaKind)K)) == 0u) { continue; }
 		const FFaunaKindDesc& D = KindDesc((EFaunaKind)K);
 		R = FMath::Max(R, D.ReachCm * SpawnHysteresis + D.CellCm / 6.0 + D.CellCm);
 	}
 	return R;
 }
 
-bool SlonkFauna::FFaunaField::WantsScan(const FVector& GroundDir) const
+bool SlonkFauna::FFaunaField::WantsScan(const FVector& GroundDir, double CameraAltitudeCm) const
 {
 	if (!bHasWorld || !World.SpawnsAny()) { return false; }
 	if (!bScanned) { return true; }
+	// Come up past a kind's height, or down into it: the kinds read change.
+	const uint32 Kinds = ScanKinds(CameraAltitudeCm);
+	if (Kinds != LastScanKinds) { return true; }
 	double Step = TNumericLimits<double>::Max();
 	for (int32 K = 0; K < NumKinds; ++K)
 	{
-		if (World.Spawns((EFaunaKind)K)) { Step = FMath::Min(Step, KindDesc((EFaunaKind)K).CellCm / 6.0); }
+		if (World.Spawns((EFaunaKind)K) && (Kinds & KindBit((EFaunaKind)K)) != 0u) { Step = FMath::Min(Step, KindDesc((EFaunaKind)K).CellCm / 6.0); }
 	}
 	return FVector::Dist(GroundDir.GetSafeNormal(), LastScanDir) * World.P.RadiusCm > Step;
 }
 
-TSharedRef<SlonkFauna::FFaunaField::FScan, ESPMode::ThreadSafe> SlonkFauna::FFaunaField::Scan(const FFaunaWorld& W, const FVector& GroundDir, double RadiusCm, TSharedPtr<const FCellCache, ESPMode::ThreadSafe> InCache)
+TSharedRef<SlonkFauna::FFaunaField::FScan, ESPMode::ThreadSafe> SlonkFauna::FFaunaField::Scan(const FFaunaWorld& W, const FVector& GroundDir, double RadiusCm, TSharedPtr<const FCellCache, ESPMode::ThreadSafe> InCache,
+	uint32 Kinds)
 {
 	const double Start = FPlatformTime::Seconds();
 	TSharedRef<FScan, ESPMode::ThreadSafe> S = MakeShared<FScan, ESPMode::ThreadSafe>();
 	S->CentreDir = GroundDir.GetSafeNormal();
 	S->GroundCm = FMath::Max(FlightGroundCm(W.P, S->CentreDir), 0.0);
+	// The kinds it reads: those asked for that live here.
+	S->Kinds = 0u;
 	TArray<FFaunaCell> Cells;
 	for (int32 K = 0; K < NumKinds; ++K)
 	{
-		if (!W.Spawns((EFaunaKind)K)) { continue; }
+		if (!W.Spawns((EFaunaKind)K) || (Kinds & KindBit((EFaunaKind)K)) == 0u) { continue; }
+		S->Kinds |= KindBit((EFaunaKind)K);
 		const FFaunaKindDesc& D = KindDesc((EFaunaKind)K);
 		CellsNear(W.P, (EFaunaKind)K, S->CentreDir, FMath::Min(RadiusCm, D.ReachCm * SpawnHysteresis + D.CellCm / 6.0 + D.CellCm), Cells);
 		for (const FFaunaCell& C : Cells)
@@ -2864,8 +3256,19 @@ void SlonkFauna::FFaunaField::Accept(const FScan& S)
 		Next->Add(S.CellIds[i], S.CellGroups[i]);
 		if (S.CellGroups[i].IsValid()) { Candidates.Add(S.CellGroups[i]); }
 	}
+	// The cells of the kinds it did not read (the camera too high for them) stay as the last scan of them left them, so
+	// coming back down past their height reads only those new to them since (a cell's kind is its id's top bits). None of
+	// their groups is a candidate: none could be spawned that high.
+	if (Cache.IsValid())
+	{
+		for (const TPair<uint64, FGroupRef>& C : *Cache)
+		{
+			if ((S.Kinds & KindBit((EFaunaKind)(C.Key >> 60))) == 0u) { Next->Add(C.Key, C.Value); }
+		}
+	}
 	Cache = Next;
 	LastScanDir = S.CentreDir;
+	LastScanKinds = S.Kinds;
 	GroundCm = S.GroundCm;
 	bScanned = true;
 }
@@ -2888,12 +3291,16 @@ void SlonkFauna::FFaunaField::Select(const FVector& CamLocal, TArray<FGroupRef>&
 	const FVector CamDir = CamLocal.GetSafeNormal();
 	const double Alt = CameraAltitudeCm(CamLocal);
 	const double R = World.P.RadiusCm;
+	// The camera's height over the ground a group's kind is kept under: the ground under the scan's middle; for a jelly the
+	// higher of that and its loop's highest ground, over which it drifts no higher than Floater::MaxCruiseCm and its bob,
+	// so however high the ground under its loop stands it comes and goes past its fade as the camera climbs and comes down.
+	auto AltOver = [&](const FFaunaGroup& G) { return G.Kind == EFaunaKind::Floater ? FMath::Min(Alt, CamLocal.Size() - R - LoopGroundTop(G)) : Alt; };
 	// Gone past the hysteresis (or its kind gone, or the camera too high): let go.
 	for (const TPair<uint64, FGroupRef>& A : Active)
 	{
 		const FFaunaKindDesc& D = KindDesc(A.Value->Kind);
 		const double Dist = FVector::Dist(CamDir, A.Value->Centre) * R;
-		if (!World.Spawns(A.Value->Kind) || Dist > D.ReachCm * SpawnHysteresis || Alt > D.MaxAltitudeCm * SpawnHysteresis) { OutLetGo.Add(A.Key); }
+		if (!World.Spawns(A.Value->Kind) || Dist > D.ReachCm * SpawnHysteresis || AltOver(*A.Value) > D.MaxAltitudeCm * SpawnHysteresis) { OutLetGo.Add(A.Key); }
 	}
 	OutLetGo.Sort();
 	for (const uint64 Id : OutLetGo) { LetGo(Id); }
@@ -2906,7 +3313,7 @@ void SlonkFauna::FFaunaField::Select(const FVector& CamLocal, TArray<FGroupRef>&
 		if (Active.Contains(G.Id) || !World.Spawns(G.Kind)) { continue; }
 		const FFaunaKindDesc& D = KindDesc(G.Kind);
 		const double Dist = FVector::Dist(CamDir, G.Centre) * R;
-		if (Dist < D.ReachCm && Alt < D.MaxAltitudeCm) { Order.Add({ Dist, i }); }
+		if (Dist < D.ReachCm && AltOver(G) < D.MaxAltitudeCm) { Order.Add({ Dist, i }); }
 	}
 	Order.Sort([this](const TPair<double, int32>& L, const TPair<double, int32>& Rt) { return L.Key < Rt.Key || (L.Key == Rt.Key && Candidates[L.Value]->Id < Candidates[Rt.Value]->Id); });
 	TArray<TPair<double, uint64>> Farther;

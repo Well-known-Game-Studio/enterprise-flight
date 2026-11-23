@@ -154,8 +154,10 @@ public:
 	// ---- On foot ----
 	/** The crew member out of the craft (null while everyone is aboard). */
 	UPROPERTY(BlueprintReadOnly, Category = "Person") TWeakObjectPtr<APersonPawn> ActivePerson;
-	/** Debug (fauna watch): the flock the view follows, how far off, and the camera it is seen through. */
+	/** Debug (fauna watch): the flock the view follows, how far off, and the camera it is seen through; and the kind it
+	 *  looks for (-1 any: one asked for, or a sky-jelly after fauna goto floater). */
 	uint64 FaunaWatchId = 0;
+	int32 FaunaWatchKind = -1;
 	double FaunaWatchDistCm = 4000.0;
 	bool bFaunaWatchLow = false;
 	UPROPERTY() TObjectPtr<class ACameraActor> FaunaWatchCamera;

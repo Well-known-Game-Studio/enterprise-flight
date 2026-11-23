@@ -67,7 +67,27 @@ namespace
 	 * fish's lengths; the speck floor's growth to twice its size at the top of its leap), which every instance's box is
 	 * padded by (8 m); their LOD screen sizes are set with that box (about 29 lengths round, where a fish is 1), so a fish
 	 * goes to its fewer triangles about 30 pixels long and to its 2 about 6 (Slonk.Fauna.Fish).
-	 * The floaters are a later phase's budget (not spawned yet): 24 of them alone. 2,414 instances and 58 group sets in all.
+	 * The floaters: sky-jellies 20 to 80 m across, only on a living world at least 0.3 strange whose air is thick
+	 * (SlonkFauna::FloatersLive), one in a 3 km cell in the share of the cells its world rolls (5 to 60%), drifting round a
+	 * loop of 3 to 6 km 300 m to 3 km over the ground; spawned within 12 km of the camera's ground point and kept to 15 km
+	 * (their loops reach at most 925 m from their middles, so one comes and goes past the 10.8 km they fade by), at most 24
+	 * of them, none spawned while the camera is more than 15 km over the ground and none kept over 18.75 km, the ground
+	 * a jelly's own: the higher of the ground under the scan's middle and its loop's highest (over which it drifts at most
+	 * 3 km, its bob 60 m more and its crown, drawn at twice its size, 200 m more), so one comes and goes at least 11.7 km
+	 * off, past its fade, as the camera climbs and comes down, however high the ground under its loop stands
+	 * (Slonk.Fauna.FloaterGate). A craft in the air within 150 m of one (at any height under 5 km over the ground: they
+	 * drift that high) startles it: it squeezes itself hard and away from it and down, 100 m off its loop at its fastest
+	 * 7.4 m/s five seconds in, holds there and drifts back onto its loop by 150 s after; someone on foot is nothing to it, so
+	 * far under it. Their shadows while it or where its shadow falls is within 3.5 km (a jelly overhead throws its dappled
+	 * shadow on the ground; a high one's falls kilometres off at a low sun). The material moves a jelly's vertices up to
+	 * about 85 unit-mesh cm past its box across (its tentacles trailing and undulating, up to 0.5 of their length) and up
+	 * to its half-height and 14 more along it (the speck floor's growth to twice its size, about its middle, and its pulse),
+	 * which every instance's box is padded by (110: 0.15 of its half-height and 20 more for any mesh, so it holds a
+	 * half-height of up to 120, the longest-tentacled plan's); their LOD screen sizes are set with that box (3.2 to 3.8
+	 * spans round, where a jelly is 1), so a jelly goes to its 60-odd triangles about 35 to 45 pixels across and to its 16
+	 * about 6 to 7 (Slonk.Fauna.Jelly), which cover about as much of the sky as its finer LODs, seen from above, below and
+	 * the side, and glow about as much (Slonk.Fauna.JellySpeck).
+	 * 2,414 instances and 58 group sets in all.
 	 */
 	FFaunaKindDesc MakeDesc(EFaunaKind K)
 	{
@@ -112,9 +132,14 @@ namespace
 			D.LodScreenSize[0] = 1.f; D.LodScreenSize[1] = 0.8f; D.LodScreenSize[2] = 0.16f;
 			break;
 		case EFaunaKind::Floater:
-			D.CellCm = 3.0e5; D.ReachCm = 1.2e6; D.MaxAltitudeCm = 1.0e6;
+			D.bLive = true;
+			D.CellCm = 3.0e5; D.ReachCm = 1.2e6; D.MaxAltitudeCm = 1.5e6;
 			D.GroupMin = 1; D.GroupMax = 1; D.MaxGroups = 24; D.MaxMembers = 24;
-			D.ShadowReachCm = 2.0e5; D.FadeCm = 1.0e6;
+			D.ScareRadiusCm = 1.5e4; D.ScareAltitudeCm = 5.0e5; D.CrewScareCm = 0.0; D.FleeCm = 1.0e4;
+			D.FleeRiseSec = 5.0; D.FleeUp = -0.55; D.FrightSec = 150.0;
+			D.ShadowReachCm = 3.5e5; D.FadeCm = 1.08e6;
+			D.CullPaddingUnits = 110.0;
+			D.LodScreenSize[0] = 1.f; D.LodScreenSize[1] = 0.25f; D.LodScreenSize[2] = 0.04f;
 			break;
 		default: break;
 		}
@@ -162,6 +187,7 @@ bool SlonkFauna::KindFromName(const FString& Name, EFaunaKind& Out)
 		if (N == Kn || N == Kn + TEXT("s")) { Out = (EFaunaKind)K; return true; }
 	}
 	if (N == TEXT("bird") || N == TEXT("birds")) { Out = EFaunaKind::Flier; return true; }
+	if (N == TEXT("jelly") || N == TEXT("jellies")) { Out = EFaunaKind::Floater; return true; }
 	return false;
 }
 
@@ -215,12 +241,55 @@ SlonkFauna::FFaunaLook SlonkFauna::LookOf(const FWorldGenome& G)
 	L.Vivid = FMath::Clamp(G.Strangeness, 0.f, 1.f);
 	if (Turn != 0.f)
 	{
-		// Round the colour wheel, its saturation and brightness kept: the plankton's glow, the fireflies' and the pollen's.
+		// Round the colour wheel, its saturation and brightness kept: the plankton's glow, the fireflies', the pollen's and
+		// the sky-jellies' pale bells.
 		L.Glow = TurnPigment(L.Glow, Turn);
 		L.Firefly = TurnPigment(L.Firefly, Turn);
 		L.Pollen = TurnPigment(L.Pollen, Turn);
+		L.Jelly = TurnPigment(L.Jelly, Turn);
 	}
 	return L;
+}
+
+bool SlonkFauna::ThickAir(const FWorldGenome& G)
+{
+	return G.LowHazeDensity > 0.f;
+}
+
+bool SlonkFauna::FloatersLive(const FWorldGenome& G)
+{
+	return G.Strangeness >= Floater::MinStrangeness && ThickAir(G);
+}
+
+float SlonkFauna::FloaterShareOf(const FWorldGenome& G, float Draw)
+{
+	if (!FloatersLive(G)) { return 0.f; }
+	const float D = FMath::Clamp(Draw, 0.f, 1.f);
+	const float Haze = FMath::Clamp(G.LowHazeDensity / Floater::HazeFull, 0.f, 1.f);
+	return (Floater::MinShare + Floater::ShareSpan * D * D) * (0.6f + 0.4f * Haze);
+}
+
+FFaunaBodyPlan SlonkFauna::FloaterPlan(uint32 Hash)
+{
+	// A stream of its own: the profile's draws, and every other roll of the world, stay where they were.
+	FRandomStream R((int32)(Hash * 0x2C1B3C6Du + 0x297A2D39u));
+	FFaunaBodyPlan P = EarthPlan(EFaunaKind::Floater);
+	const uint8 Ribs[3] = { 6, 8, 12 };
+	P.Symmetry = Ribs[FMath::Min((int32)(R.FRand() * 3.f), 2)];
+	P.LimbPairs = (uint8)(3 + FMath::Min((int32)(R.FRand() * 4.f), 3));
+	P.Length = FMath::Lerp(Floater::MinBell, Floater::MaxBell, R.FRand());
+	P.Tail = P.Length * FMath::Lerp(Floater::MinTentacles, Floater::MaxTentacles, R.FRand());
+	P.Girth = 1.f;
+	P.Chord = FMath::Lerp(0.04f, 0.1f, R.FRand());
+	P.GlowOrgans = P.Symmetry;
+	return P;
+}
+
+FLinearColor SlonkFauna::FloaterPigment(const FFaunaLook& L, double Turn, double Vary)
+{
+	FLinearColor C = TurnPigment(L.Jelly, (float)(12.0 * FMath::Clamp(Turn, -1.0, 1.0))) * (float)Vary;
+	C.A = 1.f;
+	return C;
 }
 
 SlonkFauna::FFaunaProfile SlonkFauna::Roll(const FWorldGenome& G, EPlanetArchetype Type, uint32 Hash)
@@ -233,13 +302,21 @@ SlonkFauna::FFaunaProfile SlonkFauna::Roll(const FWorldGenome& G, EPlanetArchety
 	FRandomStream R((int32)(Hash * 0x9E3779B1u + 0x27d4eb2fu));
 	F.Seed = (uint32)R.GetUnsignedInt();
 	// One draw per kind for the biosphere phase's plans, taken now so the seed above never moves when they come. At
-	// strangeness 0, and in this phase, every kind is the Earth's.
+	// strangeness 0, and in this phase, every kind is the Earth's; the floaters' draw is the share of their cells holding
+	// a jelly.
+	float FloaterDraw = 0.f;
 	for (int32 K = 0; K < NumKinds; ++K)
 	{
-		R.FRand();
+		const float Draw = R.FRand();
 		F.Plans[K] = EarthPlan((EFaunaKind)K);
+		if ((EFaunaKind)K == EFaunaKind::Floater) { FloaterDraw = Draw; }
 	}
 	F.Look = LookOf(G);
+	// The sky-jellies, on a strange world whose air is thick: how many there are, and their own body plan (an Earth-like
+	// world has none, and keeps the plan they would start from).
+	F.bThickAir = ThickAir(G);
+	F.FloaterShare = FloaterShareOf(G, FloaterDraw);
+	if (F.FloaterShare > 0.f) { F.Plans[(int32)EFaunaKind::Floater] = FloaterPlan(Hash); }
 	return F;
 }
 
@@ -247,8 +324,8 @@ bool SlonkFauna::SameProfile(const FFaunaProfile& A, const FFaunaProfile& B)
 {
 	if (A.Strangeness != B.Strangeness || A.Type != B.Type || A.Hash != B.Hash || A.Seed != B.Seed) { return false; }
 	for (int32 K = 0; K < NumKinds; ++K) { if (A.Plans[K] != B.Plans[K]) { return false; } }
-	return A.Look.Glow == B.Look.Glow && A.Look.Firefly == B.Look.Firefly && A.Look.Pollen == B.Look.Pollen && A.Look.HueTurnDeg == B.Look.HueTurnDeg
-		&& A.Look.Vivid == B.Look.Vivid;
+	return A.Look.Glow == B.Look.Glow && A.Look.Firefly == B.Look.Firefly && A.Look.Pollen == B.Look.Pollen && A.Look.Jelly == B.Look.Jelly
+		&& A.Look.HueTurnDeg == B.Look.HueTurnDeg && A.Look.Vivid == B.Look.Vivid && A.bThickAir == B.bThickAir && A.FloaterShare == B.FloaterShare;
 }
 
 FLinearColor SlonkFauna::FlierPigment(const FFaunaLook& L, const FScatterPalette& Pal, EFlierHabitat H, double Dry, double Vary)

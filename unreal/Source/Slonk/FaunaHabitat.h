@@ -13,8 +13,11 @@
 // themselves, a group in half the shoals over water deep enough, drawn in the shoal's frame as it swims: each fish leaps
 // out of the sea and back on a schedule of the material's clock in closed form (SlonkFauna::LeapOf), from the swell's
 // surface where it leaves to the surface where it dives back in (SlonkFauna::SwellAt mirrors the terrain material's
-// swell), and a craft passing low sends the group diving for a minute. FFaunaField keeps the groups about a camera, by
-// its distance from them alone.
+// swell), and a craft passing low sends the group diving for a minute. The sky-jellies (the floaters) live only on a
+// strange world whose air is thick, one in a 3 km cell in the share of the cells its world rolls, each drifting a few
+// metres a second round a closed, lobed loop whose period divides the hour, 300 m to 3 km over the highest ground near
+// its loop (read along it), rising and sinking gently; a craft passing close makes one squeeze itself away and down for a
+// couple of minutes. FFaunaField keeps the groups about a camera, by its distance from them alone.
 
 #pragma once
 
@@ -111,10 +114,12 @@ namespace SlonkFauna
 		FCivilization People;
 		FFaunaSea Sea;
 		/** Whether any group of the kind lives here: life, air, the kind allowed and spawned in this build (the leapers only in
-		 *  a sea whose shoals are painted). */
+		 *  a sea whose shoals are painted; the floaters only where the profile rolled them a share of its cells: a strange
+		 *  world whose air is thick). */
 		bool Spawns(EFaunaKind K) const
 		{
-			return Life > 0.f && Density > 0.f && !P.bAirless && (KindMask & KindBit(K)) != 0u && KindDesc(K).bLive && (K != EFaunaKind::Leaper || Sea.ShoalDensity > 0.f);
+			return Life > 0.f && Density > 0.f && !P.bAirless && (KindMask & KindBit(K)) != 0u && KindDesc(K).bLive && (K != EFaunaKind::Leaper || Sea.ShoalDensity > 0.f)
+				&& (K != EFaunaKind::Floater || Profile.FloaterShare > 0.f);
 		}
 		bool SpawnsAny() const { for (int32 K = 0; K < NumKinds; ++K) { if (Spawns((EFaunaKind)K)) { return true; } } return false; }
 		/** The salt every cell's hash takes: the profile's seed and the terrain's. */
@@ -221,6 +226,16 @@ namespace SlonkFauna
 		 */
 		float ShoalDensity = 0.f;
 		double ShoalHalfLengthCm = 0.0, ShoalHalfWidthCm = 0.0, ShoalDepthCm = 0.0, WaterCm = 0.0;
+		/**
+		 * A jelly's (a floater, alone in its group: SpanM its bell's span, FlapHz its pulse, a whole number of pulses an
+		 * hour): its frame is its middle (its loop's east and north laid level, never turned, as its body is round), flown
+		 * CruiseCm over Ground, the highest ground within Floater::GroundReachCm of its loop (the sea's surface over water,
+		 * the field without the detail under 200 m); its ribs' count (its plan's Symmetry), and how far under its middle its
+		 * tentacles' tips hang, cm. Its cruise leaves twice that (the speck floor draws one far off up to twice its size),
+		 * Floater::SinkAllowCm and Floater::ClearCm under it.
+		 */
+		int32 Ribs = 0;
+		double HangCm = 0.0;
 		/** The farthest any point of its loop lies from its middle, cm. */
 		double ExtentCm() const { return RadiusCm * (1.0 + Lobe) + MeanderCm; }
 		bool operator==(const FFaunaGroup& O) const;
@@ -282,6 +297,9 @@ namespace SlonkFauna
 	SLONK_API bool HerdCrosses(const SlonkScatter::FHabitat& H);
 	/** The group a cell holds, if it holds one (false if not, or if its kind does not live here). */
 	SLONK_API bool GroupInCell(const FFaunaWorld& W, const FFaunaCell& C, FFaunaGroup& Out);
+	/** Why a world keeps no sky-jellies, for the debug readout (nothing lives there, no air, the strangeness under
+	 *  Floater::MinStrangeness, thin air, the density 0 or the kind switched off): empty if it keeps some. */
+	SLONK_API FString FloaterAbsence(const FFaunaWorld& W);
 	/** How far a search for a group looked: how many cells it read and out to how far, cm (every cell within that). */
 	struct FGroupSearch
 	{
@@ -397,7 +415,8 @@ namespace SlonkFauna
 	};
 	/** The group's frame on its path at a time (seconds on the world's clock, wrapped to ClockPeriodSec first). A group of
 	 *  leapers' is its shoal's, at the world's own seconds (never wrapped, nor moved by the paths' clock's offset: the
-	 *  terrain material swims the shoals on them): on the sea-level sphere at the shoal's middle, x the way it swims. */
+	 *  terrain material swims the shoals on them): on the sea-level sphere at the shoal's middle, x the way it swims. A
+	 *  jelly's is its middle, its loop's east and north laid level (never turned). */
 	SLONK_API FFaunaPose PathAt(const FFaunaGroup& G, double RadiusCm, double Seconds);
 	/** A herd's schedule, in closed form: how far it has walked along its loop since the hour's turn, cm, and how fast it
 	 *  walks, cm/s, at a time (the world's seconds, wrapped to the hour); and whether it is set to walk (1 from
@@ -630,7 +649,9 @@ namespace SlonkFauna
 	/** How far a group's frame is off its path for its fright at a time, planet-local cm: away fast, held a while, back
 	 *  by its LiveSec (exactly zero from then). A galloping kind's gallop comes on at its FleeT0, and it comes back from
 	 *  its kind's FleeBackSec at a steady pace eased in and out, what a fright before left it carrying (FPanic::Carry,
-	 *  and the gallop it coasts on) coming back with it at the same pace. */
+	 *  and the gallop it coasts on) coming back with it at the same pace. A floater squeezes itself away from the drift it
+	 *  had (none if calm: the drift a fright before left it carrying coasting off over Floater::CoastSec), at its fastest its
+	 *  kind's FleeRiseSec in, so its frame's velocity never jumps, not even at a second fright. */
 	SLONK_API FVector PanicOffset(const FPanic& P, const FFaunaKindDesc& D, double Now);
 	/** A herd's offset off its path for its fright at a time, planet-local cm: its flight (PanicOffset; or, fleeing along
 	 *  its loop, FPanic::LoopWay, the way along it the flight has taken it from where its path has it) and, while a
@@ -657,7 +678,8 @@ namespace SlonkFauna
 	 * together, facing the way it flies, level: it wheels round to that from Was (its frame Dt seconds before) at
 	 * FlightTurnRadS at most, so a startle turns the formation rather than flipping it, and leans into the turn it makes
 	 * (hard over while it wheels), its bank following at FlightBankRadS at most. A group just come has no frame before:
-	 * any long Dt faces it its flight at once.
+	 * any long Dt faces it its flight at once. A floater's frame turns no way (its body is round): its loop's own east and
+	 * north laid level where its path and its flight put it.
 	 */
 	SLONK_API FFaunaPose FlightAt(const FFaunaGroup& G, const FFaunaKindDesc& D, const FPanic& P, double RadiusCm, double Now, const FFaunaPose& Was, double Dt);
 	/** Whether a threat scares a group at a place: a craft in the air (not set down) below the kind's ScareAltitudeCm
@@ -691,6 +713,11 @@ namespace SlonkFauna
 	 *  threat overhead), what is left of its last flight carried; its panic runs from now; its members' scatter, if still
 	 *  open, is kept, and its wingbeat's urge comes in from where it stands (FPanic::OnsetT0). */
 	SLONK_API void StartleNow(FPanic& P, const FFaunaKindDesc& D, const FVector& GroupPosCm, const FFaunaThreat& T, double Now);
+	/** A startle the debug command asks for of a flock or a jelly (UPlanetFaunaComponent::StartleAll): a flock however
+	 *  lately it was startled (StartleNow); a jelly only as StartleGroup allows (not within RestartleSec of its last
+	 *  startle, nor once half again its flight off its loop), so however often it is asked its drift off its loop stays
+	 *  within the ground read round it. True if it was startled. */
+	SLONK_API bool StartleByCommand(FPanic& P, const FFaunaKindDesc& D, const FVector& GroupPosCm, const FFaunaThreat& T, double Now);
 	/** A group's fright as the material reads it, into its custom primitive data (GroupData::Num floats): when its scatter
 	 *  opened, the way it opened in the group's frame (Rot, its frame's rotation now), whether it is live, when it was
 	 *  last startled and when its urge began to come in, each moment on the material's clock (the paths' clock less
@@ -699,6 +726,22 @@ namespace SlonkFauna
 	/** A herd's fright as its walkers read it (HerdData): whether it is live, when it was last startled and when its
 	 *  alarm began to come in, as FrightData has them. The herd's own slots are left as they are. */
 	SLONK_API void HerdFrightData(const FPanic& P, double Now, double ClockOffsetSec, float* Group);
+	/** A jelly's velocity through the air at a time (the paths' clock), planet-local cm/s: its path's and its flight's
+	 *  (PanicOffset's rate). */
+	SLONK_API FVector FloaterVelocity(const FFaunaGroup& G, const FFaunaKindDesc& D, const FPanic& P, double RadiusCm, double Now);
+	/** The ground a jelly's loop has it drifting over at a time (the paths' clock), cm over the sea-level sphere (the sea's
+	 *  surface over water), as PathAt lays its loop. */
+	SLONK_API double FloaterGroundAt(const FFaunaGroup& G, double Seconds);
+	/** Where a jelly's shadow falls, planet-local cm: from its middle (PosCm) away from the sun (SunLocal, a planet-local
+	 *  direction toward it) down to the level GroundCm over the sea-level sphere under it (the world's curve over a fall of
+	 *  a few kilometres left out); its middle itself while the sun stands under about three degrees over its horizon (no
+	 *  shadow, or one too long and faint to matter). */
+	SLONK_API FVector FloaterShadowFall(const FVector& PosCm, double RadiusCm, double GroundCm, const FVector& SunLocal);
+	/** What the material reads of a jelly (FloaterData::Num floats; the night left as it is): its fright, as FrightData has
+	 *  it, and the way it drifts through the air in its frame (Rot, as drawn now), m/s, and how fast that changes, m/s/s
+	 *  (from its velocity a tenth of a second either way, but from its latest startle at the earliest while that fright is
+	 *  live, so both run on through a second fright), as of now on the material's clock. */
+	SLONK_API void FloaterGroupData(const FFaunaGroup& G, const FFaunaKindDesc& D, const FPanic& P, double RadiusCm, double Now, const FQuat& Rot, double ClockOffsetSec, float* Group);
 	/** Sends a group of leapers diving if a craft scares it (Scares: in the air lower than its kind's ScareAltitudeCm over
 	 *  the sea, within its ScareRadiusCm; someone on foot never does, on a shore or wading), unless it was startled in the
 	 *  last RestartleSec; with bForce, whatever comes and however lately. None of its fish leaves the water from then
@@ -782,12 +825,33 @@ namespace SlonkFauna
 	SLONK_API FVector2f LeaperTurn(float T, const float* Custom, const float* Group);
 
 	/**
-	 * The groups kept about a camera. A scan reads the cells round the camera's ground point (on a task: Scan is pure),
-	 * reusing those the last scan read, once the ground point has moved a sixth of a cell; every frame, Select spawns
+	 * The material's motion of a jelly's vertex (fauna_material.py's floater branch), transliterated in floats as the GPU
+	 * runs it: the offset of a vertex at LP (its unit mesh's cm, in its instance's frame, which is its group's unturned and
+	 * scaled by its span, its middle at the origin) with its vertex colour and UV, at the material's time T, for a jelly's
+	 * custom floats (Custom::Num) in its group's custom primitive data (FloaterData::Num), DistCm from the camera, which
+	 * sees PxPerRad pixels a radian. In the instance's frame, unit-mesh cm. FloaterCover is its pixel shader's membrane:
+	 * whether a point of it (its UV and vertex colour) is drawn, its pores left out (its fade's dither aside), the same at
+	 * every moment; FloaterLight how brightly its ribs, ring canal and tentacles are lit there at night at T, before its
+	 * glow and the night (Emis is GlowColor times its glow, the night and this).
+	 */
+	SLONK_API FVector3f FloaterMotion(const FVector3f& LP, const FLinearColor& VC, const FVector2f& UV, float T, const float* Custom, const float* Group, float DistCm, float PxPerRad);
+	SLONK_API bool FloaterCover(const FVector2f& UV, const FLinearColor& VC, const float* Custom);
+	SLONK_API float FloaterLight(const FVector2f& UV, const FLinearColor& VC, float T, const float* Custom, const float* Group);
+
+	/** A kind's cells are read while the camera is no more than ScanKindsMarginCm over the height its groups can be kept at
+	 *  (its MaxAltitudeCm and SpawnHysteresis), and once read until it is ScanKindsBandCm higher still, cm
+	 *  (FFaunaField::ScanKinds). */
+	constexpr double ScanKindsMarginCm = 1.0e5, ScanKindsBandCm = 1.0e5;
+
+	/**
+	 * The groups kept about a camera. A scan reads the cells round the camera's ground point (on a task: Scan is pure) of
+	 * the kinds that can be kept at the camera's height (ScanKinds), reusing those the last scan read, once the ground point
+	 * has moved a sixth of a cell or the camera has come up or down past a kind's height; every frame, Select spawns
 	 * the scan's groups whose middles have come within their kind's reach of the ground point, nearest first and within
 	 * the kind's caps (with the caps full, the farthest of the kind's groups out of sight and farther off by a sixth of a
 	 * cell make room for a nearer one), and lets go of those that have gone beyond SpawnHysteresis times it (or under a
-	 * camera too high for them). Distance alone decides, so a group looked away from and back at is still there, and a
+	 * camera too high for them: its height over the ground under the scan's middle, or for a jelly over the higher of that
+	 * and its loop's highest ground). Distance alone decides, so a group looked away from and back at is still there, and a
 	 * group is the same group (the same id, on the same path) whenever it is found again.
 	 */
 	class SLONK_API FFaunaField
@@ -805,6 +869,8 @@ namespace SlonkFauna
 			TArray<FGroupRef> CellGroups;
 			int32 Evaluated = 0;
 			double Ms = 0.0;
+			/** The kinds it read (KindBit). */
+			uint32 Kinds = AllKinds;
 		};
 
 		/** A changed world (another density, a kind switched off, a new profile) clears everything: false. One whose seas
@@ -814,14 +880,24 @@ namespace SlonkFauna
 		bool SetWorld(const FFaunaWorld& W);
 		const FFaunaWorld& GetWorld() const { return World; }
 		bool HasWorld() const { return bHasWorld; }
-		/** Whether the camera's ground point (planet-local unit) has moved far enough from the last scan's for another. */
-		bool WantsScan(const FVector& GroundDir) const;
-		/** How far round its middle a scan reads, cm: every live kind's reach, its hysteresis, a sixth of a cell for the
+		/** The kinds a scan for a camera this high over the ground reads (KindBit): the world's live kinds whose groups can
+		 *  be kept that high (their MaxAltitudeCm and its hysteresis) with ScanKindsMarginCm to spare, and those the last scan
+		 *  read with ScanKindsBandCm more; so every one near the ground, and high over it only the jellies, which are kept
+		 *  the highest. */
+		uint32 ScanKinds(double CameraAltitudeCm) const;
+		/** Whether the camera's ground point (planet-local unit) has moved far enough from the last scan's for another (a
+		 *  sixth of the smallest cell of the kinds it read), or the camera has come up or down past a height that changes the
+		 *  kinds a scan reads (ScanKinds, its band keeping a camera flying about such a height from asking at every rise and
+		 *  dip). */
+		bool WantsScan(const FVector& GroundDir, double CameraAltitudeCm = 0.0) const;
+		/** How far round its middle a scan of the kinds reads, cm: their reach, its hysteresis, a sixth of a cell for the
 		 *  camera's drift between scans, and a cell. */
-		double ScanRadiusCm() const;
-		/** The cells round a ground direction, those in Cache taken from it: pure, safe on a task. */
-		static TSharedRef<FScan, ESPMode::ThreadSafe> Scan(const FFaunaWorld& W, const FVector& GroundDir, double RadiusCm, TSharedPtr<const FCellCache, ESPMode::ThreadSafe> Cache);
-		/** Takes a finished scan: its cells become the cache, its groups the candidates. */
+		double ScanRadiusCm(uint32 Kinds = AllKinds) const;
+		/** The cells of the kinds round a ground direction, those in Cache taken from it: pure, safe on a task. */
+		static TSharedRef<FScan, ESPMode::ThreadSafe> Scan(const FFaunaWorld& W, const FVector& GroundDir, double RadiusCm, TSharedPtr<const FCellCache, ESPMode::ThreadSafe> Cache,
+			uint32 Kinds = AllKinds);
+		/** Takes a finished scan: its cells become the cache (with the cells of the kinds it did not read kept as they were),
+		 *  its groups the candidates. */
 		void Accept(const FScan& S);
 		TSharedPtr<const FCellCache, ESPMode::ThreadSafe> GetCache() const { return Cache; }
 		/** Spawns and lets go of groups for a camera at a planet-local position: the ids spawned and let go this time. */
@@ -845,6 +921,7 @@ namespace SlonkFauna
 		TArray<FGroupRef> Candidates;
 		TMap<uint64, FGroupRef> Active;
 		FVector LastScanDir = FVector::ZeroVector;
+		uint32 LastScanKinds = 0;
 		bool bScanned = false;
 		double GroundCm = 0.0;
 		int32 Members[NumKinds] = {};
