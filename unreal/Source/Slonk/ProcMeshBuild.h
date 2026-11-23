@@ -47,8 +47,9 @@ namespace SlonkProcMesh
 		}
 		void Quad(int32 A, int32 B, int32 D, int32 E) { Tri(A, B, D); Tri(A, D, E); }
 
-		/** A tapering tube along a path (a trunk, a branch, a stem): rings of Sides, normals out from the axis. */
-		void Tube(const TArray<FVector>& Path, const TArray<double>& Radii, int32 Sides, double Sway0, double Sway1, float Rand)
+		/** A tapering tube along a path (a trunk, a branch, a stem): rings of Sides, normals out from the axis. Bark, unless
+		 *  Part says it is foliage (1: a strange plant's pipe, drawn in its tint). */
+		void Tube(const TArray<FVector>& Path, const TArray<double>& Radii, int32 Sides, double Sway0, double Sway1, float Rand, float Part = 0.f)
 		{
 			if (Path.Num() < 2 || Sides < 3) { return; }
 			FVector Ax = FVector::ZeroVector;
@@ -67,7 +68,7 @@ namespace SlonkProcMesh
 				{
 					const double A = UE_DOUBLE_TWO_PI * s / Sides;
 					const FVector D = Ax * FMath::Cos(A) + Ay * FMath::Sin(A);
-					Ring.Add(Vert(Path[r] + D * Radii[r], D, FVector2f((float)s / Sides, (float)F), FVector4f(0.f, Sw, Rand, SolidSurface)));
+					Ring.Add(Vert(Path[r] + D * Radii[r], D, FVector2f((float)s / Sides, (float)F), FVector4f(Part, Sw, Rand, SolidSurface)));
 				}
 				if (Prev.Num() > 0)
 				{

@@ -223,6 +223,18 @@ namespace SlonkScatter
 		return Clim.bClimate ? D * (1.0 - SmoothStep(0.45, 0.75, Clim.Heat)) * SmoothStep(0.0, 0.06, Clim.Heat) : D;
 	}
 
+	/** How likely a strange world's giant is to stand in its lattice cell at a spot, before the world's life and the
+	 *  density setting: in loose groves some kilometres across, on the wet, level ground the forests take and out over
+	 *  the meadows; none on rock to speak of, above the treeline or through lying snow, nor past the trees' own limits of
+	 *  heat and cold on a world with a climate of its own. */
+	inline double GiantDensity(const FPlanetTerrainParams& P, const FSpot& Sp, const FClimate& Clim)
+	{
+		const double Groves = SmoothStep(0.05, 0.45, SlonkTerrain::Fbm(Sp.Up * (P.RadiusCm / 900000.0) + P.Seed * 5.3 + FVector(2.0, 7.0, 4.0), 2));
+		const double SnowLying = SmoothStep(0.2, 0.6, Sp.Ice);
+		const double D = Groves * SmoothStep(0.2, 0.5, Sp.Wet) * Sp.Flat * (1.0 - 0.8 * Sp.Rocky) * (1.0 - SnowLying) * (1.0 - SmoothStep(0.6, 0.85, Clim.Alpine)) * 0.45;
+		return Clim.bClimate ? D * (1.0 - SmoothStep(0.45, 0.75, Clim.Heat)) * SmoothStep(0.0, 0.06, Clim.Heat) : D;
+	}
+
 	/** How parched a plant is, 0 lush to 1 dry: the per-instance dryness the foliage material yellows it by. */
 	inline double DrynessAt(const FSpot& Sp) { return FMath::Clamp(1.0 - Sp.Wet * 1.3, 0.0, 1.0); }
 

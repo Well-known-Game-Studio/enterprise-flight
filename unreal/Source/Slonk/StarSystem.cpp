@@ -207,6 +207,9 @@ void AStarSystem::SpawnPlanets(UWorld* World, FRandomStream& Rng, const FVector&
 			// An uncharted star's worlds are strange as far out as it lies (the charted neighbours' are not); from a
 			// hash of their own, so no draw above moves, and of what the world is (the system's seed, its place, the
 			// primary's or the companion's), not of its name, which follows the name the player gives the star.
+			// The light its plants grow under: its star's, by its class (the companion's for the companion's worlds).
+			P->StarLight = Class == EStarClass::M ? EStarLight::Red : (Class == EStarClass::K ? EStarLight::Orange : (Class == EStarClass::F ? EStarLight::White
+				: ((Class == EStarClass::A || Class == EStarClass::WhiteDwarf) ? EStarLight::Blue : EStarLight::Yellow)));
 			if (Spec.bStarOnly) { P->Strangeness = SlonkGenome::WorldStrangeness(Spec.DistanceLy, HashCombine(GetTypeHash(Spec.Seed), HashCombine(GetTypeHash(i), GetTypeHash(Prefix != Spec.Name)))); }
 			P->FinishSpawning(FTransform(PLoc));
 			Adopt(P);

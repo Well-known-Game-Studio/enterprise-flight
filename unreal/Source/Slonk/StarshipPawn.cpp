@@ -1894,6 +1894,20 @@ void AStarshipPawn::SetStarFieldHidden(bool bHide)
 	}
 }
 
+namespace SlonkFloraCommands
+{
+	/** A star's light by the letter of its class, or by its colour. */
+	bool LightNamed(const FString& Name, EStarLight& Out)
+	{
+		if (Name == TEXT("m") || Name == TEXT("red")) { Out = EStarLight::Red; return true; }
+		if (Name == TEXT("k") || Name == TEXT("orange")) { Out = EStarLight::Orange; return true; }
+		if (Name == TEXT("g") || Name == TEXT("yellow")) { Out = EStarLight::Yellow; return true; }
+		if (Name == TEXT("f") || Name == TEXT("white")) { Out = EStarLight::White; return true; }
+		if (Name == TEXT("a") || Name == TEXT("blue")) { Out = EStarLight::Blue; return true; }
+		return false;
+	}
+}
+
 void AStarshipPawn::ProcessDebugCommand()
 {
 	if (DebugCommand.IsEmpty())
@@ -2009,9 +2023,111 @@ void AStarshipPawn::ProcessDebugCommand()
 		DebugVertical = Arg(1, 0.f);
 		DebugVerticalTime = Arg(2, 1.f);
 	}
+	else if (Op == TEXT("flora"))
+	{
+		// flora [status|plans]: what grows on the world under the ship (or the nearest with terrain), a line a species.
+		// flora strange <0..1> | flora star <m|k|g|f|a>: the flora the world would roll at another strangeness, or under
+		// another star's light, in place of its own (its sky, seas and climate stay as they are).
+		// flora goto <cover|bush|tree|cold|giant|slot <n>> <alt m> [night]: parks the ship beside a plant of that slot: the
+		// nearest to the wooded ground (for a giant, the giants' groves) nearest under the ship, or with night nearest the
+		// middle of the night side; a few of its heights back from it on the sunward side, at the height asked over the
+		// ground, nose toward it.
+		APlanetBody* Planet = Movement ? Cast<APlanetBody>(Movement->GroundBody.Get()) : nullptr;
+		if (!Planet)
+		{
+			double BestD = TNumericLimits<double>::Max();
+			for (TActorIterator<APlanetBody> It(GetWorld()); It; ++It)
+			{
+				const double D = FVector::Dist(It->GetActorLocation(), GetActorLocation());
+				if (It->HasTerrain() && D < BestD) { BestD = D; Planet = *It; }
+			}
+		}
+		const FString Mode = ArgStr(1);
+		if (!Planet || !Planet->Terrain) { UE_LOG(LogTemp, Log, TEXT("Flora: no world with terrain near")); }
+		else if (Mode == TEXT("strange")) { Planet->SetFloraForDebug(FMath::Clamp(Arg(2, 0.f), 0.f, 1.f), Planet->StarLight); }
+		else if (Mode == TEXT("star"))
+		{
+			EStarLight Light = Planet->StarLight;
+			if (SlonkFloraCommands::LightNamed(ArgStr(2), Light)) { Planet->SetFloraForDebug(Planet->FloraProfile.Strangeness, Light); }
+			else { UE_LOG(LogTemp, Warning, TEXT("flora star: m, k, g, f or a")); }
+		}
+		else if (Mode == TEXT("goto") && Movement)
+		{
+			const FString What = ArgStr(2);
+			const bool bBySlot = What == TEXT("slot");
+			int32 Slot = bBySlot ? (int32)Arg(3, 0.f) : (What == TEXT("cover") ? SlonkFlora::Slot::Cover : (What == TEXT("bush") ? SlonkFlora::Slot::Bush : (What == TEXT("tree") ? SlonkFlora::Slot::Warm
+				: (What == TEXT("cold") ? SlonkFlora::Slot::Cold : (What == TEXT("giant") ? SlonkFlora::Slot::Giant : -1)))));
+			const int32 AltArg = bBySlot ? 4 : 3;
+			const double AltCm = Arg(AltArg, 60.f) * 100.0;
+			const bool bNight = ArgStr(AltArg + 1) == TEXT("night");
+			const FTransform TT = Planet->Terrain->GetComponentTransform();
+			const double R = (double)Planet->RadiusKm * 1.0e5;
+			const FVector Sun = Planet->GetStarDirection();
+			const FVector SunL = TT.InverseTransformVectorNoScale(Sun).GetSafeNormal();
+			const FVector Under = TT.InverseTransformPositionNoScale(GetActorLocation()).GetSafeNormal();
+			FVector Dir = Under, Foot = FVector::ZeroVector;
+			double GroundCm = 0.0, TallCm = 0.0;
+			bool bFound = Slot >= 0 && Slot < SlonkFlora::MaxSpecies && Planet->FloraProfile.Species[Slot].bLive;
+			if (bFound)
+			{
+				// The country it grows in first (searched over the globe as terrain goto searches), then the plant itself.
+				const EFloraClass Class = SlonkFlora::ClassOf(Slot);
+				const TCHAR* Country = Class == EFloraClass::Giant ? TEXT("giants") : (Class == EFloraClass::Tree ? TEXT("forest") : TEXT("green"));
+				bFound = Planet->Terrain->FindFeature(Country, bNight ? -SunL : Under, Dir, GroundCm, bNight ? -SunL : SunL);
+				if (bFound && !bBySlot)
+				{
+					// Whichever of the role's kind grows nearest there: a wood may be all of the cold's trees, or a
+					// role's second species.
+					const int32 Tries[4] = { Slot, SlonkFlora::SecondOfRole(Slot), Class == EFloraClass::Tree ? (int32)SlonkFlora::Slot::Cold : -1, Class == EFloraClass::Tree ? (int32)SlonkFlora::Slot::Cold2 : -1 };
+					double NearestCm = TNumericLimits<double>::Max();
+					bFound = false;
+					for (const int32 Try : Tries)
+					{
+						FVector TryFoot; double TryTall = 0.0;
+						if (Try < 0 || (What == TEXT("cold") && SlonkFlora::FirstOfRole(Try) != SlonkFlora::Slot::Cold) || !Planet->Terrain->FindPlant(Try, Dir, 4.0e6, TryFoot, TryTall)) { continue; }
+						const double AwayCm = FMath::Acos(FMath::Clamp(FVector::DotProduct(TryFoot.GetSafeNormal(), Dir), -1.0, 1.0)) * R;
+						if (AwayCm < NearestCm) { NearestCm = AwayCm; Foot = TryFoot; TallCm = TryTall; Slot = Try; bFound = true; }
+					}
+				}
+				else if (bFound) { bFound = Planet->Terrain->FindPlant(Slot, Dir, 4.0e6, Foot, TallCm); }
+			}
+			if (!bFound) { UE_LOG(LogTemp, Log, TEXT("Flora goto %s: none found on %s (flora plans lists what grows there)"), *What, *Planet->GetDisplayName()); }
+			else
+			{
+				const FVector UpP = Foot.GetSafeNormal();
+				FVector Sunward = SunL - UpP * FVector::DotProduct(SunL, UpP);
+				Sunward = Sunward.IsNearlyZero() ? FVector::CrossProduct(UpP, FVector::ZAxisVector).GetSafeNormal() : Sunward.GetSafeNormal();
+				const double BackCm = FMath::Max(TallCm * (SlonkFlora::ClassOf(Slot) == EFloraClass::Giant ? 2.2 : 3.0), 3000.0);
+				const FVector PosDir = (Foot + Sunward * BackCm).GetSafeNormal();
+				const double Ground = FMath::Max(Planet->Terrain->SurfaceHeightAtWorld(TT.TransformPositionNoScale(PosDir * R)), 0.0);
+				const FVector PosL = PosDir * (R + Ground + AltCm);
+				const FVector Pos = TT.TransformPositionNoScale(PosL);
+				const FVector Up = TT.TransformVectorNoScale(PosDir);
+				FVector Fwd = TT.TransformVectorNoScale(Foot - PosL);
+				Fwd = (Fwd - Up * FVector::DotProduct(Fwd, Up)).GetSafeNormal();
+				if (Fwd.IsNearlyZero()) { Fwd = FVector::CrossProduct(Up, FVector::ZAxisVector).GetSafeNormal(); }
+				Movement->SetThrottle(0.0); Movement->Velocity = FVector::ZeroVector; Movement->AngularVelocity = FRotator::ZeroRotator;
+				SetActorLocationAndRotation(Pos, FRotationMatrix::MakeFromXZ(Fwd, Up).ToQuat(), false, nullptr, ETeleportType::TeleportPhysics);
+				Movement->SetTerrainFollow(AltCm);
+				UE_LOG(LogTemp, Log, TEXT("Flora goto %s on %s: %s, %.1f m tall; parked %.0f m from it, %.0f m over the ground, facing it (up.sun %.2f)"), *What, *Planet->GetDisplayName(),
+					*SlonkFlora::DescribeSpecies(Planet->FloraProfile, Slot), TallCm / 100.0, BackCm / 100.0, AltCm / 100.0, FVector::DotProduct(Up, Sun));
+			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Log, TEXT("Flora on %s at strangeness %.2f: %s"), *Planet->GetDisplayName(), Planet->FloraProfile.Strangeness, *SlonkFlora::Describe(Planet->FloraProfile));
+			for (int32 Slot = 0; Slot < SlonkFlora::MaxSpecies; ++Slot)
+			{
+				if (Planet->FloraProfile.Species[Slot].bLive) { UE_LOG(LogTemp, Log, TEXT("  %s"), *SlonkFlora::DescribeSpecies(Planet->FloraProfile, Slot)); }
+			}
+			TArray<FString> Lines;
+			Planet->Terrain->DescribeFlora(Lines);
+			for (const FString& L : Lines) { UE_LOG(LogTemp, Log, TEXT("  %s"), *L); }
+		}
+	}
 	else if (Op == TEXT("spawnplanet"))
 	{
-		// spawnplanet <archetype> [radius km] [hazy] [strange <0..1>] [seed <n>] [locked]: a planet of that archetype four
+		// spawnplanet <archetype> [radius km] [hazy] [strange <0..1>] [seed <n>] [locked] [star <m|k|g|f|a>]: a planet of that archetype four
 		// radii ahead, for looking at worlds the system did not roll. "hazy" re-rolls a moon's seed until it comes out with
 		// the orange haze; "strange" gives it a genome that far from Earth's (FWorldGenome), "seed" another roll of it;
 		// "locked" holds it to the nearest star by the tides (at least half strange, so it has a genome to lock), its
@@ -2019,8 +2135,13 @@ void AStarshipPawn::ProcessDebugCommand()
 		const FString Kind = ArgStr(1);
 		float Strange = 0.f; int32 SeedPick = 0;
 		bool bLocked = false;
+		// "star <m|k|g|f|a>": the light its plants grow under (FloraTypes.h), which sets their pigment on a strange world;
+		// without it the nearest star's, by its colour.
+		EStarLight Light = EStarLight::Yellow;
+		bool bLightGiven = false;
 		for (int32 i = 2; i < 10; ++i)
 		{
+			if (ArgStr(i) == TEXT("star")) { bLightGiven = SlonkFloraCommands::LightNamed(ArgStr(i + 1), Light); }
 			if (ArgStr(i) == TEXT("strange")) { Strange = FMath::Clamp(Arg(i + 1, 0.f), 0.f, 1.f); }
 			if (ArgStr(i) == TEXT("seed")) { SeedPick = (int32)Arg(i + 1, 0.f); }
 			if (ArgStr(i) == TEXT("locked")) { bLocked = true; }
@@ -2075,11 +2196,22 @@ void AStarshipPawn::ProcessDebugCommand()
 				if (!P) { break; }
 				P->Archetype = K->Key; P->RadiusKm = RadiusKm; P->Strangeness = Strange;
 				P->StarBearing = Bearing; P->bForceTidalLock = bLocked;
+				if (!bLightGiven)
+				{
+					double NearestD = TNumericLimits<double>::Max();
+					for (TActorIterator<AStarBody> It(GetWorld()); It; ++It)
+					{
+						const double D = FVector::DistSquared(It->GetActorLocation(), Loc);
+						if (D < NearestD) { NearestD = D; Light = SlonkFlora::StarLightOf(It->StarColor); }
+					}
+				}
+				P->StarLight = Light;
 				P->SeedLocation = Loc + FVector((Attempt + SeedPick) * 1.0e9, 0.0, 0.0); P->bSeedLocationSet = true;
 				P->FinishSpawning(FTransform(Loc));
 				if (!bHazy || P->bHazyMoon)
 				{
-					UE_LOG(LogTemp, Log, TEXT("spawnplanet: %s %.0f km at %s (hazy %d, attempt %d; %s)"), *Kind, RadiusKm, *Loc.ToString(), P->bHazyMoon ? 1 : 0, Attempt, *SlonkGenome::Describe(P->Genome));
+					UE_LOG(LogTemp, Log, TEXT("spawnplanet: %s %.0f km at %s (hazy %d, attempt %d; %s; %s)"), *Kind, RadiusKm, *Loc.ToString(), P->bHazyMoon ? 1 : 0, Attempt, *SlonkGenome::Describe(P->Genome),
+						*SlonkFlora::Describe(P->FloraProfile));
 					break;
 				}
 				P->Destroy();
@@ -3151,14 +3283,15 @@ void AStarshipPawn::ProcessDebugCommand()
 			TEXT("ship impact [status|raise [<world>]|deflect|shatter|hit]  (a rock on a course for an inhabited world; the dev ops for testing)"),
 			TEXT("ship camera [chase|bridge|cinematic|front|port|starboard|top|bottom] | zoom <x> | look <yaw> <pitch> [s]"),
 			TEXT("ship warpvis [classic|real] | cscale <0..1> | systems | shipwarp [km] [far]"),
-			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mesa|badlands|cliffs|city|mountain|coast|river|linea|green|land|substellar|ring|nightcap> <alt m> [across|sun|away|along|uphill|giant] [night] | terrain rocks [on|off|density <x>|check]"),
+			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mesa|badlands|cliffs|city|mountain|coast|river|linea|green|forest|giants|land|substellar|ring|nightcap> <alt m> [across|sun|away|along|uphill|giant] [night] | terrain rocks [on|off|density <x>|check]"),
 			TEXT("ship fauna [status|on|off|density <x>|only <flier|herd|mote|leaper|floater|all>|startle|time <s>|strange <0..1>|cells|plans|habitat [km]] | fauna goto <flier|herd|leaper|floater> <alt m> [night] [species <n>] | fauna goto mote <alt m> [night|dusk|day] | fauna watch [kind|any] [m] [low|off]  (the animals of the world below: flocks, herds, motes, leaping fish, the strange worlds' sky-jellies; slonk.Fauna.Splash 0 throws no splashes)"),
-			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km] [hazy] [strange <0..1>] [seed <n>] [locked] | people [none|stone|iron|industrial|modern|starfaring] [organic] [cliff]"),
+			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km] [hazy] [strange <0..1>] [seed <n>] [locked] [star <m|k|g|f|a>] | people [none|stone|iron|industrial|modern|starfaring] [organic] [cliff]"),
 			TEXT("ship shuttle  (launch the shuttlecraft; aboard it, dock when the bay is within 500 m) | ship takeoff"),
 			TEXT("ship scan [stop]  (sensors on the locked / nav target; landed: survey the ground) | ship science [reset]"),
 			TEXT("ship ui menu | chart | science | engineering | tactical | medical | crew | msd | controls | settings | close | click <button>   (the LCARS panels)"),
 			TEXT("ship crew list [dept] | show <name> | trouble | promote|demote|commend|reprimand <name> [why] | watch <name> alpha|beta|gamma | post <name> <dept> | leave <name> [days] | talk <name> listen|encourage|order|promise | recruits | signon <n> | discharge <name> | memorial | check <skill> <difficulty> [group:<people>] [names] | experience <tag> [intensity] [group] [place:<name>] [choice] [names] | trust | time <hours> | stardate | reset [seed]"),
 			TEXT("ship order alert red|yellow|green | power <system>|balance | repair <system>|auto | shields fore|aft|port|starboard|even | triage critical|walking | resupply | report"),
+			TEXT("ship flora [status|plans|strange <0..1>|star <m|k|g|f|a>] | flora goto <cover|bush|tree|cold|giant|slot <n>> <alt m> [night]"),
 			TEXT("ship exec <console command>"),
 		};
 		// Reverse order: on-screen messages stack newest on top.

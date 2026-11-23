@@ -6,12 +6,16 @@
 #include "HAL/IConsoleManager.h"
 #include "PhysicsEngine/BodySetup.h"
 #include "ProcMeshBuild.h"
+#include "StrangePlants.h"
+#include "UObject/Package.h"
 
 using namespace UE::Geometry;
 
 namespace
 {
-	TArray<UStaticMesh*> GPlants;
+	/** The meshes made, by their forms' hashes, and each holder's forms (SlonkPlants::HoldForms). */
+	TMap<uint32, UStaticMesh*> GPlants;
+	TMap<const void*, TSet<uint32>> GHeldForms;
 
 	using SlonkProcMesh::FBuild;
 	// Vertex colour alpha: the surface kind the material masks by.
@@ -210,31 +214,113 @@ namespace
 		}
 	}
 
-	/** Each kind's levels of detail: three for all, and the trees a fourth (FarCrown) for their far levels. */
-	int32 NumLods(EPlant Kind) { return Kind == EPlant::Broadleaf || Kind == EPlant::Conifer ? 4 : 3; }
+	/** The size class an Earth plan is built for, whatever a form says of it. */
+	EFloraClass ClassOfForm(const FFloraForm& Form)
+	{
+		switch (Form.Plan)
+		{
+		case EFloraPlan::Tuft: return EFloraClass::Grass;
+		case EFloraPlan::Bush: return EFloraClass::Shrub;
+		case EFloraPlan::Crown: case EFloraPlan::Tiers: return EFloraClass::Tree;
+		default: return Form.Class;
+		}
+	}
+	bool IsTreeLike(const FFloraForm& Form)
+	{
+		const EFloraClass C = ClassOfForm(Form);
+		return C == EFloraClass::Tree || C == EFloraClass::Giant;
+	}
 
-	void BuildLod(EPlant Kind, int32 Lod, FDynamicMesh3& Out)
+	/** An Earth plan's level of detail: three for all, and the trees a fourth (FarCrown) for their far levels. */
+	void BuildEarthLod(EFloraPlan Plan, int32 Lod, FDynamicMesh3& Out)
 	{
 		FBuild B;
-		switch (Kind)
+		switch (Plan)
 		{
-		case EPlant::Grass: BuildGrass(B, Lod); break;
-		case EPlant::Shrub: BuildShrub(B, Lod); break;
+		case EFloraPlan::Tuft: BuildGrass(B, Lod); break;
+		case EFloraPlan::Bush: BuildShrub(B, Lod); break;
 		// The broadleaf's six clusters (tops 14-22 out at 58-82 up, 16-22 across) make a crown about 80 wide from 45 to
 		// 100; the conifer's tiers a cone from its lowest skirt, drooping to about 8, to its leader at 97.
-		case EPlant::Broadleaf: if (Lod >= 3) { FarCrown(B, 42.0, 68.0, 100.0, 37.0, 4, 0.4); } else { BuildBroadleaf(B, Lod); } break;
+		case EFloraPlan::Crown: if (Lod >= 3) { FarCrown(B, 42.0, 68.0, 100.0, 37.0, 4, 0.4); } else { BuildBroadleaf(B, Lod); } break;
 		default: if (Lod >= 3) { FarCrown(B, 8.0, 8.0, 99.0, 30.0, 5, 0.0); } else { BuildConifer(B, Lod); } break;
 		}
 		Out = MoveTemp(B.Mesh);
 	}
+
+	/** Every cached mesh of a form no holder holds, but the Earth's four, out of the cache and the root set. */
+	void LetGoUnheldPlants()
+	{
+		TSet<uint32> Kept;
+		for (const TPair<const void*, TSet<uint32>>& H : GHeldForms) { Kept.Append(H.Value); }
+		for (int32 K = 0; K < SlonkPlants::NumKinds; ++K) { Kept.Add(SlonkPlants::EarthForm((EPlant)K).Hash()); }
+		for (auto It = GPlants.CreateIterator(); It; ++It)
+		{
+			if (Kept.Contains(It.Key())) { continue; }
+			if (UStaticMesh* M = It.Value(); M && IsValid(M))
+			{
+				// A name of its own, so the form's name is free for its mesh made again; freed once nothing draws it.
+				M->RemoveFromRoot();
+				M->Rename(*MakeUniqueObjectName(GetTransientPackage(), UStaticMesh::StaticClass(), TEXT("SlonkPlant_LetGo")).ToString(), nullptr,
+					REN_DontCreateRedirectors | REN_NonTransactional | REN_DoNotDirty);
+			}
+			It.RemoveCurrent();
+		}
+	}
 }
 
-bool SlonkPlants::FarCrownStats(EPlant Kind, int32& OutTriangles, double& OutVolume, double& OutWorstFacing, FBox& OutBox, FBox& OutNearBox)
+int32 SlonkPlants::NumLods(const FFloraForm& Form)
 {
-	if (NumLods(Kind) < 4) { return false; }
+	return IsTreeLike(Form) ? 4 : 3;
+}
+
+bool SlonkPlants::BuildLod(const FFloraForm& Form, int32 Lod, FDynamicMesh3& Out)
+{
+	if (Lod < 0 || Lod >= NumLods(Form)) { return false; }
+	if (!Form.IsEarth()) { return SlonkStrangePlants::BuildLod(Form, Lod, Out); }
+	BuildEarthLod(Form.Plan, Lod, Out);
+	return true;
+}
+
+double SlonkPlants::CrownWideCm(const FFloraForm& Form)
+{
+	switch (Form.Plan)
+	{
+	// A tuft's blades lean out to about 30 either way; the bush's crown is 55 round, which the scatter fits to the
+	// scrub's dots; the broadleaf's crown about 80 across, the conifer's lowest skirt 68.
+	case EFloraPlan::Tuft: return 60.0;
+	case EFloraPlan::Bush: return 110.0;
+	case EFloraPlan::Crown: return 80.0;
+	case EFloraPlan::Tiers: return 68.0;
+	default: return SlonkStrangePlants::WideCm(Form);
+	}
+}
+
+double SlonkPlants::FootRadiusCm(const FFloraForm& Form)
+{
+	switch (Form.Plan)
+	{
+	case EFloraPlan::Tuft: return 12.0;
+	case EFloraPlan::Bush: return 8.0;
+	case EFloraPlan::Crown: return 4.0;
+	case EFloraPlan::Tiers: return 3.0;
+	default: return SlonkStrangePlants::FootCm(Form);
+	}
+}
+
+bool SlonkPlants::TrunkOf(const FFloraForm& Form, FTrunk& Out)
+{
+	// A capsule round a tree's trunk, so the crew walk round it; grass and bushes are walked through.
+	if (Form.Plan == EFloraPlan::Crown) { Out.Radius = 3.0f; Out.Length = 40.f; Out.Centre = FVector(0.0, 0.0, 22.0); return true; }
+	if (Form.Plan == EFloraPlan::Tiers) { Out.Radius = 2.5f; Out.Length = 60.f; Out.Centre = FVector(0.0, 0.0, 32.0); return true; }
+	if (Form.IsEarth()) { return false; }
+	return SlonkStrangePlants::TrunkOf(Form, Out);
+}
+
+bool SlonkPlants::FarCrownStats(const FFloraForm& Form, int32& OutTriangles, double& OutVolume, double& OutWorstFacing, FBox& OutBox, FBox& OutNearBox)
+{
+	if (NumLods(Form) < 4) { return false; }
 	FDynamicMesh3 Far, Near;
-	BuildLod(Kind, 3, Far);
-	BuildLod(Kind, 0, Near);
+	if (!BuildLod(Form, 3, Far) || !BuildLod(Form, 0, Near)) { return false; }
 	OutBox = FBox(ForceInit);
 	for (int32 V : Far.VertexIndicesItr()) { OutBox += (FVector)Far.GetVertex(V); }
 	OutNearBox = FBox(ForceInit);
@@ -257,10 +343,11 @@ bool SlonkPlants::FarCrownStats(EPlant Kind, int32& OutTriangles, double& OutVol
 	return true;
 }
 
-void SlonkPlants::FacingShares(EPlant Kind, int32 Lod, double& OutBark, double& OutFoliage, double& OutSkyward)
+void SlonkPlants::FacingShares(const FFloraForm& Form, int32 Lod, double& OutBark, double& OutFoliage, double& OutSkyward)
 {
 	FDynamicMesh3 M;
-	BuildLod(Kind, Lod, M);
+	OutBark = OutFoliage = OutSkyward = 1.0;
+	if (!BuildLod(Form, Lod, M)) { return; }
 	const FDynamicMeshNormalOverlay* N = M.Attributes()->PrimaryNormals();
 	const FDynamicMeshColorOverlay* C = M.Attributes()->PrimaryColors();
 	int32 Bark = 0, BarkOut = 0, Leaf = 0, LeafOut = 0, LeafUp = 0;
@@ -278,38 +365,64 @@ void SlonkPlants::FacingShares(EPlant Kind, int32 Lod, double& OutBark, double& 
 	OutSkyward = Leaf ? (double)LeafUp / Leaf : 1.0;
 }
 
-UStaticMesh* SlonkPlants::GetMesh(EPlant Kind)
+void SlonkPlants::HoldForms(const void* Holder, TConstArrayView<FFloraForm> Forms, bool bLetGoNow)
 {
-	const int32 K = FMath::Clamp((int32)Kind, 0, NumKinds - 1);
-	if (GPlants.Num() < NumKinds) { GPlants.SetNumZeroed(NumKinds); }
-	if (GPlants[K] && IsValid(GPlants[K])) { return GPlants[K]; }
+	if (Forms.Num() == 0) { GHeldForms.Remove(Holder); }
+	else
+	{
+		TSet<uint32>& Held = GHeldForms.FindOrAdd(Holder);
+		Held.Reset();
+		for (const FFloraForm& F : Forms) { Held.Add(F.Hash()); }
+	}
+	if (bLetGoNow) { LetGoUnheldPlants(); }
+}
 
-	const int32 Lods = NumLods((EPlant)K);
+int32 SlonkPlants::NumCachedMeshes()
+{
+	return GPlants.Num();
+}
+
+bool SlonkPlants::IsMeshCached(const FFloraForm& Form)
+{
+	return GPlants.Contains(Form.Hash());
+}
+
+UStaticMesh* SlonkPlants::GetMesh(const FFloraForm& Form)
+{
+	const uint32 Key = Form.Hash();
+	if (UStaticMesh* const* Found = GPlants.Find(Key))
+	{
+		if (*Found && IsValid(*Found)) { return *Found; }
+	}
+	const int32 Lods = NumLods(Form);
 	FDynamicMesh3 Built[4];
-	for (int32 L = 0; L < Lods; ++L) { BuildLod((EPlant)K, L, Built[L]); }
+	for (int32 L = 0; L < Lods; ++L)
+	{
+		if (!BuildLod(Form, L, Built[L])) { return nullptr; }
+	}
 	// Trees hold their detail further than a tuft of grass does, and go to their solid crown (FarCrown) a few pixels
 	// tall: a 15 m tree about 2 km off.
-	const bool bTree = (EPlant)K == EPlant::Broadleaf || (EPlant)K == EPlant::Conifer;
+	const bool bTree = IsTreeLike(Form);
 	const float ScreenSizes[4] = { 1.f, bTree ? 0.25f : 0.12f, bTree ? 0.07f : 0.035f, FMath::Clamp(FarCrownScreenSize, 0.002f, 0.06f) };
 	// The wind (M_Foliage) bends a plant by up to 3% of its height and flutters its leaves a centimetre on top, past the
 	// mesh's own box: the instances are culled by these bounds, so they take the sway in, in the unit mesh's own
 	// terms (a percent of the height is a unit; a centimetre is several on a tuft of grass a quarter of a metre tall).
-	const FVector Sway = (EPlant)K == EPlant::Grass ? FVector(6.0) : FVector(4.0, 4.0, 2.0);
-	UStaticMesh* Mesh = SlonkProcMesh::MakeStaticMesh(*FString::Printf(TEXT("SlonkPlant%d"), K), TEXT("Plant"), TArrayView<const FDynamicMesh3>(Built, Lods), ScreenSizes, Sway);
-	// A capsule round a tree's trunk, so the crew walk round it; grass and bushes are walked through.
-	if ((EPlant)K == EPlant::Broadleaf || (EPlant)K == EPlant::Conifer)
+	const FVector Sway = ClassOfForm(Form) == EFloraClass::Grass ? FVector(6.0) : FVector(4.0, 4.0, 2.0);
+	UStaticMesh* Mesh = SlonkProcMesh::MakeStaticMesh(*FString::Printf(TEXT("SlonkPlant_%08x"), Key), TEXT("Plant"), TArrayView<const FDynamicMesh3>(Built, Lods), ScreenSizes, Sway);
+	// A capsule round a tree's trunk or a giant's stalk, so the crew walk round it; grass and bushes are walked through.
+	FTrunk Trunk;
+	if (TrunkOf(Form, Trunk))
 	{
 		Mesh->CreateBodySetup();
 		if (UBodySetup* BS = Mesh->GetBodySetup())
 		{
-			const bool bBroad = (EPlant)K == EPlant::Broadleaf;
-			FKSphylElem Trunk(bBroad ? 3.0f : 2.5f, bBroad ? 40.f : 60.f);
-			Trunk.Center = FVector(0.0, 0.0, bBroad ? 22.0 : 32.0);
-			BS->AggGeom.SphylElems.Add(Trunk);
+			FKSphylElem Capsule(Trunk.Radius, Trunk.Length);
+			Capsule.Center = Trunk.Centre;
+			BS->AggGeom.SphylElems.Add(Capsule);
 			BS->CollisionTraceFlag = CTF_UseSimpleAsComplex;
 			BS->CreatePhysicsMeshes();
 		}
 	}
-	GPlants[K] = Mesh;
+	GPlants.Add(Key, Mesh);
 	return Mesh;
 }

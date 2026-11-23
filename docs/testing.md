@@ -72,6 +72,20 @@ a village's lanes, a grown town's ring ways and spokes, the roads between towns,
 which mirrors the material's choice of settlement point by point), no part of any building on one (every footprint
 sampled all over, with no shortcut), ways in most towns and roads leaving most of them, and a village's houses
 fronting onto their lanes by the painted ways' own slope.
+`Slonk.Flora.*` (Tests/SlonkFloraTests.cpp, Tests/SlonkFloraWorldTests.cpp) covers what grows as a life form
+(FloraTypes.h): the Earth's grass, bush, broadleaf and conifer held to the bit at every level of detail, and the static
+meshes made of them, as they were before a plant became a descriptor (where each stands is held by
+Slonk.Terrain.ClimateNeutral's chunks); every world to strangeness 0.15 growing the Earth's four under any star, its
+pigment changing no style; a world grown stranger keeping every strange species it had, its roles always filled, a
+role's two species never of one plan, no giant under the strangeness they begin at; the pigment by the star's light
+(dark under a red dwarf, orange and red under a blue-white star) and how far the living ground takes it; the four
+strange plans as meshes for every size class at the ends of their proportions (the unit height, their width, their
+class's triangles at each level, solid parts wound outward, the glow's UV, a far crown and a capsule for a tree and a
+giant); a second species of a role sharing its plants by stands and keeping each tree's species on the finer chunks,
+a species' own height scaling its trees and moving none; the giants on their own lattice (their heights, upright, in
+the drawn ground, the same on the finer chunks and thinned on the far level, none on a world without one, a dead world
+or the sea); the meshes kept while a world holds their forms and let go after; and the terrain drawing a strange
+species in a material of its own carrying its look, every parameter of which the foliage material has.
 
 Writing one: make an `FSystems` (a roster seed gives the same people every time), drive the subsystems through
 their public API, assert with `TestEqual`/`TestTrue`. For anything that depends on the world (targets picked from
