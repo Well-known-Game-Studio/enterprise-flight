@@ -2128,26 +2128,35 @@ void AStarshipPawn::ProcessDebugCommand()
 	else if (Op == TEXT("spawnplanet"))
 	{
 		// spawnplanet <archetype> [radius km] [hazy] [strange <0..1>] [seed <n>] [locked] [star <m|k|g|f|a>]
-		// [geology <crystals|polygons|terraces|spires|glass>]: a planet of that archetype four
+		// [geology <crystals|polygons|terraces|spires|glass>] [landmarks <arch|monolith|greatring|reef|mound|all>]: a planet of that archetype four
 		// radii ahead, for looking at worlds the system did not roll. "hazy" re-rolls a moon's seed until it comes out with
 		// the orange haze; "strange" gives it a genome that far from Earth's (FWorldGenome), "seed" another roll of it;
 		// "locked" holds it to the nearest star by the tides (at least half strange, so it has a genome to lock), its
 		// climate laid about that star's bearing; "geology" gives it that geology of its own whatever it rolled (at least
-		// half strange likewise).
+		// half strange likewise); "landmarks" stands that kind of landmark on it (or every kind) whatever it rolled, and
+		// may be given more than once.
 		const FString Kind = ArgStr(1);
 		float Strange = 0.f; int32 SeedPick = 0;
 		bool bLocked = false;
 		uint8 Geology = 0;
+		uint8 Marks = 0;
 		// "star <m|k|g|f|a>": the light its plants grow under (FloraTypes.h), which sets their pigment on a strange world;
 		// without it the nearest star's, by its colour.
 		EStarLight Light = EStarLight::Yellow;
 		bool bLightGiven = false;
-		for (int32 i = 2; i < 14; ++i)
+		for (int32 i = 2; i < Args.Num(); ++i)
 		{
 			if (ArgStr(i) == TEXT("star")) { bLightGiven = SlonkFloraCommands::LightNamed(ArgStr(i + 1), Light); }
 			if (ArgStr(i) == TEXT("strange")) { Strange = FMath::Clamp(Arg(i + 1, 0.f), 0.f, 1.f); }
 			if (ArgStr(i) == TEXT("seed")) { SeedPick = (int32)Arg(i + 1, 0.f); }
 			if (ArgStr(i) == TEXT("locked")) { bLocked = true; }
+			if (ArgStr(i) == TEXT("landmarks"))
+			{
+				const ELandmark One = SlonkLandmarks::KindNamed(ArgStr(i + 1));
+				if (ArgStr(i + 1) == TEXT("all")) { Marks = (uint8)((1 << SlonkLandmarks::NumKinds) - 1); }
+				else if (One != ELandmark::Count) { Marks |= (uint8)(1 << (int32)One); }
+				else { UE_LOG(LogTemp, Warning, TEXT("spawnplanet: no landmark named %s (arch, monolith, greatring, reef, mound, all)"), *ArgStr(i + 1)); }
+			}
 			if (ArgStr(i) == TEXT("geology"))
 			{
 				for (uint8 G = 1; G < (uint8)EGeology::Count; ++G)
@@ -2211,6 +2220,7 @@ void AStarshipPawn::ProcessDebugCommand()
 				P->Archetype = K->Key; P->RadiusKm = RadiusKm; P->Strangeness = Strange;
 				P->StarBearing = Bearing; P->bForceTidalLock = bLocked;
 				P->ForcedGeology = Geology;
+				P->ForcedLandmarks = Marks;
 				if (!bLightGiven)
 				{
 					double NearestD = TNumericLimits<double>::Max();
@@ -2231,8 +2241,8 @@ void AStarshipPawn::ProcessDebugCommand()
 					{
 						UE_LOG(LogTemp, Warning, TEXT("spawnplanet: this %s world takes no geology of its own (only a world with air whose crust is not lineae does)"), *Kind);
 					}
-					UE_LOG(LogTemp, Log, TEXT("spawnplanet: %s %.0f km at %s (hazy %d, attempt %d; %s; %s)"), *Kind, RadiusKm, *Loc.ToString(), P->bHazyMoon ? 1 : 0, Attempt, *SlonkGenome::Describe(P->Genome),
-						*SlonkFlora::Describe(P->FloraProfile));
+					UE_LOG(LogTemp, Log, TEXT("spawnplanet: %s %.0f km at %s (hazy %d, attempt %d; %s; %s; %s)"), *Kind, RadiusKm, *Loc.ToString(), P->bHazyMoon ? 1 : 0, Attempt, *SlonkGenome::Describe(P->Genome),
+						*SlonkFlora::Describe(P->FloraProfile), *SlonkLandmarks::Describe(P->LandmarkProfile));
 					break;
 				}
 				P->Destroy();
@@ -2323,7 +2333,59 @@ void AStarshipPawn::ProcessDebugCommand()
 		// "night": search from the middle of the night side and prefer what is dark, to look at the lights.
 		const bool bNight = ArgStr(4) == TEXT("night") || ArgStr(5) == TEXT("night");
 		const FVector SearchFrom = bNight ? -SunLocal : (bTown ? ShipLocal : NearLocal);
-		if (Planet && Planet->Terrain && Planet->HasTerrain() && Planet->Terrain->FindFeature(ArgStr(2), SearchFrom, Dir, H, bNight ? -SunLocal : SunLocal))
+		// A strange world's landmark (arch, monolith, greatring, reef, mound, or "landmark" for the nearest of any kind),
+		// searched out from the ship's side of the morning (where the sun stands 35 degrees up, so it is seen in a
+		// slanting light; "night" from the middle of the night side): the ship stands off it by three times its size
+		// and its own half length ("off <m>" for another distance, "near" for beside it), nose to it, with the sun on the beam, behind
+		// ("away") or ahead ("sun"); an arch or a ring is seen through its opening from its sunlit side unless a
+		// heading is given.
+		const ELandmark MarkKind = SlonkLandmarks::KindNamed(ArgStr(2));
+		const bool bMark = MarkKind != ELandmark::Count || ArgStr(2) == TEXT("landmark");
+		FVector MarkLook = FVector::ZeroVector;
+		FVector MarkSide = ShipLocal - SunLocal * FVector::DotProduct(ShipLocal, SunLocal);
+		if (MarkSide.IsNearlyZero(1.0e-3)) { MarkSide = FVector::CrossProduct(SunLocal, FMath::Abs(SunLocal.Z) < 0.9 ? FVector::ZAxisVector : FVector::XAxisVector); }
+		const FVector MarkFrom = bNight ? -SunLocal : (SunLocal * FMath::Sin(FMath::DegreesToRadians(35.0)) + MarkSide.GetSafeNormal() * FMath::Cos(FMath::DegreesToRadians(35.0))).GetSafeNormal();
+		bool bFound = false;
+		if (Planet && Planet->Terrain && Planet->HasTerrain())
+		{
+			SlonkScatter::FLandmarkStand Stand;
+			// A kind that stands in the sea is looked for from the nearest coast: on a world that is mostly ocean the
+			// shallows may be a thousand kilometres from where the search would begin.
+			FVector MarkNear = MarkFrom, CoastDir;
+			double CoastH = 0.0;
+			if (bMark && MarkKind != ELandmark::Count && SlonkLandmarks::SpecOf(MarkKind).bInSea && Planet->Terrain->FindFeature(TEXT("coast"), MarkFrom, CoastDir, CoastH, bNight ? -SunLocal : SunLocal))
+			{
+				MarkNear = CoastDir;
+			}
+			if (!bMark) { bFound = Planet->Terrain->FindFeature(ArgStr(2), SearchFrom, Dir, H, bNight ? -SunLocal : SunLocal); }
+			else if (Planet->Terrain->FindLandmark(MarkKind, MarkNear, Stand))
+			{
+				FVector Ta, Tb;
+				SlonkScatter::LandmarkTangents(Stand.Up, Ta, Tb);
+				const FVector SunFlat = (SunLocal - Stand.Up * FVector::DotProduct(SunLocal, Stand.Up)).GetSafeNormal();
+				const FVector Through = FVector::CrossProduct(Stand.Up, Ta * FMath::Cos(Stand.Yaw) + Tb * FMath::Sin(Stand.Yaw));
+				const FString How = ArgStr(4);
+				const bool bHowGiven = How == TEXT("sun") || How == TEXT("away") || How == TEXT("across");
+				FVector Look = How == TEXT("sun") ? SunFlat : (How == TEXT("away") ? -SunFlat : FVector::CrossProduct(Stand.Up, SunFlat));
+				if (!bHowGiven && (Stand.Kind == ELandmark::Arch || Stand.Kind == ELandmark::Ring)) { Look = FVector::DotProduct(Through, SunFlat) > 0.0 ? -Through : Through; }
+				if (Look.IsNearlyZero()) { Look = Ta; }
+				double OffCm = 3.0 * Stand.SizeCm + 0.5 * GetShipLengthCm();
+				for (int32 i = 4; i < Args.Num(); ++i)
+				{
+					if (ArgStr(i) == TEXT("off")) { OffCm = Arg(i + 1, 0.f) * 100.0; }
+					// "near": beside it, to beam down and look up at it; "at": at its foot, where it is solid to the boots.
+					if (ArgStr(i) == TEXT("near")) { OffCm = 1.7 * Stand.SizeCm; }
+					if (ArgStr(i) == TEXT("at")) { OffCm = 0.6 * Stand.SizeCm; }
+				}
+				Dir = (Stand.Up * Planet->GetRadiusCm() - Look * OffCm).GetSafeNormal();
+				// Over the ground where the ship stands off, or over the sea.
+				H = FMath::Max(SlonkTerrain::Sample(Planet->Terrain->GetParams(), Dir, 2000.0).HeightCm, 0.0);
+				MarkLook = Look;
+				bFound = true;
+				UE_LOG(LogTemp, Log, TEXT("Terrain goto: %s, this one %.0f m, %.0f m off, standing on %.1f m"), SlonkLandmarks::KindName(Stand.Kind), Stand.SizeCm / 100.0, OffCm / 100.0, Stand.BaseCm / 100.0);
+			}
+		}
+		if (bFound)
 		{
 			const FTransform& TT = Planet->Terrain->GetComponentTransform();
 			const FVector Up = TT.TransformVectorNoScale(Dir).GetSafeNormal();
@@ -2332,6 +2394,7 @@ void AStarshipPawn::ProcessDebugCommand()
 			const FString Heading = ArgStr(4);
 			FVector Fwd = Heading == TEXT("sun") ? Sun : (Heading == TEXT("away") ? -Sun : FVector::CrossProduct(Up, Sun));
 			if (Giant) { Fwd = (Giant->GetActorLocation() - Pos).GetSafeNormal(); }
+			if (bMark) { Fwd = TT.TransformVectorNoScale(MarkLook).GetSafeNormal(); }
 			if (Heading == TEXT("sea"))
 			{
 				// Toward the nearest water: sample sixteen bearings out to 12 km and take the closest wet one.
@@ -2394,7 +2457,12 @@ void AStarshipPawn::ProcessDebugCommand()
 			{
 				// terrain glide: fly there instead, over the seconds given (the first number after the heading).
 				float Seconds = 20.f;
-				for (int32 i = 5; i < Args.Num(); ++i) { if (ArgStr(i).IsNumeric()) { Seconds = Arg(i, 20.f); break; } }
+				for (int32 i = 4; i < Args.Num(); ++i)
+				{
+					// (The number after "off" is a landmark's standoff, not the seconds.)
+					if (ArgStr(i) == TEXT("off")) { ++i; continue; }
+					if (i >= 5 && ArgStr(i).IsNumeric()) { Seconds = Arg(i, 20.f); break; }
+				}
 				if (Movement) { Movement->SetCanyonFollow(false); Movement->StartGlide(Planet, FTransform(FRotationMatrix::MakeFromXZ(Fwd, Up).ToQuat(), Pos), Arg(3, 1000.f) * 100.0, Seconds); }
 			}
 			else
@@ -2463,6 +2531,9 @@ void AStarshipPawn::ProcessDebugCommand()
 				int32 Hits = 0;
 				const int32 Tried = T->CheckSolidRocks(40, Hits);
 				UE_LOG(LogTemp, Log, TEXT("Rock check: %d of the %d solid rocks nearest you stop the boots' trace"), Hits, Tried);
+				int32 MarkHits = 0;
+				const int32 MarksTried = T->CheckSolidRocks(40, MarkHits, true);
+				if (MarksTried > 0) { UE_LOG(LogTemp, Log, TEXT("Landmark check: %d of the %d solid landmarks round you stop the boots' trace"), MarkHits, MarksTried); }
 			}
 			const FScatterSettings& Now = T->GetScatterSettings();
 			const FString Line = FString::Printf(TEXT("Rocks and plants on %s: %s, density %.2f, life %.2f%s; %d rocks and %d plants on the chunks showing, %d solid round you, %d instance sets"), *Planet->GetDisplayName(),
@@ -3304,9 +3375,9 @@ void AStarshipPawn::ProcessDebugCommand()
 			TEXT("ship impact [status|raise [<world>]|deflect|shatter|hit]  (a rock on a course for an inhabited world; the dev ops for testing)"),
 			TEXT("ship camera [chase|bridge|cinematic|front|port|starboard|top|bottom] | zoom <x> | look <yaw> <pitch> [s]"),
 			TEXT("ship warpvis [classic|real] | cscale <0..1> | systems | shipwarp [km] [far]"),
-			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mesa|badlands|cliffs|city|mountain|coast|river|linea|green|forest|giants|geology|land|substellar|ring|nightcap> <alt m> [across|sun|away|along|uphill|giant] [night] | terrain rocks [on|off|density <x>|check]"),
+			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mesa|badlands|cliffs|city|mountain|coast|river|linea|green|forest|giants|geology|land|substellar|ring|nightcap|arch|monolith|greatring|reef|mound|landmark> <alt m> [across|sun|away|along|uphill|giant] [night] [off <m>|near|at] | terrain rocks [on|off|density <x>|check]"),
 			TEXT("ship fauna [status|on|off|density <x>|only <flier|herd|mote|leaper|floater|all>|startle|time <s>|strange <0..1>|cells|plans|habitat [km]] | fauna goto <flier|herd|leaper|floater> <alt m> [night] [species <n>] | fauna goto mote <alt m> [night|dusk|day] | fauna watch [kind|any] [m] [low|off]  (the animals of the world below: flocks, herds, motes, leaping fish, the strange worlds' sky-jellies; slonk.Fauna.Splash 0 throws no splashes)"),
-			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km] [hazy] [strange <0..1>] [seed <n>] [locked] [star <m|k|g|f|a>] [geology <kind>] | people [none|stone|iron|industrial|modern|starfaring] [organic] [cliff]"),
+			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km] [hazy] [strange <0..1>] [seed <n>] [locked] [star <m|k|g|f|a>] [geology <kind>] [landmarks <kind|all>] | people [none|stone|iron|industrial|modern|starfaring] [organic] [cliff]"),
 			TEXT("ship shuttle  (launch the shuttlecraft; aboard it, dock when the bay is within 500 m) | ship takeoff"),
 			TEXT("ship scan [stop]  (sensors on the locked / nav target; landed: survey the ground) | ship science [reset]"),
 			TEXT("ship ui menu | chart | science | engineering | tactical | medical | crew | msd | controls | settings | close | click <button>   (the LCARS panels)"),

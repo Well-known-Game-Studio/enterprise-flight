@@ -4,6 +4,7 @@
 #include "PlanetCities.h"
 #include "PlanetFaunaComponent.h"
 #include "GroundRocks.h"
+#include "LandmarkMeshes.h"
 #include "SlonkMaterials.h"
 
 #include "Components/DynamicMeshComponent.h"
@@ -87,6 +88,8 @@ void UPlanetTerrainComponent::BeginDestroy()
 
 UStaticMesh* UPlanetTerrainComponent::MeshOfSet(int32 Mesh) const
 {
+	// A landmark's, on a world that has its kind (no other world makes the mesh).
+	if (SlonkScatter::IsLandmark(Mesh)) { return Scatter.Landmarks.Has(SlonkScatter::LandmarkOf(Mesh)) ? SlonkLandmarks::GetMesh(SlonkScatter::LandmarkOf(Mesh)) : nullptr; }
 	if (!SlonkScatter::IsPlant(Mesh)) { return SlonkGroundRocks::GetMesh((EGroundRock)Mesh); }
 	const FFloraSpecies& Sp = Scatter.Flora.Species[FMath::Clamp(SlonkScatter::SlotOf(Mesh), 0, SlonkFlora::MaxSpecies - 1)];
 	return Sp.bLive ? SlonkPlants::GetMesh(Sp.Form) : nullptr;
@@ -172,11 +175,11 @@ void UPlanetTerrainComponent::SetFlora(const FFloraProfile& InFlora)
 	};
 	TFunction<void(FNode&)> Walk = [&](FNode& N)
 	{
-		for (int32 K = SlonkScatter::FirstPlant; K < SlonkScatter::NumMeshes; ++K) { Dress(N.Sets[K], K); }
+		for (int32 K = SlonkScatter::FirstPlant; K < SlonkScatter::FirstLandmark; ++K) { Dress(N.Sets[K], K); }
 		for (const TUniquePtr<FNode>& C : N.Children) { if (C) { Walk(*C); } }
 	};
 	for (const TUniquePtr<FNode>& Root : Roots) { if (Root) { Walk(*Root); } }
-	for (int32 K = SlonkScatter::FirstPlant; K < SlonkScatter::NumMeshes; ++K) { for (UStaticMeshComponent* R : FreeSets[K]) { Dress(R, K); } }
+	for (int32 K = SlonkScatter::FirstPlant; K < SlonkScatter::FirstLandmark; ++K) { for (UStaticMeshComponent* R : FreeSets[K]) { Dress(R, K); } }
 	// The forms held from now, those before them let go once nothing above draws them; the trunks' collision made again
 	// of the new meshes when next wanted.
 	SlonkPlants::HoldForms(this, Forms);
@@ -190,6 +193,61 @@ void UPlanetTerrainComponent::SetFlora(const FFloraProfile& InFlora)
 		RebuildChunksUpTo(FMath::Max(SlonkScatter::MaxChunkEdgeCm(Before, FaceEdge), SlonkScatter::MaxChunkEdgeCm(BuildScatterSettings(), FaceEdge)));
 		UE_LOG(LogTemp, Log, TEXT("PlanetTerrain: flora set (%d species), the chunks carrying plants built again"), Scatter.Flora.Num());
 	}
+}
+
+void UPlanetTerrainComponent::SetLandmarks(const FLandmarkProfile& InLandmarks)
+{
+	if (Scatter.Landmarks == InLandmarks) { return; }
+	const FScatterSettings Before = BuildScatterSettings();
+	Scatter.Landmarks = InLandmarks;
+	// The sets made so far, in use or pooled, take their kinds' meshes as the world has them now, and the collision
+	// copies are made again of them when next wanted.
+	auto Dress = [this](UStaticMeshComponent* R, int32 K)
+	{
+		if (!R) { return; }
+		UStaticMesh* Wanted = MeshOfSet(K);
+		if (R->GetStaticMesh() != Wanted) { R->SetStaticMesh(Wanted); }
+	};
+	TFunction<void(FNode&)> Walk = [&](FNode& N)
+	{
+		for (int32 K = SlonkScatter::FirstLandmark; K < SlonkScatter::NumMeshes; ++K) { Dress(N.Sets[K], K); }
+		for (const TUniquePtr<FNode>& C : N.Children) { if (C) { Walk(*C); } }
+	};
+	for (const TUniquePtr<FNode>& Root : Roots) { if (Root) { Walk(*Root); } }
+	for (int32 K = SlonkScatter::FirstLandmark; K < SlonkScatter::NumMeshes; ++K) { for (UStaticMeshComponent* R : FreeSets[K]) { Dress(R, K); } }
+	for (UScatterInstancesComponent* C : SolidSets) { if (C) { C->DestroyComponent(); } }
+	SolidSets.Reset();
+	ClearSolidRocks();
+	if (bConfigured)
+	{
+		const double FaceEdge = SlonkScatter::FaceEdgeCm(Params.RadiusCm);
+		RebuildChunksUpTo(FMath::Max(SlonkScatter::MaxChunkEdgeCm(Before, FaceEdge), SlonkScatter::MaxChunkEdgeCm(BuildScatterSettings(), FaceEdge)));
+		UE_LOG(LogTemp, Log, TEXT("PlanetTerrain: %s, the chunks carrying any built again"), *SlonkLandmarks::Describe(Scatter.Landmarks));
+	}
+}
+
+bool UPlanetTerrainComponent::FindLandmark(ELandmark Kind, const FVector& FromDir, SlonkScatter::FLandmarkStand& Out) const
+{
+	if (!Scatter.Landmarks.Any() || (Kind != ELandmark::Count && !Scatter.Landmarks.Has(Kind))) { return false; }
+	const FScatterSettings Sc = BuildScatterSettings();
+	// Nearer rings first: most are found within a few sites' spacing, and the widest ring reads the field at a
+	// hundred thousand cells' sites.
+	TArray<SlonkScatter::FLandmarkStand> Found;
+	for (const double ReachCm : { 2.0e6, 6.0e6, 1.6e7, 4.0e7 })
+	{
+		SlonkScatter::LandmarksNear(Params, Sc, Kind, FromDir, ReachCm, Found);
+		if (Found.Num() > 0)
+		{
+			// The first of its site (the tallest stone of a row, the middle of a cluster), if the nearest is another of it.
+			Out = Found[0];
+			for (const SlonkScatter::FLandmarkStand& St : Found)
+			{
+				if (St.Member == 0 && St.Kind == Out.Kind && St.Face == Out.Face && St.GX == Out.GX && St.GY == Out.GY) { Out = St; break; }
+			}
+			return true;
+		}
+	}
+	return false;
 }
 
 void UPlanetTerrainComponent::DescribeFlora(TArray<FString>& OutLines) const
@@ -811,8 +869,9 @@ void UPlanetTerrainComponent::ApplyScatter(FNode& N, SlonkScatter::FChunkScatter
 		// Rocks and bushes cast shadows from the near chunks, trees from chunks twice the size and a giant from chunks
 		// eight times it (its shadow is a hundred metres long at noon); grass never does. By the slot's class, whatever
 		// species stands in it.
+		// A landmark from chunks sixteen times the rocks': an arch's shadow lies as far as a giant's.
 		const EFloraClass Class = SlonkScatter::IsPlant(K) ? SlonkFlora::ClassOf(SlonkScatter::SlotOf(K)) : EFloraClass::Count;
-		const float ShadowEdges = Class == EFloraClass::Giant ? 8.f : (Class == EFloraClass::Tree ? 2.f : 1.f);
+		const float ShadowEdges = SlonkScatter::IsLandmark(K) ? 16.f : (Class == EFloraClass::Giant ? 8.f : (Class == EFloraClass::Tree ? 2.f : 1.f));
 		const bool bShadow = Class != EFloraClass::Grass && N.EdgeCm < ScatterShadowEdgeCm * ShadowEdges;
 		N.Solids[K] = MoveTemp(Sc.Solids[K]);
 		const TArray<FTransform>& Xf = Sc.Transforms[K];
@@ -845,9 +904,12 @@ FString UPlanetTerrainComponent::DescribeVisibleScatter() const
 	FString S;
 	for (int32 K = 0; K < SlonkScatter::NumMeshes; ++K)
 	{
-		// A flora slot by what stands in it; one with nothing in it is left out.
+		// A flora slot by what stands in it; one with nothing in it is left out, and so is a kind of landmark the world
+		// has none of.
 		if (SlonkScatter::IsPlant(K) && !Scatter.Flora.Species[SlonkScatter::SlotOf(K)].bLive) { continue; }
-		const FString Name = SlonkScatter::IsPlant(K) ? FString::Printf(TEXT("plant%d (%s)"), K - SlonkScatter::FirstPlant, SlonkFlora::PlanName(Scatter.Flora.Species[SlonkScatter::SlotOf(K)].Form.Plan))
+		if (SlonkScatter::IsLandmark(K) && !Scatter.Landmarks.Has(SlonkScatter::LandmarkOf(K))) { continue; }
+		const FString Name = SlonkScatter::IsLandmark(K) ? FString(SlonkLandmarks::KindName(SlonkScatter::LandmarkOf(K)))
+			: SlonkScatter::IsPlant(K) ? FString::Printf(TEXT("plant%d (%s)"), K - SlonkScatter::FirstPlant, SlonkFlora::PlanName(Scatter.Flora.Species[SlonkScatter::SlotOf(K)].Form.Plan))
 			: FString::Printf(TEXT("rock%d"), K);
 		S += FString::Printf(TEXT("%s%s %d in %d"), K ? TEXT(", ") : TEXT(""), *Name, VisibleByMesh[K], VisibleSetsByMesh[K]);
 	}
@@ -933,15 +995,17 @@ void UPlanetTerrainComponent::ApplyMotes(FNode& N, SlonkScatter::FChunkFauna& Fa
 	N.MoteCount = Fauna.Num();
 }
 
-int32 UPlanetTerrainComponent::CheckSolidRocks(int32 MaxRocks, int32& OutHits) const
+int32 UPlanetTerrainComponent::CheckSolidRocks(int32 MaxRocks, int32& OutHits, bool bLandmarks) const
 {
 	OutHits = 0;
 	UWorld* World = GetWorld();
 	if (!World) { return 0; }
 	struct FNear { double DistSq; FVector Local; double HeightCm; };
 	TArray<FNear> Near;
-	for (const UScatterInstancesComponent* C : SolidSets)
+	for (int32 K = 0; K < SolidSets.Num(); ++K)
 	{
+		const UScatterInstancesComponent* C = SolidSets[K];
+		if (SlonkScatter::IsLandmark(K) != bLandmarks) { continue; }
 		for (int32 i = 0; C && i < C->GetInstanceCount(); ++i)
 		{
 			FTransform T;
@@ -991,7 +1055,11 @@ void UPlanetTerrainComponent::UpdateSolidRocks()
 	const FVector Centre = bPinned ? SolidPinLocal : PawnLocal;
 	const FVector PawnDir = Centre.GetSafeNormal();
 	double Ground = 0.0;
-	if (!bPinned && (Moved.Size() > 2000.0 || !DrawnHeightAtLocalDir(PawnDir, Ground) || PawnLocal.Size() - Params.RadiusCm - Ground > 3000.0))
+	// A landmark is solid from as far off as it reaches (its origin is the middle of an arch's span, of a ring's
+	// round), and as far up as the tallest stands: someone beamed down onto an arch's crown, or a stone's top, is
+	// more than "near the ground" over the drawn ground and must not fall through when the transport's hold ends.
+	const double MarkReach = Scatter.Landmarks.Any() ? 22000.0 : 0.0, MarkTop = Scatter.Landmarks.Any() ? 30000.0 : 0.0;
+	if (!bPinned && (Moved.Size() > 2000.0 || !DrawnHeightAtLocalDir(PawnDir, Ground) || PawnLocal.Size() - Params.RadiusCm - Ground > 3000.0 + MarkTop))
 	{
 		if (SolidRocks > 0) { ClearSolidRocks(); }
 		return;
@@ -1002,7 +1070,7 @@ void UPlanetTerrainComponent::UpdateSolidRocks()
 	TFunction<void(const FNode&)> Walk = [&](const FNode& N)
 	{
 		const double AwayCm = FMath::Acos(FMath::Clamp(FVector::DotProduct(PawnDir, N.Centre), -1.0, 1.0)) * Params.RadiusCm;
-		if (AwayCm > N.EdgeCm * 0.75 + Reach) { return; }
+		if (AwayCm > N.EdgeCm * 0.75 + Reach + MarkReach) { return; }
 		if (N.Mesh && N.bReady && N.Mesh->IsVisible() && N.RockCount + N.PlantCount > 0) { Near.Add(&N); }
 		for (const TUniquePtr<FNode>& C : N.Children) { if (C) { Walk(*C); } }
 	};
@@ -1047,7 +1115,8 @@ void UPlanetTerrainComponent::UpdateSolidRocks()
 			const FVector O = N->Mesh->GetRelativeLocation();
 			for (const FTransform& T : N->Solids[K])
 			{
-				if (FVector::DistSquared(T.GetLocation() + O, Centre) > Reach * Reach) { continue; }
+				const double Far = SlonkScatter::IsLandmark(K) ? Reach + FMath::Min(T.GetScale3D().GetMax() * SlonkLandmarks::UnitCm * 0.75, MarkReach) : Reach;
+				if (FVector::DistSquared(T.GetLocation() + O, Centre) > Far * Far) { continue; }
 				FTransform W = T;
 				W.AddToTranslation(O);
 				Planet.Add(W);

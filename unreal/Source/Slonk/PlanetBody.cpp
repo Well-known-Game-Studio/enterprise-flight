@@ -776,6 +776,26 @@ void APlanetBody::ResolveStyleFromArchetype()
 	Land2BeforeFlora = Style.LandColor2;
 	bLandBeforeFloraSet = true;
 	SlonkFlora::ApplyPigment(FloraProfile, GroundLifeOf(Type, Style.bAtmosphere), Style);
+	// The landmarks that stand on it (Landmarks.h), from the genome on a stream of their own: none to strangeness 0.15;
+	// what its life builds only where something lives, and the reefs only in a sea that is liquid.
+	LandmarkProfile = SlonkLandmarks::Roll(Genome, Type, Hash, GroundLifeOf(Type, Style.bAtmosphere),
+		Genome.Solvent != ESolvent::Magma && Genome.Solvent != ESolvent::None && Style.LavaEmissive <= 0.f, ForcedLandmarks);
+	if (LandmarkProfile.Any())
+	{
+		// As its ground can carry them, read once from the height field as the cloud base above is (only on a world
+		// that rolled any): a world all sea has nowhere to stand one, and one with no sea no shallows for a reef.
+		const FPlanetTerrainParams P = MakeTerrainParams();
+		const int32 N = 256;
+		int32 Dry = 0;
+		for (int32 i = 0; i < N; ++i)
+		{
+			const double Z = 1.0 - 2.0 * (i + 0.5) / N;
+			const double Rxy = FMath::Sqrt(FMath::Max(0.0, 1.0 - Z * Z));
+			const double Phi = i * 2.399963229728653; // Fibonacci sphere
+			Dry += SlonkTerrain::Sample(P, FVector(Rxy * FMath::Cos(Phi), Rxy * FMath::Sin(Phi), Z), 2.0e6).bWater ? 0 : 1;
+		}
+		SlonkLandmarks::FitToGround(LandmarkProfile, (float)Dry / N);
+	}
 	// A world the tides hold does not turn, keeps no rings (the tides that stopped it would have pulled them down) and
 	// has no polar caps: its cap is the far side's, which the terrain's climate makes. The draws for the spin and the
 	// rings above are still taken, so nothing after them moves.
@@ -787,6 +807,7 @@ void APlanetBody::ResolveStyleFromArchetype()
 	}
 	if (Genome.Strangeness > 0.f) { UE_LOG(LogTemp, Log, TEXT("%s: %s"), *GetDisplayName(), *SlonkGenome::Describe(Genome)); }
 	if (!FloraProfile.IsEarth()) { UE_LOG(LogTemp, Log, TEXT("%s: %s"), *GetDisplayName(), *SlonkFlora::Describe(FloraProfile)); }
+	if (LandmarkProfile.Any()) { UE_LOG(LogTemp, Log, TEXT("%s: %s"), *GetDisplayName(), *SlonkLandmarks::Describe(LandmarkProfile)); }
 }
 
 FFloraProfile APlanetBody::FloraRolledAt(const FWorldGenome& Own, EPlanetArchetype Kind, uint32 Hash, float AtStrangeness, EStarLight Light)
@@ -1099,8 +1120,10 @@ void APlanetBody::SetNightLights(float Intensity)
 		ApplyTerrainMaterialParams();
 		// A colony founded (or a world gone dark) brings its towns or takes them away; the rocks follow.
 		Terrain->SetScatterOptions(Terrain->GetScatterSettings().bEnabled, Terrain->GetScatterSettings().Density, HasCities(), GroundLife(), GetPeople());
-		// What grows there as the style resolved again rolled it (the same, unless its strangeness or its star changed).
+		// What grows there as the style resolved again rolled it (the same, unless its strangeness or its star changed),
+		// and what stands there.
 		Terrain->SetFlora(FloraProfile);
+		Terrain->SetLandmarks(LandmarkProfile);
 		ConfigureFauna();
 	}
 	const FCivilization& Now = GetPeople();
@@ -1141,8 +1164,9 @@ void APlanetBody::SetPeople(const FCivilization& People)
 	if (Terrain)
 	{
 		Terrain->SetScatterOptions(Terrain->GetScatterSettings().bEnabled, Terrain->GetScatterSettings().Density, HasCities(), GroundLife(), GetPeople());
-		// And what grows there, as the style resolved again rolled it.
+		// And what grows there, as the style resolved again rolled it, and what stands there.
 		Terrain->SetFlora(FloraProfile);
+		Terrain->SetLandmarks(LandmarkProfile);
 	}
 	ConfigureFauna();
 	ApplyBuildingParams();
@@ -1582,8 +1606,10 @@ void APlanetBody::EnsureTerrain()
 	const FPlanetTerrainParams P = MakeTerrainParams();
 	// The rocks keep off the streets of a world with towns; set before the chunks are built.
 	Terrain->SetScatterOptions(Terrain->GetScatterSettings().bEnabled, Terrain->GetScatterSettings().Density, HasCities(), GroundLife(), GetPeople());
-	// And what grows there, its species by slot, before them too: the Earth's on the worlds near home.
+	// And what grows there, its species by slot, before them too: the Earth's on the worlds near home. A strange
+	// world's landmarks with it.
 	Terrain->SetFlora(FloraProfile);
+	Terrain->SetLandmarks(LandmarkProfile);
 	if (!bTerrainActive || P != TerrainParams)
 	{
 		TerrainParams = P;

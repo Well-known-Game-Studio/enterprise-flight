@@ -80,7 +80,7 @@ namespace
 		TArray<double> Drawn[SlonkScatter::NumMeshes];
 		FVector Origin = FVector::ZeroVector;
 		int32 Num() const { int32 N = 0; for (const TArray<FTransform>& T : Xf) { N += T.Num(); } return N; }
-		int32 NumPlants() const { int32 N = 0; for (int32 M = SlonkScatter::FirstPlant; M < SlonkScatter::NumMeshes; ++M) { N += Xf[M].Num(); } return N; }
+		int32 NumPlants() const { int32 N = 0; for (int32 M = SlonkScatter::FirstPlant; M < SlonkScatter::FirstLandmark; ++M) { N += Xf[M].Num(); } return N; }
 	};
 	/** A chunk's scatter at the terrain's default grid (64 steps a side), or at another the component allows. */
 	FRocks Build(const FPlanetTerrainParams& P, const FScatterSettings& S, int32 Face, int32 Depth, int64 X, int64 Y, int32 Steps = 64)
