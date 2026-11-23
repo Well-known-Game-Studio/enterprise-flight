@@ -504,6 +504,12 @@ public:
 	float GetWeatherStrength() const { return WeatherStrength; }
 	/** The cloud shell's frame (the body's spin plus the shell's own drift): what the weather map is laid over. */
 	FTransform GetCloudFrame() const;
+	/** How much of the sun's light the cloud layer keeps from all the ground about a place, 0 under a clear or a
+	 *  broken sky to 1 under a deck (SlonkWeather::DeckShade): by the layer's cover (SlonkWeather::CoverOf, from the
+	 *  world's weather map once it has one, its style's even sky till then) where the sun's light crosses the middle
+	 *  of the layer on its way down to the place. OutCover, if asked for, is that cover itself. 0 on a world without
+	 *  clouds. For what lights itself and so takes no cloud's shadow from the engine: the animals' dust and spray. */
+	float CloudShadeAt(const FVector& WorldPos, const FVector& ToSunWorld, float* OutCover = nullptr) const;
 
 	UFUNCTION(BlueprintPure, Category = "Planet")
 	bool IsDetailMeshActive() const { return bDetailActive; }

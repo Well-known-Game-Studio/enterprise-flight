@@ -231,6 +231,10 @@ private:
 		/** How wet the ground under a herd raising dust was when last read, and when (the world's seconds); whether it
 		 *  goes fast enough to raise any, its speed smoothed (SlonkFauna::StepDustGate). */
 		double DustWet = 0.5, DustWetAt = -1.0e9;
+		/** How much of the sun's light the clouds kept from it then (APlanetBody::CloudShadeAt), and how much of the sky
+		 *  over it they covered, read with the wetness. */
+		double DustShade = 0.0;
+		float DustCover = 0.f;
 		SlonkFauna::FDustGate DustGate;
 		/** A group of leapers' fish and the sea's surface their leaps cross. */
 		TSharedPtr<FLeaperState> Leaper;
@@ -280,6 +284,12 @@ private:
 	/** A splash where a leap crossed the sea's surface (planet-local), of a fish of that length; an entry or not; how deep
 	 *  in the night it is there. */
 	void ThrowSplash(const FVector& PlaceLocal, double SizeCm, bool bEntry, float Night);
+	/** How much of the sun's light the clouds keep from a place in the planet's frame, 0..1 (APlanetBody::CloudShadeAt,
+	 *  by the sun as the last UpdateView had it, at the strength the game mode casts its cloud layer's shadow with); 0
+	 *  with slonk.Fauna.CloudShade 0, where the game draws no cloud layer to cast a shadow, or on no planet. */
+	double CloudShadeAt(const FVector& PlaceLocal, float* OutCover = nullptr) const;
+	/** The way to the sun in the world, as the last UpdateView was given it. */
+	FVector SunWorld = FVector::ZeroVector;
 	/** NS_FishSplash, loaded the first time a splash would be thrown (false, and one line in the log, without it). */
 	bool EnsureSplashSystem();
 	UNiagaraComponent* MakeSplashComponent();

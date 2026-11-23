@@ -56,6 +56,13 @@ namespace SlonkFauna
 	 *  given back rests that long before it is lent again, so its last puffs fade where they were left. */
 	constexpr double DustPuffCmPerM = 110.0;
 	constexpr double DustPuffLifeSec = 6.0;
+	/** The share of a puff's light that is the sun's own (M_HerdDust lights a puff by the sun on a soft wrap, about 0.7
+	 *  of it over the puff, and a quarter of the sun's light again from the sky: 0.75 x 0.7 of 0.25 + 0.75 x 0.7). Under
+	 *  cloud that share goes with the sun: the puff lights itself, so no cloud's shadow falls on it, and its colour is
+	 *  dimmed by as much of this as the cloud keeps (FHerdDustInput::Shade). slonk.Fauna.CloudShade 0 leaves the dust
+	 *  and the spray as bright under cloud as in the sun. */
+	constexpr double DustSunShare = 0.68;
+	SLONK_API bool CloudShadeEnabled();
 
 	/** What a herd's dust is worked out from: how fast its frame goes over the ground (m/s, smoothed: FDustGate) and its
 	 *  velocity there in the world's axes (cm/s), the ground's own velocity through the world there (cm/s:
@@ -71,6 +78,9 @@ namespace SlonkFauna
 		int32 Members = 0;
 		double SpanM = 2.0, RadiusCm = 0.0;
 		FLinearColor Color = FLinearColor::White;
+		/** How much of the sun's light the clouds keep from the herd, 0 under a clear or a broken sky to 1 under a deck
+		 *  (APlanetBody::CloudShadeAt). */
+		double Shade = 0.0;
 	};
 	/** A herd's dust as the system's user parameters take it (see the contract above). */
 	struct FHerdDust
@@ -82,7 +92,8 @@ namespace SlonkFauna
 	};
 	/** The dust a herd raises: none while it grazes, stands or walks (a frame no faster than DustWalkMS), past
 	 *  DustReachCm, at night or on a dead world; more the faster it goes past a walk, the more walkers it has and the
-	 *  drier its ground, fewer as the light goes, at most DustMaxRate. */
+	 *  drier its ground, fewer as the light goes, at most DustMaxRate. Its colour is the one given, dimmer under cloud
+	 *  by the sun's share of its light (DustSunShare), its opacity as given. */
 	SLONK_API FHerdDust HerdDustFor(const FHerdDustInput& In);
 	/** The dust's colour over ground of a wetness: the terrain's own dry ground (its palette's Land2), a little of its
 	 *  living cover (Land) the wetter it is, paled as dust in the air is; its opacity less as the light goes. */

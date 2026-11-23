@@ -1062,7 +1062,9 @@ void APlanetBody::PollWeatherMap(float DeltaTime)
 			WeatherMap = SlonkWeather::MakeTexture(*WeatherPixels, WeatherW, WeatherH, *FString::Printf(TEXT("Weather_%s"), *GetName()));
 			UE_LOG(LogTemp, Log, TEXT("%s: weather map %dx%d ready"), *GetName(), WeatherW, WeatherH);
 		}
-		WeatherPixels.Reset();
+		// The pixels are kept beside the texture made of them, for the cover over a place (CloudShadeAt), and let go
+		// with it.
+		if (!WeatherMap) { WeatherPixels.Reset(); }
 		if (WeatherMap && CloudMID) { CloudMID->SetTextureParameterValue(TEXT("WeatherMap"), WeatherMap); }
 	}
 	if (WeatherMap && WeatherStrength < 1.f)
@@ -1392,6 +1394,24 @@ FTransform APlanetBody::GetCloudFrame() const
 {
 	const USceneComponent* Frame = CloudsMesh ? static_cast<const USceneComponent*>(CloudsMesh) : static_cast<const USceneComponent*>(Clouds);
 	return Frame ? Frame->GetComponentTransform() : GetActorTransform();
+}
+
+float APlanetBody::CloudShadeAt(const FVector& WorldPos, const FVector& ToSunWorld, float* OutCover) const
+{
+	if (OutCover) { *OutCover = 0.f; }
+	if (!Style.bClouds || Style.CloudThicknessKm <= 0.f || Style.CloudCoverage <= 0.f) { return 0.f; }
+	// Where the sun's light crosses the middle of the layer on its way down to the place, and how high the sun stands.
+	double SunUp = 1.0;
+	const double LayerCm = GetRadiusCm() + ((double)Style.CloudBaseKm + 0.5 * (double)Style.CloudThicknessKm) * 1.0e5;
+	const FVector Through = SlonkWeather::SunThroughLayer(WorldPos - GetActorLocation(), ToSunWorld, LayerCm, SunUp);
+	// The map there once it is made (not one still being made on its thread), in the cloud shell's frame; the style's
+	// even sky till then, as the layer itself is drawn.
+	float Masses = 0.5f, Cells = 0.5f;
+	const bool bMap = WeatherMap != nullptr && !WeatherFuture.IsValid() && WeatherPixels.IsValid()
+		&& SlonkWeather::SampleAt(*WeatherPixels, WeatherW, WeatherH, GetCloudFrame().InverseTransformVectorNoScale(Through), Masses, Cells);
+	const float Cover = SlonkWeather::CoverOf(Masses, Cells, Style.CloudCoverage, Style.CloudDeck, bMap ? WeatherStrength : 0.f);
+	if (OutCover) { *OutCover = Cover; }
+	return SlonkWeather::DeckShade(Cover);
 }
 
 void APlanetBody::UpdateSunDirectionParams()
@@ -1952,6 +1972,7 @@ void APlanetBody::Tick(float DeltaTime)
 				{
 					bWeatherRequested = false;
 					WeatherMap = nullptr;
+					WeatherPixels.Reset();
 					WeatherStrength = 0.f;
 					if (CloudMID) { CloudMID->SetScalarParameterValue(TEXT("WeatherStrength"), 0.f); }
 				}

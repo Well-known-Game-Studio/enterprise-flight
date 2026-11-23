@@ -22,6 +22,7 @@
 #include "PlanetInstancesComponent.h"
 #include "PlanetTerrainComponent.h"
 #include "ScatterSpot.h"
+#include "SlonkGameMode.h"
 #include "SlonkMaterials.h"
 #include "StarshipMovementComponent.h"
 #include "StarshipPawn.h"
@@ -756,6 +757,7 @@ void UPlanetFaunaComponent::UpdateView(const APlayerController* PC, const FVecto
 	TArray<SlonkFauna::FFaunaThreat> Threats;
 	GatherThreats(PC, Threats);
 	const FVector Sun = SunDirectionWorld.GetSafeNormal();
+	SunWorld = Sun;
 	for (TPair<uint64, FGroupSet>& Pair : Sets)
 	{
 		FGroupSet& S = Pair.Value;
@@ -999,7 +1001,13 @@ void UPlanetFaunaComponent::UpdateDust(uint64 Id, FGroupSet& S, const FVector& C
 	{
 		// How wet the ground under it is, read again each second it raises dust.
 		const double Now = WorldSeconds();
-		if (Now - S.DustWetAt > 1.0) { S.DustWet = SlonkScatter::HabitatAt(Params, H.FramePos.GetSafeNormal()).Wet; S.DustWetAt = Now; }
+		if (Now - S.DustWetAt > 1.0)
+		{
+			S.DustWet = SlonkScatter::HabitatAt(Params, H.FramePos.GetSafeNormal()).Wet;
+			// And how much of the sun the clouds keep from it: the dust lights itself, so it is dimmed by hand.
+			S.DustShade = CloudShadeAt(H.FramePos, &S.DustCover);
+			S.DustWetAt = Now;
+		}
 		SlonkFauna::FHerdDustInput In;
 		In.SpeedMS = S.DustGate.SpeedMS;
 		In.VelWorldCmS = GetComponentTransform().TransformVectorNoScale(H.VelCmS);
@@ -1014,6 +1022,7 @@ void UPlanetFaunaComponent::UpdateDust(uint64 Id, FGroupSet& S, const FVector& C
 		In.SpanM = G.SpanM;
 		In.RadiusCm = G.HerdRadiusCm;
 		In.Color = SlonkFauna::HerdDustColor(Palette, S.DustWet, Night);
+		In.Shade = S.DustShade;
 		Dust = SlonkFauna::HerdDustFor(In);
 	}
 	// Kept while the gate holds it on, at whatever rate its smoothed speed gives (none for a moment does not let it go).
@@ -1037,6 +1046,20 @@ void UPlanetFaunaComponent::UpdateDust(uint64 Id, FGroupSet& S, const FVector& C
 		C->SetRelativeLocationAndRotation(FVector::ZeroVector, FQuat::Identity);
 		C->Activate(true);
 	}
+}
+
+double UPlanetFaunaComponent::CloudShadeAt(const FVector& PlaceLocal, float* OutCover) const
+{
+	if (OutCover) { *OutCover = 0.f; }
+	const APlanetBody* Planet = Cast<APlanetBody>(GetOwner());
+	if (!Planet || !SlonkFauna::CloudShadeEnabled()) { return 0.0; }
+	// As far as the clouds really keep the sun from the ground there: by the shadow the game casts from its cloud
+	// layer (none where it draws no layer to cast one), at its strength.
+	const UWorld* World = GetWorld();
+	const ASlonkGameMode* Mode = World ? Cast<ASlonkGameMode>(World->GetAuthGameMode()) : nullptr;
+	const double Strength = !Mode ? 1.0 : (Mode->bUseVolumetricClouds ? (double)FMath::Clamp(Mode->CloudShadowStrength, 0.f, 1.f) : 0.0);
+	if (Strength <= 0.0) { return 0.0; }
+	return Strength * Planet->CloudShadeAt(GetComponentTransform().TransformPositionNoScale(PlaceLocal), SunWorld, OutCover);
 }
 
 FVector UPlanetFaunaComponent::GroundCarryAt(const FVector& WorldPos, bool bOverFrame) const
@@ -1149,6 +1172,7 @@ void UPlanetFaunaComponent::ThrowSplash(const FVector& PlaceLocal, double SizeCm
 	In.CarryWorldCmS = GroundCarryAt(GetComponentTransform().TransformPositionNoScale(PlaceLocal), false);
 	In.Shallow = Sea.Shallow;
 	In.Ocean = Sea.Ocean;
+	In.Shade = CloudShadeAt(PlaceLocal);
 	const SlonkFauna::FFishSplash Sp = SlonkFauna::FishSplashFor(In);
 	C->SetVariableFloat(TEXT("Size"), Sp.Size);
 	C->SetVariableLinearColor(TEXT("Color"), Sp.Color);
@@ -1374,17 +1398,21 @@ FString UPlanetFaunaComponent::Describe() const
 	for (const TPair<uint64, SlonkFauna::FPanic>& P : Panics) { Shaken += P.Value.IsLive(Now) ? 1 : 0; }
 	// The herds about: how many are grazing, walking and fleeing, and how many members.
 	int32 Grazing = 0, Walking = 0, Fleeing = 0, Walkers = 0;
+	double Shade = 0.0;
+	float Cover = 0.f;
 	for (const TPair<uint64, FGroupSet>& S : Sets)
 	{
 		if (!S.Value.Herd.IsValid()) { continue; }
 		Walkers += S.Value.Group->Members;
+		if (DustPool.Find(S.Key)) { Shade = FMath::Max(Shade, S.Value.DustShade); Cover = FMath::Max(Cover, S.Value.DustCover); }
 		const bool bShaken = Panics.Contains(S.Key) && Panics[S.Key].IsLive(Now);
 		(bShaken ? Fleeing : (S.Value.Herd->Travel > 0.5 ? Walking : Grazing)) += 1;
 	}
 	// Their dust: how many raise it, and the pool's components.
 	const FString Dust = !SlonkFauna::DustEnabled() ? FString(TEXT("no dust (slonk.Fauna.Dust 0)"))
 		: (bDustMissing ? FString(TEXT("no dust (NS_HerdDust missing)"))
-			: FString::Printf(TEXT("%d raising dust (%d components, %d resting)"), DustPool.NumLive(), DustPool.NumMade(), DustPool.NumResting()));
+			: FString::Printf(TEXT("%d raising dust (%d components, %d resting; under a sky %.0f%% cloud at most, which keeps %.0f%% of the sun from it)"), DustPool.NumLive(), DustPool.NumMade(), DustPool.NumResting(),
+				Cover * 100.f, Shade * 100.0));
 	const FString Herds = !CanDrawHerds() ? FString(TEXT("no herds (M_Fauna has no walker branch yet)"))
 		: FString::Printf(TEXT("%d herds drawn (%d walkers: %d grazing, %d walking, %d fleeing; %s) in %s"), Grazing + Walking + Fleeing, Walkers, Grazing, Walking, Fleeing, *Dust,
 			bWalkerMaterial ? (HerdPlanMIDs.Num() > 0 ? *FString::Printf(TEXT("M_Fauna's walker branch (%d instances of alien plans)"), HerdPlanMIDs.Num()) : TEXT("M_Fauna's walker branch"))

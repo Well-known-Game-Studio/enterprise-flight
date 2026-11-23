@@ -32,7 +32,11 @@ SlonkFauna::FFishSplash SlonkFauna::FishSplashFor(const FFishSplashInput& In)
 	S.Size = (float)FMath::Max(In.SizeCm, 1.0);
 	S.Entry = In.bEntry ? 1.f : 0.f;
 	S.Night = (float)FMath::Clamp(In.Night, 0.0, 1.0);
-	S.Color = FoamColor(In.Shallow, In.Ocean);
+	// Under cloud, the sun's share of its light goes with the sun (it lights itself, as the dust does); its opacity
+	// stays. A clear sky's 1 leaves the foam's colour exactly as it is.
+	const FLinearColor Foam = FoamColor(In.Shallow, In.Ocean);
+	const float Lit = (float)(1.0 - SplashSunShare * FMath::Clamp(In.Shade, 0.0, 1.0));
+	S.Color = FLinearColor(Foam.R * Lit, Foam.G * Lit, Foam.B * Lit, Foam.A);
 	S.Carry = In.CarryWorldCmS;
 	return S;
 }
