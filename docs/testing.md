@@ -104,6 +104,20 @@ middle, half way to the next and round the seam; where the sun's light crosses t
 deck shading all the ground under it and a broken sky none of it as a whole; and the herds' dust and the leapers'
 spray, which light themselves, dimmed by the sun's share of their light under a deck and exactly as they were under a
 clear sky.
+`Slonk.Missions.TimeLoop*` (Tests/SlonkSystemTests.cpp) cover a loop in time. `TimeLoop`: held, not running out, not
+abandoned; its hours untouched by the clock; brought round by the run for clear space (an order, with no check), by
+the ship going to warp (once, not every tick of it), and by its hours being spent; an attempt's hours taken from the
+watch and from the stars' time, carried or not; what nobody aboard knows to try not offered or carried, and what the
+watch has not the hours for refused; what a pass learns kept and the option that taught it off the board; what a pass
+makes ready undone at its end; Starfleet's orders held while it lasts; the twelfth pass the last; one offered turned
+down, or begun at the accepting. `TimeLoopLock`: in sixty folds one answer of three is right, has every field the
+board shows as the wrong ones have, and is the one the two clues leave; both wrong answers refused with no check,
+each the pass over, the next an hour shorter down to three, the answer closed; the right one the best regard and all
+the science; orders reaching the ship again; the next fold known at sight. `TimeLoopExits`: the cold core (the flag
+and its twelve hours), the hard point broken with nothing known but the fold (least regard, no science for it, the
+next stone harder), the closing ridden (five to eleven whole days on, closed where she came out). Not covered by a
+test, and seen in the game instead: the drive let go while held or cold, and the blows to the ship (they are the
+ship's own, and the tests have no ship); nor the one-in-sixteen roll and its ten days, nor the save.
 `Slonk.Landmarks.*` (Tests/SlonkLandmarkTests.cpp) covers a strange world's landmarks (Landmarks.h): none rolled to
 strangeness 0.15 or on a world with no ground, the same on every roll and kept as the world grows stranger, arches, a
 vanished people's stones (monoliths or great rings, never both), reef towers, mound cities and giant shells at their

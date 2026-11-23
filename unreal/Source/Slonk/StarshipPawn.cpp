@@ -4899,6 +4899,9 @@ void AStarshipPawn::TickClock(float DeltaTime)
 	auto Low = [&Cap, &Why](float C, const FString& W) { if (C < Cap) { Cap = C; Why = W; } };
 	if (Systems && Systems->GetAlert() == EAlertState::Red) { Low(1.f, TEXT("red alert")); }
 	if (Systems && Systems->IsUnderFire()) { Low(1.f, TEXT("under fire")); }
+	// Held in a fold in time, the watch's hours are spent by what the captain has done in them, not by the reading
+	// of the board: the clock runs as the console's does.
+	if (const UMissionSubsystem* Held = GetGameInstance() ? GetGameInstance()->GetSubsystem<UMissionSubsystem>() : nullptr) { if (Held->IsHeldInTime()) { Low(1.f, TEXT("a fold in time")); } }
 	if (Weapons && Weapons->IsFiringPhasers()) { Low(1.f, TEXT("phasers")); }
 	// A torpedo flies in real seconds (the projectile movement, the seek, the fuse): at x60 the ship would overrun
 	// her own shot and a target would outrun it, so any torpedo out, anyone's, holds the clock.
@@ -5381,7 +5384,7 @@ void AStarshipPawn::HandleMissionCommand(const TArray<FString>& Args)
 		const FMission* Ms = M->Find(Id(2));
 		if (!Ms) { Say(TEXT("show <id>"), FColor::Orange); return; }
 		Line(*Ms); Say(Ms->Brief, FColor::White, 20.f);
-		if (Ms->State == EMissionState::Active) { if (const FMissionStage* St = Ms->Current()) { Say(FString::Printf(TEXT("%s: %s"), *St->Title, *St->Text), FColor::Yellow, 20.f); for (int32 i = 0; i < St->Options.Num(); ++i) { const FMissionOption& O = St->Options[i]; Say(FString::Printf(TEXT("   %d. %s  [%s %s %.0f%s]"), i, *O.Text, *UCrewRosterSubsystem::DepartmentName(O.Party), *UCrewRosterSubsystem::SkillName(O.Skill).ToLower(), O.Difficulty, O.Risk > 0.f ? TEXT(", risk") : TEXT("")), FColor::White, 20.f); } } }
+		if (Ms->State == EMissionState::Active) { if (const FMissionStage* St = Ms->Current()) { Say(FString::Printf(TEXT("%s: %s"), *St->Title, *St->Text), FColor::Yellow, 20.f); for (int32 i = 0; i < St->Options.Num(); ++i) { const FMissionOption& O = St->Options[i]; if (!Ms->Offers(O)) { continue; } Say(FString::Printf(TEXT("   %d. %s  [%s %s %.0f%s%s]"), i, *O.Text, *UCrewRosterSubsystem::DepartmentName(O.Party), *UCrewRosterSubsystem::SkillName(O.Skill).ToLower(), O.Difficulty, O.Hours > 0.f ? *FString::Printf(TEXT(", %.0f h"), O.Hours) : TEXT(""), O.Risk > 0.f || O.WrongBlow > 0.f ? TEXT(", risk") : TEXT("")), FColor::White, 20.f); } } }
 		for (const FString& L : Ms->Log) { Say(L, FColor::White, 20.f); }
 	}
 	else if (What == TEXT("accept")) { const bool bOk = M->Accept(Id(2), Reply); Say(Reply, bOk ? FColor::Cyan : FColor::Orange); }
@@ -5417,9 +5420,9 @@ void AStarshipPawn::HandleMissionCommand(const TArray<FString>& Args)
 	{
 		// dev <kind> [orders|board|event]: one of that kind now, as the given source (events are active at once).
 		EMissionKind K;
-		if (!UMissionSubsystem::ParseKind(Word(2), K)) { Say(TEXT("dev <survey|rescue|diplomacy|delivery|anomaly|medical|patrol|contact|derelict|smuggler|explore|firstcontact|prewarp|beacon|outpost|colony|starbase|impact> [orders|board|event]"), FColor::Orange); return; }
+		if (!UMissionSubsystem::ParseKind(Word(2), K)) { Say(TEXT("dev <survey|rescue|diplomacy|delivery|anomaly|medical|patrol|contact|derelict|smuggler|explore|firstcontact|prewarp|beacon|outpost|colony|starbase|impact|timeloop> [orders|board|event]"), FColor::Orange); return; }
 		const FString Src = Word(3).ToLower();
-		const bool bEventKind = K == EMissionKind::Rescue || K == EMissionKind::Anomaly || K == EMissionKind::Contact || K == EMissionKind::Derelict || K == EMissionKind::Smuggler || K == EMissionKind::FirstContact || K == EMissionKind::PreWarp || K == EMissionKind::Beacon;
+		const bool bEventKind = K == EMissionKind::Rescue || K == EMissionKind::Anomaly || K == EMissionKind::Contact || K == EMissionKind::Derelict || K == EMissionKind::Smuggler || K == EMissionKind::FirstContact || K == EMissionKind::PreWarp || K == EMissionKind::Beacon || K == EMissionKind::TimeLoop;
 		const EMissionSource S = Src.StartsWith(TEXT("ev")) ? EMissionSource::Event : Src.StartsWith(TEXT("b")) || Src.StartsWith(TEXT("st")) ? EMissionSource::Starbase : bEventKind && Src.IsEmpty() ? EMissionSource::Event : EMissionSource::Starfleet;
 		const int32 NewId = M->DevSpawn(K, S);
 		if (const FMission* Ms = M->Find(NewId)) { Line(*Ms); } else if (NewId == -2) { Say(TEXT("That kind brings its own hull: it only happens as an event"), FColor::Orange); } else { Say(TEXT("Nothing to make it from (no target in reach)"), FColor::Orange); }

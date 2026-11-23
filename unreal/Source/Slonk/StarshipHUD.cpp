@@ -309,6 +309,8 @@ void AStarshipHUD::DrawHUD()
 				if (Obj)
 				{
 					FString T = FString::Printf(TEXT("MISSION  %s"), *Obj->Title.ToUpper());
+					// A loop in time: which pass of it this is, and how long until the fold closes again.
+					if (Obj->Kind == EMissionKind::TimeLoop) { T += FString::Printf(TEXT("   PASS %d   %.1f H"), Obj->Pass + 1, Mis->PassHoursLeft(*Obj)); }
 					if (Mis->TargetKindOf(*Obj) != EMissionTarget::None) { T += Mis->IsAtTarget(*Obj) ? TEXT("   IN RANGE") : FString::Printf(TEXT("   AT %s"), *Mis->TargetNameOf(*Obj).ToUpper()); }
 					if (Mis->Active().Num() > 1) { T += FString::Printf(TEXT("   +%d MORE"), Mis->Active().Num() - 1); }
 					if (Offers > 0 || Mis->Unread() > 0) { T += FString::Printf(TEXT("   (%d offered, %d unread)"), Offers, Mis->Unread()); }
@@ -376,6 +378,11 @@ void AStarshipHUD::DrawHUD()
 		case EWarpState::Jumping: State = TEXT("ENGAGING"); StateColor = Warning; break;
 		case EWarpState::AtWarp: State = TEXT("AT WARP"); StateColor = Accent; break;
 		case EWarpState::Dropping: State = TEXT("DROPPING TO IMPULSE"); StateColor = Warning; break;
+		}
+		// (A core shut down cold to get out of a fold in time: no warp until it is lit again.)
+		if (const UMissionSubsystem* Cold = Ship->GetGameInstance() ? Ship->GetGameInstance()->GetSubsystem<UMissionSubsystem>() : nullptr)
+		{
+			if (Cold->IsDriveCold()) { State = FString::Printf(TEXT("CORE COLD %.1f H"), Cold->DriveColdHoursLeft()); StateColor = Warning; }
 		}
 		DrawText(FString::Printf(TEXT("WARP %.1f   %s   [%s]"), Warp->WarpFactor, *State, Ship->GetWarpVisualMode() == EWarpVisualMode::Relativistic ? TEXT("RELATIVISTIC") : TEXT("CLASSIC")), StateColor, X, Y, Font, UIScale); Y += Line;
 		DrawText(FString::Printf(TEXT("  cruise %s"), *FormatSpeed(Warp->GetWarpSpeedForFactor(Warp->WarpFactor))), Dim, X, Y, SmallFont, UIScale); Y += Line * 1.4f;

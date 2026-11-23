@@ -34,13 +34,93 @@ namespace
 		FMissionOption O; O.Text = Text; O.Skill = Skill; O.Difficulty = Diff; O.Party = Party; O.SuccessTag = STag; O.FailTag = FTag; O.SuccessText = SText; O.FailText = FText; O.NextOnSuccess = NextS; O.NextOnFail = NextF; O.bFailEndsMission = bFailEnds; O.Risk = Risk; O.Science = Science; return O;
 	}
 	FMissionStage Stage(const TCHAR* Title, const FString& Text, bool bAtTarget = true) { FMissionStage S; S.Title = Title; S.Text = Text; S.bAtTarget = bAtTarget; return S; }
+	// ---- a fold in time: the lock on the old road -------------------------------------------------------------
+	// Its particulars come from the mission's secret: which of the three answers the stone takes (0 its call as
+	// given, 1 its call turned about, 2 silence for its length), which of the wrong ones the dead hull gave, which
+	// the stone's faces rule out (the other wrong one, so the two together leave the right one), how the call
+	// runs, and how many days a ship that rides the closing is thrown.
+	int32 LockAnswer(const FMission& M) { return M.Secret % 3; }
+	int32 LockHullTried(const FMission& M) { return (LockAnswer(M) + 1 + (M.Secret / 3) % 2) % 3; }
+	int32 LockCarvedOut(const FMission& M) { return 3 - LockAnswer(M) - LockHullTried(M); }
+	int32 LockDaysThrown(const FMission& M) { return 5 + (M.Secret / 6) % 7; }
+	const TCHAR* LockCall(const FMission& M)
+	{
+		static const TCHAR* Calls[] = { TEXT("long, short, short, long, short"), TEXT("short, short, long, short, long"), TEXT("long, long, short, short, long"), TEXT("short, long, long, short, short") };
+		return Calls[(M.Secret / 42) % UE_ARRAY_COUNT(Calls)];
+	}
+	FName LockRefusedMark(int32 Answer) { static const TCHAR* Marks[] = { TEXT("Refused.Given"), TEXT("Refused.Turned"), TEXT("Refused.Silence") }; return FName(Marks[Answer % 3]); }
+	const TCHAR* LockAnswerText(int32 Answer)
+	{
+		static const TCHAR* Texts[] = { TEXT("Answer: its call as given"), TEXT("Answer: its call turned about"), TEXT("Answer: silence for its length") };
+		return Texts[Answer % 3];
+	}
+	const TCHAR* LockRefusedLine(int32 Answer)
+	{
+		static const TCHAR* Lines[] = { TEXT("Refused by the stone: its call given back as given."), TEXT("Refused by the stone: its call turned about."), TEXT("Refused by the stone: silence for its length.") };
+		return Lines[Answer % 3];
+	}
+	const TCHAR* LockHullClue(int32 Tried)
+	{
+		static const TCHAR* Clues[] = {
+			TEXT("Her transmitter still runs on a trickle of power, giving the stone's call back to it as given, as it has for longer than the Federation is old. It did not serve her people."),
+			TEXT("Her transmitter still runs on a trickle of power, giving the stone's call back to it turned about, as it has for longer than the Federation is old. It did not serve her people."),
+			TEXT("Her last order stands in her log, and was kept to the end: show no light, send nothing, keep silence through the stone's call, engines ready. It did not serve her people.") };
+		return Clues[Tried % 3];
+	}
+	const TCHAR* LockCarvedClue(int32 Out)
+	{
+		static const TCHAR* Clues[] = {
+			TEXT("Ship after ship is cut into the stone beside the gate's own mark, and no ship's mark repeats the gate's: to its makers a call given back unchanged was no answer."),
+			TEXT("Ship after ship is cut into the stone beside the gate's own mark, and every one faces as the gate's faces: nothing on the stone is turned about. To its makers a thing reversed was a thing refused."),
+			TEXT("Ship after ship is cut into the stone beside the gate's own mark, and every one is cut deep, a thing said: none of them passed by keeping still.") };
+		return Clues[Out % 3];
+	}
+	/** The watch of a loop in time, as it reads on this pass: the same every time, then what the passes have left
+	 *  (one line a thing known, with what each way out would cost where that can be seen), then what this pass has
+	 *  made ready. */
+	FString LoopWatchText(const FMission& M)
+	{
+		auto Has = [&M](const TCHAR* Mark) { return M.Marks.Contains(FName(Mark)); };
+		static const TCHAR* Times[] = { TEXT("second"), TEXT("third"), TEXT("fourth"), TEXT("fifth"), TEXT("sixth"), TEXT("seventh"), TEXT("eighth"), TEXT("ninth"), TEXT("tenth"), TEXT("eleventh"), TEXT("twelfth") };
+		FString T;
+		if (M.Pass == 0)
+		{
+			T = Has(TEXT("Met")) ? TEXT("A fold in space lies across the course, closing on the ship, and Science knows it at sight: another lock on the old road.")
+				: TEXT("A fold in space lies across the course, and it is closing on the ship. Nothing in the catalogue describes it.");
+		}
+		else
+		{
+			T = FString::Printf(TEXT("The forenoon watch, for the %s time, though nobody aboard would say so: the same reports in the same words, and the fold closing as before."),
+				M.Pass - 1 < UE_ARRAY_COUNT(Times) ? Times[M.Pass - 1] : *FString::Printf(TEXT("%dth"), M.Pass + 1));
+			T += Has(TEXT("Echoes")) ? TEXT(" What the last watches learned is in the crew's hands before it is in their heads.") : TEXT(" Some of the crew have the look of people who have heard all of it before.");
+		}
+		TArray<FString> Known;
+		if (Has(TEXT("Curve")))
+		{
+			Known.Add(TEXT("The fold is a closed curve, and has the ship by her drive's own field: that is what it will tear when it closes. A cold core would give it nothing to hold; and a cold core is half a day in the relighting."));
+			if (!Has(TEXT("Anchor"))) { Known.Add(TEXT("The whole of it hangs from a hard point at the seam, which nobody has yet looked at. Break that and the fold would let go all at once: a hard blow to a ship not rigged for it.")); }
+		}
+		if (Has(TEXT("Hailed"))) { Known.Add(TEXT("A hail comes back before it is sent. No help is coming in.")); }
+		if (Has(TEXT("Echoes"))) { Known.Add(TEXT("What a watch learns is carried through the closing, and what it does is undone. A ship might be carried through the same way, and come out wherever the stars had got to by then.")); }
+		if (Has(TEXT("Anchor")))
+		{
+			Known.Add(FString::Printf(TEXT("The stone at the seam is a lock on an old road, of the make of the rings and the standing stones. It calls in five beats (%s) and wants an answer; a wrong one it refuses, and closes the fold hard on the ship that gave it. It could be broken: the fold would let go all at once, a hard blow to a ship not rigged for it; and nothing else of its makers' has ever been found working."), LockCall(M)));
+			if (Has(TEXT("Wary"))) { Known.Add(TEXT("Its call is short and hard: word of the stone that was broken seems to have gone down the road.")); }
+		}
+		if (Has(TEXT("Hull"))) { Known.Add(FString(TEXT("The dead hull. ")) + LockHullClue(LockHullTried(M))); }
+		if (Has(TEXT("Faces"))) { Known.Add(FString(TEXT("The stone's faces. ")) + LockCarvedClue(LockCarvedOut(M))); }
+		for (int32 k = 0; k < 3; ++k) { if (M.Marks.Contains(LockRefusedMark(k))) { Known.Add(LockRefusedLine(k)); } }
+		if (M.Readied.Contains(TEXT("Braced"))) { Known.Add(TEXT("This watch: the forward decks are cleared, and she is rigged for a blow.")); }
+		for (const FString& K : Known) { T += TEXT("\n- ") + K; }
+		return T;
+	}
 	/** A stage at its own place: a Station with no name is any station the ship is alongside. */
 	FMissionStage StageAt(const TCHAR* Title, const FString& Text, EMissionTarget Kind, const FString& Name) { FMissionStage S = Stage(Title, Text, true); S.bOwnTarget = true; S.TargetKind = Kind; S.TargetName = Name; return S; }
 }
 
 FString UMissionSubsystem::KindName(EMissionKind K)
 {
-	static const TCHAR* N[] = { TEXT("Survey"), TEXT("Rescue"), TEXT("Diplomacy"), TEXT("Delivery"), TEXT("Anomaly"), TEXT("Medical"), TEXT("Patrol"), TEXT("Contact"), TEXT("Derelict"), TEXT("Smuggler"), TEXT("Support"), TEXT("Assist"), TEXT("Explore"), TEXT("FirstContact"), TEXT("PreWarp"), TEXT("Beacon"), TEXT("Outpost"), TEXT("Colony"), TEXT("Starbase"), TEXT("Impact") };
+	static const TCHAR* N[] = { TEXT("Survey"), TEXT("Rescue"), TEXT("Diplomacy"), TEXT("Delivery"), TEXT("Anomaly"), TEXT("Medical"), TEXT("Patrol"), TEXT("Contact"), TEXT("Derelict"), TEXT("Smuggler"), TEXT("Support"), TEXT("Assist"), TEXT("Explore"), TEXT("FirstContact"), TEXT("PreWarp"), TEXT("Beacon"), TEXT("Outpost"), TEXT("Colony"), TEXT("Starbase"), TEXT("Impact"), TEXT("TimeLoop") };
 	return (int32)K < (int32)EMissionKind::Count ? N[(int32)K] : TEXT("-");
 }
 FString UMissionSubsystem::SourceName(EMissionSource S) { static const TCHAR* N[] = { TEXT("Starfleet"), TEXT("Starbase"), TEXT("Event"), TEXT("Fleet") }; return (int32)S < 4 ? N[(int32)S] : TEXT("-"); }
@@ -68,7 +148,7 @@ void UMissionSubsystem::Load()
 	{
 		if (const USlonkMissionSaveGame* S = Cast<USlonkMissionSaveGame>(UGameplayStatics::LoadGameFromSlot(SlotName, 0)))
 		{
-			Missions = S->Missions; Inbox = S->Inbox; Standing = S->Standing; NextId = S->NextId; NextOrdersHours = S->NextOrdersHours; NextEventHours = S->NextEventHours; Completed = S->Completed; Failed = S->Failed; BoardDays = S->BoardDays;
+			Missions = S->Missions; Inbox = S->Inbox; Legacy = S->Legacy; DriveColdUntilHours = S->DriveColdUntilHours; Standing = S->Standing; NextId = S->NextId; NextOrdersHours = S->NextOrdersHours; NextEventHours = S->NextEventHours; Completed = S->Completed; Failed = S->Failed; BoardDays = S->BoardDays;
 			for (FMission& M : Missions)
 			{
 				bool bNeedsHull = false; for (int32 i = M.Stage; i < M.Stages.Num(); ++i) { bNeedsHull |= M.Stages[i].bAtTarget; }
@@ -85,7 +165,7 @@ void UMissionSubsystem::Save()
 	if (bNoDisk) { bSaveWanted = false; return; }
 	USlonkMissionSaveGame* S = Cast<USlonkMissionSaveGame>(UGameplayStatics::CreateSaveGameObject(USlonkMissionSaveGame::StaticClass()));
 	if (!S) { return; }
-	S->Missions = Missions; S->Inbox = Inbox; S->Standing = Standing; S->NextId = NextId; S->NextOrdersHours = NextOrdersHours; S->NextEventHours = NextEventHours; S->Completed = Completed; S->Failed = Failed; S->BoardDays = BoardDays;
+	S->Missions = Missions; S->Inbox = Inbox; S->Legacy = Legacy; S->DriveColdUntilHours = DriveColdUntilHours; S->Standing = Standing; S->NextId = NextId; S->NextOrdersHours = NextOrdersHours; S->NextEventHours = NextEventHours; S->Completed = Completed; S->Failed = Failed; S->BoardDays = BoardDays;
 	UGameplayStatics::SaveGameToSlot(S, SlotName, 0);
 	bSaveWanted = false;
 }
@@ -94,7 +174,7 @@ void UMissionSubsystem::Reset()
 {
 	if (!bNoDisk) { UGameplayStatics::DeleteGameInSlot(SlotName, 0); }
 	// NextId runs on: the science log keeps mission/<id> keys.
-	Missions.Reset(); Inbox.Reset(); Standing = 0; Completed = 0; Failed = 0; NextOrdersHours = 0.0; NextEventHours = 0.0; BoardPostedAt.Empty(); BoardDays.Empty();
+	Missions.Reset(); Inbox.Reset(); Legacy.Reset(); DriveColdUntilHours = 0.0; Standing = 0; Completed = 0; Failed = 0; NextOrdersHours = 0.0; NextEventHours = 0.0; BoardPostedAt.Empty(); BoardDays.Empty();
 	if (UFleetSubsystem* F = Fleet()) { F->BoardCleared(); }   // no ship's record points at a mission that is gone
 	for (const TPair<int32, TWeakObjectPtr<ASpaceVessel>>& H : EventHulls) { if (H.Value.IsValid() && !H.Value->IsDying()) { H.Value->Destroy(); } }
 	for (const TWeakObjectPtr<ASpaceVessel>& H : RetiredHulls) { if (H.IsValid() && !H->IsDying()) { H->Destroy(); } }
@@ -214,19 +294,29 @@ const FMission* UMissionSubsystem::Objective() const
 void UMissionSubsystem::AdvanceSeconds(float Seconds, const FMissionShipState& Ship, float RealSeconds)
 {
 	if (RealSeconds < 0.f) { RealSeconds = Seconds; }
+	// (The first look after a load is not the drive being engaged.)
+	const bool bWasAtWarp = LastClockHours < 0.0 ? Ship.bAtWarp : Last.bAtWarp;
 	Last = Ship;
 	if (UFleetSubsystem* F = Fleet())
 	{
 		F->AdvanceSeconds(Seconds, Ship, RealSeconds);
 		TArray<FFleetRequest> Q; F->DrainRequests(Q);
-		for (const FFleetRequest& R : Q) { int32 Calls = 0; for (const FMission& M : Missions) { if (M.IsOpen() && M.Kind == EMissionKind::Support) { ++Calls; } } if (Calls < 2) { IssueFleetMission(R); } }
+		// (No call reaches a ship held in a loop in time, any more than Starfleet's orders do: she could not answer it.)
+		const bool bHeld = IsHeldInTime();
+		for (const FFleetRequest& R : Q) { int32 Calls = 0; for (const FMission& M : Missions) { if (M.IsOpen() && M.Kind == EMissionKind::Support) { ++Calls; } } if (Calls < 2 && !bHeld) { IssueFleetMission(R); } }
 		TArray<FCrewReport> Rep; F->DrainReports(Rep); Reports.Append(Rep);
-		OfferAssists();
+		if (!bHeld) { OfferAssists(); }
 	}
 	const double H = Hours();
 	// The shared clock went back: the schedules keep their distance to now.
-	if (LastClockHours >= 0.0 && H < LastClockHours) { const double Back = LastClockHours - H; NextOrdersHours -= Back; NextEventHours -= Back; }
+	if (LastClockHours >= 0.0 && H < LastClockHours)
+	{
+		const double Back = LastClockHours - H; NextOrdersHours -= Back; NextEventHours -= Back;
+		DriveColdUntilHours -= Back;
+	}
 	LastClockHours = H;
+	// (A clock begun again between sessions does not lengthen the relighting of a cold core.)
+	DriveColdUntilHours = FMath::Min(DriveColdUntilHours, H + 12.0);
 	if (NextOrdersHours <= 0.0) { NextOrdersHours = H + Rng.FRandRange(2.0, 5.0); }
 	if (NextEventHours <= 0.0) { NextEventHours = H + Rng.FRandRange(0.5, 1.5); }
 	// Starfleet's orders come over subspace every several ship's hours while fewer than two of theirs are open.
@@ -234,10 +324,11 @@ void UMissionSubsystem::AdvanceSeconds(float Seconds, const FMissionShipState& S
 	{
 		NextOrdersHours = H + Rng.FRandRange(6.0, 14.0);
 		int32 Theirs = 0; for (const FMission& M : Missions) { if (M.IsOpen() && M.Source == EMissionSource::Starfleet) { ++Theirs; } }
-		if (Theirs < 2) { IssueOrders(); }
+		// (No subspace reaches a ship held in a loop in time: the orders wait for her.)
+		if (Theirs < 2 && !IsHeldInTime()) { IssueOrders(); }
 	}
 	// A starbase's board, once per arrival.
-	if (Ship.bAlongside && !Ship.StationName.IsEmpty() && Ship.StationName != BoardPostedAt) { BoardPostedAt = Ship.StationName; PostBoard(Ship.StationName); }
+	if (Ship.bAlongside && !Ship.StationName.IsEmpty() && Ship.StationName != BoardPostedAt && !IsHeldInTime()) { BoardPostedAt = Ship.StationName; PostBoard(Ship.StationName); }
 	else if (!Ship.bAlongside) { BoardPostedAt.Empty(); }
 	// Space: something happens now and then while under way and not already dealing with one.
 	if (H >= NextEventHours)
@@ -246,8 +337,117 @@ void UMissionSubsystem::AdvanceSeconds(float Seconds, const FMissionShipState& S
 		int32 Events = 0; for (const FMission& M : Missions) { if (M.IsOpen() && M.Source == EMissionSource::Event) { ++Events; } }
 		if (!Ship.bAlongside && !Ship.bUnderFire && !Ship.bAtWarp && Events == 0) { RollEvent(); }
 	}
+	// A cold core does not answer the helm (the ship lets the drive go): Engineering says how long yet.
+	if (Ship.bAtWarp && !bWasAtWarp && IsDriveCold()) { Report(FString::Printf(TEXT("The core is cold, Captain: %.0f hours yet before she will go to warp."), FMath::Max(DriveColdHoursLeft(), 1.0)), FLinearColor(1.f, 0.75f, 0.5f), ECrewDepartment::Engineering); }
+	// A loop in time comes round the moment the ship runs for it at warp. (Its hours are spent by what is done in
+	// them, in Act, and never by the clock; the date the board shows is the one they would run out on.)
+	for (FMission& M : Missions)
+	{
+		if (M.State != EMissionState::Active || M.Kind != EMissionKind::TimeLoop) { continue; }
+		if (Ship.bAtWarp && !bWasAtWarp) { ComeRound(M, TEXT("The ship runs for clear space at warp, and every heading bends back into the fold.")); }
+		if (M.State == EMissionState::Active) { M.DeadlineStardate = Stardate() + M.HoursLeft / 24.0; }
+	}
 	Expire();
 	if (bSaveWanted) { SaveDelaySeconds -= RealSeconds; if (SaveDelaySeconds <= 0.f) { Save(); } }
+}
+
+bool UMissionSubsystem::IsHeldInTime() const
+{
+	for (const FMission& M : Missions) { if (M.State == EMissionState::Active && M.Kind == EMissionKind::TimeLoop) { return true; } }
+	return false;
+}
+
+double UMissionSubsystem::PassHoursLeft(const FMission& M) const
+{
+	return M.State == EMissionState::Active && M.Kind == EMissionKind::TimeLoop ? FMath::Max(M.HoursLeft, 0.0) : 0.0;
+}
+
+void UMissionSubsystem::BeginPass(FMission& M)
+{
+	// The pass has its hours again: the deadline the board and the HUD show is the pass's own.
+	M.HoursLeft = M.PassHours;
+	M.DeadlineStardate = Stardate() + M.PassHours / 24.0;
+}
+
+bool UMissionSubsystem::HasHoursFor(const FMission& M, const FMissionOption& O) const
+{
+	return O.Hours <= 0.f || M.Kind != EMissionKind::TimeLoop || PassHoursLeft(M) + 1.0e-3 >= O.Hours;
+}
+
+void UMissionSubsystem::ComeRound(FMission& M, const FString& How)
+{
+	// What the pass learned it keeps; what it made ready is undone.
+	M.Readied.Reset();
+	++M.Pass; M.Stage = 0;
+	if (!How.IsEmpty()) { M.Log.Add(FString::Printf(TEXT("%.1f  %s"), Stardate(), *How)); }
+	// Twelve passes and no way found: nobody aboard is keeping a watch any longer, and a ship nobody is working is
+	// drift to the lock. Out, with nothing to show for it but the science, and the core gone cold of itself. (No crew
+	// is held for good, whatever its checks.)
+	if (M.Pass >= 12)
+	{
+		M.Exit = TEXT("Worn"); M.Standing = 0;
+		DriveColdUntilHours = Hours() + 12.0;
+		CompleteOutside(M, TEXT("let go, worn out"), TEXT("After twelve passes of the one watch nobody aboard is keeping it. The core gutters untended, and the fold closes on a ship too still to hold: drift, to the lock, and drift goes free."));
+		if (UCrewRosterSubsystem* R = Roster()) { FCrewExperience E; E.Tag = TEXT("Time.Freed"); E.Intensity = 0.3f; E.Text = TEXT("Out of the fold in time, with nothing done to get out"); R->Experience(E); }
+		return;
+	}
+	M.Log.Add(FString::Printf(TEXT("%.1f  The fold closes on the ship. Then it is the forenoon watch again: pass %d."), Stardate(), M.Pass + 1));
+	BeginPass(M);
+	if (M.Stages.Num() > 0) { M.Stages[0].Text = LoopWatchText(M); }
+	// The same report in the same words, every pass; and what the passes have left, after it.
+	Report(FString::Printf(TEXT("%s It is on the mission board, Captain."), *M.Brief), FLinearColor(1.f, 0.85f, 0.5f), ECrewDepartment::Science);
+	if (!M.Marks.Contains(TEXT("Echoes"))) { Report(TEXT("Captain, sickbay has had three of the crew in this watch, each sure of what would be said before it was said."), FLinearColor(0.75f, 0.9f, 1.f), ECrewDepartment::Medical); }
+	// Nobody remembers, and everybody is the wearier for it.
+	if (UCrewRosterSubsystem* R = Roster()) { FCrewExperience E; E.Tag = TEXT("Time.Loop"); E.Intensity = 0.3f; E.Text = TEXT("A watch that felt lived before"); R->Experience(E); }
+	Dirty();
+}
+
+void UMissionSubsystem::LeaveFold(FMission& M, const FMissionOption& O)
+{
+	// Out of the fold: what follows is the way out's own.
+	UCrewRosterSubsystem* R = Roster();
+	auto Felt = [R](const TCHAR* Tag, float Intensity, const FString& Text) { if (R) { FCrewExperience E; E.Tag = Tag; E.Intensity = Intensity; E.Text = Text; R->Experience(E); } };
+	const FLinearColor Good(0.6f, 1.f, 0.6f), Grave(1.f, 0.75f, 0.5f);
+	const int32 Passes = M.Pass + 1;
+	if (M.Exit == FName(TEXT("Answered")))
+	{
+		// The road knows the ship: Science will know the next lock at sight.
+		Legacy.AddUnique(TEXT("Lock.Answered"));
+		Report(FString::Printf(TEXT("The lock stands open astern, Captain, and our mark is on the stone with the others. %d passes of the one watch, by what it left in the log."), Passes), Good, ECrewDepartment::Science);
+		Felt(TEXT("Time.Freed"), 0.6f, TEXT("Through the lock on the old road, by its own leave"));
+	}
+	else if (M.Exit == FName(TEXT("Cold")))
+	{
+		// Dead metal goes free, and is twelve hours in the relighting: no warp until then.
+		DriveColdUntilHours = Hours() + 12.0;
+		Report(FString::Printf(TEXT("We are through, Captain, and dark: %d passes of the one watch behind us. A cold core is twelve hours in the lighting; she has impulse, and nothing more, until then."), Passes), Grave, ECrewDepartment::Engineering);
+		Felt(TEXT("Time.Freed"), 0.5f, TEXT("Out of the fold in time: the watch ended at last"));
+	}
+	else if (M.Exit == FName(TEXT("Broken")))
+	{
+		// The fold lets go all at once: she takes it on her shields and her frame, the less for being rigged for it;
+		// and the road remembers.
+		Legacy.AddUnique(TEXT("Lock.Broken"));
+		const bool bBraced = M.Readied.Contains(TEXT("Braced"));
+		// (The ship's own model of a blow with no place to it: something breaks, and people are hurt.)
+		if (AStarshipPawn* Ship = CrewedShip()) { if (Ship->Systems) { const float Blow = bBraced ? 25.f : 70.f; Ship->Systems->OnHit(Blow, Blow); } }
+		Report(M.Marks.Contains(TEXT("Anchor")) ? TEXT("The stone is dust, Captain. Whatever road it kept has no gate here now; and what else of its makers' was listening, we cannot say.")
+			: TEXT("There is worked stone in the dust, Captain: carved, every piece of it, and older than anything in the catalogue. Whatever that was, somebody made it; and it was working until we came."), Grave, ECrewDepartment::Science);
+		Felt(TEXT("Relic.Broken"), 0.6f, TEXT("The only working thing of a vanished people's, and we broke it to get by"));
+		Felt(TEXT("Time.Freed"), 0.3f, TEXT("Out of the fold in time"));
+	}
+	else if (M.Exit == FName(TEXT("Thrown")))
+	{
+		// Carried through the closing: no hour of the ship's own spent, and the stars days on.
+		const int32 Days = LockDaysThrown(M);
+		if (R) { R->SkipDays(Days); }
+		M.ClosedStardate = Stardate();   // (closed where she came out: the next fold keeps its ten days from there)
+		Legacy.AddUnique(TEXT("Lock.Ridden"));
+		Report(FString::Printf(TEXT("We are clear of it, Captain. By the pulsars it is stardate %.1f: %d days gone between one breath and the next, and everything we were due for with them."), Stardate(), Days), Grave, ECrewDepartment::Science);
+		Felt(TEXT("Time.Lost"), 0.6f, FString::Printf(TEXT("%d days gone that nobody aboard lived"), Days));
+		Save();   // (with the roster's own save of the days: the two files do not disagree about them)
+	}
+	Dirty();
 }
 
 void UMissionSubsystem::Expire()
@@ -255,7 +455,8 @@ void UMissionSubsystem::Expire()
 	const double SD = Stardate();
 	for (FMission& M : Missions)
 	{
-		if (!M.IsOpen() || M.DeadlineStardate <= 0.0 || SD <= M.DeadlineStardate) { continue; }
+		// (A loop in time the ship is in does not run out: it comes round.)
+		if (!M.IsOpen() || M.DeadlineStardate <= 0.0 || SD <= M.DeadlineStardate || (M.Kind == EMissionKind::TimeLoop && M.State == EMissionState::Active)) { continue; }
 		if (M.State == EMissionState::Offered || M.Kind == EMissionKind::Assist)
 		{
 			Close(M, EMissionState::Expired, M.Kind == EMissionKind::Assist ? TEXT("their work went on without us") : TEXT("the offer lapsed"));
@@ -343,6 +544,7 @@ bool UMissionSubsystem::PickTarget(FMission& M, FRandomStream& R)
 		M.TargetKind = EMissionTarget::World; M.TargetName = E->PreWarpWorld; M.Group = FName(*FString::Printf(TEXT("%s people"), *E->PreWarpWorld)); return true;
 	}
 	case EMissionKind::Beacon: M.TargetKind = EMissionTarget::None; return true;   // the signal gives the target when decoded
+	case EMissionKind::TimeLoop: M.TargetKind = EMissionTarget::None; return true;   // it is where the ship is
 	case EMissionKind::Outpost: case EMissionKind::Colony: case EMissionKind::Starbase:
 	{
 		// Somewhere the Federation may found it (the frontier's rules); a colony's order names the world.
@@ -626,6 +828,70 @@ FMission UMissionSubsystem::MakeMission(EMissionKind Kind, EMissionSource Source
 		S1.Options.Add(Opt(TEXT("A party to plant charges on it"), S::Engineering, 60.f, D::Engineering, TEXT("Away.Routine"), TEXT("Away.Danger"), TEXT("The charges are set in a seam and the rock splits clean."), TEXT("The seam gives early; the party is got off, not all of it whole."), -1, 1, false, 0.3f, 120));
 		M.Stages = { S0, S1 }; break;
 	}
+	case EMissionKind::TimeLoop:
+	{
+		// A fold in time: a lock left on an old road by the people who raised the rings and the standing stones. It
+		// holds a ship with a live drive in one closed watch, which comes round until she is got out of it; and there
+		// are four ways out, each with its own price (LeaveFold): answer the stone, go through it cold, break it, or
+		// ride the closing and be thrown days on. One stage; an option costs hours of the watch; what it teaches is
+		// kept from pass to pass (Marks), what it makes ready is not (Readied). The stone takes one answer of three,
+		// another in every fold (Secret): the dead hull and the stone's faces each rule one out, and a wrong answer
+		// costs the pass, an hour of every pass after, and a blow to the ship. The twelfth pass is the last (ComeRound).
+		M.Title = TEXT("A fold in time"); M.Standing = 40; M.TargetKind = EMissionTarget::None; M.PassHours = 5.0;
+		M.Secret = R.RandRange(0, (1 << 20) - 1);
+		M.Brief = TEXT("The chronometers have fallen out with the stars: every clock aboard agrees with every other, and none with the pulsars. Science reports a fold in space across the course, closing on the ship. Five hours, at the rate it is going.");
+		// What the ship's earlier folds left: one answered, and Science knows the next at sight; one broken, and the
+		// next stone is the harder to satisfy.
+		const bool bWary = Remembers(TEXT("Lock.Broken"));
+		if (Remembers(TEXT("Lock.Answered"))) { M.Marks.Add(TEXT("Met")); M.Marks.Add(TEXT("Curve")); M.Marks.Add(TEXT("Anchor")); }
+		if (bWary) { M.Marks.Add(TEXT("Wary")); }
+		FMissionOption Scan = Opt(TEXT("Close in and scan the fold"), S::Science, 55.f, D::Science, TEXT("Discovery"), TEXT(""), TEXT("It is a closed curve: space and time bent round to meet themselves, and the ship inside. It has her by the drive's own field, and when it closes the field is what it will tear. There is other metal in the fold, cold and old; and at the seam a hard point the whole of it hangs from, like a net from a float."), TEXT("The sensors return the ship's own echo and nothing else."), 0, 0, false, 0.f, 150);
+		Scan.Hours = 2.f; Scan.GivesMark = TEXT("Curve");
+		FMissionOption Hail = Opt(TEXT("Hail Starfleet"), S::Operations, 35.f, D::Operations, TEXT(""), TEXT(""), TEXT("The hail comes back to the ship an hour before it was sent, in the communications officer's own voice."), TEXT("No answer, on any band."), 0, 0, false, 0.f, 30);
+		Hail.Hours = 1.f; Hail.GivesMark = TEXT("Hailed");
+		FMissionOption Doctor = Opt(TEXT("Ask the doctor what ails them"), S::Medicine, 55.f, D::Medical, TEXT(""), TEXT(""), TEXT("It is not memory, the doctor says. It is an echo: what a watch learns is carried into the next, in the hands more than the head. And if the fold carries that through its closing, it might carry a ship."), TEXT("Fatigue, the doctor says, and prescribes sleep."), 0, 0, false, 0.f, 60);
+		Doctor.Hours = 1.f; Doctor.MinPass = 1; Doctor.GivesMark = TEXT("Echoes");
+		FMissionOption Probe = Opt(TEXT("Send a probe to the hard point"), S::Science, 70.f, D::Science, TEXT("Discovery"), TEXT(""), TEXT(""), TEXT("The probe's track bends away from the seam, and it is lost."), 0, 0, false, 0.f, 120);
+		Probe.SuccessText = FString::Printf(TEXT("A stone the size of a shuttle, worked on every face and older than anything in the catalogue: the same hands raised the rings and the standing stones. The fold hangs from it. It is a lock on an old road, and it is calling, five beats over and over: %s. It wants an answer."), LockCall(M));
+		Probe.Hours = 3.f; Probe.NeedsMark = TEXT("Curve"); Probe.GivesMark = TEXT("Anchor");
+		FMissionOption Hull = Opt(TEXT("Board the dead hull"), S::Science, 65.f, D::Science, TEXT("Away.Routine"), TEXT("Away.Danger"), TEXT(""), TEXT("Every hatch is sealed from within, and the party's air runs short before one is cut. They are brought back with nothing."), 0, 0, false, 0.2f, 80);
+		Hull.SuccessText = FString::Printf(TEXT("Another people's ship, of no make in the catalogue, held here as we are and long dead in it. %s"), LockHullClue(LockHullTried(M)));
+		Hull.Hours = 2.f; Hull.NeedsMark = TEXT("Curve"); Hull.GivesMark = TEXT("Hull");
+		FMissionOption Faces = Opt(TEXT("Read the stone's faces"), S::Science, 75.f, D::Science, TEXT("Discovery"), TEXT(""), LockCarvedClue(LockCarvedOut(M)), TEXT("The marks will not resolve at this range before the hours given to them are gone."), 0, 0, false, 0.f, 100);
+		Faces.Hours = 2.f; Faces.NeedsMark = TEXT("Anchor"); Faces.GivesMark = TEXT("Faces");
+		FMissionOption Brace = Opt(TEXT("Clear the forward decks and rig for a blow"), S::Security, 35.f, D::Security, TEXT(""), TEXT(""), TEXT("The forward sections are cleared and every hand is at a brace. It is to do again if the watch comes round."), TEXT("The drill goes badly: sections report late, and not all of them."), 0, 0, false, 0.f);
+		Brace.Hours = 1.f; Brace.NeedsMark = TEXT("Curve"); Brace.MakesReady = TEXT("Braced");
+		FMissionOption Cold = Opt(TEXT("Shut the warp core down cold"), S::Engineering, 65.f, D::Engineering, TEXT(""), TEXT(""), TEXT("With the core cold there is no field for the fold to grip. It closes on dead metal and goes through her like weather: to the lock she is drift, and drift goes free."), TEXT("The core will not go cold in the hours given to it."), -1, 0, false, 0.f, 60);
+		Cold.Hours = 4.f; Cold.NeedsMark = TEXT("Curve"); Cold.Exit = TEXT("Cold"); Cold.ExitStanding = 35;
+		// (Breaking it needs nothing known but where it is: the quickest way out, and the one taken blind.)
+		FMissionOption Break = Opt(TEXT("Torpedo the hard point"), S::Tactical, 75.f, D::Security, TEXT(""), TEXT(""), TEXT("The hard point breaks. The fold lets go all at once and throws the ship clear like a shot from a sling; astern there is dust, and nothing holding anything."), TEXT("The spread bursts short: the fold bends its track away from the seam."), -1, 0, false, 0.2f);
+		Break.Hours = 1.f; Break.NeedsMark = TEXT("Curve"); Break.Exit = TEXT("Broken"); Break.ExitStanding = 20; Break.SaferWhenReady = TEXT("Braced");
+		FMissionOption Ride = Opt(TEXT("Ride the closing through"), S::Helm, 85.f, D::Helm, TEXT("Discovery"), TEXT(""), TEXT("She holds the fold's own pitch as it closes, and is carried through the closing as the echoes are: out, clear, and no hour of her own spent. The stars' hours are another matter."), TEXT("She slips off the pitch, and the closing takes her as it did before."), -1, 0, false, 0.25f, 150);
+		Ride.Hours = 1.f; Ride.NeedsMark = TEXT("Curve"); Ride.NeedsMark2 = TEXT("Echoes"); Ride.Exit = TEXT("Thrown"); Ride.ExitStanding = 30; Ride.bFailEndsPass = true; Ride.SaferWhenReady = TEXT("Braced");
+		FMissionOption Run = Opt(TEXT("Come about and run for clear space"), S::Helm, 40.f, D::Helm, TEXT(""), TEXT(""), TEXT("The helm steers a straight line and the stars draw it into a circle: every heading bends back to the same place. Then the fold closes."), TEXT("She runs, and the fold runs with her. Then it closes."), 0, 0, false, 0.f);
+		// (An order, not an attempt: there is no check in it, and nothing to be got by repeating it.)
+		Run.bSure = true; Run.bSuccessEndsPass = true; Run.bFailEndsPass = true;
+		FMissionStage S0 = Stage(TEXT("The forenoon watch"), FString(), false);
+		S0.Options = { Scan, Hail, Doctor, Probe, Hull, Faces };
+		// The three answers: one is the stone's; the others are refused whoever sends them, and are known for it after.
+		for (int32 k = 0; k < 3; ++k)
+		{
+			FMissionOption Answer = Opt(LockAnswerText(k), S::Operations, bWary ? 95.f : 80.f, D::Operations, TEXT("Discovery"), TEXT(""), TEXT("The stone takes the answer. The fold opens along its seam like a lock gate, and the road beyond it is clear."), TEXT("The answer goes out ragged, out of time with the call. The stone waits: it has not refused."), -1, 0, false, 0.f, 250);
+			Answer.Hours = 1.f; Answer.NeedsMark = TEXT("Anchor"); Answer.NotIfMark = LockRefusedMark(k); Answer.Exit = TEXT("Answered"); Answer.ExitStanding = 50;
+			Answer.WrongBlow = 25.f; Answer.SaferWhenReady = TEXT("Braced");
+			if (k != LockAnswer(M))
+			{
+				// (Everything the board shows of it is as the right one's: only the stone knows the difference.)
+				Answer.bWrong = true; Answer.FailText = TEXT("The stone goes dark: refused. The fold closes at once, and harder than before.");
+				Answer.FailGivesMark = LockRefusedMark(k); Answer.bFailEndsPass = true; Answer.FailShortensPass = 1.f;
+			}
+			S0.Options.Add(Answer);
+		}
+		S0.Options.Append({ Brace, Cold, Break, Ride, Run });
+		M.Stages = { S0 };
+		M.Stages[0].Text = LoopWatchText(M);
+		break;
+	}
 	default: break;
 	}
 	return M;
@@ -732,6 +998,9 @@ void UMissionSubsystem::AfterOption(FMission& M, const FMissionOption& O, bool b
 		if (bOver && bSucceeded) { FString Why; F->Commission(M.TargetName, Why); }
 		break;
 	}
+	case EMissionKind::TimeLoop:
+		if (bOver && bSucceeded) { LeaveFold(M, O); }
+		break;
 	case EMissionKind::Impact:
 	{
 		if (M.Stage == 1 && !bOver && bSuccess && O.Skill == ECrewSkill::Operations) { M.bEvacuated = true; }
@@ -790,13 +1059,20 @@ void UMissionSubsystem::RollEvent()
 	const EMissionKind Kind = X < 0.3f ? EMissionKind::Anomaly : X < 0.55f ? EMissionKind::Rescue : X < 0.75f ? EMissionKind::Derelict : X < 0.92f ? EMissionKind::Smuggler : EMissionKind::Contact;
 	// Where there is a world with people on it, one time in six the sky throws something at it.
 	FMission M; M.Id = -1;
-	if (R.FRand() < 0.17f) { M = MakeMission(EMissionKind::Impact, EMissionSource::Event, R); }
+	// Once in a long while the ship runs into a fold in time: one event in sixteen, and none within ten days of the
+	// last. (A draw of its own, off the event's seed, so every other event falls as it did before there were any.)
+	FRandomStream Odd((int32)HashCombine((uint32)R.GetInitialSeed(), 0x7f4a7c15u));
+	bool bLoopLately = false;
+	for (const FMission& Was : Missions) { bLoopLately |= Was.Kind == EMissionKind::TimeLoop && (Was.IsOpen() || Was.ClosedStardate > Stardate() - 10.0); }
+	if (Odd.FRand() < 0.0625f && !bLoopLately) { M = MakeMission(EMissionKind::TimeLoop, EMissionSource::Event, R); }
+	else if (R.FRand() < 0.17f) { M = MakeMission(EMissionKind::Impact, EMissionSource::Event, R); }
 	if (M.Id < 0) { M = MakeMission(Kind, EMissionSource::Event, R); }
 	M.State = EMissionState::Active; if (M.Kind != EMissionKind::Impact) { M.DeadlineStardate = Stardate() + 1.0; }
 	M.Log.Add(FString::Printf(TEXT("%.1f  %s"), Stardate(), *M.Brief));
 	Place(M);
 	Missions.Add(M);
-	Report(FString::Printf(TEXT("%s. It is on the mission board, Captain."), *M.Brief), FLinearColor(1.f, 0.85f, 0.5f), M.Kind == EMissionKind::Anomaly || M.Kind == EMissionKind::Contact || M.Kind == EMissionKind::Impact ? ECrewDepartment::Science : ECrewDepartment::Operations);
+	Report(FString::Printf(TEXT("%s It is on the mission board, Captain."), *M.Brief), FLinearColor(1.f, 0.85f, 0.5f),
+		M.Kind == EMissionKind::Anomaly || M.Kind == EMissionKind::Contact || M.Kind == EMissionKind::Impact || M.Kind == EMissionKind::TimeLoop ? ECrewDepartment::Science : ECrewDepartment::Operations);
 	Dirty();
 }
 
@@ -804,6 +1080,7 @@ void UMissionSubsystem::Place(FMission& M)
 {
 	if (M.TargetKind == EMissionTarget::Vessel && M.Source == EMissionSource::Event) { SpawnEventVessel(M, M.TargetName); }
 	if (M.Kind == EMissionKind::Impact) { SpawnImpactor(M, M.ImpactHours); }
+	if (M.Kind == EMissionKind::TimeLoop && M.State == EMissionState::Active) { BeginPass(M); }
 }
 
 bool UMissionSubsystem::HasOpenExpansion(EMissionKind Kind, const FString& System) const
@@ -1089,6 +1366,7 @@ bool UMissionSubsystem::Accept(int32 Id, FString& OutReply)
 		if (M.Id != Id) { continue; }
 		if (M.State != EMissionState::Offered) { OutReply = FString::Printf(TEXT("%s is %s"), *M.Title, *StateName(M.State).ToLower()); return false; }
 		M.State = EMissionState::Active;
+		if (M.Kind == EMissionKind::TimeLoop) { BeginPass(M); }
 		M.Log.Add(FString::Printf(TEXT("%.1f  Accepted%s."), Stardate(), M.Source == EMissionSource::Starbase ? *(TEXT(" at ") + M.PostedAt) : TEXT("")));
 		for (FStarfleetMessage& Msg : Inbox) { if (Msg.MissionId == Id) { Msg.bRead = true; } }
 		OutReply = FString::Printf(TEXT("%s accepted%s"), *M.Title, M.TargetName.IsEmpty() ? TEXT("") : *FString::Printf(TEXT("; make for %s"), *M.TargetName));
@@ -1104,6 +1382,7 @@ bool UMissionSubsystem::Abandon(int32 Id, FString& OutReply)
 	{
 		if (M.Id != Id) { continue; }
 		if (!M.IsOpen()) { OutReply = FString::Printf(TEXT("%s is already %s"), *M.Title, *StateName(M.State).ToLower()); return false; }
+		if (M.Kind == EMissionKind::TimeLoop && M.State == EMissionState::Active) { OutReply = TEXT("There is nowhere to leave it for: the fold is all round the ship"); return false; }
 		const bool bWasActive = M.State == EMissionState::Active;
 		Close(M, EMissionState::Abandoned, TEXT("by the captain's decision"));
 		if (bWasActive && M.Source != EMissionSource::Event) { Standing -= M.Standing / 2; ++Failed; }
@@ -1203,6 +1482,13 @@ bool UMissionSubsystem::Act(int32 Id, int32 Option, FMissionOutcome& Out, FStrin
 	UCrewRosterSubsystem* R = Roster();
 	if (!R) { OutReply = TEXT("No crew"); return false; }
 	const FMissionOption O = St->Options[Option];
+	if (!M.Offers(O))
+	{
+		OutReply = M.Learned(O) ? TEXT("That is known already: it is in the watch's report") : M.Closed(O) ? TEXT("That way is closed: it was tried, and refused")
+			: M.Done(O) ? TEXT("That is done already, this watch") : TEXT("Nobody aboard knows to try that yet");
+		return false;
+	}
+	if (!HasHoursFor(M, O)) { OutReply = FString::Printf(TEXT("There is not the time left in this watch: it wants %.0f hours, and the fold closes in %.1f"), O.Hours, PassHoursLeft(M)); return false; }
 	if (O.bNeedsSurvey)
 	{
 		const UScienceLogSubsystem* L = GetGameInstance() ? GetGameInstance()->GetSubsystem<UScienceLogSubsystem>() : nullptr;
@@ -1223,6 +1509,9 @@ bool UMissionSubsystem::Act(int32 Id, int32 Option, FMissionOutcome& Out, FStrin
 	// The work already done is not rolled for: a survey on file, a station built, carry without a check.
 	FCrewCheck C;
 	if (O.bNeedsSurvey || O.bNeedsWorks) { C.bSuccess = true; C.Margin = 100.f; C.BestId = Party[0]; C.Summary = O.bNeedsSurvey ? TEXT("the survey on file") : TEXT("the works complete"); }
+	// (A wrong guess is wrong whoever makes it; and what is only an order given is carried as given.)
+	else if (O.bWrong) { C.bSuccess = false; C.Margin = -100.f; C.BestId = Party[0]; C.Summary = TEXT("Sent true, and in time. It was not the answer"); }
+	else if (O.bSure) { C.bSuccess = true; C.Margin = 100.f; C.BestId = Party[0]; C.Summary = TEXT("Done as ordered"); }
 	else { C = R->Check(O.Skill, O.Difficulty, Party, 0.f, M.Group); }
 	Out.bSuccess = C.bSuccess; Out.CheckSummary = C.Summary; Out.Text = C.bSuccess ? O.SuccessText : O.FailText;
 	M.Log.Add(FString::Printf(TEXT("%.1f  %s: %s %s"), Stardate(), *St->Title, *O.Text, C.bSuccess ? TEXT("- carried.") : TEXT("- failed.")));
@@ -1235,8 +1524,37 @@ bool UMissionSubsystem::Act(int32 Id, int32 Option, FMissionOutcome& Out, FStrin
 		E.Text = FString::Printf(TEXT("%s: %s"), *M.Title, *Out.Text);
 		R->Experience(E);
 	}
-	if (!C.bSuccess) { Hurt(M, Party, O.Risk); }
+	if (!C.bSuccess) { Hurt(M, Party, O.Risk * (!O.SaferWhenReady.IsNone() && M.Readied.Contains(O.SaferWhenReady) ? 0.33f : 1.f)); }
+	// The hours it took are lived, carried or not: the stardate moves, and a pass has that much less of itself.
+	if (O.Hours > 0.f) { R->LiveHours(FMath::RoundToInt(O.Hours)); M.HoursLeft = FMath::Max(M.HoursLeft - O.Hours, 0.0); }
+	// A wrong guess can be a blow to the ship, the less for her being rigged for one (her own model of a blow with
+	// no place to it: something breaks, and people are hurt).
+	if (!C.bSuccess && O.bWrong && O.WrongBlow > 0.f)
+	{
+		if (AStarshipPawn* Struck = CrewedShip()) { if (Struck->Systems) { const float Blow = O.WrongBlow * (!O.SaferWhenReady.IsNone() && M.Readied.Contains(O.SaferWhenReady) ? 0.33f : 1.f); Struck->Systems->OnHit(Blow, Blow); } }
+	}
+	// What the mission learns it keeps (and is not offered again, so its science is earned the once); what it makes
+	// ready lasts the pass; and a failure can teach too, or cost every pass after it.
 	if (C.bSuccess && O.Science > 0) { M.ScienceEarned += O.Science; }
+	if (C.bSuccess && !O.GivesMark.IsNone()) { M.Marks.AddUnique(O.GivesMark); }
+	if (C.bSuccess && !O.MakesReady.IsNone()) { M.Readied.AddUnique(O.MakesReady); }
+	if (!C.bSuccess && !O.FailGivesMark.IsNone()) { M.Marks.AddUnique(O.FailGivesMark); }
+	if (!C.bSuccess && O.FailShortensPass > 0.f) { M.PassHours = FMath::Max(3.0, M.PassHours - O.FailShortensPass); }
+	// A loop in time: the outcome may end the pass, and so do its hours, spent, unless this was the way out; then
+	// the watch begins again.
+	if (M.Kind == EMissionKind::TimeLoop)
+	{
+		const bool bWayOut = (C.bSuccess ? O.NextOnSuccess : O.NextOnFail) < 0;
+		const bool bEndsPass = C.bSuccess ? O.bSuccessEndsPass : O.bFailEndsPass;
+		if (bEndsPass || (!bWayOut && PassHoursLeft(M) <= 1.0e-3))
+		{
+			ComeRound(M, bEndsPass ? FString() : FString(TEXT("The watch's hours are spent.")));
+			Out.bMissionOver = !M.IsOpen(); OutReply = Out.Text;   // (the twelfth pass is the last: ComeRound)
+			Dirty();
+			return true;
+		}
+		if (M.Stages.Num() > 0) { M.Stages[0].Text = LoopWatchText(M); }
+	}
 	// Onward, or the end.
 	const int32 Next = C.bSuccess ? O.NextOnSuccess : O.NextOnFail;
 	if (Next >= 0 && M.Stages.IsValidIndex(Next)) { M.Stage = Next; Out.bMissionOver = false; AfterOption(M, O, C.bSuccess, false, true); Out.bMissionOver = !M.IsOpen(); }
@@ -1246,6 +1564,11 @@ bool UMissionSubsystem::Act(int32 Id, int32 Option, FMissionOutcome& Out, FStrin
 		Out.bMissionOver = true;
 		if (bSucceeded)
 		{
+			// The way out that was taken, and Starfleet's regard for it; a loop left in few passes is the better
+			// seamanship.
+			M.Exit = O.Exit;
+			if (O.ExitStanding > 0) { M.Standing = O.ExitStanding; }
+			if (M.Kind == EMissionKind::TimeLoop) { M.Standing = FMath::Max(10, M.Standing - 3 * M.Pass); }
 			Close(M, EMissionState::Completed, C.bSuccess ? TEXT("carried through") : TEXT("done, though not well"));
 			Standing += C.bSuccess ? M.Standing : M.Standing / 3; ++Completed;
 			PayScience(M, Out.Text);
