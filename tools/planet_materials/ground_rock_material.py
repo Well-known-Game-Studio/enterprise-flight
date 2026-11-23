@@ -11,8 +11,10 @@ SlonkScatter::ScatterChunk:
     8   the canyon-wall bed the rock fell from (-1 for none), coloured with the terrain material's own hash so the
         two agree on the GPU
     9   how much of the bed's colour it wears
-The normal is perturbed in the scaled rock frame and handed to a Local to World transform divided by the scale, so
-it comes out right on a squashed slab. IceColor is set per planet by the terrain component.
+The normal is perturbed in the scaled rock frame and handed to an Instance to World transform divided by the scale, so
+it comes out right on a squashed slab. (Instance, not Local: in a pixel shader Local to World is the whole instanced
+set's transform, which knows nothing of how each rock is turned, and every rock and landmark was lit as if it lay
+square to the planet's own axes.) IceColor is set per planet by the terrain component.
 
 Run with the editor open and no play session:  python3 tools/planet_materials/ground_rock_material.py
 """
@@ -60,7 +62,7 @@ col *= detail;
 // Snow lies on the faces that look up (the rock's z is near the ground's up), patchy with the texture.
 float snow = Snow * smoothstep(0.35, 0.75, n.z + 0.15 * (bc.r / mean.r - 1.0));
 col = lerp(col, IceColor, snow);
-// Out in the scaled frame divided by the scale, for the Local to World transform that follows to undo.
+// Out in the scaled frame divided by the scale, for the Instance to World transform that follows to undo.
 Nrm = lerp(nl, n, snow * 0.7) / sz;
 Rough = lerp(nr.a, 0.55, snow);
 AO = lerp(nr.b, 1.0, snow * 0.5);
@@ -86,8 +88,8 @@ def build():
         asset = f"T_Cliff_{kind}"
         t = g.node("TextureObjectParameter", {"ParameterName": f"Cliff{kind}", "Texture": {"refPath": f"{TEX_FOLDER}/{asset}.{asset}"}})
         g.c(t, e, f"Cliff{kind}")
-    # The normal from the rock's frame to the world's, then unit length again.
-    tr = g.node("Transform", {"TransformSourceType": "TRANSFORMSOURCE_Local", "TransformType": "TRANSFORM_World"})
+    # The normal from the rock's own frame (its instance's, not its set's) to the world's, then unit length again.
+    tr = g.node("Transform", {"TransformSourceType": "TRANSFORMSOURCE_Instance", "TransformType": "TRANSFORM_World"})
     g.c(e, tr, "", "Nrm")
     nn = g.un("Normalize", tr)
     g.out(e, "MP_BaseColor")
