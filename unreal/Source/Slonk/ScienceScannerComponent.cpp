@@ -478,6 +478,8 @@ void UScienceScannerComponent::FactsForWorld(const APlanetBody* P, FScanRecord& 
 		if (S.CraterStrength > 0.3f) { Surface.Add(TEXT("heavily cratered")); }
 		if (S.MariaStrength > 0.3f) { Surface.Add(TEXT("basaltic maria")); }
 		if (S.Lineae > 0.05f) { Surface.Add(TEXT("surface lineae")); }
+		// A strange world's own geology, as its terrain has it (EGeology): crystal fields, spire forests and the rest.
+		if (TP.Geology != EGeology::None) { Surface.Add(SlonkGenome::GeologyName((uint8)TP.Geology)); }
 		if (Surface.Num() > 0) { R.Facts.Add(TEXT("Surface: ") + FString::Join(Surface, TEXT(", "))); }
 		if (bLocked)
 		{

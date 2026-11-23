@@ -79,6 +79,8 @@ FWorldGenome SlonkGenome::Roll(EPlanetArchetype Type, float Strangeness, uint32 
 	const float HazeDraw = R.FRand(), HazeKm = R.FRand(), HazeAmount = R.FRand(), HazeHue = R.FRand(), HazeSat = R.FRand();
 	const float SkyPale = R.FRand();
 	const float LockDraw = R.FRand(), DayDraw = R.FRand(), TermDraw = R.FRand(), NightDraw = R.FRand(), WarmDraw = R.FRand();
+	// The geology's, after the climate's: everything before them rolls as it did.
+	const float GeoDraw = R.FRand(), GeoKind = R.FRand(), GeoAmount = R.FRand();
 
 	// The seas: a world with water swaps it for another solvent more often the stranger it is. An ice world's cold
 	// keeps methane and ammonia liquid; a temperate one's may be any of them.
@@ -116,7 +118,98 @@ FWorldGenome SlonkGenome::Roll(EPlanetArchetype Type, float Strangeness, uint32 
 		G.NightCold = FMath::Lerp(0.2f, 0.6f, NightDraw);
 		G.WarmthN = S * FMath::Lerp(-0.12f, 0.12f, WarmDraw);
 	}
+	// Its ground: three strange worlds in four, from a quarter strange up, have a geology of their own, of a kind their
+	// archetype's ground can make. None to 0.15, as with what grows there.
+	const float GeoChance = 0.75f * FMath::SmoothStep(0.15f, 0.7f, S);
+	if (GeoDraw < GeoChance)
+	{
+		EGeology Kind = EGeology::None;
+		switch (Type)
+		{
+		case EPlanetArchetype::Terrestrial: Kind = GeoKind < 0.3f ? EGeology::Terraces : GeoKind < 0.55f ? EGeology::Crystals : GeoKind < 0.8f ? EGeology::Spires : GeoKind < 0.9f ? EGeology::Polygons : EGeology::Glass; break;
+		case EPlanetArchetype::Ocean: Kind = GeoKind < 0.5f ? EGeology::Terraces : GeoKind < 0.8f ? EGeology::Crystals : EGeology::Spires; break;
+		case EPlanetArchetype::Desert: Kind = GeoKind < 0.3f ? EGeology::Polygons : GeoKind < 0.6f ? EGeology::Spires : GeoKind < 0.8f ? EGeology::Glass : EGeology::Crystals; break;
+		case EPlanetArchetype::Ice: Kind = GeoKind < 0.5f ? EGeology::Polygons : EGeology::Crystals; break;
+		case EPlanetArchetype::Mars: Kind = GeoKind < 0.3f ? EGeology::Polygons : GeoKind < 0.6f ? EGeology::Glass : GeoKind < 0.8f ? EGeology::Spires : EGeology::Crystals; break;
+		case EPlanetArchetype::Venus: Kind = GeoKind < 0.5f ? EGeology::Glass : GeoKind < 0.8f ? EGeology::Crystals : EGeology::Spires; break;
+		case EPlanetArchetype::Lava: Kind = GeoKind < 0.6f ? EGeology::Glass : EGeology::Crystals; break;
+		default: break;
+		}
+		if (Kind != EGeology::None)
+		{
+			G.Geology = (uint8)Kind;
+			G.GeologyStrength = FMath::Lerp(0.5f, 1.f, GeoAmount);
+		}
+	}
 	return G;
+}
+
+void SlonkGenome::ApplyGeology(const FWorldGenome& G, FPlanetTerrainParams& P)
+{
+	if (G.Strangeness <= 0.f || G.Geology == 0 || G.Geology >= (uint8)EGeology::Count || P.Lineae > 0.f) { return; }
+	P.Geology = (EGeology)G.Geology;
+	P.GeoStrength = G.GeologyStrength;
+}
+
+const TCHAR* SlonkGenome::GeologyName(uint8 Geology)
+{
+	switch ((EGeology)Geology)
+	{
+	case EGeology::Crystals: return TEXT("crystal fields");
+	case EGeology::Polygons: return TEXT("polygon pans");
+	case EGeology::Terraces: return TEXT("terraced pools");
+	case EGeology::Spires: return TEXT("spire forests");
+	case EGeology::Glass: return TEXT("glass plains");
+	default: return TEXT("none");
+	}
+}
+
+void SlonkGenome::GeologyColors(const FWorldGenome& G, const FPlanetStyle& S, FLinearColor& OutA, FLinearColor& OutB)
+{
+	OutA = FLinearColor(0.5f, 0.5f, 0.5f);
+	OutB = FLinearColor(0.2f, 0.2f, 0.2f);
+	switch ((EGeology)G.Geology)
+	{
+	case EGeology::Crystals:
+	{
+		// Half way round the wheel from the world's sky, so a field stands out under it: clear and bright on its lit
+		// faces, deep on the others.
+		FLinearColor Hsv = S.AtmosphereColor.LinearRGBToHSV();
+		Hsv.R = FMath::Fmod(Hsv.R + 150.f + 60.f * G.GeologyStrength, 360.f);
+		Hsv.G = 0.55f;
+		Hsv.B = 0.62f;
+		OutA = Hsv.HSVToLinearRGB();
+		OutB = OutA * 0.3f;
+		break;
+	}
+	case EGeology::Polygons:
+		// Salt over the dry ground's own colour, or the world's ice; the cracks the ground showing through.
+		OutA = S.IceCapStart < 1.5f && S.LandColor.B > S.LandColor.R ? S.IceColor * 0.92f : FMath::Lerp(S.LandColor2, FLinearColor(0.86f, 0.84f, 0.78f), 0.75f);
+		OutB = FMath::Lerp(S.LandColor2, S.MountainColor, 0.5f) * 0.5f;
+		break;
+	case EGeology::Terraces:
+	{
+		// Pale mineral stone, and the world's own liquid standing clear in the pools: its shallows' hue, no duller
+		// than half saturated and neither black nor washed out.
+		OutA = FMath::Lerp(S.MountainColor, FLinearColor(0.84f, 0.8f, 0.68f), 0.7f);
+		FLinearColor Hsv = S.ShallowColor.LinearRGBToHSV();
+		Hsv.G = FMath::Max(Hsv.G, 0.5f);
+		Hsv.B = FMath::Clamp(Hsv.B, 0.3f, 0.75f);
+		OutB = Hsv.HSVToLinearRGB();
+		break;
+	}
+	case EGeology::Spires:
+		OutA = S.MountainColor * FLinearColor(1.25f, 0.9f, 0.68f);
+		OutB = S.MountainColor * FLinearColor(0.62f, 0.48f, 0.42f);
+		break;
+	case EGeology::Glass:
+		OutA = FMath::Lerp(FLinearColor(0.02f, 0.02f, 0.025f), S.MountainColor, 0.12f);
+		OutB = FLinearColor(0.34f, 0.36f, 0.38f);
+		break;
+	default: break;
+	}
+	OutA.A = 1.f;
+	OutB.A = 1.f;
 }
 
 void SlonkGenome::SettleLock(FWorldGenome& G, EPlanetArchetype Type, const FVector& StarBearing, bool bForce)
@@ -260,5 +353,6 @@ FString SlonkGenome::Describe(const FWorldGenome& G)
 	if (G.LowHazeKm > 0.f) { Out += FString::Printf(TEXT(", lowland haze %.1f km (+%.2f, tint %.2f %.2f %.2f)"), G.LowHazeKm, G.LowHazeDensity, G.HazeTint.R, G.HazeTint.G, G.HazeTint.B); }
 	if (G.bTidallyLocked) { Out += FString::Printf(TEXT(", tidally locked (day x%.2f, terminator x%.2f, night %.2f below freezing)"), G.DayHeat, G.TermHeat, G.NightCold); }
 	else if (G.WarmthN != 0.f) { Out += FString::Printf(TEXT(", %s by %.3f of the liquid range"), G.WarmthN > 0.f ? TEXT("warmer") : TEXT("colder"), FMath::Abs(G.WarmthN)); }
+	if (G.Geology != 0) { Out += FString::Printf(TEXT(", %s over %.0f%% strength"), GeologyName(G.Geology), G.GeologyStrength * 100.f); }
 	return Out;
 }

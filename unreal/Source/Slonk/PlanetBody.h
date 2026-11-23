@@ -271,6 +271,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (ClampMin = "0", ClampMax = "1")) float TidalPull = 0.f;
 	/** Debug: lock a strange world with a climate to its star whatever its roll (it still needs a StarBearing). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet") bool bForceTidalLock = false;
+	/** For debug (ship spawnplanet ... geology <kind>): the geology a strange world has whatever its genome rolled (an
+	 *  EGeology, PlanetTerrain.h); 0 leaves it the genome's. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet") uint8 ForcedGeology = 0;
 	/** Whether the tides hold this world's face to its star: it does not turn, and its climate is laid about the star. */
 	bool IsTidallyLocked() const { return Genome.bTidallyLocked; }
 

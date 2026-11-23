@@ -271,6 +271,7 @@ namespace
 		SlonkScatter::FSpot Sp;
 		Sp.Slope = T.Slope; Sp.Rock = T.Rock; Sp.Wet = T.Wet; Sp.Ice = T.Ice; Sp.Canyon = T.Canyon; Sp.Wall = T.Wall;
 		Sp.Crater = T.Crater; Sp.Table = T.Table; Sp.River = T.River; Sp.HeightCm = T.HeightCm; Sp.Stratum = T.Stratum;
+		Sp.Geo = T.Geo;
 		Sp.Up = Up; Sp.Nt = Up; Sp.Pt = Up * (P.RadiusCm + T.HeightCm);
 		// The regimes from the slope, as SpotAt has them.
 		Sp.Cliff = SmoothStep(0.7, 1.3, Sp.Slope);
@@ -292,7 +293,8 @@ namespace
 	double MoteDensityOf(const FPlanetTerrainParams& P, const SlonkScatter::FSpot& Sp)
 	{
 		using SlonkScatter::SmoothStep;
-		if (Sp.River > 0.15 || Sp.Cliff > 0.3) { return 0.0; }
+		// None over a strange world's own geology, where nothing grows for them to rise from.
+		if (Sp.River > 0.15 || Sp.Cliff > 0.3 || Sp.Geo > 0.25) { return 0.0; }
 		const double Base = SmoothStep(0.25, 0.6, Sp.Wet) * Sp.Flat * (1.0 - SmoothStep(0.05, 0.35, Sp.Ice));
 		if (Base <= 0.0) { return 0.0; }
 		const SlonkScatter::FClimate Clim = SlonkScatter::ClimateAt(P, Sp);
@@ -324,6 +326,7 @@ SlonkScatter::FHabitat SlonkScatter::HabitatAt(const FPlanetTerrainParams& P, co
 	H.bWater = T.bWater;
 	H.DepthCm = T.bWater ? FMath::Max(T.WaterCm - T.GroundCm, 0.0) : 0.0;
 	H.HeightCm = T.HeightCm;
+	H.Geo = Sp.Geo;
 	return H;
 }
 
@@ -518,7 +521,7 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 				else
 				{
 					Density = SmoothStep(0.15, 0.45, Sp.Wet) * (1.0 - SmoothStep(0.3, 0.7, Sp.Slope)) * (1.0 - Sp.Rocky) * (1.0 - SnowLying)
-						* (1.0 - SmoothStep(0.75, 1.0, Clim.Alpine)) * (1.0 - 0.5 * Forest * Sp.Wet) * 0.9;
+						* (1.0 - SmoothStep(0.75, 1.0, Clim.Alpine)) * (1.0 - 0.5 * Forest * Sp.Wet) * 0.9 * Sp.Grows();
 					// The grass holds on into more heat than the trees: it thins out past seven tenths of the liquid range.
 					if (Clim.bClimate) { Density *= 1.0 - SmoothStep(0.7, 0.95, Clim.Heat); }
 				}
@@ -533,6 +536,9 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 			if (KeepOut.Towns.Num() > 0 && (KeepOut.Contains(Sp.Up, R, !bRock) || KeepOut.OnWay(Sp.Up))) { continue; }
 			// Nothing grows or lies in a giant's foot.
 			if (Feet.Num() > 0 && InGiantFoot(Sp.Up)) { continue; }
+			// No loose rock lies on a strange world's own geology (a boulder stood out of a spire's side as readily as
+			// off its floor), but for the pebbles among its spires.
+			if (bRock && Sp.Geo > 0.25 && (P.Geology != EGeology::Spires || Cl.Kind != EClass::Pebble)) { continue; }
 			const double Seed = D.Next();
 			const double Snow = FMath::Clamp(Sp.Ice * 1.2, 0.0, 1.0) * (1.0 - FMath::Clamp(Sp.Slope * 2.0, 0.0, 1.0));
 
@@ -716,7 +722,7 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 			int32 Face; double U, V;
 			if (!SlonkTerrain::FaceUV(Planet.GetSafeNormal(), Face, U, V) || Face != G.Face || !F.Inside(U, V)) { continue; }
 			FSpot Sp;
-			if (!F.SpotAt(U, V, Sp) || Sp.River > 0.08 || Sp.Cliff > 0.3 || Sp.Ice > 0.3) { continue; }
+			if (!F.SpotAt(U, V, Sp) || Sp.River > 0.08 || Sp.Cliff > 0.3 || Sp.Ice > 0.3 || Sp.Geo > 0.25) { continue; }
 			if (CellOf(OriginNoise + Sp.Pt) != Cell) { continue; }
 			const double Zone = F.ScrubZoneAt(P, Sp);
 			// The bush's own draws from the dot's place on the periodic lattice, so it is the same bush whichever side

@@ -300,8 +300,8 @@ namespace SlonkFauna
 	SLONK_API bool HerdGrass(const SlonkScatter::FHabitat& H, bool bStrict);
 	/** Whether a herd will set foot on a spot at all: its grass, or rougher ground off it that it crosses on its way
 	 *  (scrub too dry or too wet for it, a strip of trees, a gentle rise); never water, ice, near the snowline, a cliff
-	 *  (Cliff over 0.3), ground steeper than a gentle rise (Flat 0.45 or less, about 15 degrees) nor a dense wood (Forest
-	 *  0.6 or more). */
+	 *  (Cliff over 0.3), ground steeper than a gentle rise (Flat 0.45 or less, about 15 degrees), a dense wood (Forest
+	 *  0.6 or more) nor a strange world's own geology (Geo over 0.25), which it does not graze either. */
 	SLONK_API bool HerdCrosses(const SlonkScatter::FHabitat& H);
 	/**
 	 * The species of its kind a habitat cell's group is: its index among the world's species of the kind

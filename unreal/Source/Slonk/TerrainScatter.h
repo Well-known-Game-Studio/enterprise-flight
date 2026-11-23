@@ -276,6 +276,8 @@ namespace SlonkScatter
 		bool bWater = false;
 		/** The water's depth over the ground (0 on land) and the height above the sea-level sphere, cm. */
 		double DepthCm = 0.0, HeightCm = 0.0;
+		/** A strange world's own geology there (FPlanetTerrainSample::Geo), 0..1: 0 on a world without one. */
+		double Geo = 0.0;
 	};
 	/** The habitat at a unit direction, planet-local. A pure function of the planet, safe off the game thread. */
 	SLONK_API FHabitat HabitatAt(const FPlanetTerrainParams& P, const FVector& Dir);

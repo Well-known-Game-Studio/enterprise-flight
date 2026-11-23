@@ -264,7 +264,7 @@ namespace
 	}
 
 	/** Worley-style crater field: the nearest feature point in the 27 cells around P, each with a hashed radius. */
-	struct FCraterHit { double Dist = 1e9; double Radius = 0.0; double Depth = 0.0; };
+	struct FCraterHit { double Dist = 1e9; double Radius = 0.0; double Depth = 0.0; /** What the gate was held against, 0..1. */ double Gate = 0.0; };
 	FCraterHit NearestCrater(const FVector& P, double Gate)
 	{
 		FCraterHit Best;
@@ -283,8 +283,31 @@ namespace
 			if (D - R < Best.Dist - Best.Radius)
 			{
 				Best.Dist = D; Best.Radius = R; Best.Depth = 0.6 + 0.4 * ((Hash3(CX + 9, CY, CZ) & 255) / 255.0);
+				Best.Gate = ((H >> 24) & 255) / 255.0;
 			}
 		}
+		return Best;
+	}
+	/** The cell of a jittered lattice P lies in, by its nearest feature point (one a cell): the cell's hash, how
+	 *  much nearer P is to that point than to the next nearest (0 on the wall between two cells), and, if asked for,
+	 *  P's place from that point in cells. */
+	uint32 NearestCell(const FVector& P, double& OutEdge, FVector* OutFromPoint = nullptr)
+	{
+		const int64 IX = (int64)FMath::Floor(P.X), IY = (int64)FMath::Floor(P.Y), IZ = (int64)FMath::Floor(P.Z);
+		double D1 = 1e30, D2 = 1e30;
+		uint32 Best = 0;
+		for (int64 dz = -1; dz <= 1; ++dz)
+		for (int64 dy = -1; dy <= 1; ++dy)
+		for (int64 dx = -1; dx <= 1; ++dx)
+		{
+			const int64 CX = IX + dx, CY = IY + dy, CZ = IZ + dz;
+			const uint32 H = Hash3(CX * 5 + 3, CY * 13 + 1, CZ * 17 + 7);
+			const FVector Centre((double)CX + ((H & 255) / 255.0), (double)CY + (((H >> 8) & 255) / 255.0), (double)CZ + (((H >> 16) & 255) / 255.0));
+			const double D = (P - Centre).SizeSquared();
+			if (D < D1) { D2 = D1; D1 = D; Best = H; if (OutFromPoint) { *OutFromPoint = P - Centre; } }
+			else if (D < D2) { D2 = D; }
+		}
+		OutEdge = FMath::Sqrt(D2) - FMath::Sqrt(D1);
 		return Best;
 	}
 	/** Signed height of the crater profile at the hit: bowl (negative) with a raised rim, in units of the radius. */
@@ -945,6 +968,33 @@ namespace SlonkTerrain
 			const double Patch = SmoothStep(0.35, 0.55, FbmN(Dir * (R / (1.5 * WidthCm)) + P.Seed * 0.7, 3, 2.0, 0.5) * 0.5 + 0.5);
 			Out.Badland = (float)FMath::Clamp(BadZone * (1.0 - SmoothStep(0.3, 0.6, Wet)) * Patch, 0.0, 1.0);
 		}
+		// ---- a strange world's own geology: where it takes the ground ----
+		if (P.Geology != EGeology::None && !Out.bWater)
+		{
+			// In provinces some hundreds of kilometres across, a tenth of the land at half its strength to a third at all
+			// of it; and within one, on the ground of its kind: crystals at any height, a pan on level lowland that is
+			// dry or frozen, terraces on moist ground and most of all down the slopes of the ranges (where there is a
+			// slope for them to step; on the level they are a mosaic of pools), spires on the drier ground and thickest
+			// on tableland, glass on the plains. The dry ground is the world's own drier ground as much as dry by any measure (a wet world's
+			// pans and stone forests stand among its woods, as the Earth's do). Never in a canyon or along a river, and
+			// fading out at the coast.
+			const double Strong = FMath::Clamp((double)P.GeoStrength, 0.0, 1.0);
+			const double Province = SmoothStep(0.65 - 0.13 * Strong, 0.71 - 0.13 * Strong, FbmN(Q * 3.1 + FVector(13.0, 57.0, 29.0), 3, 2.0, 0.5) * 0.5 + 0.5);
+			const double Hills = FMath::Clamp(MtnMask * Mtn * 3.0, 0.0, 1.0);
+			const double Open = (1.0 - FMath::Clamp(Carve, 0.0, 1.0)) * (1.0 - FMath::Clamp(Wall * 2.0, 0.0, 1.0)) * (1.0 - FMath::Clamp(Banks, 0.0, 1.0)) * Land;
+			const double Icy = (double)Out.Ice;
+			const double Drier = FMath::Min(Wet, WetField);
+			double Where = 0.0;
+			switch (P.Geology)
+			{
+			case EGeology::Crystals: Where = (1.0 - 0.5 * Wet) * (1.0 - Icy); break;
+			case EGeology::Polygons: Where = (1.0 - Hills) * (1.0 - SmoothStep(0.2, 0.5, Hr)) * FMath::Max(1.0 - SmoothStep(0.4, 0.6, Drier), Icy); break;
+			case EGeology::Terraces: Where = SmoothStep(0.1, 0.3, Wet) * (1.0 - Icy) * (0.4 + 0.6 * SmoothStep(0.05, 0.3, Hills)); break;
+			case EGeology::Spires: Where = (1.0 - SmoothStep(0.5, 0.75, Drier)) * (1.0 - Icy) * (0.6 + 0.4 * FMath::Max(Tableland, FMath::Clamp(BadZone, 0.0, 1.0))); break;
+			default: Where = (1.0 - Hills) * (1.0 - 0.6 * SmoothStep(0.5, 0.8, Drier)) * (1.0 - Icy); break;
+			}
+			Out.Geo = (float)FMath::Clamp(Province * Where * Open * 1.25, 0.0, 1.0);
+		}
 		return Out;
 	}
 
@@ -1009,11 +1059,132 @@ namespace SlonkTerrain
 			const double Dry = 1.0 - 0.5 * S.Wet;
 			Add += FbmN(Q + FVector(7.7, 0.0, 4.4), Oct, 2.0, 0.45) * 150.0 * Flat * Dry * Air * (1.0 - Bad);
 		}
+		// A strange world's own geology: what it makes of the last two hundred metres where the field marks it. A mesh
+		// too coarse for a shape still carries it, lower and blunter the coarser it is (Carries), down to none where the
+		// refinement itself begins: a forest of spires or a field of crystal runs on for kilometres and sharpens as it
+		// is neared, instead of ending where the fine chunks do.
+		const double Geo = SmoothStep(0.1, 0.5, (double)S.Geo);
+		double GeoRock = 0.0;
+		if (Geo > 0.002)
+		{
+			const bool bFull = MinWavelengthCm <= 0.0;
+			// The share of a shape a mesh of this fineness carries: all of it to FullCm of wavelength, none from GoneCm.
+			const auto Carries = [bFull, MinWavelengthCm](double FullCm, double GoneCm) { return bFull ? 1.0 : 1.0 - SmoothStep(FullCm, GoneCm, MinWavelengthCm); };
+			switch (P.Geology)
+			{
+			case EGeology::Polygons:
+				// A pan lies level: what the soil and the talus raised is smoothed away.
+				Add *= 1.0 - 0.85 * Geo;
+				break;
+			case EGeology::Glass:
+				Add *= 1.0 - 0.95 * Geo;
+				break;
+			case EGeology::Terraces:
+			{
+				// How much of the stepping the ground takes: none on a cliff, nor on a mesh too coarse for a tread. The
+				// soil's hummocks are smoothed by the same share, so the ground is its own again where the stepping ends.
+				const double Stepping = Geo * Carries(3000.0, 12000.0) * FMath::Max(1.0 - Cliff * 2.0, 0.0);
+				if (Stepping > 0.0)
+				{
+					// The slope stepped into treads six metres one above the next: each level for three quarters of its
+					// width, then the riser up to the next, with a low rim along the lip the riser comes up to, so every
+					// tread is dammed into a pool. The treads lie along the contours of the ground the structure and a
+					// little of the soil's hummocks make, so each is a pool's shape.
+					const double Step = 600.0;
+					const double Base = S.HeightCm + Add * (1.0 - 0.8 * Stepping);
+					const double Lv = Base / Step, Fl = FMath::FloorToDouble(Lv), Fr = Lv - Fl;
+					const double Rim = 30.0 * SmoothStep(0.86, 0.95, Fr) * (1.0 - SmoothStep(0.95, 1.0, Fr));
+					const double Stepped = (Fl + SmoothStep(0.72, 0.95, Fr) + 0.335) * Step + Rim;
+					Add = FMath::Lerp(Base, Stepped, Stepping) - S.HeightCm;
+				}
+				break;
+			}
+			case EGeology::Crystals:
+			{
+				// Columns nine metres across, each cut off level at a height of its own up to fourteen metres over or
+				// under the ground's, in clumps a few hundred metres across; and prisms thirty metres through standing
+				// eighteen to forty metres out of them at their middles, a cell in five of a lattice of their own where
+				// the clumps are thickest: each prism's faces its cell's own walls, its top cut on a slant of its own
+				// (three fifths to five quarters of that height across it).
+				const double Clump = SmoothStep(-0.15, 0.25, FbmN(Q * 1.5 + FVector(5.0, 2.0, 8.0), 2, 2.0, 0.5));
+				const double Columns = Carries(1800.0, 6000.0), Prisms = Carries(6000.0, 20000.0);
+				if (Columns > 0.0)
+				{
+					double Edge = 0.0;
+					const uint32 Cell = NearestCell(Dir * (R / 900.0) + P.Seed * 2.9, Edge);
+					Add += (((Cell >> 24) & 255) / 255.0 - 0.5) * 2800.0 * Clump * Geo * Columns;
+				}
+				if (Prisms > 0.0)
+				{
+					double Edge = 0.0;
+					FVector From;
+					uint32 M = NearestCell(Dir * (R / 3000.0) + P.Seed * 4.3, Edge, &From) * 2654435761u;
+					M ^= M >> 15; M *= 2246822519u; M ^= M >> 13;
+					// Whether a cell holds a prism is the cell's own: by the clumps at its point, not at the sample (a prism
+					// was cut off along the clumps' contours where they crossed its cell), and one that only just stands
+					// stands low, so none is cut off sheer where the mark thins either.
+					const double ClumpAtCell = SmoothStep(-0.15, 0.25, FbmN((Q - From * (3000.0 / RefineStartCm)) * 1.5 + FVector(5.0, 2.0, 8.0), 2, 2.0, 0.5));
+					const double Stands = SmoothStep(0.0, 0.04, 0.22 * Geo * (0.3 + 0.7 * ClumpAtCell) - (M & 1023) / 1023.0);
+					if (Stands > 0.0)
+					{
+						const double Tall = 1800.0 + 2200.0 * (((M >> 10) & 255) / 255.0);
+						const FVector Lean(((M >> 18) & 15) / 7.5 - 1.0, ((M >> 22) & 15) / 7.5 - 1.0, ((M >> 26) & 15) / 7.5 - 1.0);
+						const double Cut = FMath::Clamp(1.0 + 0.5 * FVector::DotProduct(From, Lean), 0.6, 1.25);
+						// Sheer to within a metre of the cell's wall, where the face comes down to the columns.
+						Add += Tall * Cut * FMath::Min(1.0, Edge * 12.0) * Geo * Prisms * Stands;
+					}
+				}
+				GeoRock = Geo;
+				break;
+			}
+			case EGeology::Spires:
+			{
+				// Hoodoos: a spire to a cell of forty metres where the forest is thick, each fourteen to thirty-six metres
+				// through at its foot and twenty-five to fifty-five tall, steep-sided under a blunt head; and needles a
+				// third the size between them. A mesh too coarse to stand a spire on (fewer than two of its cells across
+				// the foot) carries it broader, to at most nine tenths of its cell, and somewhat lower for it: the same
+				// spire in the same place, fat far off and slimming as it is neared.
+				const double Hoodoos = Carries(8000.0, 20000.0), Needles = Carries(700.0, 1400.0);
+				if (Hoodoos > 0.0)
+				{
+					const double CellCm = 4000.0;
+					const FCraterHit Big = NearestCrater(Dir * (R / CellCm) + P.Seed * 6.1, 0.75 * Geo);
+					// (No spire within reach leaves the hit's radius 0: nothing to broaden or to divide by.)
+					if (Big.Radius > 0.0)
+					{
+						const double Broader = bFull ? 1.0 : FMath::Clamp(MinWavelengthCm * 0.5 / (Big.Radius * CellCm), 1.0, 0.9 / Big.Radius);
+						if (Big.Dist < Big.Radius * Broader)
+						{
+							// A spire the thinning mark only just leaves standing stands low, so none is cut off sheer along
+							// the forest's edge.
+							const double Stands = SmoothStep(0.0, 0.08, 0.75 * Geo - Big.Gate);
+							const double r = Big.Dist / (Big.Radius * Broader);
+							Add += FMath::Pow(FMath::Max(1.0 - r * r * r, 0.0), 0.7) * (0.45 + 0.55 * Big.Depth) * 5500.0 * Geo * Hoodoos * Stands / (1.0 + 0.35 * (Broader - 1.0));
+						}
+					}
+				}
+				if (Needles > 0.0)
+				{
+					const FCraterHit Small = NearestCrater(Dir * (R / 1400.0) + P.Seed * 8.3, 0.6 * Geo);
+					if (Small.Dist < Small.Radius)
+					{
+						const double r = Small.Dist / Small.Radius;
+						Add += FMath::Pow(FMath::Max(1.0 - r * r, 0.0), 0.8) * Small.Depth * 1500.0 * Geo * Needles * SmoothStep(0.0, 0.08, 0.6 * Geo - Small.Gate);
+					}
+				}
+				GeoRock = 0.8 * Geo;
+				break;
+			}
+			default: break;
+			}
+		}
 		// Keep the coast where it is: the refinement fades out over the first few metres above the sea.
 		if (!P.bAirless) { Add *= SmoothStep(0.0, 600.0, S.HeightCm); }
 		S.HeightCm += Add;
 		S.GroundCm += Add;
 		S.Rock = (float)FMath::Clamp(FMath::Max((double)S.Rock, Rocky * 0.9 + Talus * 0.35), 0.0, 1.0);
+		// Crystal and spire are bare rock, whatever ground they stand out of.
+		if (GeoRock > 0.0) { S.Rock = (float)FMath::Clamp(FMath::Max((double)S.Rock, GeoRock), 0.0, 1.0); }
 	}
 
 	FPlanetTerrainSample Sample(const FPlanetTerrainParams& P, const FVector& Dir, double MinWavelengthCm)
@@ -1037,5 +1208,20 @@ namespace SlonkTerrain
 	{
 		const FPlanetTerrainSample S = Sample(P, Dir, 0.0);
 		return FMath::Max(S.HeightCm, 0.0);
+	}
+
+	double GeologyReliefCm(const FPlanetTerrainParams& P, float Geo)
+	{
+		// As Refine shapes them: a prism of fifty metres on a column fourteen over the ground; a hoodoo of fifty-five
+		// with a needle of fifteen on its shoulder; a riser of six and its rim.
+		double TallCm = 0.0;
+		switch (P.Geology)
+		{
+		case EGeology::Crystals: TallCm = 6400.0; break;
+		case EGeology::Spires: TallCm = 7000.0; break;
+		case EGeology::Terraces: TallCm = 650.0; break;
+		default: return 0.0;
+		}
+		return TallCm * SmoothStep(0.1, 0.5, (double)Geo);
 	}
 }

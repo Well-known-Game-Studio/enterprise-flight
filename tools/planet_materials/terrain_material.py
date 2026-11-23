@@ -2,7 +2,10 @@
 
 The mesh carries the height field: positions, smooth normals and per-vertex biome data (UV0 = height/relief and
 slope, UV1 = moisture and rock, UV2 = ice and canyon, UV3 = lineae and forest cover, colour = crater, water, canyon
-wall, alpha the stratum). The material only
+wall, alpha the stratum). On a strange world with a geology of its own (GeoKind over 0: EGeology, PlanetTerrain.h) the
+lineae's place in the vertex carries that geology's mark instead, and the material draws it in the world's two geology
+colours: a crystal field clear on its tops and deep on its walls, a pan cracked into polygons, a terrace's stone with a
+pool on every tread, a spire's banded rock, a plain of glass crazed with pale lines. The material only
 shades: it picks layer colours from those, adds a periodic detail bump that stays continuous across chunks (the
 chunk origin modulo the noise period arrives through custom primitive data 0..2, the cell size in 3, the origin over
 the radius in 4..6 and its tile of the period in whole periods in 7..9), and fades each noise octave out once it is
@@ -769,9 +772,91 @@ if (nearFade > 0.001 && water < 0.5)
 }
 // Lineae on an icy crust: the band between the ridges is stained brown (hydrated salts and sulphur) and a
 // little rougher than the ice around it.
-float linea = UV3.x;
+float linea = GeoKind > 0.5 ? 0.0 : UV3.x;
 land = lerp(land, land * float3(0.78, 0.5, 0.34), linea * 0.85);
 land *= texMod;
+// A strange world's own geology, where the vertex carries its mark in the lineae's place (GeoKind says which kind):
+// drawn over the land in the world's two geology colours, clear of the water and, but for a frozen pan's troughs, of
+// the snow.
+float geoAll = GeoKind > 0.5 ? smoothstep(0.1, 0.5, UV3.x) * (1.0 - water) : 0.0;
+float geo = geoAll * (1.0 - snowy);
+float geoGloss = 0.0;
+// Where no one builds: the mark itself, snow or no snow, gone by the tenth of it at which SlonkCities founds no town
+// and takes no lot (its LandFactor and Buildable), so no street is paved or lit where nothing is built.
+float geoBuilt = GeoKind > 0.5 ? smoothstep(0.02, 0.1, UV3.x) : 0.0;
+[branch] if (geoAll > 0.001)
+{
+    // The cells of a jittered lattice in the ground's own space (a whole number to the period, so they carry across a
+    // wrap): a crystal field's facets, ten metres across; a pan's polygons and a terrace's pools, twenty; a glass
+    // plain's plates, and a spire forest's spires seen from too far for the mesh to carry them, forty. A line is drawn
+    // where the pixel is as near the next cell's point as its own (crack), each cell has a shade of its own (cellv),
+    // and gd1 is how far the pixel is from its cell's point, squared.
+    int gn = GeoKind < 1.5 ? 1024 : (GeoKind < 3.5 ? 512 : 256);
+    float3 gq = p / (NoisePeriodCm / (float)gn);
+    float3 gqi = floor(gq); float3 gqf = gq - gqi;
+    float gd1 = 9.0, gd2 = 9.0;
+    uint gbest = 0u;
+    for (int gz = -1; gz <= 1; gz++) { for (int gy = -1; gy <= 1; gy++) { for (int gx = -1; gx <= 1; gx++)
+    {
+        float3 gc = float3(gx, gy, gz);
+        int3 gi = int3(gqi + gc);
+        gi = ((gi % gn) + gn) % gn;
+        uint gh = ((uint)gi.x * 73856093u) ^ ((uint)gi.y * 19349663u) ^ ((uint)gi.z * 83492791u) ^ (77u * 2654435761u);
+        gh = (gh ^ (gh >> 13)) * 0x5bd1e995u; gh ^= gh >> 15;
+        float3 gr = gc + float3((float)(gh & 0xffu), (float)((gh >> 8) & 0xffu), (float)((gh >> 16) & 0xffu)) / 255.0 - gqf;
+        float gd = dot(gr, gr);
+        if (gd < gd1) { gd2 = gd1; gd1 = gd; gbest = gh; } else if (gd < gd2) { gd2 = gd; }
+    } } }
+    // The line thinner than a pixel far off is faded rather than left to sparkle, and what each cell has of its own
+    // evens out to the mean as the cells go under a pixel.
+    float gedge = sqrt(gd2) - sqrt(gd1);
+    float gpix = dist * 0.0012 / (NoisePeriodCm / (float)gn);
+    float crack = (1.0 - smoothstep(0.03 + gpix, 0.08 + gpix * 2.0, gedge)) * saturate(0.06 / max(gpix, 0.06));
+    float gseen = saturate(0.3 / max(gpix, 0.3));
+    float cellv = lerp(0.5, (float)((gbest >> 24) & 0xffu) / 255.0, gseen);
+    if (GeoKind < 1.5)
+    {
+        // Crystal: clear on the faces that look up, deep on its walls, each facet a depth of its own, and glassy.
+        float3 cry = lerp(GeoColor2, GeoColor, saturate(1.0 - slope * 2.2) * 0.8 + 0.2 * saturate(fb0 + 0.5)) * (0.7 + 0.6 * cellv);
+        land = lerp(land, lerp(cry, GeoColor2, crack * 0.6), geo * 0.92);
+        geoGloss = geo * 0.85;
+    }
+    else if (GeoKind < 2.5)
+    {
+        // A pan: salt cracked into polygons; on frozen ground the snow's own, its troughs drawn darker.
+        land = lerp(land, lerp(GeoColor, GeoColor2, crack * 0.8) * (0.92 + 0.16 * saturate(fb0 + 0.5)), geo * 0.9);
+        land *= 1.0 - 0.4 * crack * geoAll * snowy;
+    }
+    else if (GeoKind < 3.5)
+    {
+        // Terraces: pale stone on the risers, and on the level treads a mosaic of pools, a rim of the stone between
+        // one and the next; each pool pale over the stone where it shallows to its rim, its liquid's own colour
+        // where it deepens toward its middle.
+        float tread = 1.0 - smoothstep(0.03, 0.12, slope);
+        float pool = tread * (1.0 - crack);
+        float3 poolC = lerp(lerp(GeoColor, GeoColor2, 0.5), GeoColor2 * (0.75 + 0.35 * cellv), saturate(gedge * 2.5));
+        land = lerp(land, lerp(GeoColor, poolC, pool), geo * 0.9);
+        geoGloss = geo * pool * 0.9;
+    }
+    else if (GeoKind < 4.5)
+    {
+        // Spires: banded rock, a darker bed every few metres of height, clearest on the steep; the floor between them
+        // the same stone, bare. On chunks too coarse for their mesh to carry them (PlanetTerrain.cpp's Refine fades
+        // the hoodoos out between 80 and 200 m of wavelength, two of the chunk's cells) the forest is stippled dark
+        // instead, a spire and its shadow to a cell, evening out to their mean shade as the cells go under a pixel.
+        float bed = 0.5 + 0.5 * sin(hN * ReliefCm / 350.0 + fb0 * 3.0);
+        land = lerp(land, lerp(GeoColor, GeoColor2, bed * 0.6 * saturate(0.3 + slope * 2.0)), geo * (0.65 + 0.25 * saturate(slope * 2.0)));
+        float spot = lerp(0.35, 1.0 - smoothstep(0.04, 0.2, gd1), gseen);
+        land *= 1.0 - 0.45 * spot * geo * smoothstep(8000.0, 20000.0, Cell * 2.0);
+    }
+    else
+    {
+        // Glass: dark and mirror-smooth, crazed with pale hairlines, each plate a shade of its own.
+        float craze = crack * crack;
+        land = lerp(land, lerp(GeoColor, GeoColor2, craze * 0.6) * (0.85 + 0.3 * cellv), geo * 0.95);
+        geoGloss = geo * (1.0 - craze) * 0.95;
+    }
+}
 float3 base = lerp(land, sea, water);
 // Sea ice: on a tidally locked world (SeaIce 1) the vertex ice runs out over the seas of the far side and the cold
 // edge of the ring, where the sea freezes at its surface. It takes the ice's colour, a little grey where it is thin,
@@ -780,23 +865,27 @@ float seaIce = SeaIce * smoothstep(0.4, 0.7, ice) * water;
 base = lerp(base, IceColor * lerp(0.82, 1.0, smoothstep(0.7, 1.0, ice)), seaIce);
 
 // Detail bump from the analytic gradient, scaled by a height that grows with rockiness, plus the texture normals.
-float bumpCm = (25.0 + 320.0 * rocky) * (1.0 - water) * (1.0 - snowy * 0.6);
+float bumpCm = (25.0 + 320.0 * rocky) * (1.0 - water) * (1.0 - snowy * 0.6) * (1.0 - geoGloss);
 float dh1 = dot(gfb, T1) * bumpCm;
 float dh2 = dot(gfb, T2) * bumpCm;
+// A geology's glassy faces (crystal, a pool, a plate of glass) carry none of the soil's or the rock's texture.
+texN *= 1.0 - geoGloss;
 Nrm = normalize(Nn - T1 * dh1 - T2 * dh2 + texN * (1.0 - water) + waterN * water * (1.0 - seaIce));
 float seaRough = lerp(OceanRoughness, 0.12, river);
 seaRough = lerp(lerp(seaRough, 0.09, 0.5 * (1.0 - smoothstep(300000.0, 2000000.0, dist))), 0.7, foam);
 Rough = lerp(lerp(LandRoughness * (0.8 + 0.2 * rocky), 0.35, snowy), seaRough, water);
 Rough = lerp(Rough, texOrm.g, 0.6 * nearFade * (1.0 - water) * (1.0 - snowy));
 Rough = lerp(Rough, 0.8, linea * 0.5);
+Rough = lerp(Rough, 0.07, geoGloss);
 Rough = lerp(Rough, 0.35, seaIce);
-AO = lerp(1.0, texOrm.r, nearFade * (1.0 - water));
+AO = lerp(1.0, texOrm.r, nearFade * (1.0 - water) * (1.0 - geoGloss));
 
 float lowland = 1.0 - saturate(hN * ReliefCm / 250000.0);
 // The settlement points were found above the forest, which their clearings thin.
 // SettleWet is the driest ground the world's people settle (Civilization.h: 0.3, or none at all for a desert people), as
 // SlonkCities gates its towns.
-float city = settled * region * cluster * town * (1.0 - water) * saturate((wet - SettleWet + 0.05) * 4.0) * (1.0 - saturate(slope * 12.0)) * lowland * saturate(fb0 * 4.0 + 0.6);
+// No one builds on a strange world's own geology (SlonkCities founds no town and takes no lot there).
+float city = settled * region * cluster * town * (1.0 - water) * saturate((wet - SettleWet + 0.05) * 4.0) * (1.0 - saturate(slope * 12.0)) * lowland * saturate(fb0 * 4.0 + 0.6) * (1.0 - geoBuilt);
 // Built-up ground by day: paving and roofs grey the land where the lights are at night, where the people pave
 // (StreetGrid: an industrial or later people that builds on a grid; not a village's, nor a grown town's).
 base = lerp(base, float3(0.30, 0.29, 0.28), saturate(city * 1.5) * 0.7 * StreetGrid);
@@ -837,7 +926,7 @@ if (water < 0.5 && lit > 0.0)
     float kept = inCity ? keptC : keptT;
     float Rr = inCity ? cityR : townR;
     // The same land gating the lights and the builder use: level, wet, low ground only.
-    float landOk = saturate((wet - SettleWet + 0.05) * 4.0) * (1.0 - saturate(slope * 12.0)) * lowland;
+    float landOk = saturate((wet - SettleWet + 0.05) * 4.0) * (1.0 - saturate(slope * 12.0)) * lowland * (1.0 - geoBuilt);
     // The settlement's own up, at its site, and its frame (FTownFrame).
     float3 upT = inCity ? upC : upW;
     float3 eT = normalize(cross(float3(0, 0, 1), upT)); float3 nT = cross(upT, eT);
@@ -885,7 +974,7 @@ if (water < 0.5 && lit > 0.0)
         float3 ap = townRel - U * dot(townRel, U);
         float3 ab = ap - (town2Rel - U * dot(town2Rel, U));
         float clr = SlonkRoad(ap, ab, U, townH, town2H, WayStyle, townR);
-        float road = (1.0 - smoothstep(-100.0, 50.0, clr)) * (1.0 - saturate(slope * 8.0)) * saturate((wet - SettleWet + 0.1) * 5.0);
+        float road = (1.0 - smoothstep(-100.0, 50.0, clr)) * (1.0 - saturate(slope * 8.0)) * saturate((wet - SettleWet + 0.1) * 5.0) * (1.0 - geoBuilt);
         if (WayStyle < 0.5) { paving = max(paving, road); }
         else
         {
@@ -915,7 +1004,7 @@ INPUTS = ["Fn", "N", "LP", "UV0", "UV1", "UV2", "UV3", "Col", "ColA", "OX", "OY"
           "OceanColor", "ShallowColor", "LandColor", "LandColor2", "MountainColor", "IceColor", "NightLightColor",
           "OceanRoughness", "LandRoughness", "NightLightIntensity", "LavaEmissive", "SunDirection",
           "NoisePeriodCm", "ReliefCm", "OceanDepthCm", "TX", "TY", "TZ", "StreetGrid", "SettleWet", "SettleDensity", "WayStyle", "CliffAffinity", "CanopyShade", "CoverGain", "TreeLife", "Clearings", "SeaIce",
-          "PlanktonGlow", "PlanktonColor", "ShoalDensity", "ShipGroundPos", "ShipStir"]
+          "PlanktonGlow", "PlanktonColor", "ShoalDensity", "ShipGroundPos", "ShipStir", "GeoKind", "GeoColor", "GeoColor2"]
 
 
 def build():
@@ -939,10 +1028,14 @@ def build():
         # The sea's life (SlonkFauna::SeaLifeOf): the plankton's glow, blue-green as on an Earth; the point under a ship
         # stirring the sea, world space (APlanetBody::UpdateShipWake).
         "PlanktonColor": (0.08, 0.7, 0.85), "ShipGroundPos": (0.0, 0.0, 0.0),
+        # A strange world's own geology (SlonkGenome::GeologyColors): its two colours.
+        "GeoColor": (0.5, 0.5, 0.5), "GeoColor2": (0.2, 0.2, 0.2),
     }
     scal = {"OceanRoughness": 0.22, "LandRoughness": 0.9, "NightLightIntensity": 0.0, "LavaEmissive": 0.0, "NoisePeriodCm": 1048576.0, "ReliefCm": 3.8e6, "OceanDepthCm": 5.0e5, "PlanetRadiusCm": 6.371e8, "SwellCm": 120.0, "StreetGrid": 1.0, "SettleWet": 0.3, "SettleDensity": 1.0, "WayStyle": 0.0, "CliffAffinity": 0.0, "CanopyShade": 0.4, "CoverGain": 2.0, "TreeLife": 1.0, "Clearings": 1.0, "SeaIce": 0.0,
             # 0: a sea with no plankton, no shoals and no ship stirring it, left exactly as it was.
-            "PlanktonGlow": 0.0, "ShoalDensity": 0.0, "ShipStir": 0.0}
+            "PlanktonGlow": 0.0, "ShoalDensity": 0.0, "ShipStir": 0.0,
+            # 0: no geology of its own, and the vertex's mark is the lineae's, as on every world near home.
+            "GeoKind": 0.0}
     e = g.custom(CODE, INPUTS, "CMOT_Float3", "terrain layers, textures, bump, lights", extra_outputs=(("Nrm", "CMOT_Float3"), ("Rough", "CMOT_Float1"), ("Emis", "CMOT_Float3"), ("AO", "CMOT_Float1")))
     for pin, src in [("Fn", fn), ("N", n), ("LP", vi), ("UV0", uv0), ("UV1", uv1), ("UV2", uv2), ("UV3", uv3), ("Col", col), ("OX", ox), ("OY", oy), ("OZ", oz), ("Cell", cell), ("ORX", orx), ("ORY", ory), ("ORZ", orz), ("Cam", cam), ("WP", wp), ("TX", tx), ("TY", ty), ("TZ", tz)]:
         g.c(src, e, pin)

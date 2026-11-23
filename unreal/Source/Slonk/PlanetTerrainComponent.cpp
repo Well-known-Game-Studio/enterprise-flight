@@ -1325,11 +1325,26 @@ bool UPlanetTerrainComponent::ChunkAt(const FVector& Dir, int32 Depth, int32& Ou
 }
 
 void UPlanetTerrainComponent::BuildChunkScatterForTest(const FPlanetTerrainParams& P, const FScatterSettings& S, int32 Face, int32 Depth, int64 X, int64 Y, int32 Steps,
-	TArray<FTransform> (&OutPlanetLocal)[SlonkScatter::NumMeshes], TArray<double> (&OutDrawnHeightCm)[SlonkScatter::NumMeshes], FVector* OutOrigin, TArray<float>* OutTreeCover)
+	TArray<FTransform> (&OutPlanetLocal)[SlonkScatter::NumMeshes], TArray<double> (&OutDrawnHeightCm)[SlonkScatter::NumMeshes], FVector* OutOrigin, TArray<float>* OutTreeCover,
+	TArray<float>* OutMark, double* OutSkirtCm)
 {
 	FBuildResult R;
 	BuildChunk(P, S, SlonkScatter::FMoteSettings(), Face, Depth, X, Y, Steps, R);
 	if (OutOrigin) { *OutOrigin = R.Origin; }
+	if (OutMark && R.Mesh)
+	{
+		// The mark the material reads at each of the grid's vertices: the lineae's, or on a world with a geology of its
+		// own that geology's.
+		const FDynamicMeshUVOverlay* UV3 = R.Mesh->Attributes()->GetUVLayer(3);
+		const int32 GridVerts = (R.Steps + 1) * (R.Steps + 1);
+		for (int32 i = 0; i < GridVerts && UV3->IsElement(i); ++i) { OutMark->Add(UV3->GetElement(i).X); }
+	}
+	if (OutSkirtCm && R.Mesh)
+	{
+		// How far the skirt hangs: the first of its vertices (they follow the grid's) under the grid's first.
+		const int32 GridVerts = (R.Steps + 1) * (R.Steps + 1);
+		*OutSkirtCm = R.Mesh->IsVertex(GridVerts) ? FVector::Dist(R.Mesh->GetVertex(0), R.Mesh->GetVertex(GridVerts)) : 0.0;
+	}
 	if (OutTreeCover && R.Mesh)
 	{
 		// The grid's vertices come first, one UV element each, before the skirt's.
@@ -1502,6 +1517,9 @@ bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& Ne
 	// the daylight gate does not apply to them.
 	const bool bClimateFeature = K == TEXT("ring") || K == TEXT("substellar") || K == TEXT("nightcap");
 	if (bClimateFeature && Params.Climate != EClimateModel::Locked) { return false; }
+	// A geology of its own only a strange world that rolled one has.
+	const bool bGeology = K == TEXT("geology");
+	if (bGeology && Params.Geology == EGeology::None) { return false; }
 	// Fibonacci sphere: even coverage; the coarse pass samples at ~30 km, the refine pass walks the best few.
 	const int32 N = 6000;
 	double BestScore = -1e30;
@@ -1549,6 +1567,24 @@ bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& Ne
 		if (K == TEXT("forest")) { return S.bWater ? -1e9 : SlonkScatter::HabitatAt(Params, D).Forest * 10.0 - S.Slope * 2.0 + Near * 2.0; }
 		if (K == TEXT("giants")) { return S.bWater ? -1e9 : SlonkScatter::GiantDensityAt(Params, D) * 20.0 + Near * 2.0; }
 		if (K == TEXT("linea")) { return S.Linea * 10.0 + Near * 3.0; }
+		// A strange world's own geology: where the field marks it most, clear of the snow, and for terraces on a slope
+		// they can step (the ground's over 300 m: the sample's own slope is the refinement's, which a search this coarse
+		// does not reach).
+		if (bGeology)
+		{
+			if (S.bWater) { return -1e9; }
+			double Stepped = 0.0;
+			if (Params.Geology == EGeology::Terraces && S.Geo > 0.3f)
+			{
+				const FVector E = FVector::CrossProduct(FMath::Abs(D.Z) < 0.9 ? FVector::ZAxisVector : FVector::XAxisVector, D).GetSafeNormal();
+				const FVector Nn = FVector::CrossProduct(D, E);
+				const double H0 = SlonkTerrain::SampleStructure(Params, D, 3.0e4).HeightCm;
+				const double He = SlonkTerrain::SampleStructure(Params, (D * Params.RadiusCm + E * 3.0e4).GetSafeNormal(), 3.0e4).HeightCm;
+				const double Hn = SlonkTerrain::SampleStructure(Params, (D * Params.RadiusCm + Nn * 3.0e4).GetSafeNormal(), 3.0e4).HeightCm;
+				Stepped = FMath::Min(FMath::Sqrt(FMath::Square(He - H0) + FMath::Square(Hn - H0)) / 3.0e4, 0.2) * 15.0;
+			}
+			return S.Geo * 10.0 - S.Ice * 4.0 + Stepped + Near * 2.0;
+		}
 		if (K == TEXT("coast"))
 		{
 			if (S.bWater) { return -1e9; }
@@ -1671,6 +1707,8 @@ bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& Ne
 		const FPlanetTerrainSample S = SlonkTerrain::Sample(Params, Best, 1.0e4);
 		if (K == TEXT("mesa") ? (S.Wall < 0.1f || S.CutCm > 0.01 * Params.CanyonDepthCm) : S.Badland < 0.1f) { return false; }
 	}
+	// Nor a geology where none of the daylit ground is marked.
+	if (bGeology && SlonkTerrain::Sample(Params, Best, 1.0e4).Geo < 0.1f) { return false; }
 	OutDir = Best;
 	OutHeightCm = SlonkTerrain::SurfaceHeightCm(Params, Best);
 	return true;
@@ -1875,7 +1913,7 @@ void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, const FS
 			const float HeightN = (float)(S.HeightCm / FMath::Max(S.HeightCm >= 0.0 ? P.ReliefCm : P.OceanDepthCm, 1.0));
 			const FVector3f Nf(N);
 			Normals[j * GW + i] = Nf;
-			Vid[j * GW + i] = AddVert(Pos[k], Nf, FVector2f(HeightN, Slope), FVector2f(S.Wet, S.Rock), FVector2f(S.Ice, S.Canyon), FVector2f(S.Linea, Cover.IsValidIndex(j * GW + i) ? Cover[j * GW + i] : 0.f),
+			Vid[j * GW + i] = AddVert(Pos[k], Nf, FVector2f(HeightN, Slope), FVector2f(S.Wet, S.Rock), FVector2f(S.Ice, S.Canyon), FVector2f(P.Geology != EGeology::None ? S.Geo : S.Linea, Cover.IsValidIndex(j * GW + i) ? Cover[j * GW + i] : 0.f),
 				FVector4f(S.Crater, S.bWater ? 1.f : 0.f, S.Wall, S.Stratum));
 			Bounds += Pos[k];
 		}
@@ -1907,12 +1945,22 @@ void UPlanetTerrainComponent::BuildChunk(const FPlanetTerrainParams& P, const FS
 	// Skirt: the border loop dropped a little below the surface hides the hairline gap against a neighbour at
 	// another depth. Two per cent of the edge covers the height a coarser neighbour can miss by (the octaves
 	// between the two levels' cutoffs); a cell and a half was a metre on fine chunks, nothing like it.
-	const double SkirtCm = FMath::Max(FMath::Max(CellCm * 1.5, N_EdgeCm * 0.02), 100.0);
+	double SkirtCm = FMath::Max(FMath::Max(CellCm * 1.5, N_EdgeCm * 0.02), 100.0);
 	TArray<int32> Loop;
 	for (int32 i = 0; i <= Steps; ++i) { Loop.Add(i); }
 	for (int32 j = 1; j <= Steps; ++j) { Loop.Add(j * GW + Steps); }
 	for (int32 i = Steps - 1; i >= 0; --i) { Loop.Add(Steps * GW + i); }
 	for (int32 j = Steps - 1; j >= 1; --j) { Loop.Add(j * GW); }
+	// A strange world's own geology stands far taller than that between one level and the next: a spire a coarser
+	// neighbour draws broader and lower, a crystal column it does not draw at all. Where the chunk's border is marked
+	// and its mesh is fine enough to be shaped, the skirt hangs as far as the kind's shapes stand, so a spire or a
+	// prism the border cuts through has a back to it.
+	if (P.Geology != EGeology::None && MinWavelength < SlonkTerrain::RefineStartCm)
+	{
+		float Marked = 0.f;
+		for (int32 G : Loop) { Marked = FMath::Max(Marked, Smp[(G / GW + Margin) * W + (G % GW + Margin)].Geo); }
+		SkirtCm = FMath::Max(SkirtCm, SlonkTerrain::GeologyReliefCm(P, Marked));
+	}
 	TArray<int32> Lower;
 	for (int32 G : Loop)
 	{

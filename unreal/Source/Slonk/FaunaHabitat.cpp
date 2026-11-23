@@ -176,7 +176,9 @@ namespace
 	double FlightGroundCm(const FPlanetTerrainParams& P, const FVector& Dir)
 	{
 		const FPlanetTerrainSample S = SlonkTerrain::Sample(P, Dir, 5000.0);
-		return S.bWater ? S.WaterCm : S.HeightCm;
+		if (S.bWater) { return S.WaterCm; }
+		// Over a strange world's crystal or spires, their tops: they stand tens of metres over the ground read here.
+		return P.Geology == EGeology::None ? S.HeightCm : S.HeightCm + SlonkTerrain::GeologyReliefCm(P, S.Geo);
 	}
 
 	/** A group's loop in its tangent plane at theta, cm from its middle. */
@@ -456,7 +458,8 @@ SlonkFauna::FFlierHabitatRead SlonkFauna::FlierHabitatAt(const FPlanetTerrainPar
 
 bool SlonkFauna::HerdGrass(const SlonkScatter::FHabitat& H, bool bStrict)
 {
-	if (H.bWater || H.Ice > 0.2 || H.Alpine > 0.7) { return false; }
+	// Nothing grazes a strange world's own geology: crystal, a pan, pools, spires or glass.
+	if (H.bWater || H.Ice > 0.2 || H.Alpine > 0.7 || H.Geo > 0.25) { return false; }
 	// The ground's wetness has no upper bound here: lush grass reads wet to the top of its range (water and rivers are their
 	// own), and only the driest land, desert, is too poor for a herd.
 	if (bStrict) { return H.Flat > 0.85 && H.Wet >= 0.2 && H.Forest < 0.3; }
@@ -465,7 +468,7 @@ bool SlonkFauna::HerdGrass(const SlonkScatter::FHabitat& H, bool bStrict)
 
 bool SlonkFauna::HerdCrosses(const SlonkScatter::FHabitat& H)
 {
-	return !H.bWater && H.Ice <= 0.2 && H.Alpine <= 0.7 && H.Cliff <= 0.3 && H.Flat > 0.45 && H.Forest < 0.6;
+	return !H.bWater && H.Ice <= 0.2 && H.Alpine <= 0.7 && H.Cliff <= 0.3 && H.Flat > 0.45 && H.Forest < 0.6 && H.Geo <= 0.25;
 }
 
 namespace
@@ -988,7 +991,9 @@ namespace
 		auto At = [&P](const FVector& D)
 		{
 			const FPlanetTerrainSample S = SlonkTerrain::Sample(P, D, 1.0e4);
-			return S.bWater ? FMath::Max(S.WaterCm, S.HeightCm) : S.HeightCm;
+			if (S.bWater) { return FMath::Max(S.WaterCm, S.HeightCm); }
+			// Over a strange world's crystal or spires, their tops, as the fliers take them.
+			return P.Geology == EGeology::None ? S.HeightCm : S.HeightCm + SlonkTerrain::GeologyReliefCm(P, S.Geo);
 		};
 		double H = At(Up);
 		for (const double Ring : { 0.5, 1.0 })
