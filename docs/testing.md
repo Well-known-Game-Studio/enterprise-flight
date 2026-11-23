@@ -96,6 +96,14 @@ terraces stepping a slope into level treads); the coarser levels of detail still
 field, lower, down to nothing where the refinement begins, a chunk's skirt hanging as far as they stand, and the ground a
 flier reads clearing every one; no tree on it, nor the forest's painted cover, no herd grazing or crossing it, and the
 chunk's vertices carrying its mark to the material; and the terrain material having its three parameters.
+`Slonk.Weather.*` (Tests/SlonkWeatherTests.cpp) covers the cloud layer's cover over a place as the CPU reckons it
+(PlanetWeather.h): clear between the weather map's masses and a deck inside a mass's cells, never less with more of the
+masses, the cells, the style's coverage or its deck, the style's own even sky before the map is in, and a mean over a
+whole map that rises with the coverage; the map read at a direction as the materials' sampler reads it, at a texel's
+middle, half way to the next and round the seam; where the sun's light crosses the layer on its way down to a place; a
+deck shading all the ground under it and a broken sky none of it as a whole; and the herds' dust and the leapers'
+spray, which light themselves, dimmed by the sun's share of their light under a deck and exactly as they were under a
+clear sky.
 
 Writing one: make an `FSystems` (a roster seed gives the same people every time), drive the subsystems through
 their public API, assert with `TestEqual`/`TestTrue`. For anything that depends on the world (targets picked from

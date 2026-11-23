@@ -10,12 +10,22 @@ static TAutoConsoleVariable<int32> CVarFaunaDust(TEXT("slonk.Fauna.Dust"), 1,
 
 bool SlonkFauna::DustEnabled() { return CVarFaunaDust.GetValueOnGameThread() != 0; }
 
+// The herds' dust and the leapers' spray light themselves, so the engine's cloud shadow does not fall on them: under
+// cloud they are dimmed by hand instead. 0 leaves them as bright as in the sun.
+static TAutoConsoleVariable<int32> CVarFaunaCloudShade(TEXT("slonk.Fauna.CloudShade"), 1,
+	TEXT("The herds' dust and the leaping fish's spray dimmed under cloud, as the ground they are over is by the clouds' shadow (1, the default), or as bright as in the sun (0)"));
+
+bool SlonkFauna::CloudShadeEnabled() { return CVarFaunaCloudShade.GetValueOnGameThread() != 0; }
+
 SlonkFauna::FHerdDust SlonkFauna::HerdDustFor(const FHerdDustInput& In)
 {
 	FHerdDust D;
 	D.Radius = (float)FMath::Max(In.RadiusCm, 0.0);
 	D.Size = (float)(DustPuffCmPerM * FMath::Max(In.SpanM, 0.1));
-	D.Color = In.Color;
+	// Under cloud, the sun's share of its light goes with the sun (the puff lights itself: no cloud's shadow falls on
+	// it); its opacity stays. A clear sky's 1 leaves the colour exactly as given.
+	const float Lit = (float)(1.0 - DustSunShare * FMath::Clamp(In.Shade, 0.0, 1.0));
+	D.Color = FLinearColor(In.Color.R * Lit, In.Color.G * Lit, In.Color.B * Lit, In.Color.A);
 	D.Drift = In.VelWorldCmS;
 	D.Carry = In.CarryWorldCmS;
 	// None too far off to make out, by night or on a dead world.

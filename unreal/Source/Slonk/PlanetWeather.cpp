@@ -108,6 +108,57 @@ void SlonkWeather::Generate(const FPlanetWeatherSpec& Spec, int32 W, int32 H, TA
 	}
 }
 
+bool SlonkWeather::SampleAt(const TArray<FColor>& Pixels, int32 W, int32 H, const FVector& Dir, float& OutMasses, float& OutCells)
+{
+	if (W < 2 || H < 2 || Pixels.Num() != W * H) { return false; }
+	const FVector D = Dir.GetSafeNormal();
+	// The materials' WeatherUV: longitude round u, its seam at 180 degrees, and the colatitude down v; a texel's middle
+	// at its half.
+	const double U = FMath::Atan2(D.Y, D.X) / UE_DOUBLE_TWO_PI + 0.5;
+	const double V = FMath::Acos(FMath::Clamp(D.Z, -1.0, 1.0)) / UE_DOUBLE_PI;
+	const double X = U * W - 0.5, Y = FMath::Clamp(V * H - 0.5, 0.0, (double)(H - 1));
+	const int32 X0 = FMath::FloorToInt32(X), Y0 = FMath::Min(FMath::FloorToInt32(Y), H - 2);
+	const float Fx = (float)(X - X0), Fy = (float)(Y - Y0);
+	// Wrapped round the seam, clamped at the poles (the texture's own addressing).
+	const auto At = [&Pixels, W](int32 Xi, int32 Yi) -> const FColor& { return Pixels[Yi * W + ((Xi % W) + W) % W]; };
+	const FColor& A = At(X0, Y0); const FColor& B = At(X0 + 1, Y0); const FColor& C = At(X0, Y0 + 1); const FColor& E = At(X0 + 1, Y0 + 1);
+	OutMasses = FMath::Lerp(FMath::Lerp((float)A.R, (float)B.R, Fx), FMath::Lerp((float)C.R, (float)E.R, Fx), Fy) / 255.f;
+	OutCells = FMath::Lerp(FMath::Lerp((float)A.G, (float)B.G, Fx), FMath::Lerp((float)C.G, (float)E.G, Fx), Fy) / 255.f;
+	return true;
+}
+
+float SlonkWeather::CoverOf(float Masses, float Cells, float Coverage, float Deck, float WeatherIn)
+{
+	const float In = FMath::Clamp(WeatherIn, 0.f, 1.f);
+	// The material's two smoothsteps about the style's coverage: how far inside a mass, and inside a cell.
+	const float Clear = 1.f - Coverage;
+	const float Mass = FMath::SmoothStep(Clear - 0.25f, Clear + 0.1f, Masses);
+	const float Cell = FMath::SmoothStep(Clear - 0.1f, Clear + 0.1f, Cells);
+	// Its Cloud_GlobalCoverage: the style's even bias without the map, a scattered sky's with it; then the map's push
+	// (its WeatherAmp 1.4 and CellAmp 0.6).
+	const float StyleBias = Coverage * 1.2f - 0.7f + Deck * 0.3f;
+	const float Bias = FMath::Lerp(StyleBias, -0.25f + Deck * 0.3f, In) + ((Mass - 0.5f) * 1.4f + (Cell - 0.5f) * 0.6f) * In;
+	return FMath::SmoothStep(-0.55f, 0.25f, Bias);
+}
+
+FVector SlonkWeather::SunThroughLayer(const FVector& PlaceFromCentre, const FVector& ToSun, double LayerRadiusCm, double& OutSunUp)
+{
+	const FVector Sun = ToSun.GetSafeNormal();
+	OutSunUp = 1.0;
+	if (Sun.IsNearlyZero()) { return PlaceFromCentre; }
+	FVector Through = PlaceFromCentre;
+	// The far root of |Place + t Sun| = LayerRadius, for a place under the shell.
+	const double B = FVector::DotProduct(PlaceFromCentre, Sun), C = PlaceFromCentre.SizeSquared() - LayerRadiusCm * LayerRadiusCm;
+	if (C < 0.0) { Through = PlaceFromCentre + Sun * (-B + FMath::Sqrt(B * B - C)); }
+	OutSunUp = FVector::DotProduct(Through.GetSafeNormal(), Sun);
+	return Through;
+}
+
+float SlonkWeather::DeckShade(float Cover)
+{
+	return FMath::SmoothStep(0.88f, 0.97f, Cover);
+}
+
 void SlonkWeather::SavePng(const TArray<FColor>& Pixels, int32 W, int32 H, const FString& Path)
 {
 	TArray64<uint8> Png;

@@ -61,6 +61,10 @@ namespace SlonkFauna
 	constexpr float SplashNightMax = 0.55f;
 	/** Whether a splash is thrown where the night is as deep as this. */
 	inline bool SplashLitAt(float Night) { return Night <= SplashNightMax; }
+	/** The share of a splash's light that is the sun's own (M_FishSplash lights it as the herds' dust is lit, and by
+	 *  the sun through its droplets besides), which goes with the sun under cloud: its colour is dimmed by as much of
+	 *  this as the cloud keeps (FFishSplashInput::Shade), as the dust's is by its own share (HerdDust.h). */
+	constexpr double SplashSunShare = 0.72;
 
 	/** What a splash is worked out from: the fish's length (cm), whether it dives back in, how deep in the night it is there
 	 *  (0 day, 1 night), the ground's own velocity through the world there (world cm/s: GroundCarryCmS), and the sea's
@@ -73,6 +77,9 @@ namespace SlonkFauna
 		FVector CarryWorldCmS = FVector::ZeroVector;
 		FLinearColor Shallow = FLinearColor(0.1f, 0.35f, 0.5f);
 		FLinearColor Ocean = FLinearColor(0.05f, 0.17f, 0.35f);
+		/** How much of the sun's light the clouds keep from the place, 0 under a clear or a broken sky to 1 under a deck
+		 *  (APlanetBody::CloudShadeAt). */
+		double Shade = 0.0;
 	};
 	/** A splash as the system's user parameters take it (see the contract above). */
 	struct FFishSplash
