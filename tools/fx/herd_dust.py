@@ -101,8 +101,11 @@ def strict(ts, tool, args):
 
 def build_material():
     uemat.MATERIAL_FOLDER = FOLDER
-    # Every graph call of uemat's (G, node, c, custom, out) goes through its T: made strict for this build.
+    # Every graph call of uemat's (G, node, c, custom, out) goes through its T, and this script's own T from here on
+    # (creating, recompiling, saving): made strict for this build.
+    global T
     uemat.T = strict
+    T = strict
     T(MT, "create_material", {"folder_path": FOLDER, "asset_name": MAT})
     g = G(MAT, {"BlendMode": "BLEND_Translucent", "ShadingModel": "MSM_Unlit", "TwoSided": False,
                 "bUsedWithNiagaraSprites": True})

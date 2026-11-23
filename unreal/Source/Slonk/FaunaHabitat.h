@@ -9,8 +9,12 @@
 // of scrub, a strip of trees or a gentle rise here and there, and nowhere its walkers stand water, a cliff or a dense
 // wood), keeping clear of the water and off the towns and their roads; each grazes most of the time and walks and trots
 // now and then, on a schedule of the clock whose distance walked is known in closed form, and stands on the ground that
-// is drawn (SlonkFauna::StepHerd); frightened, it flees a way that keeps it dry. FFaunaField keeps the groups about a
-// camera, by its distance from them alone.
+// is drawn (SlonkFauna::StepHerd); frightened, it flees a way that keeps it dry. The leapers live in the painted shoals
+// themselves, a group in half the shoals over water deep enough, drawn in the shoal's frame as it swims: each fish leaps
+// out of the sea and back on a schedule of the material's clock in closed form (SlonkFauna::LeapOf), from the swell's
+// surface where it leaves to the surface where it dives back in (SlonkFauna::SwellAt mirrors the terrain material's
+// swell), and a craft passing low sends the group diving for a minute. FFaunaField keeps the groups about a camera, by
+// its distance from them alone.
 
 #pragma once
 
@@ -45,6 +49,10 @@ namespace SlonkFauna
 		 *  frays a tenth either way), and how deep it swims, 3 to 40 m: the material shows it only where the sea is
 		 *  deeper than that. */
 		double HalfLengthCm = 0.0, HalfWidthCm = 0.0, DepthCm = 0.0;
+		/** The middle of the loop it swims round, planet-local cm on the sea-level sphere (where it is at no time, the same
+		 *  at every time), and the loop's radius on the plane it is drawn on, cm. */
+		FVector LoopCentreCm = FVector::ZeroVector;
+		double LoopRadiusCm = 0.0;
 	};
 
 	/** The shoal of the cell holding a planet-local point (on the sea-level sphere of RadiusCm, or near it) at a time
@@ -54,8 +62,40 @@ namespace SlonkFauna
 	/** Where a planet-local point near a shoal lies in its painted shape: 0 at its middle, 1 at its edge. */
 	SLONK_API double ShoalShapeAt(const FShoal& S, const FVector& PlanetLocalCm);
 
-	/** A world as its animals see it: its field, its fauna, how much lives there, the living ground's colours, and the
-	 *  settings (the density, the kinds allowed). */
+	/** The projection's plane for a planet-local direction, as the terrain material lays its waves and its shoals: 0 across
+	 *  x, 1 across y, 2 across z, by the direction's largest axis (x before y before z where they tie). */
+	SLONK_API int32 ProjectionAxis(const FVector& Dir);
+
+	/**
+	 * The terrain material's swell (terrain_material.py's SlonkGerstner, which moves the sea's vertices): four Gerstner
+	 * waves of whole wave numbers across the noise period, on the projection's plane at a planet-local point (on the
+	 * sea-level sphere, or near it), at the material's time (the world's seconds, never wrapped): the displacement along
+	 * the plane's two axes and up the radial, cm, at full strength (the material fades it out from 800 m to 2.5 km from
+	 * the camera: SwellFade).
+	 */
+	SLONK_API FVector SwellAt(const FVector& PlanetLocalCm, double TimeSec, double SwellCm);
+	SLONK_API double SwellFade(double DistFromCameraCm);
+	/** The drawn sea's surface over the sea-level sphere along the radial through a planet-local point, cm: where the swell
+	 *  (faded by Fade) has carried the surface that stands over it (the vertex it came from found by one step back along the
+	 *  swell's sway across the plane), its lift up the radial and its sway's own lift (the sway runs along the plane's fixed
+	 *  axes, not along the sphere). */
+	SLONK_API double SeaSurfaceCm(const FVector& PlanetLocalCm, double RadiusCm, double TimeSec, double SwellCm, double Fade);
+
+	/** What a world's seas carry as its animals see them: the share of the shoal lattice's cells holding a shoal (the
+	 *  terrain material's ShoalDensity, SlonkFauna::SeaLifeOf: 0 on a sea with no life, and then there are no leapers), the
+	 *  swell's height (the material's SwellCm), and the sea's colours (its solvent's). */
+	struct FFaunaSea
+	{
+		float ShoalDensity = 0.f;
+		float SwellCm = 0.f;
+		FLinearColor Shallow = FLinearColor(0.1f, 0.35f, 0.5f);
+		FLinearColor Ocean = FLinearColor(0.05f, 0.17f, 0.35f);
+		bool operator==(const FFaunaSea& O) const { return ShoalDensity == O.ShoalDensity && SwellCm == O.SwellCm && Shallow == O.Shallow && Ocean == O.Ocean; }
+		bool operator!=(const FFaunaSea& O) const { return !(*this == O); }
+	};
+
+	/** A world as its animals see it: its field, its fauna, how much lives there, the living ground's colours, its seas,
+	 *  and the settings (the density, the kinds allowed). */
 	struct FFaunaWorld
 	{
 		FPlanetTerrainParams P;
@@ -69,8 +109,13 @@ namespace SlonkFauna
 		/** Whether the world has towns (APlanetBody::HasCities), and whose: the herds keep their loops out of them. */
 		bool bTowns = false;
 		FCivilization People;
-		/** Whether any group of the kind lives here: life, air, the kind allowed and spawned in this build. */
-		bool Spawns(EFaunaKind K) const { return Life > 0.f && Density > 0.f && !P.bAirless && (KindMask & KindBit(K)) != 0u && KindDesc(K).bLive; }
+		FFaunaSea Sea;
+		/** Whether any group of the kind lives here: life, air, the kind allowed and spawned in this build (the leapers only in
+		 *  a sea whose shoals are painted). */
+		bool Spawns(EFaunaKind K) const
+		{
+			return Life > 0.f && Density > 0.f && !P.bAirless && (KindMask & KindBit(K)) != 0u && KindDesc(K).bLive && (K != EFaunaKind::Leaper || Sea.ShoalDensity > 0.f);
+		}
 		bool SpawnsAny() const { for (int32 K = 0; K < NumKinds; ++K) { if (Spawns((EFaunaKind)K)) { return true; } } return false; }
 		/** The salt every cell's hash takes: the profile's seed and the terrain's. */
 		uint64 Salt() const;
@@ -78,7 +123,10 @@ namespace SlonkFauna
 		bool operator!=(const FFaunaWorld& O) const { return !(*this == O); }
 	};
 
-	/** A habitat cell of a kind on the cube's faces (the terrain's quadtree's, SlonkTerrain::CubeDir). */
+	/** A habitat cell of a kind on the cube's faces (the terrain's quadtree's, SlonkTerrain::CubeDir). A leaper's cell is
+	 *  instead a cell of the shoals' own lattice (ShoalAt's, unwrapped so each is one place on the planet): its Face the
+	 *  projection's plane times two, and one more on the plane's negative side; X and Y its cell across the plane's two
+	 *  axes, from the planet's middle (either sign). */
 	struct FFaunaCell
 	{
 		EFaunaKind Kind = EFaunaKind::Flier;
@@ -90,6 +138,8 @@ namespace SlonkFauna
 	SLONK_API int64 CellsAcross(const FPlanetTerrainParams& P, EFaunaKind K);
 	/** The cell holding a planet-local unit direction. */
 	SLONK_API FFaunaCell CellOf(const FPlanetTerrainParams& P, EFaunaKind K, const FVector& Dir);
+	/** A cell's middle, a planet-local unit direction (a leaper's cell's off the sphere: none, false). */
+	SLONK_API bool CellMiddle(const FPlanetTerrainParams& P, const FFaunaCell& C, FVector& OutDir);
 	/** Every cell of the kind within RadiusCm of a direction along the ground (the cells under a disc RadiusCm plus a
 	 *  cell across, so any group placed within RadiusCm is in one), once each, nearest first. */
 	SLONK_API void CellsNear(const FPlanetTerrainParams& P, EFaunaKind K, const FVector& Dir, double RadiusCm, TArray<FFaunaCell>& Out);
@@ -163,6 +213,14 @@ namespace SlonkFauna
 		 *  read's step beyond), read out to HerdDryReadCm (that much if none is nearer; unread, as far as can be): the crew
 		 *  walk it off its path no further than this leaves its edge HerdCrewDryCm short of the water. */
 		double DryCm = 1.0e30;
+		/**
+		 * A group of leapers': the shoal it leaps from (ShoalAt at Centre on the sea, with the terrain material's
+		 * ShoalDensity), whose frame it is drawn in, swimming its loop (RadiusCm round Centre) on the world's own seconds as
+		 * the material paints it; its painted half-length and half-width and how deep it swims, cm; the shallowest water
+		 * read under its leaps, cm; and its leap cycle, s (CycleSec, a divisor of the hour; PeriodSec the same).
+		 */
+		float ShoalDensity = 0.f;
+		double ShoalHalfLengthCm = 0.0, ShoalHalfWidthCm = 0.0, ShoalDepthCm = 0.0, WaterCm = 0.0;
 		/** The farthest any point of its loop lies from its middle, cm. */
 		double ExtentCm() const { return RadiusCm * (1.0 + Lobe) + MeanderCm; }
 		bool operator==(const FFaunaGroup& O) const;
@@ -237,6 +295,87 @@ namespace SlonkFauna
 	/** What a herd's loop offers (its cell's group, or one being made), read along it. */
 	SLONK_API FHerdHabitatRead HerdHabitatAt(const FFaunaWorld& W, const FFaunaGroup& G);
 
+	/**
+	 * What a leaper's cell offers (its group's own reading of it): whether the cell holds a painted shoal (ShoalAt at the
+	 * cell's middle finds this cell's), lying wholly on its own plane of the projection out to its reach (so the swell
+	 * the material draws about it is the same plane's all round, and the sea a fish leaves is the sea drawn); whether the
+	 * cell is among the share of the shoals holding leapers; and the water under its leaps, read at its loop's middle and
+	 * eight points round it out to its loop and reach: the open sea everywhere (no land, no river or lake, no ice; on a
+	 * locked world the air neither baked nor frozen), at least NeedDepthCm deep (Leaper::MinWaterCm, and the shoal's own
+	 * depth and Leaper::ShoalClearCm, so the material paints it whole where its fish leap).
+	 */
+	struct FLeaperHabitatRead
+	{
+		bool bShoal = false, bOnePlane = false, bGate = false, bSuits = false;
+		/** The points of water read, how many of them were not the open sea or too shallow, and the shallowest water read. */
+		int32 Points = 0, NotSea = 0, Shallow = 0;
+		double MinDepthCm = 0.0, NeedDepthCm = 0.0;
+		FShoal Shoal;
+	};
+	SLONK_API FLeaperHabitatRead LeaperHabitatAt(const FFaunaWorld& W, const FFaunaCell& C);
+	/** How far a group of leapers' fish may come from its shoal's loop's path, cm along the sea: their homes within its
+	 *  painted shape, and their leaps out from them. */
+	SLONK_API double LeaperReachCm(const FShoal& S);
+
+	/**
+	 * A fish's leap (SlonkFauna::Leaper), in closed form from its custom floats (Custom::Num) as the material has it: its
+	 * cycle (on the clock asked of: whole cycles of its group's from that clock's zero, its slot's start a share in) and
+	 * whether the cycle holds a leap; when it leaves the water (T0, on the same clock) and how long it is out of it, and how
+	 * long before and after that it is drawn under the surface; where it leaves the water in its group's frame (cm from its
+	 * home), the way it goes (radians from the frame's x toward its y), how high it rises over the line between the sea's
+	 * surface where it leaves and where it dives back in, and how far on it comes down, cm.
+	 */
+	struct FLeap
+	{
+		int64 Cycle = 0;
+		bool bLeaps = false;
+		double T0 = 0.0, FlightSec = 0.0, LeadSec = 0.0;
+		FVector2D FromCm = FVector2D::ZeroVector;
+		double Yaw = 0.0, ApexCm = 0.0, RangeCm = 0.0;
+		double T1() const { return T0 + FlightSec; }
+		FVector2D ToCm() const { return FromCm + FVector2D(FMath::Cos(Yaw), FMath::Sin(Yaw)) * RangeCm; }
+		/** Whether it is drawn at a moment: from LeadSec before it leaves to LeadSec after it dives back in. */
+		bool DrawnAt(double T) const { return bLeaps && T >= T0 - LeadSec && T <= T1() + LeadSec; }
+	};
+	/** A fish's leap of a cycle (any whole number: its hash is its place in the hour), and of the cycle holding a moment,
+	 *  on any clock whose hours are the material's (the world's seconds, or the material's own). */
+	SLONK_API FLeap LeapOf(const float* Custom, int64 Cycle);
+	SLONK_API FLeap LeapAt(const float* Custom, double Seconds);
+	/** A fish's place on its leap at a moment, in its group's frame, cm from its home (z up from the sea's level), with the
+	 *  sea's surface H0 over its level where it leaves the water and H1 where it dives back in (cm, each held to
+	 *  Leaper::MaxSurfaceCm): its middle, its pitch (radians, nose up) and its share of the way through its flight (0
+	 *  leaving, 1 diving back in; beyond either it is under the surface). */
+	struct FLeapPose
+	{
+		FVector PosCm = FVector::ZeroVector;
+		double Pitch = 0.0;
+		double Share = 0.0;
+	};
+	SLONK_API FLeapPose LeapPoseAt(const FLeap& L, double H0, double H1, double T);
+	/** A fish's leaving the water (bEntry false) or diving back into it, at a moment (the world's seconds). */
+	struct FLeapEvent
+	{
+		int32 Member = 0;
+		bool bEntry = false;
+		double TimeSec = 0.0;
+		FLeap Leap;
+	};
+	/** Every leaving and diving back in of a fish's leaps after FromSec up to ToSec (the world's seconds), oldest first: none
+	 *  of a cycle without a leap. */
+	SLONK_API void LeapEventsBetween(const float* Custom, int32 Member, double FromSec, double ToSec, TArray<FLeapEvent>& Out);
+	/** A point of a group of leapers' frame (cm in its frame), planet-local, at a moment (the world's seconds). */
+	SLONK_API FVector LeaperFramePoint(const FFaunaGroup& G, double RadiusCm, double WorldSec, const FVector& FrameCm);
+	/** Where a fish's leap leaves the water (bEntry false) or dives back into it: planet-local, on the sea's drawn surface
+	 *  there at that moment (SeaSurfaceCm, its swell faded by Fade), its home HomeCm in its group's frame and the leap on the
+	 *  world's seconds; and the surface's height over the sea's level there, cm. */
+	SLONK_API FVector LeapCrossing(const FFaunaGroup& G, double RadiusCm, double SwellCm, double Fade, const FVector& HomeCm, const FLeap& L, bool bEntry, double* OutSurfaceCm = nullptr);
+	/** Where a ship parks to watch a group of leapers from AltCm over the sea at a moment (the world's seconds; `fauna goto
+	 *  leaper`): off to the side of its shoal then, out from its loop's middle, SideCm out past the furthest its shoal
+	 *  swims from that middle, so that wherever round its loop the shoal goes it never comes nearer than SideCm. SideCm is
+	 *  1.6 times the kind's scare radius when lower than 1.2 times its scare altitude (out of reach of its dive), else 0.6
+	 *  of its height (at least 30 m). A planet-local unit direction; and SideCm. */
+	SLONK_API FVector LeaperWatchDir(const FFaunaGroup& G, double RadiusCm, double WorldSec, double AltCm, double* OutSideCm = nullptr);
+
 	/** Where a group's frame is on its path at a time: planet-local, its frame (a flock's: x along its heading, level, z up
 	 *  from the planet; a herd's: its own east and north laid level, which never turn, z up), its velocity, cm/s, and the
 	 *  bank its members lean into the turn with, radians (positive lifting the right wing, so negative in a turn to the
@@ -256,7 +395,9 @@ namespace SlonkFauna
 		/** A herd's way along its loop there, planet-local unit (level): its heading, in whatever frame it stands in. */
 		FVector Ahead = FVector::ZeroVector;
 	};
-	/** The group's frame on its path at a time (seconds on the world's clock, wrapped to ClockPeriodSec first). */
+	/** The group's frame on its path at a time (seconds on the world's clock, wrapped to ClockPeriodSec first). A group of
+	 *  leapers' is its shoal's, at the world's own seconds (never wrapped, nor moved by the paths' clock's offset: the
+	 *  terrain material swims the shoals on them): on the sea-level sphere at the shoal's middle, x the way it swims. */
 	SLONK_API FFaunaPose PathAt(const FFaunaGroup& G, double RadiusCm, double Seconds);
 	/** A herd's schedule, in closed form: how far it has walked along its loop since the hour's turn, cm, and how fast it
 	 *  walks, cm/s, at a time (the world's seconds, wrapped to the hour); and whether it is set to walk (1 from
@@ -558,6 +699,48 @@ namespace SlonkFauna
 	/** A herd's fright as its walkers read it (HerdData): whether it is live, when it was last startled and when its
 	 *  alarm began to come in, as FrightData has them. The herd's own slots are left as they are. */
 	SLONK_API void HerdFrightData(const FPanic& P, double Now, double ClockOffsetSec, float* Group);
+	/** Sends a group of leapers diving if a craft scares it (Scares: in the air lower than its kind's ScareAltitudeCm over
+	 *  the sea, within its ScareRadiusCm; someone on foot never does, on a shore or wading), unless it was startled in the
+	 *  last RestartleSec; with bForce, whatever comes and however lately. None of its fish leaves the water from then
+	 *  (Leaper::DiveLeadSec on, past the leaps already on their way up) to Leaper::DiveSec after its latest startle; a leap
+	 *  already in sight comes down. Dive.T0 is its latest startle and Dive.ScatterT0 when its dive began: a startle while
+	 *  the dive lasts carries it on from there (moved up to ten seconds back after half an hour of it). Once its window has
+	 *  closed (or is all but closed, DiveLeadSec short of it) its fish leap again, though still shaken a few seconds: a
+	 *  startle then, forced or not, does nothing until every leap the old dive kept under is past its time back in the
+	 *  water (Leaper::HeldUnderSec), and after it begins a new dive; so no startle ever hides a fish in sight, nor shows
+	 *  one the dive kept under. On the world's own seconds, as the leaps are. True if it did. */
+	SLONK_API bool StartleLeapers(FPanic& Dive, const FFaunaKindDesc& D, const FVector& GroupPosCm, const FFaunaThreat& T, double Now, bool bForce = false);
+	/** Whether a group's dive keeps in the water a leap leaving at T0 (the world's seconds): one leaving from when its dive
+	 *  began (Dive.ScatterT0) to Leaper::DiveSec after its latest startle (Dive.T0), as the material reads it. */
+	SLONK_API bool LeapDived(const FPanic& Dive, double T0);
+	/** A group of leapers' dive as the material reads it (LeaperData's slots 1, 6 and 7), Now the world's seconds: the
+	 *  other slots are left as they are. */
+	SLONK_API void LeaperDiveData(const FPanic& Dive, double Now, float* Group);
+	/** The sea's surface each of a group's fish's leaps crosses, as last read: the leap's cycle (none read yet: the lowest),
+	 *  and the surface where it leaves the water and where it dives back in, at the swell's full strength, cm. */
+	struct FLeaperSurfaceCache
+	{
+		int64 Cycle[Leaper::MaxPerGroup];
+		double Surface[Leaper::MaxPerGroup][2];
+		FLeaperSurfaceCache()
+		{
+			for (int32 i = 0; i < Leaper::MaxPerGroup; ++i) { Cycle[i] = TNumericLimits<int64>::Lowest(); Surface[i][0] = Surface[i][1] = 0.0; }
+		}
+	};
+	/** The leap of a fish the material is given the sea's surface for at a moment (the world's seconds): its current one
+	 *  until a second after it is back under the water, then its next (many seconds off, so the material never reads one
+	 *  leap's surface for another's). */
+	SLONK_API FLeap LeapToRead(const float* Custom, double WorldSec);
+	/**
+	 * What the material reads of a group of leapers at a moment (the world's seconds), into its custom primitive data
+	 * (LeaperData::Num floats; the night left as it is): its dive (LeaperDiveData), and the sea's surface where and when
+	 * each fish's leap to read (LeapToRead) leaves the water and dives back in, faded by Fade (SwellFade at the camera's
+	 * distance: the surface the terrain draws there): read afresh (LeapCrossing, at full strength) for a fish whose leap to
+	 * read has changed since Cache's, else taken from it. Its fish's custom floats (Custom::Num each) and homes (in its
+	 * frame) as its set was given them.
+	 */
+	SLONK_API void LeaperGroupData(const FFaunaGroup& G, TConstArrayView<float> Custom, TConstArrayView<FVector> Homes, double RadiusCm, double SwellCm, double Fade, double WorldSec,
+		const FPanic& Dive, FLeaperSurfaceCache& Cache, float* Group);
 
 	/**
 	 * The material's motion of a flier's vertex (fauna_material.py, WPO_CODE), transliterated in floats as the GPU runs
@@ -586,6 +769,19 @@ namespace SlonkFauna
 	SLONK_API float WalkerSpeedMS(float T, const float* Custom, const float* Group);
 
 	/**
+	 * The material's motion of a fish's vertex (fauna_material.py's leaper branch), transliterated in floats as the GPU
+	 * runs it: the offset of a vertex at LP (its unit mesh's cm, in its instance's frame, which is its group's unturned
+	 * and scaled by its length) with its vertex colour, at the material's time T, for a fish's custom floats (Custom::Num)
+	 * in its group's custom primitive data (LeaperData::Num), DistCm from the camera, which sees PxPerRad pixels a radian.
+	 * In the instance's frame, unit-mesh cm. LeaperShown is the pixel shader's own reading of the same leap: whether the
+	 * fish is drawn at all then (its fade's dither aside); and LeaperTurn the pitch and the way it turns the fish then
+	 * (radians), by which the pixel shader turns its normals.
+	 */
+	SLONK_API FVector3f LeaperMotion(const FVector3f& LP, const FLinearColor& VC, float T, const float* Custom, const float* Group, float DistCm, float PxPerRad);
+	SLONK_API bool LeaperShown(float T, const float* Custom, const float* Group);
+	SLONK_API FVector2f LeaperTurn(float T, const float* Custom, const float* Group);
+
+	/**
 	 * The groups kept about a camera. A scan reads the cells round the camera's ground point (on a task: Scan is pure),
 	 * reusing those the last scan read, once the ground point has moved a sixth of a cell; every frame, Select spawns
 	 * the scan's groups whose middles have come within their kind's reach of the ground point, nearest first and within
@@ -611,8 +807,11 @@ namespace SlonkFauna
 			double Ms = 0.0;
 		};
 
-		/** A changed world (another density, a kind switched off, a new profile) clears everything. */
-		void SetWorld(const FFaunaWorld& W);
+		/** A changed world (another density, a kind switched off, a new profile) clears everything: false. One whose seas
+		 *  alone changed (fauna switched off and on takes the shoals out of the terrain's material and puts them back) lets
+		 *  only the leapers' groups and cells go, which alone live by them, and asks for a scan; the other kinds' groups about
+		 *  and cells read are kept: true (as for the same world). */
+		bool SetWorld(const FFaunaWorld& W);
 		const FFaunaWorld& GetWorld() const { return World; }
 		bool HasWorld() const { return bHasWorld; }
 		/** Whether the camera's ground point (planet-local unit) has moved far enough from the last scan's for another. */

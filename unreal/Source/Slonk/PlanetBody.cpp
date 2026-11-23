@@ -1548,6 +1548,16 @@ void APlanetBody::ApplyTerrainMaterialParams()
 	Terrain->SetScalarParameter(TEXT("PlanktonGlow"), Sea.PlanktonGlow);
 	Terrain->SetScalarParameter(TEXT("ShoalDensity"), Sea.ShoalDensity);
 	Terrain->SetVectorParameter(TEXT("PlanktonColor"), Sea.PlanktonColor);
+	// And the fish that leap out of those shoals, through that swell, in that sea's colours (none where it paints none).
+	if (Fauna)
+	{
+		SlonkFauna::FFaunaSea FaunaSea;
+		FaunaSea.ShoalDensity = Sea.ShoalDensity;
+		FaunaSea.SwellCm = S.SwellCm;
+		FaunaSea.Shallow = S.ShallowColor;
+		FaunaSea.Ocean = S.OceanColor;
+		Fauna->SetSea(FaunaSea);
+	}
 	// The ship's stir as last given, to a material made anew; none over a sea with nothing in it to stir.
 	if (!bLivingSea) { ShipStirApplied = 0.f; }
 	Terrain->SetScalarParameter(TEXT("ShipStir"), ShipStirApplied);

@@ -68,6 +68,11 @@ namespace SlonkFauna
 	 *  Tone (0..1) and paler on drier grass; turned round the wheel and made vivid (the grass's own colour) as the world
 	 *  grows strange, as the fliers' are. Vary (about 0.85 to 1.15) is the herd's own shade. */
 	SLONK_API FLinearColor HerdPigment(const FFaunaLook& L, const FScatterPalette& Pal, double Dry, double Tone, double Vary);
+	/** A group of leapers' colour: on an Earth at strangeness 0 a fish's silver-blue, a quarter of it tinted by the sea's
+	 *  own colour (SeaColor, its solvent's: the shoals under the surface are painted in its shade); turned round the wheel
+	 *  and made vivid (the sea's own colour, as bright as the Earth's) as the world grows strange, as the other animals
+	 *  are. Vary (about 0.85 to 1.15) is the group's own shade. */
+	SLONK_API FLinearColor LeaperPigment(const FFaunaLook& L, const FLinearColor& SeaColor, double Vary);
 
 	/** What a world's seas carry, as the terrain material paints them: how brightly the plankton glow where the sea is
 	 *  stirred (PlanktonGlow: emissive at full stir, at night) and in what colour, and the share of the shoal lattice's
