@@ -534,15 +534,21 @@ SlonkFauna::FFaunaProfile SlonkFauna::Roll(const FWorldGenome& G, EPlanetArchety
 	F.Strangeness = FMath::Clamp(G.Strangeness, 0.f, 1.f);
 	F.Type = Type;
 	F.Hash = Hash;
-	// A stream of its own: none of the world's other rolls (its style, its genome, its people) moves.
+	// A stream of its own: none of the world's other rolls (its style, its genome, its people) moves. Its first draw is
+	// the seed the animals' places are made from, the same at every strangeness.
 	FRandomStream R((int32)(Hash * 0x9E3779B1u + 0x27d4eb2fu));
 	F.Seed = (uint32)R.GetUnsignedInt();
-	// One draw per kind, taken so the seed above never moves: each seeds the kind's species (RollSpecies, a stream of the
-	// kind's own; at strangeness 0 every kind is the Earth's), and the floaters' is the share of their cells holding a jelly.
+	// One draw per kind: each seeds the kind's species (RollSpecies, a stream of the kind's own; at strangeness 0 every
+	// kind is the Earth's), and the floaters' is the share of their cells holding a jelly. They come from a second
+	// stream, seeded with the hash mixed and not stepped: the first is seeded a fixed step from the genome's (the hash
+	// times the same odd number, each plus a constant of its own), and a stream so seeded draws a fixed step from the
+	// other's, draw for draw, on every world: the jellies' share followed the hue of the sky. The seed above stays where
+	// it was, so nothing moves on a world near home; what departs on a strange one is drawn anew.
+	FRandomStream Kinds((int32)HashCombine(Hash, 0x27d4eb2fu));
 	float FloaterDraw = 0.f;
 	for (int32 K = 0; K < NumKinds; ++K)
 	{
-		const float Draw = R.FRand();
+		const float Draw = Kinds.FRand();
 		F.Species[K] = RollSpecies((EFaunaKind)K, F.Strangeness, Hash, Draw);
 		if ((EFaunaKind)K == EFaunaKind::Floater) { FloaterDraw = Draw; }
 	}

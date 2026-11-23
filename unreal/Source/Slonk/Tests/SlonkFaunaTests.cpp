@@ -6238,7 +6238,8 @@ bool FSlonkFaunaFloaterLoopsTest::RunTest(const FString& Parameters)
 {
 	// Every jelly drifts a few metres a second round a closed loop whose period divides the hour (where it was an hour ago,
 	// no seam at the clock's wrap), its middle 300 m to 3 km over the highest ground near its loop, rising and sinking
-	// gently (under a metre and a half a second), its pulse a whole number of times an hour 3 to 6 s apart, 20 to 80 m
+	// gently (no faster than its ground's envelope and its own rise and fall make it: a metre and a half a second or so
+	// at the most, never over two and a quarter), its pulse a whole number of times an hour 3 to 6 s apart, 20 to 80 m
 	// across, its loop within 1.2 km of its middle (so one comes and goes unseen past its fade). Its lowest point (its
 	// tentacles' tips, drawn at twice its size far off) stays Floater::ClearCm over the ground under it all round its loop:
 	// the field at its finest, and the drawn ground of chunks 1.2 km and 9.8 km across. The jellies are pure functions of
@@ -6277,13 +6278,18 @@ bool FSlonkFaunaFloaterLoopsTest::RunTest(const FString& Parameters)
 			const FVector A = PathAt(G, R, T).PosCm, B = PathAt(G, R, T + 1.0).PosCm;
 			const double Climb = FMath::Abs(B.Size() - A.Size()) / 100.0;
 			MaxClimb = FMath::Max(MaxClimb, Climb);
-			Climbs += Climb < 1.5 ? 0 : 1;
+			// What its making allows it: the envelope its ground is laid under rises no steeper than Floater::GroundSlope
+			// along its loop (the curve through the envelope's samples up to three tenths steeper between them), and it
+			// rises and falls BobCm over that BobK times a lap. A cap on the fastest of one world's jellies holds only
+			// for that world: these hold for every jelly.
+			const double Allowed = 1.3 * Floater::GroundSlope * G.SpeedCmS / 100.0 + 0.5 * G.BobCm / 100.0 * G.BobK * UE_DOUBLE_TWO_PI / G.PeriodSec + 0.05;
+			Climbs += Climb < Allowed && Climb < 2.25 ? 0 : 1;
 			const double Up = (A.Size() - R - FMath::Max(SlonkTerrain::SurfaceHeightCm(W.P, A.GetSafeNormal()), 0.0)) / 100.0;
 			MinUp = FMath::Min(MinUp, Up);
 			MaxUp = FMath::Max(MaxUp, Up);
 		}
 	}
-	AddInfo(FString::Printf(TEXT("%d jellies over a world rolling them into %.0f%% of its cells: %d periods not dividing the hour, %d loops not closed, %d seams; drifting %.1f to %.1f m/s (%d off), %d off their sizes, %d pulses off, %d cruises off, loops within %.0f m of their middles (%d too wide to come unseen); climbing at most %.2f m/s (%d over 1.5); their middles %.0f to %.0f m over the ground under them"),
+	AddInfo(FString::Printf(TEXT("%d jellies over a world rolling them into %.0f%% of its cells: %d periods not dividing the hour, %d loops not closed, %d seams; drifting %.1f to %.1f m/s (%d off), %d off their sizes, %d pulses off, %d cruises off, loops within %.0f m of their middles (%d too wide to come unseen); climbing at most %.2f m/s (%d over what their making allows); their middles %.0f to %.0f m over the ground under them"),
 		Jellies.Num(), 100.0 * W.Profile.FloaterShare, NotDividing, Unclosed, Seams, MinSpeed, MaxSpeed, Speeds, Sizes, Pulses, Cruises, MaxExtent / 100.0, Extents, MaxClimb, Climbs, MinUp, MaxUp));
 	TestTrue(TEXT("jellies to test"), Jellies.Num() >= 150);
 	TestEqual(TEXT("every period divides the hour"), NotDividing, 0);
@@ -7651,7 +7657,10 @@ bool FSlonkFaunaEarthGoldenTest::RunTest(const FString& Parameters)
 	}
 	AddInfo(FString::Printf(TEXT("the Earth's animals (%d flocks, %d herds, %d leaper groups, %d jellies%s): %s"), Flocks.Num(), Herds.Num(), Leapers.Num(), Jellies.Num(),
 		bJellyWorld ? TEXT("") : TEXT(", no jelly world"), *Lines));
-	TestTrue(TEXT("groups of every kind to hold"), Flocks.Num() == 424 && Herds.Num() == 410 && Leapers.Num() == 30 && Jellies.Num() == 917);
+	// (The jellies are a strange world's, at 0.6: their share of the cells is one of the kinds' draws, which come from a
+	// stream of their own since they stopped following the genome's. This test, run on that code, gave 1546 of them and
+	// the CRC below; everything of the Earth's is as it was.)
+	TestTrue(TEXT("groups of every kind to hold"), Flocks.Num() == 424 && Herds.Num() == 410 && Leapers.Num() == 30 && Jellies.Num() == 1546);
 	// As they were before the species and the alien plans came (this test, run on that code, gave these).
 	TestEqual(TEXT("the Earth bird's mesh as it was"), MeshCrc[0], 0x2b5c9454u);
 	TestEqual(TEXT("the Earth grazer's mesh as it was"), MeshCrc[1], 0x794bc941u);
@@ -7661,7 +7670,7 @@ bool FSlonkFaunaEarthGoldenTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("the Earth-like world's flocks as they were"), FlockCrc, 0x987cd155u);
 	TestEqual(TEXT("its herds as they were"), HerdCrc, 0x72d681cdu);
 	TestEqual(TEXT("its leapers as they were"), LeaperCrc, 0xcd898b04u);
-	TestEqual(TEXT("a strange world's jellies as they were"), JellyCrc, 0x2c603a68u);
+	TestEqual(TEXT("a strange world's jellies as they were"), JellyCrc, 0x315ec08au);
 	TestEqual(TEXT("a herd stepped as it was"), StepCrc, 0x00a33f86u);
 	TestEqual(TEXT("the walker branch's copy as it was, for the Earth grazer's rig"), MotionCrc, 0x433b0e77u);
 	// The alien wings and fish came into the fliers' part and the leaper branch: their copies for a bird and an Earth fish
@@ -7856,8 +7865,9 @@ bool FSlonkFaunaDepartureTest::RunTest(const FString& Parameters)
 	// in about even numbers. At 1, most worlds have departed in every kind that has forms to depart to (the herds, the
 	// fliers and the fish), each of their forms coming; their fliers and their fish, too, rise with it and keep every alien
 	// plan they had. Of more than one species, each holds a fair share of its kind's cells. The profile's
-	// other draws never move: its seed, its look and its jellies are those its stream gave before the species came, at
-	// every strangeness.
+	// other draws never move: its seed, its look and its jellies are those its streams gave before the species came, at
+	// every strangeness. And the kinds' draws follow none of the genome's (their stream is seeded with the hash mixed,
+	// where one seeded a fixed step from the genome's would draw that step from it on every world).
 	constexpr int32 N = 600;
 	double WorldShare[11] = {}, CellShare[11] = {}, SpeciesMean[11] = {};
 	int32 Lost = 0, Moved = 0, Hexa = 0, Insect = 0, EveryKind = 0, Skewed = 0, Several = 0;
@@ -7870,6 +7880,7 @@ bool FSlonkFaunaDepartureTest::RunTest(const FString& Parameters)
 	WasOther[1].SetNum(N);
 	double OtherShare[2][11] = {};
 	int32 OtherForms[2][3] = {};
+	int32 StepSeen[SlonkFauna::NumKinds][16][16] = {};
 	for (int32 t = 0; t <= 10; ++t)
 	{
 		const float S = t / 10.f;
@@ -7878,11 +7889,25 @@ bool FSlonkFaunaDepartureTest::RunTest(const FString& Parameters)
 			const uint32 Hash = (uint32)(h + 1) * 7919u;
 			const FWorldGenome G = SlonkGenome::Roll(EPlanetArchetype::Terrestrial, S, Hash);
 			const SlonkFauna::FFaunaProfile F = SlonkFauna::Roll(G, EPlanetArchetype::Terrestrial, Hash);
-			// The profile's own stream, drawn as it was: its seed, a draw a kind, the jellies' share from the floaters' draw.
+			// The profile's own streams, drawn as they were: its seed from the first; a draw a kind from the second, the
+			// jellies' share from the floaters'.
 			FRandomStream R((int32)(Hash * 0x9E3779B1u + 0x27d4eb2fu));
 			const uint32 Seed = (uint32)R.GetUnsignedInt();
+			FRandomStream KindStream((int32)HashCombine(Hash, 0x27d4eb2fu));
 			float Draws[SlonkFauna::NumKinds];
-			for (int32 K = 0; K < SlonkFauna::NumKinds; ++K) { Draws[K] = R.FRand(); }
+			for (int32 K = 0; K < SlonkFauna::NumKinds; ++K) { Draws[K] = KindStream.FRand(); }
+			if (t == 10)
+			{
+				// Against the genome's own draws (its stream as SlonkGenome::Roll seeds it): how far each kind's draw is
+				// from every one of the genome's first sixteen, as a sixteenth of the way round. A stream seeded a fixed
+				// step from the genome's is the same sixteenth off one of them on every world.
+				FRandomStream GenomeStream((int32)(Hash * 2654435761u + 0x5bd1e995u));
+				for (int32 j = 0; j < 16; ++j)
+				{
+					const float GenomeDraw = GenomeStream.FRand();
+					for (int32 K = 0; K < SlonkFauna::NumKinds; ++K) { ++StepSeen[K][j][FMath::Clamp((int32)(FMath::Frac(Draws[K] - GenomeDraw + 1.f) * 16.f), 0, 15)]; }
+				}
+			}
 			const SlonkFauna::FFaunaLook L = SlonkFauna::LookOf(G);
 			Moved += F.Seed == Seed && F.FloaterShare == SlonkFauna::FloaterShareOf(G, Draws[(int32)EFaunaKind::Floater]) && F.Look.Glow == L.Glow && F.Look.HueTurnDeg == L.HueTurnDeg
 				&& F.Look.Vivid == L.Vivid ? 0 : 1;
@@ -7967,6 +7992,12 @@ bool FSlonkFaunaDepartureTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("most worlds at 1 departed in every kind with forms to depart to"), EveryKind > N * 9 / 10);
 	TestTrue(TEXT("of several species, each a fair share"), Several > 100 && Skewed == 0);
 	TestEqual(TEXT("the profile's other draws as its stream gave them"), Moved, 0);
+	// The kinds' draws stand in no fixed step from the genome's: of the sixteenths of the way round a kind's draw can be
+	// from one of the genome's, the fullest holds about a sixteenth of the worlds, not all of them.
+	int32 FullestStep = 0;
+	for (int32 K = 0; K < SlonkFauna::NumKinds; ++K) { for (int32 j = 0; j < 16; ++j) { for (int32 b = 0; b < 16; ++b) { FullestStep = FMath::Max(FullestStep, StepSeen[K][j][b]); } } }
+	AddInfo(FString::Printf(TEXT("the kinds' draws against the genome's first sixteen: the fullest sixteenth of a step holds %d of %d worlds"), FullestStep, N));
+	TestTrue(TEXT("no kind's draw follows a draw of the genome's"), FullestStep > 0 && FullestStep < N / 6);
 	return true;
 }
 
