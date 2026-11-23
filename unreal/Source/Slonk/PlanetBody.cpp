@@ -678,6 +678,9 @@ void APlanetBody::ResolveStyleFromArchetype()
 	// strangeness 0. Given to the animals about if there are any (a world resolved again keeps its terrain).
 	FaunaProfile = SlonkFauna::Roll(Genome, Type, Hash);
 	if (Fauna && bTerrainActive) { ConfigureFauna(); }
+	// What grows on it, rolled from the genome and its star's light on streams of its own likewise: the Earth's at
+	// strangeness 0, whatever the star. The terrain is given it with its scatter's settings (EnsureTerrain).
+	FloraProfile = SlonkFlora::Roll(Genome, Type, Hash, StarLight);
 	// The layer was placed from sea level, but on a world with relief most land stands a kilometre or more above
 	// it, so over the plateaus people fly across and land on the cloud base sat on the ground. Lift the layer by
 	// the typical land height, read once from the height field at a coarse wavelength (a hundred-odd samples).
@@ -760,6 +763,13 @@ void APlanetBody::ResolveStyleFromArchetype()
 	// The alien layer, last: at strangeness 0 (home, the charted neighbours) it leaves the style exactly as the
 	// archetype made it.
 	SlonkGenome::Apply(Genome, Type, Style);
+	// And over it the pigment of what grows there: the living ground's colour goes toward the one its vegetation takes
+	// under its star, as far as its flora is its own. None of the way at strangeness 0, which leaves the land colours
+	// exactly as the archetype made them. They are kept as they stood before it, for a flora rolled again to start from.
+	LandBeforeFlora = Style.LandColor;
+	Land2BeforeFlora = Style.LandColor2;
+	bLandBeforeFloraSet = true;
+	SlonkFlora::ApplyPigment(FloraProfile, GroundLifeOf(Type, Style.bAtmosphere), Style);
 	// A world the tides hold does not turn, keeps no rings (the tides that stopped it would have pulled them down) and
 	// has no polar caps: its cap is the far side's, which the terrain's climate makes. The draws for the spin and the
 	// rings above are still taken, so nothing after them moves.
@@ -770,6 +780,54 @@ void APlanetBody::ResolveStyleFromArchetype()
 		Style.IceCapStart = 2.f;
 	}
 	if (Genome.Strangeness > 0.f) { UE_LOG(LogTemp, Log, TEXT("%s: %s"), *GetDisplayName(), *SlonkGenome::Describe(Genome)); }
+	if (!FloraProfile.IsEarth()) { UE_LOG(LogTemp, Log, TEXT("%s: %s"), *GetDisplayName(), *SlonkFlora::Describe(FloraProfile)); }
+}
+
+FFloraProfile APlanetBody::FloraRolledAt(const FWorldGenome& Own, EPlanetArchetype Kind, uint32 Hash, float AtStrangeness, EStarLight Light)
+{
+	const float S = FMath::Clamp(AtStrangeness, 0.f, 1.f);
+	const FWorldGenome G = FMath::IsNearlyEqual(S, Own.Strangeness) ? Own : SlonkGenome::Roll(Kind, S, Hash);
+	return SlonkFlora::Roll(G, Kind, Hash, Light);
+}
+
+void APlanetBody::WearFloraPigment(const FFloraProfile& Flora, EPlanetArchetype Kind, const FLinearColor& BareLand, const FLinearColor& BareLand2, FPlanetStyle& S)
+{
+	S.LandColor = BareLand;
+	S.LandColor2 = BareLand2;
+	SlonkFlora::ApplyPigment(Flora, GroundLifeOf(Kind, S.bAtmosphere), S);
+}
+
+void APlanetBody::SetFloraForDebug(float AtStrangeness, EStarLight Light)
+{
+	// The style as the archetype resolves it first, if it has yet to be, and kept from here on (as a change of the
+	// world's people keeps it): resolved again it would roll the world's own flora back over this one.
+	if (bStyleFromArchetype) { ResolveStyleFromArchetype(); bStyleFromArchetype = false; }
+	uint32 Hash = FloraProfile.Hash;
+	if (!bLandBeforeFloraSet)
+	{
+		// A world whose style was set by hand never resolved one: its land colours as they stand are what a pigment
+		// goes over, and its flora is rolled from its place's own hash, as a resolved world's is.
+		LandBeforeFlora = Style.LandColor;
+		Land2BeforeFlora = Style.LandColor2;
+		bLandBeforeFloraSet = true;
+		const FVector L = GetSeedLocation();
+		Hash = HashCombine(HashCombine(GetTypeHash(FMath::RoundToInt64(L.X / 1000.0)), GetTypeHash(FMath::RoundToInt64(L.Y / 1000.0))), GetTypeHash(FMath::RoundToInt64(L.Z / 1000.0)));
+	}
+	StarLight = Light;
+	FloraProfile = FloraRolledAt(Genome, ResolvedArchetype, Hash, AtStrangeness, Light);
+	WearFloraPigment(FloraProfile, ResolvedArchetype, LandBeforeFlora, Land2BeforeFlora, Style);
+	// The ground far and near in the new colours (the plants' palette with it), then the species, then the animals,
+	// whose pigments follow the living ground's.
+	for (UMaterialInstanceDynamic* M : SurfaceMIDs())
+	{
+		if (!M) { continue; }
+		M->SetVectorParameterValue(TEXT("LandColor"), Style.LandColor);
+		M->SetVectorParameterValue(TEXT("LandColor2"), Style.LandColor2);
+	}
+	ApplyTerrainMaterialParams();
+	if (Terrain) { Terrain->SetFlora(FloraProfile); }
+	ConfigureFauna();
+	UE_LOG(LogTemp, Log, TEXT("%s: %s"), *GetDisplayName(), *SlonkFlora::Describe(FloraProfile));
 }
 
 TArray<UMaterialInstanceDynamic*> APlanetBody::SurfaceMIDs() const
@@ -1033,6 +1091,8 @@ void APlanetBody::SetNightLights(float Intensity)
 		ApplyTerrainMaterialParams();
 		// A colony founded (or a world gone dark) brings its towns or takes them away; the rocks follow.
 		Terrain->SetScatterOptions(Terrain->GetScatterSettings().bEnabled, Terrain->GetScatterSettings().Density, HasCities(), GroundLife(), GetPeople());
+		// What grows there as the style resolved again rolled it (the same, unless its strangeness or its star changed).
+		Terrain->SetFlora(FloraProfile);
 		ConfigureFauna();
 	}
 	const FCivilization& Now = GetPeople();
@@ -1070,7 +1130,12 @@ void APlanetBody::SetPeople(const FCivilization& People)
 		M->SetVectorParameterValue(TEXT("NightLightColor"), Style.NightLightColor);
 	}
 	ApplyTerrainMaterialParams();
-	if (Terrain) { Terrain->SetScatterOptions(Terrain->GetScatterSettings().bEnabled, Terrain->GetScatterSettings().Density, HasCities(), GroundLife(), GetPeople()); }
+	if (Terrain)
+	{
+		Terrain->SetScatterOptions(Terrain->GetScatterSettings().bEnabled, Terrain->GetScatterSettings().Density, HasCities(), GroundLife(), GetPeople());
+		// And what grows there, as the style resolved again rolled it.
+		Terrain->SetFlora(FloraProfile);
+	}
 	ConfigureFauna();
 	ApplyBuildingParams();
 	ClearCities();
@@ -1489,6 +1554,8 @@ void APlanetBody::EnsureTerrain()
 	const FPlanetTerrainParams P = MakeTerrainParams();
 	// The rocks keep off the streets of a world with towns; set before the chunks are built.
 	Terrain->SetScatterOptions(Terrain->GetScatterSettings().bEnabled, Terrain->GetScatterSettings().Density, HasCities(), GroundLife(), GetPeople());
+	// And what grows there, its species by slot, before them too: the Earth's on the worlds near home.
+	Terrain->SetFlora(FloraProfile);
 	if (!bTerrainActive || P != TerrainParams)
 	{
 		TerrainParams = P;

@@ -6,9 +6,11 @@
 // show it, trees and boulders from a few hundred metres across down, pebbles and grass on the last level alone, so
 // the quadtree's own detail levels are the scatter's. Density comes from the fields the material paints with
 // (slope, rock, wet, ice, canyon wall, crater) and the refinement's own regimes, so a fan of boulders lies under the
-// cliff the shader draws as cliff; the shrubs stand on the very dots the material paints as scrub. Everything here
-// is a pure function of the planet and the chunk: safe off the game thread, and every visit puts everything back
-// where it was.
+// cliff the shader draws as cliff; the shrubs stand on the very dots the material paints as scrub. What the plants are
+// is the world's flora (FFloraProfile, FloraTypes.h): its species by slot, the Earth's grass, bush, broadleaf and
+// conifer in the four roles on the worlds near home, other life forms in their places and beside them on a strange
+// world, and giants of a hundred metres and more on a lattice of their own. Everything here is a pure function of the
+// planet, the settings and the chunk: safe off the game thread, and every visit puts everything back where it was.
 
 #pragma once
 
@@ -40,6 +42,8 @@ struct FScatterSettings
 	FCivilization People;
 	/** How much grows, 0..1: 1 on a temperate living world, a little scrub on a desert, nothing on the dead ones. */
 	float Life = 0.f;
+	/** What grows: the world's species by slot. The Earth's, unless the world rolled its own (SlonkFlora::Roll). */
+	FFloraProfile Flora;
 	FScatterPalette Palette;
 	/** A plant fades out this many edges of the coarsest chunk carrying it from the camera: under the distance at which
 	 *  finer chunks carrying it arrive (the terrain component sets it from its split factor), so none pops in. */
@@ -50,10 +54,14 @@ struct FScatterSettings
 
 namespace SlonkScatter
 {
-	/** The meshes the scatter places, one instanced set each: the rock shapes, then the plants. */
+	/** The meshes the scatter places, one instanced set each: the rock shapes, then the flora's slots (SlonkFlora::Slot).
+	 *  The Earth's four plants are the first four slots, on every world: a strange world's species of the same roles
+	 *  stand in them, and its others in the slots after. A slot with no species carries nothing. */
 	constexpr int32 FirstPlant = SlonkGroundRocks::NumKinds;
-	constexpr int32 NumMeshes = SlonkGroundRocks::NumKinds + SlonkPlants::NumKinds;
+	constexpr int32 NumMeshes = SlonkGroundRocks::NumKinds + SlonkFlora::MaxSpecies;
 	constexpr int32 PlantMesh(EPlant Kind) { return FirstPlant + (int32)Kind; }
+	constexpr int32 FloraMesh(int32 Slot) { return FirstPlant + Slot; }
+	constexpr int32 SlotOf(int32 Mesh) { return Mesh - FirstPlant; }
 	constexpr bool IsPlant(int32 Mesh) { return Mesh >= FirstPlant; }
 
 	/** Per-instance custom data. For a rock: tint RGB, snow cover, seed, the size in metres along the mesh's three
@@ -65,6 +73,22 @@ namespace SlonkScatter
 	/** Rocks at least this big across (cm), and trees at least this tall, get collision near the crew. */
 	constexpr double SolidMinCm = 45.0;
 	constexpr double SolidTreeCm = 200.0;
+	/**
+	 * A strange world's giants: a class of their own, on a lattice of about GiantSpacingCm, on chunks up to
+	 * GiantMaxEdgeCm across and on GiantFarLevels coarser levels besides, half of them kept on each (as the trees thin
+	 * with distance), from GiantMinCm to GiantMaxCm tall before their species' own height. They stand in loose groves
+	 * (GiantDensity) on the wet, level ground the forests take and out over the meadows, none on a cliff, in lying snow,
+	 * above the treeline or in a town. Whether one stands in a cell, where and how tall are read from the planet's
+	 * field, not from a chunk's drawn mesh, so every level of the quadtree carries the same giants, and nothing else the
+	 * scatter places stands in one's foot. A world without a giant species carries none, and its chunks are no coarser
+	 * for them (MaxChunkEdgeCm).
+	 */
+	constexpr double GiantSpacingCm = 12000.0;
+	constexpr double GiantMaxEdgeCm = 250000.0;
+	constexpr int32 GiantFarLevels = 3;
+	constexpr double GiantKeep = 0.5;
+	constexpr double GiantMinCm = 6000.0;
+	constexpr double GiantMaxCm = 20000.0;
 	/** Chunks up to this edge keep their solid copies, cm: round someone on the ground, and under a ship hovering up to
 	 *  about 6 km, whose transporter's arrival trace needs them (every level of every class at the default ground
 	 *  detail). The coarser chunks further off keep none: on Horizon, most of the trees. */
@@ -122,7 +146,8 @@ namespace SlonkScatter
 	};
 
 	/** The largest chunk edge any class rides on under the settings, on a world whose faces' chunk edge is FaceEdge
-	 *  (FaceEdgeCm), cm: coarser chunks carry nothing. It only grows with the settings' MaxFarLevels. */
+	 *  (FaceEdgeCm), cm: coarser chunks carry nothing. It only grows with the settings' MaxFarLevels. The giants count
+	 *  only on a world whose flora has one. */
 	SLONK_API double MaxChunkEdgeCm(const FScatterSettings& S, double FaceEdge);
 	/** How many far levels the trees use under the settings on such a world, and how far from the camera they reach, cm,
 	 *  where its chunks are their depth's share of FaceEdge (towards a face's edges they run smaller, and so a little
@@ -160,6 +185,16 @@ namespace SlonkScatter
 	 * soil. Every chunk carries it, however coarse; the settings reach it through the material, with no rebuild.
 	 */
 	SLONK_API void TreeCover(const FPlanetTerrainParams& P, const FChunkGrid& G, TArray<float>& Out);
+
+	/** The slot of the species that stands at a spot, of a role's two (First, one of SlonkFlora::Slot's first of a role):
+	 *  the first where the role has one species; else by stands a few hundred metres across, each species its share of
+	 *  them, the edges between two stands mixed by Mix (a number 0..1 of the plant's own, the same at every level of the
+	 *  quadtree). A pure function of the planet, the flora and the place. */
+	SLONK_API int32 SpeciesAt(const FPlanetTerrainParams& P, const FFloraProfile& Flora, int32 First, const FVector& Up, double Mix);
+	/** The chance of a giant in its lattice cell at a unit direction, as ScatterChunk reckons it, read from the field
+	 *  (finer than ten metres left out) rather than a chunk's drawn mesh, before the world's life and the density
+	 *  setting: 0 over water. For the searches and the tests. */
+	SLONK_API double GiantDensityAt(const FPlanetTerrainParams& P, const FVector& Dir);
 
 	/** A planet-local position in the terrain material's noise space: each axis modulo NoisePeriodCm, as the chunk
 	 *  origins reach the shader. */

@@ -83,6 +83,23 @@ public:
 	 *  so the arrival trace stands the person on a boulder rather than inside it. */
 	void PinSolidRocks(const FVector& WorldPos, double Seconds);
 	const FScatterSettings& GetScatterSettings() const { return Scatter; }
+	/** The world's flora: its species by slot (FloraTypes.h). Set before the terrain is configured, or after: a change of
+	 *  species holds the new forms' meshes, gives every plant set its species' mesh and material, and builds the chunks
+	 *  carrying plants again. A species drawn as the Earth's are shares the foliage material; a strange one has an
+	 *  instance of its own carrying its look (SlonkFlora::LookOf), if the material has been built with the species'
+	 *  parameters, and the shared one, with no glow, until it is. */
+	void SetFlora(const FFloraProfile& InFlora);
+	const FFloraProfile& GetFlora() const { return Scatter.Flora; }
+	/** Whether the foliage material has the species' parameters (tools/planet_materials/foliage_material.py builds it). */
+	bool HasFloraMaterial() const { return bFloraMaterial; }
+	/** The material a flora slot's sets are drawn in: the shared foliage material, or the species' own. */
+	UMaterialInterface* GetFloraMaterial(int32 Slot) const { return MaterialOfSet(SlonkScatter::FloraMesh(Slot)); }
+	/** For the debug commands: a plant of a flora slot standing near a planet-local unit direction, found by building the
+	 *  chunks round it as the game does (synchronous, a few dozen chunks at most: debug use). False if none stands within
+	 *  MaxCm. OutLocalCm is its foot, planet-local; OutHeightCm its height. */
+	bool FindPlant(int32 Slot, const FVector& FromDir, double MaxCm, FVector& OutLocalCm, double& OutHeightCm) const;
+	/** One line a live slot for the debug readout: what stands in it, what it is drawn in, how many show now. */
+	void DescribeFlora(TArray<FString>& OutLines) const;
 	/** Rocks and plants on the chunks showing, the rocks and trunks with collision round the pawn, and the instance
 	 *  components made. */
 	int32 GetVisibleRockCount() const { return VisibleRocks; }
@@ -301,6 +318,15 @@ private:
 	TArray<UDynamicMeshComponent*> FreeMeshes;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> RockMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> FoliageMID;
+	/** Each flora slot's own material, where its species is not drawn as the Earth's are (none: the shared one), and
+	 *  whether the foliage material has the parameters they carry. */
+	UPROPERTY() TArray<TObjectPtr<UMaterialInstanceDynamic>> FloraMIDs;
+	bool bFloraMaterial = false;
+	bool bFloraMaterialsMade = false;
+	void MakeFloraMaterials();
+	/** The mesh and the material of a scatter set: a rock shape's, or its flora slot's species'. */
+	UStaticMesh* MeshOfSet(int32 Mesh) const;
+	UMaterialInterface* MaterialOfSet(int32 Mesh) const;
 	UPROPERTY() TArray<TObjectPtr<UStaticMeshComponent>> SetPool;
 	TArray<UStaticMeshComponent*> FreeSets[SlonkScatter::NumMeshes];
 	SlonkScatter::FMoteSettings Motes;

@@ -50,6 +50,15 @@ namespace
 	constexpr double ShrubKeep = 0.7;
 	/** The salt of the hash that picks the pieces kept on the far levels. */
 	constexpr uint64 KeepSalt = 0x7f4a7c159e3779b9ULL;
+	/** And of the one that mixes a role's two species where their stands meet: a number of the plant's own, apart from
+	 *  the draws that place it, so a world with one species to a role places every plant as it always did. */
+	constexpr uint64 SpeciesSalt = 0x9d2c5680a3b1f4e7ULL;
+	/** And the giants' lattice's own (SlonkScatter::GiantSpacingCm and the rest): on chunks to 2.5 km (seen to about
+	 *  7 km) and half of them on each of three levels more (to 60 km), where one two hundred metres tall is still a few
+	 *  pixels of far crown. */
+	constexpr uint64 GiantSalt = 0x1f83d9abfb41bd6bULL;
+	int32 GiantLevel(double FaceArcCm) { return FMath::Clamp(FMath::RoundToInt32(FMath::Log2(FaceArcCm / SlonkScatter::GiantSpacingCm)), 0, 40); }
+	int32 GiantFarLevelsUsed(const FScatterSettings& S) { return FMath::Clamp(FMath::Min(SlonkScatter::GiantFarLevels, S.MaxFarLevels), 0, SlonkScatter::GiantFarLevels); }
 
 	/** How many levels a chunk lies above the coarsest that carries all of a class: 0 at or below it. */
 	int32 LevelsAbove(double EdgeCm, double MaxEdgeCm)
@@ -152,6 +161,8 @@ namespace SlonkScatter
 		}
 		/** On a way the terrain paints, or within a couple of metres of one. */
 		bool OnWay(const FVector& Up) const { return SlonkCities::PaintedWayCm(Params, Civ, Up) < 200.0; }
+		/** Or within a distance of one: a giant's foot is metres across. */
+		bool WayWithin(const FVector& Up, double Cm) const { return SlonkCities::PaintedWayCm(Params, Civ, Up) < Cm; }
 	};
 }
 
@@ -196,6 +207,8 @@ double SlonkScatter::MaxChunkEdgeCm(const FScatterSettings& S, double FaceEdge)
 {
 	double M = ShrubMaxEdgeCm * FMath::Pow(2.0, (double)FMath::Min(ShrubFarLevels, FMath::Max(S.MaxFarLevels, 0)));
 	for (const FClass& C : Classes) { M = FMath::Max(M, C.MaxEdgeCm * FMath::Pow(2.0, (double)FarLevelsUsed(C, S, FaceEdge))); }
+	// The giants' coarse chunks carry something only on a world that grows a giant.
+	if (S.Flora.HasGiants()) { M = FMath::Max(M, GiantMaxEdgeCm * FMath::Pow(2.0, (double)GiantFarLevelsUsed(S))); }
 	return M;
 }
 
@@ -314,6 +327,71 @@ SlonkScatter::FHabitat SlonkScatter::HabitatAt(const FPlanetTerrainParams& P, co
 	return H;
 }
 
+int32 SlonkScatter::SpeciesAt(const FPlanetTerrainParams& P, const FFloraProfile& Flora, int32 First, const FVector& Up, double Mix)
+{
+	const int32 Second = SlonkFlora::SecondOfRole(First);
+	const FFloraSpecies& A = Flora.Species[First];
+	const FFloraSpecies& B = Flora.Species[Second];
+	if (!B.bLive) { return First; }
+	if (!A.bLive) { return Second; }
+	// Stands a few hundred metres across, each role's laid apart from the others', and the first species as much of
+	// them as its share of the two.
+	const double Field = SlonkTerrain::Fbm(Up * (P.RadiusCm / 60000.0) + P.Seed * 9.1 + FVector(3.0 * First, 5.0, 1.0), 2);
+	const double U = FMath::Clamp(0.5 + 0.9 * Field + 0.3 * (Mix - 0.5), 0.0, 1.0);
+	return U < (double)A.Share / FMath::Max((double)A.Share + (double)B.Share, 1e-6) ? First : Second;
+}
+
+double SlonkScatter::GiantDensityAt(const FPlanetTerrainParams& P, const FVector& Dir)
+{
+	const FVector Up = Dir.GetSafeNormal();
+	FPlanetTerrainSample T;
+	const FSpot Sp = FieldSpot(P, Up, T);
+	if (T.bWater || Sp.River > 0.08 || Sp.Cliff > 0.3 || P.bAirless) { return 0.0; }
+	return GiantDensity(P, Sp, ClimateAt(P, Sp));
+}
+
+namespace
+{
+	/** A giant standing in a cell of the giants' lattice. */
+	struct FGiantStand
+	{
+		/** Its place on its face, and its direction there. */
+		double U = 0.0, V = 0.0;
+		FVector Up = FVector::ZeroVector;
+		/** Its species' slot, its height, and how far round its foot nothing else grows, cm. */
+		int32 Slot = SlonkFlora::Slot::Giant;
+		double HeightCm = 0.0, FootCm = 0.0;
+	};
+
+	/**
+	 * The giant in a cell of the giants' lattice, if one stands there. Whether one does, where, of which species and
+	 * how tall are read from the planet's field and the cell's own draws, not from any chunk's drawn mesh: every chunk
+	 * at every level finds the same giant in the same place, and so does whatever else is placed near it, which keeps
+	 * out of its foot. D is the cell's draws, left where its own chunk takes up the rest (its seed, its girth, how it
+	 * stands).
+	 */
+	bool GiantInCell(const FPlanetTerrainParams& P, const FScatterSettings& S, int32 Face, int32 L, int64 GX, int64 GY, FGiantStand& Out, SlonkScatter::FDraw& D)
+	{
+		using namespace SlonkScatter;
+		const double Delta = 2.0 / (double)((int64)1 << L);
+		Out.U = -1.0 + ((double)GX + D.Next()) * Delta;
+		Out.V = -1.0 + ((double)GY + D.Next()) * Delta;
+		const double Draw = D.Next(), Tall = D.Next();
+		Out.Up = SlonkTerrain::CubeDir(Face, Out.U, Out.V);
+		if (Draw >= FMath::Min(GiantDensityAt(P, Out.Up) * S.Life * S.Density, 0.9)) { return false; }
+		Out.Slot = SlonkFlora::Slot::Giant;
+		if (S.Flora.Species[SlonkFlora::Slot::Giant2].bLive || !S.Flora.Species[SlonkFlora::Slot::Giant].bLive)
+		{
+			Out.Slot = SpeciesAt(P, S.Flora, SlonkFlora::Slot::Giant, Out.Up, FDraw(CellHash(Face, L, GX, GY, GiantSalt ^ SpeciesSalt)).Next());
+		}
+		const FFloraSpecies& Kind = S.Flora.Species[Out.Slot];
+		if (!Kind.bLive) { return false; }
+		Out.HeightCm = GiantMinCm * FMath::Pow(GiantMaxCm / GiantMinCm, FMath::Pow(Tall, 1.3)) * Kind.Height;
+		Out.FootCm = Kind.UnitFootCm * Out.HeightCm / SlonkPlants::UnitCm;
+		return true;
+	}
+}
+
 void SlonkScatter::TreeCover(const FPlanetTerrainParams& P, const FChunkGrid& G, TArray<float>& Out)
 {
 	const int32 GW = G.Steps + 1;
@@ -348,6 +426,32 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 	const FKeepOut NoTowns{};
 	const FKeepOut& KeepOut = S.bCities ? (Shared ? Shared : &Own)->Get(P, S.People, G) : NoTowns;
 	const FCivilization ClearCiv = S.People.bInhabited ? S.People : SlonkCivs::Colonists();
+
+	// A strange world's giants standing on this chunk and just beyond it, as far as anything placed here might stand in
+	// one's foot: on the chunks the trees' own levels ride and finer (a far level's trees are specks, and its cells
+	// thousands).
+	TArray<TPair<FVector, double>> Feet;
+	const bool bGiants = bLiving && S.Flora.HasGiants();
+	if (bGiants && G.EdgeCm <= 62000.0)
+	{
+		const int32 L = GiantLevel(FaceArcCm);
+		const int64 Cells = (int64)1 << L;
+		const double Delta = 2.0 / (double)Cells;
+		const int64 GX0 = FMath::Max((int64)FMath::FloorToDouble((F.U0 + 1.0) / Delta) - 1, (int64)0), GX1 = FMath::Min((int64)FMath::CeilToDouble((F.U1 + 1.0) / Delta), Cells - 1);
+		const int64 GY0 = FMath::Max((int64)FMath::FloorToDouble((F.V0 + 1.0) / Delta) - 1, (int64)0), GY1 = FMath::Min((int64)FMath::CeilToDouble((F.V1 + 1.0) / Delta), Cells - 1);
+		for (int64 GY = GY0; GY <= GY1; ++GY)
+		for (int64 GX = GX0; GX <= GX1; ++GX)
+		{
+			FDraw D(CellHash(G.Face, L, GX, GY, GiantSalt));
+			FGiantStand St;
+			if (GiantInCell(P, S, G.Face, L, GX, GY, St, D)) { Feet.Add({ St.Up * R, FMath::Square(St.FootCm + 150.0) }); }
+		}
+	}
+	auto InGiantFoot = [&Feet, R](const FVector& Up)
+	{
+		for (const TPair<FVector, double>& Ft : Feet) { if (FVector::DistSquared(Up * R, Ft.Key) < Ft.Value) { return true; } }
+		return false;
+	};
 
 	int32 Rocks = 0, Plants = 0;
 	for (const FClass& Cl : Classes)
@@ -427,6 +531,8 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 			// at the same edge (the same draw, so a tree outside every clearing stands where it did).
 			if (Cl.Kind == EClass::Tree && S.bCities && Draw >= Density * (1.0 - SlonkCities::ClearingAt(P, ClearCiv, Sp.Up))) { continue; }
 			if (KeepOut.Towns.Num() > 0 && (KeepOut.Contains(Sp.Up, R, !bRock) || KeepOut.OnWay(Sp.Up))) { continue; }
+			// Nothing grows or lies in a giant's foot.
+			if (Feet.Num() > 0 && InGiantFoot(Sp.Up)) { continue; }
 			const double Seed = D.Next();
 			const double Snow = FMath::Clamp(Sp.Ice * 1.2, 0.0, 1.0) * (1.0 - FMath::Clamp(Sp.Slope * 2.0, 0.0, 1.0));
 
@@ -491,9 +597,19 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 				const bool bTree = Cl.Kind == EClass::Tree;
 				// The cold, the heights and the poor ground grow conifers; the warm, wet lowlands broadleaves.
 				const bool bConifer = bTree && D.Next() < SmoothStep(0.25, 0.6, Clim.Cold) + 0.3 * Sp.Rocky;
-				const EPlant Kind = bTree ? (bConifer ? EPlant::Conifer : EPlant::Broadleaf) : EPlant::Grass;
+				// The role, and which of the role's species stands here: the world's one, or by stands where it has two
+				// (a number of the plant's own mixes their edges, the same on every level of the quadtree).
+				const int32 Role = bTree ? (bConifer ? SlonkFlora::Slot::Cold : SlonkFlora::Slot::Warm) : SlonkFlora::Slot::Cover;
+				int32 Slot = Role;
+				if (S.Flora.Species[SlonkFlora::SecondOfRole(Role)].bLive || !S.Flora.Species[Role].bLive)
+				{
+					Slot = SpeciesAt(P, S.Flora, Role, Sp.Up, FDraw(CellHash(G.Face, L, GX, GY, Cl.Salt ^ SpeciesSalt)).Next());
+				}
+				const FFloraSpecies& Kind = S.Flora.Species[Slot];
+				if (!Kind.bLive) { continue; }
+				// A species' own height against its class's: the conifer stands a little taller than the broadleaf.
 				double H = Cl.MinCm * FMath::Pow(Cl.MaxCm / Cl.MinCm, FMath::Pow(D.Next(), 1.3));
-				if (bConifer) { H *= 1.15; }
+				H *= Kind.Height;
 				// Near the treeline what grows is stunted.
 				if (bTree) { H *= 1.0 - 0.45 * SmoothStep(0.45, 0.85, Clim.Alpine); }
 				const double Wx = FMath::Lerp(0.85, 1.15, D.Next()), Wy = Wx * FMath::Lerp(0.9, 1.1, D.Next());
@@ -506,15 +622,59 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 				const FTransform Xf(Rot, Sp.Pt - Z * Sink, FVector(H * Wx, H * Wy, H) / SlonkPlants::UnitCm);
 				const double Vary = 0.78 + 0.34 * D.Next();
 				FLinearColor Tint = FoliageAt(S.Palette, Dryness, Vary);
-				// Needles are darker and bluer than leaves; the grass is the ground's own colour so the two meet.
-				if (Kind == EPlant::Conifer) { Tint *= FLinearColor(0.62f, 0.72f, 0.7f); }
-				else if (Kind == EPlant::Broadleaf) { Tint *= 0.85f; }
-				else { Tint = FMath::Lerp(S.Palette.Land2, S.Palette.Land, (float)FMath::Clamp(Sp.Wet * 1.2 - Sp.Rocky * 0.3, 0.0, 1.0)) * (float)(0.8 * Vary); }
+				// The grass is the ground's own colour so the two meet; a species' own shade over that (needles darker and
+				// bluer than leaves), and for a strange one a share of a colour of its own.
+				if (Cl.Kind == EClass::Grass) { Tint = FMath::Lerp(S.Palette.Land2, S.Palette.Land, (float)FMath::Clamp(Sp.Wet * 1.2 - Sp.Rocky * 0.3, 0.0, 1.0)) * (float)(0.8 * Vary); }
+				Tint *= Kind.Tint;
+				if (Kind.OwnShare > 0.f) { Tint = FMath::Lerp(Tint, Kind.Own * (float)Vary, Kind.OwnShare); }
 				const double FadeCm = FadeFarCm(G, Cl.MaxEdgeCm, FarLevels, Cl.Keep, KeepDraw, S.FadeEdges);
 				const float C[NumCustomFloats] = { Tint.R, Tint.G, Tint.B, (float)Snow, (float)Seed, (float)(H * Wx / 100.0), (float)(H * Wy / 100.0), (float)(H / 100.0), (float)Dryness, (float)FadeCm };
-				AddPiece(Out, PlantMesh(Kind), Xf, C, bTree && H >= SolidTreeCm && G.EdgeCm <= SolidMaxEdgeCm);
+				AddPiece(Out, FloraMesh(Slot), Xf, C, bTree && H >= SolidTreeCm && G.EdgeCm <= SolidMaxEdgeCm);
 				++Plants;
 			}
+		}
+	}
+
+	// The giants: each where the field says one stands (GiantInCell), on the drawn ground there; none over the water as
+	// the chunk draws it, in a town or across a way.
+	const int32 GiantFar = GiantFarLevelsUsed(S);
+	const int32 GiantAbove = LevelsAbove(G.EdgeCm, GiantMaxEdgeCm);
+	if (bGiants && GiantAbove <= GiantFar)
+	{
+		const double KeepHere = FMath::Pow(GiantKeep, (double)GiantAbove);
+		const int32 L = GiantLevel(FaceArcCm);
+		const double Delta = 2.0 / (double)((int64)1 << L);
+		const int64 GX0 = (int64)FMath::FloorToDouble((F.U0 + 1.0) / Delta), GX1 = (int64)FMath::CeilToDouble((F.U1 + 1.0) / Delta) - 1;
+		const int64 GY0 = (int64)FMath::FloorToDouble((F.V0 + 1.0) / Delta), GY1 = (int64)FMath::CeilToDouble((F.V1 + 1.0) / Delta) - 1;
+		for (int64 GY = GY0; GY <= GY1 && Plants < MaxPlantsPerChunk; ++GY)
+		for (int64 GX = GX0; GX <= GX1 && Plants < MaxPlantsPerChunk; ++GX)
+		{
+			const double KeepDraw = FDraw(CellHash(G.Face, L, GX, GY, GiantSalt ^ KeepSalt)).Next();
+			if (KeepDraw >= KeepHere) { continue; }
+			FDraw D(CellHash(G.Face, L, GX, GY, GiantSalt));
+			FGiantStand St;
+			if (!GiantInCell(P, S, G.Face, L, GX, GY, St, D) || !F.Inside(St.U, St.V)) { continue; }
+			FSpot Sp;
+			if (!F.SpotAt(St.U, St.V, Sp)) { continue; }
+			if (KeepOut.Towns.Num() > 0 && (KeepOut.Contains(Sp.Up, R, false) || KeepOut.WayWithin(Sp.Up, 200.0 + St.FootCm))) { continue; }
+			const FFloraSpecies& Kind = S.Flora.Species[St.Slot];
+			const double Seed = D.Next();
+			const double H = St.HeightCm;
+			const double Wx = FMath::Lerp(0.85, 1.15, D.Next()), Wy = Wx * FMath::Lerp(0.9, 1.1, D.Next());
+			// More nearly upright than a tree, and sunk by a hundredth of its height besides: its foot is metres across.
+			const FQuat Rot = StandingFrame(Sp, 0.02, 2.0, D);
+			const double SlopeTan = FMath::Sqrt(FMath::Max(1.0 - FMath::Square(FVector::DotProduct(Sp.Nt, Sp.Up)), 0.0));
+			const double Sink = 120.0 + H * 0.012 + H * 0.02 * SlopeTan * 3.0;
+			const FTransform Xf(Rot, Sp.Pt - Rot.GetAxisZ() * Sink, FVector(H * Wx, H * Wy, H) / SlonkPlants::UnitCm);
+			const double Dryness = DrynessAt(Sp);
+			const double Vary = 0.78 + 0.34 * D.Next();
+			FLinearColor Tint = FoliageAt(S.Palette, Dryness, Vary) * Kind.Tint;
+			if (Kind.OwnShare > 0.f) { Tint = FMath::Lerp(Tint, Kind.Own * (float)Vary, Kind.OwnShare); }
+			const double Snow = FMath::Clamp(Sp.Ice * 1.2, 0.0, 1.0) * (1.0 - FMath::Clamp(Sp.Slope * 2.0, 0.0, 1.0));
+			const double FadeCm = FadeFarCm(G, GiantMaxEdgeCm, GiantFar, GiantKeep, KeepDraw, S.FadeEdges);
+			const float C[NumCustomFloats] = { Tint.R, Tint.G, Tint.B, (float)Snow, (float)Seed, (float)(H * Wx / 100.0), (float)(H * Wy / 100.0), (float)(H / 100.0), (float)Dryness, (float)FadeCm };
+			AddPiece(Out, FloraMesh(St.Slot), Xf, C, H >= SolidTreeCm && G.EdgeCm <= SolidMaxEdgeCm);
+			++Plants;
 		}
 	}
 
@@ -568,18 +728,34 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 			FDraw D(Mix64(KeyHash ^ 0x6a09e667f3bcc909ULL));
 			if (D.Next() >= S.Life * S.Density * SmoothStep(0.25, 0.55, Zone)) { continue; }
 			if (KeepOut.Towns.Num() > 0 && (KeepOut.Contains(Sp.Up, R, true) || KeepOut.OnWay(Sp.Up))) { continue; }
-			// As wide as the painted dot, a little over half as tall; the mesh's crown is 110 cm across at unit scale.
+			if (Feet.Num() > 0 && InGiantFoot(Sp.Up)) { continue; }
+			// Which of the world's bushes: its one, or by stands where it has two.
+			int32 Slot = SlonkFlora::Slot::Bush;
+			if (S.Flora.Species[SlonkFlora::Slot::Bush2].bLive || !S.Flora.Species[SlonkFlora::Slot::Bush].bLive)
+			{
+				Slot = SpeciesAt(P, S.Flora, SlonkFlora::Slot::Bush, Sp.Up, FDraw(Mix64(KeyHash ^ SpeciesSalt)).Next());
+			}
+			const FFloraSpecies& Kind = S.Flora.Species[Slot];
+			if (!Kind.bLive) { continue; }
+			// As wide as the painted dot, a little over half as tall by its species' own height; the Earth's bush's crown
+			// is 110 cm across at unit scale, and every species' mesh says its own.
 			const double Wide = DotR * 2.0 * FMath::Lerp(0.95, 1.15, D.Next());
-			const double H = Wide * FMath::Lerp(0.55, 0.85, D.Next());
+			const double H = Wide * FMath::Lerp(0.55, 0.85, D.Next()) * Kind.Height;
 			const FQuat Rot = StandingFrame(Sp, 0.25, 6.0, D);
-			const FTransform Xf(Rot, Sp.Pt - Rot.GetAxisZ() * (H * 0.04), FVector(Wide / 110.0, Wide / 110.0 * FMath::Lerp(0.85, 1.1, D.Next()), H / SlonkPlants::UnitCm));
+			// The Earth's bush by the very division it always was (a divisor the compiler knows is not one it is handed).
+			const FVector Scale = Kind.Form.Plan == EFloraPlan::Bush ? FVector(Wide / 110.0, Wide / 110.0 * FMath::Lerp(0.85, 1.1, D.Next()), H / SlonkPlants::UnitCm)
+				: FVector(Wide / Kind.UnitWideCm, Wide / Kind.UnitWideCm * FMath::Lerp(0.85, 1.1, D.Next()), H / SlonkPlants::UnitCm);
+			const FTransform Xf(Rot, Sp.Pt - Rot.GetAxisZ() * (H * 0.04), Scale);
 			const double Dryness = DrynessAt(Sp);
 			// The dot's own darkening of the ground, which the bush now stands over.
-			const FLinearColor Tint = FoliageAt(S.Palette, Dryness, 0.8 + 0.3 * D.Next()) * FLinearColor(0.55f, 0.62f, 0.45f) * 1.5f;
+			const double Vary = 0.8 + 0.3 * D.Next();
+			FLinearColor Tint = FoliageAt(S.Palette, Dryness, Vary) * FLinearColor(0.55f, 0.62f, 0.45f) * 1.5f;
+			Tint *= Kind.Tint;
+			if (Kind.OwnShare > 0.f) { Tint = FMath::Lerp(Tint, Kind.Own * (float)Vary, Kind.OwnShare); }
 			const double Snow = FMath::Clamp(Sp.Ice * 1.2, 0.0, 1.0);
 			const double FadeCm = FadeFarCm(G, ShrubMaxEdgeCm, ShrubFar, ShrubKeep, KeepDraw, S.FadeEdges);
 			const float C[NumCustomFloats] = { Tint.R, Tint.G, Tint.B, (float)Snow, (float)D.Next(), (float)(Wide / 100.0), (float)(Wide / 100.0), (float)(H / 100.0), (float)Dryness, (float)FadeCm };
-			AddPiece(Out, PlantMesh(EPlant::Shrub), Xf, C, false);
+			AddPiece(Out, FloraMesh(Slot), Xf, C, false);
 			++Plants;
 		}
 	}

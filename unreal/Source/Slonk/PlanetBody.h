@@ -11,6 +11,7 @@
 #include "BuildingMeshes.h"
 #include "WorldGenome.h"
 #include "FaunaProfile.h"
+#include "FloraProfile.h"
 #include "Async/Future.h"
 #include "PlanetBody.generated.h"
 
@@ -302,6 +303,27 @@ public:
 	SlonkFauna::FFaunaProfile FaunaProfile;
 	/** Gives the animals the world as it stands: its field, its profile, its life and its living ground's colours. */
 	void ConfigureFauna();
+	/** The light the world's plants grow under, its star's by colour (FloraTypes.h), set by whatever spawns it (AStarSystem
+	 *  from the star's class, the spawnplanet command from the nearest star's colour) before its appearance is resolved:
+	 *  the Sun's yellow for a world placed by hand. */
+	EStarLight StarLight = EStarLight::Yellow;
+	/** What grows on the world, rolled from the genome and that light with its animals (SlonkFlora::Roll): the Earth's at
+	 *  strangeness 0, whatever its star. The style's land colours wear its pigment (SlonkFlora::ApplyPigment), and the
+	 *  terrain places its species. */
+	FFloraProfile FloraProfile;
+	/** Debug (the `ship flora` command): gives the world the flora it would roll at another strangeness, or under another
+	 *  star's light, from now on. The land colours go back to what they were before any pigment and take the new flora's,
+	 *  the ground's materials near and far and the animals' palette follow, and the terrain places the new species. The
+	 *  style is kept from here on, as a change of its people keeps it. Its genome stays its own: its sky, its seas and
+	 *  its climate do not move. */
+	void SetFloraForDebug(float AtStrangeness, EStarLight Light);
+	/** The flora a world of a kind and a hash rolls at a strangeness under a light: from its own genome (Own) where the
+	 *  strangeness is its own, else from the genome it would roll at that strangeness. */
+	static FFloraProfile FloraRolledAt(const FWorldGenome& Own, EPlanetArchetype Kind, uint32 Hash, float AtStrangeness, EStarLight Light);
+	/** Puts a style's land colours back to what they were before any flora's pigment (BareLand, BareLand2) and gives them
+	 *  a flora's, as far as a world of the kind grows anything (GroundLifeOf): a flora rolled again never lays its pigment
+	 *  over the last one's. */
+	static void WearFloraPigment(const FFloraProfile& Flora, EPlanetArchetype Kind, const FLinearColor& BareLand, const FLinearColor& BareLand2, FPlanetStyle& S);
 
 	/** For Moon archetypes: which kind of moon the location hash produced. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Planet")
@@ -566,6 +588,12 @@ private:
 	/** Whether the seas carry life (SlonkFauna::SeaLifeOf, set with the terrain material's parameters): a ship hovering
 	 *  low stirs only a living sea's plankton. */
 	bool bLivingSea = false;
+	/** The style's land colours as the archetype and the genome left them, before the flora's pigment went over them
+	 *  (ResolveStyleFromArchetype): a flora rolled again starts from them (SetFloraForDebug). */
+	FLinearColor LandBeforeFlora = FLinearColor(0.30f, 0.36f, 0.18f);
+	FLinearColor Land2BeforeFlora = FLinearColor(0.55f, 0.45f, 0.28f);
+	/** Whether they have been taken yet: a world whose style was set by hand has resolved none. */
+	bool bLandBeforeFloraSet = false;
 	/** slonk.Fauna.Enable as the terrain material's sea life was last set by: switched, the seas are set again. */
 	bool bFaunaOnApplied = true;
 	/** The ship's stir last given the terrain material (ShipStir), so it is sent only as it changes, and when a craft

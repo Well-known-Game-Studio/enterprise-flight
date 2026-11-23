@@ -1,4 +1,5 @@
 #include "PlanetTerrainComponent.h"
+#include "FloraProfile.h"
 #include "FaunaMeshes.h"
 #include "PlanetCities.h"
 #include "PlanetFaunaComponent.h"
@@ -36,12 +37,6 @@ namespace
 	/** Period of the material's detail noise, cm (2^20). Chunk origins are handed to the shader modulo this, so the
 	 *  float it adds to the vertex position never loses the metres; the scatter finds the scrub dots in the same space. */
 	constexpr double NoisePeriodCm = SlonkScatter::NoisePeriodCm;
-
-	/** The mesh of a scatter set: the rock shapes, then the plants. */
-	UStaticMesh* ScatterMesh(int32 Mesh)
-	{
-		return SlonkScatter::IsPlant(Mesh) ? SlonkPlants::GetMesh((EPlant)(Mesh - SlonkScatter::FirstPlant)) : SlonkGroundRocks::GetMesh((EGroundRock)Mesh);
-	}
 
 	/** A scatter set of either kind (UPlanetInstancesComponent, or the engine-instanced UScatterInstancesComponent). */
 	void SetPiecesOn(UStaticMeshComponent* R, const TArray<FTransform>& Transforms, TConstArrayView<float> Custom)
@@ -85,7 +80,172 @@ void UPlanetTerrainComponent::BeginDestroy()
 		if (N && N->Task.IsValid()) { N->Task.Wait(); }
 	}
 	InFlight.Reset();
+	// Its flora's forms are no longer held; their meshes are let go when a world next sets its own.
+	SlonkPlants::HoldForms(this, {}, false);
 	Super::BeginDestroy();
+}
+
+UStaticMesh* UPlanetTerrainComponent::MeshOfSet(int32 Mesh) const
+{
+	if (!SlonkScatter::IsPlant(Mesh)) { return SlonkGroundRocks::GetMesh((EGroundRock)Mesh); }
+	const FFloraSpecies& Sp = Scatter.Flora.Species[FMath::Clamp(SlonkScatter::SlotOf(Mesh), 0, SlonkFlora::MaxSpecies - 1)];
+	return Sp.bLive ? SlonkPlants::GetMesh(Sp.Form) : nullptr;
+}
+
+UMaterialInterface* UPlanetTerrainComponent::MaterialOfSet(int32 Mesh) const
+{
+	if (!SlonkScatter::IsPlant(Mesh)) { return RockMID; }
+	const int32 Slot = SlonkScatter::SlotOf(Mesh);
+	if (FloraMIDs.IsValidIndex(Slot) && FloraMIDs[Slot]) { return FloraMIDs[Slot]; }
+	return FoliageMID;
+}
+
+void UPlanetTerrainComponent::MakeFloraMaterials()
+{
+	// Made once a flora: the sets drawn in them keep them through a terrain configured again.
+	if (bFloraMaterialsMade) { return; }
+	FloraMIDs.Reset();
+	FloraMIDs.SetNum(SlonkFlora::MaxSpecies);
+	// Made once the foliage material is (Configure), if the flora came first.
+	if (!FoliageMID) { return; }
+	bFloraMaterialsMade = true;
+	UMaterialInterface* Parent = FoliageMID->Parent;
+	float Probe = 0.f;
+	bFloraMaterial = Parent && Parent->GetScalarParameterValue(FHashedMaterialParameterInfo(TEXT("Glow")), Probe);
+	for (int32 Slot = 0; Slot < SlonkFlora::MaxSpecies; ++Slot)
+	{
+		const FFloraSpecies& Sp = Scatter.Flora.Species[Slot];
+		if (!Sp.bLive || Sp.HasEarthLook()) { continue; }
+		if (!bFloraMaterial)
+		{
+			// A foliage material built before the species' parameters draws a strange species as it draws a leaf: its
+			// shape and its tint are its own, its skin and its glow are not.
+			static bool bWarned = false;
+			if (!bWarned)
+			{
+				bWarned = true;
+				UE_LOG(LogTemp, Warning, TEXT("Flora: M_Foliage has no species parameters (its Glow parameter; tools/planet_materials/foliage_material.py builds it): strange plants are drawn as leaves, without their glow, until it is built again"));
+			}
+			continue;
+		}
+		const SlonkFlora::FFloraLook Look = SlonkFlora::LookOf(Sp);
+		UMaterialInstanceDynamic* M = UMaterialInstanceDynamic::Create(Parent, this);
+		M->SetVectorParameterValue(TEXT("StemColor"), Look.Stem);
+		M->SetScalarParameterValue(TEXT("Gloss"), Look.Gloss);
+		M->SetScalarParameterValue(TEXT("Translucence"), Look.Translucence);
+		M->SetVectorParameterValue(TEXT("GlowColor"), Look.GlowColor);
+		M->SetScalarParameterValue(TEXT("Glow"), Look.Glow);
+		M->SetVectorParameterValue(TEXT("GlowForm"), Look.GlowForm);
+		M->SetScalarParameterValue(TEXT("GlowBody"), Look.GlowForm.A);
+		// And what the shared one is kept given: the snow's colour, and where the sun stands, by which a plant tells
+		// its night.
+		M->SetVectorParameterValue(TEXT("IceColor"), Scatter.Palette.Ice);
+		M->SetVectorParameterValue(TEXT("SunDirection"), FaunaSunDirection);
+		FloraMIDs[Slot] = M;
+	}
+}
+
+void UPlanetTerrainComponent::SetFlora(const FFloraProfile& InFlora)
+{
+	const bool bSame = Scatter.Flora.SameSpecies(InFlora);
+	// A pigment reaches the plants through the palette their chunks are built with: another one builds them again.
+	const bool bSamePigment = Scatter.Flora.Vivid == InFlora.Vivid && Scatter.Flora.Pigment == InFlora.Pigment;
+	const FScatterSettings Before = BuildScatterSettings();
+	Scatter.Flora = InFlora;
+	if (bSame && bSamePigment) { return; }
+	if (bSame)
+	{
+		if (bConfigured) { RebuildChunksUpTo(SlonkScatter::MaxChunkEdgeCm(Before, SlonkScatter::FaceEdgeCm(Params.RadiusCm))); }
+		return;
+	}
+	TArray<FFloraForm> Forms;
+	for (const FFloraSpecies& Sp : Scatter.Flora.Species) { if (Sp.bLive) { Forms.Add(Sp.Form); } }
+	bFloraMaterialsMade = false;
+	MakeFloraMaterials();
+	// Every plant set made so far, in use or pooled, takes its slot's species' mesh and material as they are now.
+	auto Dress = [this](UStaticMeshComponent* R, int32 K)
+	{
+		if (!R) { return; }
+		UStaticMesh* Wanted = MeshOfSet(K);
+		if (R->GetStaticMesh() != Wanted) { R->SetStaticMesh(Wanted); }
+		if (UMaterialInterface* Mat = MaterialOfSet(K)) { R->SetMaterial(0, Mat); }
+	};
+	TFunction<void(FNode&)> Walk = [&](FNode& N)
+	{
+		for (int32 K = SlonkScatter::FirstPlant; K < SlonkScatter::NumMeshes; ++K) { Dress(N.Sets[K], K); }
+		for (const TUniquePtr<FNode>& C : N.Children) { if (C) { Walk(*C); } }
+	};
+	for (const TUniquePtr<FNode>& Root : Roots) { if (Root) { Walk(*Root); } }
+	for (int32 K = SlonkScatter::FirstPlant; K < SlonkScatter::NumMeshes; ++K) { for (UStaticMeshComponent* R : FreeSets[K]) { Dress(R, K); } }
+	// The forms held from now, those before them let go once nothing above draws them; the trunks' collision made again
+	// of the new meshes when next wanted.
+	SlonkPlants::HoldForms(this, Forms);
+	for (UScatterInstancesComponent* C : SolidSets) { if (C) { C->DestroyComponent(); } }
+	SolidSets.Reset();
+	ClearSolidRocks();
+	if (bConfigured)
+	{
+		// The chunks that carried plants or will: a giant's are coarser than a tree's.
+		const double FaceEdge = SlonkScatter::FaceEdgeCm(Params.RadiusCm);
+		RebuildChunksUpTo(FMath::Max(SlonkScatter::MaxChunkEdgeCm(Before, FaceEdge), SlonkScatter::MaxChunkEdgeCm(BuildScatterSettings(), FaceEdge)));
+		UE_LOG(LogTemp, Log, TEXT("PlanetTerrain: flora set (%d species), the chunks carrying plants built again"), Scatter.Flora.Num());
+	}
+}
+
+void UPlanetTerrainComponent::DescribeFlora(TArray<FString>& OutLines) const
+{
+	for (int32 Slot = 0; Slot < SlonkFlora::MaxSpecies; ++Slot)
+	{
+		const FFloraSpecies& Sp = Scatter.Flora.Species[Slot];
+		if (!Sp.bLive) { continue; }
+		const int32 K = SlonkScatter::FloraMesh(Slot);
+		const bool bOwn = FloraMIDs.IsValidIndex(Slot) && FloraMIDs[Slot];
+		OutLines.Add(FString::Printf(TEXT("slot %d (%s, %s): %d showing in %d sets, drawn in %s"), Slot, SlonkFlora::ClassName(SlonkFlora::ClassOf(Slot)), SlonkFlora::PlanName(Sp.Form.Plan),
+			VisibleByMesh[K], VisibleSetsByMesh[K], bOwn ? TEXT("a material of its own") : (Sp.HasEarthLook() ? TEXT("the foliage material") : TEXT("the foliage material (it has no species parameters yet)"))));
+	}
+}
+
+bool UPlanetTerrainComponent::FindPlant(int32 Slot, const FVector& FromDir, double MaxCm, FVector& OutLocalCm, double& OutHeightCm) const
+{
+	if (!bConfigured || Slot < 0 || Slot >= SlonkFlora::MaxSpecies || !Scatter.Flora.Species[Slot].bLive) { return false; }
+	// The coarsest chunks carrying all of the slot's class, round the direction asked, ring by ring.
+	const EFloraClass Class = SlonkFlora::ClassOf(Slot);
+	const double ClassEdge = Class == EFloraClass::Giant ? SlonkScatter::GiantMaxEdgeCm : (Class == EFloraClass::Tree ? 31000.0 : (Class == EFloraClass::Shrub ? 8000.0 : 1700.0));
+	const double FaceEdge = SlonkScatter::FaceEdgeCm(Params.RadiusCm);
+	const int32 Depth = FMath::Clamp(FMath::CeilToInt32(FMath::Log2(FaceEdge / ClassEdge)), 0, 24);
+	const FVector From = FromDir.GetSafeNormal();
+	int32 Face = 0; int64 X = 0, Y = 0;
+	if (!ChunkAt(From, Depth, Face, X, Y)) { return false; }
+	const int64 Cells = (int64)1 << Depth;
+	const double EdgeCm = FaceEdge / (double)Cells;
+	const int32 Rings = FMath::Clamp(FMath::CeilToInt32(MaxCm / FMath::Max(EdgeCm, 1.0)), 0, 4);
+	const FScatterSettings Sc = BuildScatterSettings();
+	const int32 K = SlonkScatter::FloraMesh(Slot);
+	double Best = MaxCm;
+	bool bFound = false;
+	for (int32 Ring = 0; Ring <= Rings && !bFound; ++Ring)
+	{
+		for (int32 Dy = -Ring; Dy <= Ring; ++Dy)
+		for (int32 Dx = -Ring; Dx <= Ring; ++Dx)
+		{
+			if (FMath::Max(FMath::Abs(Dx), FMath::Abs(Dy)) != Ring) { continue; }
+			const int64 Cx = X + Dx, Cy = Y + Dy;
+			if (Cx < 0 || Cy < 0 || Cx >= Cells || Cy >= Cells) { continue; }
+			TArray<FTransform> Xf[SlonkScatter::NumMeshes];
+			TArray<double> Drawn[SlonkScatter::NumMeshes];
+			BuildChunkScatterForTest(Params, Sc, Face, Depth, Cx, Cy, 64, Xf, Drawn);
+			for (const FTransform& T : Xf[K])
+			{
+				const double Away = FMath::Acos(FMath::Clamp(FVector::DotProduct(From, T.GetLocation().GetSafeNormal()), -1.0, 1.0)) * Params.RadiusCm;
+				if (Away >= Best) { continue; }
+				Best = Away;
+				OutLocalCm = T.GetLocation();
+				OutHeightCm = T.GetScale3D().Z * SlonkPlants::UnitCm;
+				bFound = true;
+			}
+		}
+	}
+	return bFound;
 }
 
 void UPlanetTerrainComponent::Configure(const FPlanetTerrainParams& InParams, UMaterialInterface* InMaterial)
@@ -126,6 +286,8 @@ void UPlanetTerrainComponent::Configure(const FPlanetTerrainParams& InParams, UM
 		UMaterialInterface* PlantMat = SlonkMaterials::LoadOrFallback(TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_Foliage.M_Foliage"))), TEXT("Foliage"), true);
 		if (PlantMat) { FoliageMID = UMaterialInstanceDynamic::Create(PlantMat, this); }
 	}
+	// And its strange species' own instances of it, if its flora came before the material did.
+	MakeFloraMaterials();
 	EnsureFaunaMaterial();
 	if (CVarScatterGPUInstances.GetValueOnGameThread() != 0) { EnsureWriterAnchor(); }
 	MakeRoots();
@@ -350,12 +512,15 @@ void UPlanetTerrainComponent::SetVectorParameter(FName Name, const FLinearColor&
 		Scatter.Palette.Ice = Value;
 		if (RockMID) { RockMID->SetVectorParameterValue(Name, Value); }
 		if (FoliageMID) { FoliageMID->SetVectorParameterValue(Name, Value); }
+		for (UMaterialInstanceDynamic* M : FloraMIDs) { if (M) { M->SetVectorParameterValue(Name, Value); } }
 	}
 	// The motes tell day from night by it: the pollen by day, the fireflies at dusk and through the night.
 	else if (Name == TEXT("SunDirection") && FaunaSunDirection != Value)
 	{
 		FaunaSunDirection = Value;
 		if (FaunaMID && bMoteMaterial) { FaunaMID->SetVectorParameterValue(Name, Value); }
+		// And the strange plants their night by it, which is when they glow.
+		for (UMaterialInstanceDynamic* M : FloraMIDs) { if (M) { M->SetVectorParameterValue(Name, Value); } }
 	}
 }
 
@@ -567,7 +732,7 @@ void UPlanetTerrainComponent::EnsureWriterAnchor()
 	// to infinities in the instance data the culling reads).
 	WriterAnchor = NewObject<UPlanetInstancesComponent>(GetOwner() ? (UObject*)GetOwner() : (UObject*)this, NAME_None, RF_Transient);
 	WriterAnchor->bCarriesWrites = true;
-	WriterAnchor->SetStaticMesh(ScatterMesh(0));
+	WriterAnchor->SetStaticMesh(MeshOfSet(0));
 	WriterAnchor->SetNumCustomDataFloats(SlonkScatter::NumCustomFloats);
 	WriterAnchor->CastShadow = false;
 	WriterAnchor->bRenderInMainPass = false;
@@ -615,7 +780,7 @@ UStaticMeshComponent* UPlanetTerrainComponent::AcquireSet(int32 Mesh)
 		R = I;
 	}
 	R->SetMobility(EComponentMobility::Movable);
-	R->SetStaticMesh(ScatterMesh(Mesh));
+	R->SetStaticMesh(MeshOfSet(Mesh));
 	R->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	R->SetGenerateOverlapEvents(false);
 	R->SetCanEverAffectNavigation(false);
@@ -630,7 +795,7 @@ UStaticMeshComponent* UPlanetTerrainComponent::AcquireSet(int32 Mesh)
 		// geometry would have to be rebuilt every frame.
 		R->bEvaluateWorldPositionOffsetInRayTracing = false;
 		R->SetWorldPositionOffsetDisableDistance((int32)PlantWindDistanceCm);
-		if (FoliageMID) { R->SetMaterial(0, FoliageMID); }
+		if (UMaterialInterface* PlantMat = MaterialOfSet(Mesh)) { R->SetMaterial(0, PlantMat); }
 	}
 	else if (RockMID) { R->SetMaterial(0, RockMID); }
 	R->RegisterComponent();
@@ -643,9 +808,12 @@ void UPlanetTerrainComponent::ApplyScatter(FNode& N, SlonkScatter::FChunkScatter
 	N.RockCount = N.PlantCount = 0;
 	for (int32 K = 0; K < SlonkScatter::NumMeshes; ++K)
 	{
-		// Rocks and bushes cast shadows from the near chunks, trees from chunks twice the size; grass never does.
-		const bool bTree = K == SlonkScatter::PlantMesh(EPlant::Broadleaf) || K == SlonkScatter::PlantMesh(EPlant::Conifer);
-		const bool bShadow = K != SlonkScatter::PlantMesh(EPlant::Grass) && N.EdgeCm < ScatterShadowEdgeCm * (bTree ? 2.f : 1.f);
+		// Rocks and bushes cast shadows from the near chunks, trees from chunks twice the size and a giant from chunks
+		// eight times it (its shadow is a hundred metres long at noon); grass never does. By the slot's class, whatever
+		// species stands in it.
+		const EFloraClass Class = SlonkScatter::IsPlant(K) ? SlonkFlora::ClassOf(SlonkScatter::SlotOf(K)) : EFloraClass::Count;
+		const float ShadowEdges = Class == EFloraClass::Giant ? 8.f : (Class == EFloraClass::Tree ? 2.f : 1.f);
+		const bool bShadow = Class != EFloraClass::Grass && N.EdgeCm < ScatterShadowEdgeCm * ShadowEdges;
 		N.Solids[K] = MoveTemp(Sc.Solids[K]);
 		const TArray<FTransform>& Xf = Sc.Transforms[K];
 		UStaticMeshComponent*& R = N.Sets[K];
@@ -677,7 +845,10 @@ FString UPlanetTerrainComponent::DescribeVisibleScatter() const
 	FString S;
 	for (int32 K = 0; K < SlonkScatter::NumMeshes; ++K)
 	{
-		const FString Name = SlonkScatter::IsPlant(K) ? FString::Printf(TEXT("plant%d"), K - SlonkScatter::FirstPlant) : FString::Printf(TEXT("rock%d"), K);
+		// A flora slot by what stands in it; one with nothing in it is left out.
+		if (SlonkScatter::IsPlant(K) && !Scatter.Flora.Species[SlonkScatter::SlotOf(K)].bLive) { continue; }
+		const FString Name = SlonkScatter::IsPlant(K) ? FString::Printf(TEXT("plant%d (%s)"), K - SlonkScatter::FirstPlant, SlonkFlora::PlanName(Scatter.Flora.Species[SlonkScatter::SlotOf(K)].Form.Plan))
+			: FString::Printf(TEXT("rock%d"), K);
 		S += FString::Printf(TEXT("%s%s %d in %d"), K ? TEXT(", ") : TEXT(""), *Name, VisibleByMesh[K], VisibleSetsByMesh[K]);
 	}
 	return S;
@@ -852,7 +1023,7 @@ void UPlanetTerrainComponent::UpdateSolidRocks()
 			UScatterInstancesComponent* C = NewObject<UScatterInstancesComponent>(GetOwner() ? (UObject*)GetOwner() : (UObject*)this, NAME_None, RF_Transient);
 			C->SetupAttachment(this);
 			C->SetMobility(EComponentMobility::Movable);
-			C->SetStaticMesh(ScatterMesh(K));
+			C->SetStaticMesh(MeshOfSet(K));
 			// Solid to the crew's boots (their floor and wall traces) and nothing else.
 			C->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 			C->SetCollisionResponseToAllChannels(ECR_Ignore);
@@ -1063,6 +1234,7 @@ void UPlanetTerrainComponent::UpdateView(const FVector& ViewLocationWorld, const
 	// The plants fade by their distance from the camera (their custom data says where): from this parameter rather
 	// than the view's own position, so the shadow passes fade them by the same distance as the view does.
 	if (FoliageMID) { FoliageMID->SetVectorParameterValue(TEXT("ViewPos"), FLinearColor((float)ViewLocationWorld.X, (float)ViewLocationWorld.Y, (float)ViewLocationWorld.Z, 0.f)); }
+	for (UMaterialInstanceDynamic* M : FloraMIDs) { if (M) { M->SetVectorParameterValue(TEXT("ViewPos"), FLinearColor((float)ViewLocationWorld.X, (float)ViewLocationWorld.Y, (float)ViewLocationWorld.Z, 0.f)); } }
 	// The motes' too, for their fade, their turn to the camera and their speck floor, with how many pixels a radian is.
 	if (FaunaMID && bMoteMaterial && MoteSetPool.Num() > 0)
 	{
@@ -1373,6 +1545,9 @@ bool UPlanetTerrainComponent::FindFeature(const FString& Kind, const FVector& Ne
 		if (K == TEXT("badlands")) { return S.bWater ? -1e9 : S.Badland * 10.0 + Temperate + Near * 0.5; }
 		// Green: the wettest level lowland, where a living world grows its meadows and forests (TerrainScatter.h).
 		if (K == TEXT("green")) { return S.bWater ? -1e9 : S.Wet * 6.0 - S.Slope * 4.0 - S.Rock * 2.0 - S.Ice * 6.0 - S.HeightCm / FMath::Max(Params.ReliefCm, 1.0) * 6.0 - SlonkTerrain::ClimateColdness(Params, D) * 2.0 + Near * 2.0; }
+		// Forest: where the trees stand thickest, on level ground; and a strange world's giants' groves.
+		if (K == TEXT("forest")) { return S.bWater ? -1e9 : SlonkScatter::HabitatAt(Params, D).Forest * 10.0 - S.Slope * 2.0 + Near * 2.0; }
+		if (K == TEXT("giants")) { return S.bWater ? -1e9 : SlonkScatter::GiantDensityAt(Params, D) * 20.0 + Near * 2.0; }
 		if (K == TEXT("linea")) { return S.Linea * 10.0 + Near * 3.0; }
 		if (K == TEXT("coast"))
 		{

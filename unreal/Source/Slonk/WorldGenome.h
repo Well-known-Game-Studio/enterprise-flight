@@ -6,7 +6,7 @@
 // worlds get more of it the further out they lie. It sets the world's climate too: how much warmer or colder it runs
 // than the Earth-like version, or whether the tides hold one face to its star for ever, baked under it, frozen
 // behind it, with a temperate ring between.
-// Later phases add the biosphere here.
+// What grows on it is rolled from it, apart: its flora (FloraProfile.h), as its animals are (FaunaProfile.h).
 
 #pragma once
 
