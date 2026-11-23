@@ -2128,7 +2128,7 @@ void AStarshipPawn::ProcessDebugCommand()
 	else if (Op == TEXT("spawnplanet"))
 	{
 		// spawnplanet <archetype> [radius km] [hazy] [strange <0..1>] [seed <n>] [locked] [star <m|k|g|f|a>]
-		// [geology <crystals|polygons|terraces|spires|glass>] [landmarks <arch|monolith|greatring|reef|mound|all>]: a planet of that archetype four
+		// [geology <crystals|polygons|terraces|spires|glass>] [landmarks <arch|monolith|greatring|reef|mound|shell|skyrock|all>]: a planet of that archetype four
 		// radii ahead, for looking at worlds the system did not roll. "hazy" re-rolls a moon's seed until it comes out with
 		// the orange haze; "strange" gives it a genome that far from Earth's (FWorldGenome), "seed" another roll of it;
 		// "locked" holds it to the nearest star by the tides (at least half strange, so it has a genome to lock), its
@@ -2155,7 +2155,7 @@ void AStarshipPawn::ProcessDebugCommand()
 				const ELandmark One = SlonkLandmarks::KindNamed(ArgStr(i + 1));
 				if (ArgStr(i + 1) == TEXT("all")) { Marks = (uint8)((1 << SlonkLandmarks::NumKinds) - 1); }
 				else if (One != ELandmark::Count) { Marks |= (uint8)(1 << (int32)One); }
-				else { UE_LOG(LogTemp, Warning, TEXT("spawnplanet: no landmark named %s (arch, monolith, greatring, reef, mound, all)"), *ArgStr(i + 1)); }
+				else { UE_LOG(LogTemp, Warning, TEXT("spawnplanet: no landmark named %s (arch, monolith, greatring, reef, mound, shell, skyrock, all)"), *ArgStr(i + 1)); }
 			}
 			if (ArgStr(i) == TEXT("geology"))
 			{
@@ -2333,12 +2333,12 @@ void AStarshipPawn::ProcessDebugCommand()
 		// "night": search from the middle of the night side and prefer what is dark, to look at the lights.
 		const bool bNight = ArgStr(4) == TEXT("night") || ArgStr(5) == TEXT("night");
 		const FVector SearchFrom = bNight ? -SunLocal : (bTown ? ShipLocal : NearLocal);
-		// A strange world's landmark (arch, monolith, greatring, reef, mound, or "landmark" for the nearest of any kind),
+		// A strange world's landmark (arch, monolith, greatring, reef, mound, shell, skyrock, or "landmark" for the nearest of any kind),
 		// searched out from the ship's side of the morning (where the sun stands 35 degrees up, so it is seen in a
 		// slanting light; "night" from the middle of the night side): the ship stands off it by three times its size
 		// and its own half length ("off <m>" for another distance, "near" for beside it), nose to it, with the sun on the beam, behind
-		// ("away") or ahead ("sun"); an arch or a ring is seen through its opening from its sunlit side unless a
-		// heading is given.
+		// ("away") or ahead ("sun"); an arch or a ring is seen through its opening from its sunlit side, and a shell
+		// on its sunlit flank, unless a heading is given.
 		const ELandmark MarkKind = SlonkLandmarks::KindNamed(ArgStr(2));
 		const bool bMark = MarkKind != ELandmark::Count || ArgStr(2) == TEXT("landmark");
 		FVector MarkLook = FVector::ZeroVector;
@@ -2367,7 +2367,7 @@ void AStarshipPawn::ProcessDebugCommand()
 				const FString How = ArgStr(4);
 				const bool bHowGiven = How == TEXT("sun") || How == TEXT("away") || How == TEXT("across");
 				FVector Look = How == TEXT("sun") ? SunFlat : (How == TEXT("away") ? -SunFlat : FVector::CrossProduct(Stand.Up, SunFlat));
-				if (!bHowGiven && (Stand.Kind == ELandmark::Arch || Stand.Kind == ELandmark::Ring)) { Look = FVector::DotProduct(Through, SunFlat) > 0.0 ? -Through : Through; }
+				if (!bHowGiven && (Stand.Kind == ELandmark::Arch || Stand.Kind == ELandmark::Ring || Stand.Kind == ELandmark::Shell)) { Look = FVector::DotProduct(Through, SunFlat) > 0.0 ? -Through : Through; }
 				if (Look.IsNearlyZero()) { Look = Ta; }
 				double OffCm = 3.0 * Stand.SizeCm + 0.5 * GetShipLengthCm();
 				for (int32 i = 4; i < Args.Num(); ++i)
@@ -2382,7 +2382,8 @@ void AStarshipPawn::ProcessDebugCommand()
 				H = FMath::Max(SlonkTerrain::Sample(Planet->Terrain->GetParams(), Dir, 2000.0).HeightCm, 0.0);
 				MarkLook = Look;
 				bFound = true;
-				UE_LOG(LogTemp, Log, TEXT("Terrain goto: %s, this one %.0f m, %.0f m off, standing on %.1f m"), SlonkLandmarks::KindName(Stand.Kind), Stand.SizeCm / 100.0, OffCm / 100.0, Stand.BaseCm / 100.0);
+				UE_LOG(LogTemp, Log, TEXT("Terrain goto: %s, this one %.0f m, %.0f m off, standing on %.1f m%s"), SlonkLandmarks::KindName(Stand.Kind), Stand.SizeCm / 100.0, OffCm / 100.0, Stand.BaseCm / 100.0,
+					Stand.LiftCm > 0.0 ? *FString::Printf(TEXT(", hanging %.0f m over it"), Stand.LiftCm / 100.0) : TEXT(""));
 			}
 		}
 		if (bFound)
@@ -3375,7 +3376,7 @@ void AStarshipPawn::ProcessDebugCommand()
 			TEXT("ship impact [status|raise [<world>]|deflect|shatter|hit]  (a rock on a course for an inhabited world; the dev ops for testing)"),
 			TEXT("ship camera [chase|bridge|cinematic|front|port|starboard|top|bottom] | zoom <x> | look <yaw> <pitch> [s]"),
 			TEXT("ship warpvis [classic|real] | cscale <0..1> | systems | shipwarp [km] [far]"),
-			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mesa|badlands|cliffs|city|mountain|coast|river|linea|green|forest|giants|geology|land|substellar|ring|nightcap|arch|monolith|greatring|reef|mound|landmark> <alt m> [across|sun|away|along|uphill|giant] [night] [off <m>|near|at] | terrain rocks [on|off|density <x>|check]"),
+			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mesa|badlands|cliffs|city|mountain|coast|river|linea|green|forest|giants|geology|land|substellar|ring|nightcap|arch|monolith|greatring|reef|mound|shell|skyrock|landmark> <alt m> [across|sun|away|along|uphill|giant] [night] [off <m>|near|at] | terrain rocks [on|off|density <x>|check]"),
 			TEXT("ship fauna [status|on|off|density <x>|only <flier|herd|mote|leaper|floater|all>|startle|time <s>|strange <0..1>|cells|plans|habitat [km]] | fauna goto <flier|herd|leaper|floater> <alt m> [night] [species <n>] | fauna goto mote <alt m> [night|dusk|day] | fauna watch [kind|any] [m] [low|off]  (the animals of the world below: flocks, herds, motes, leaping fish, the strange worlds' sky-jellies; slonk.Fauna.Splash 0 throws no splashes)"),
 			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km] [hazy] [strange <0..1>] [seed <n>] [locked] [star <m|k|g|f|a>] [geology <kind>] [landmarks <kind|all>] | people [none|stone|iron|industrial|modern|starfaring] [organic] [cliff]"),
 			TEXT("ship shuttle  (launch the shuttlecraft; aboard it, dock when the bay is within 500 m) | ship takeoff"),

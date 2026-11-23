@@ -783,18 +783,21 @@ void APlanetBody::ResolveStyleFromArchetype()
 	if (LandmarkProfile.Any())
 	{
 		// As its ground can carry them, read once from the height field as the cloud base above is (only on a world
-		// that rolled any): a world all sea has nowhere to stand one, and one with no sea no shallows for a reef.
+		// that rolled any): a world all sea has nowhere to stand one, one with no sea no shallows for a reef, and one
+		// with no ground near the sea's level none of what the giant shells lie on.
 		const FPlanetTerrainParams P = MakeTerrainParams();
 		const int32 N = 256;
-		int32 Dry = 0;
+		int32 Dry = 0, Low = 0;
 		for (int32 i = 0; i < N; ++i)
 		{
 			const double Z = 1.0 - 2.0 * (i + 0.5) / N;
 			const double Rxy = FMath::Sqrt(FMath::Max(0.0, 1.0 - Z * Z));
 			const double Phi = i * 2.399963229728653; // Fibonacci sphere
-			Dry += SlonkTerrain::Sample(P, FVector(Rxy * FMath::Cos(Phi), Rxy * FMath::Sin(Phi), Z), 2.0e6).bWater ? 0 : 1;
+			const FPlanetTerrainSample Sm = SlonkTerrain::Sample(P, FVector(Rxy * FMath::Cos(Phi), Rxy * FMath::Sin(Phi), Z), 2.0e6);
+			Dry += Sm.bWater ? 0 : 1;
+			Low += !Sm.bWater && Sm.HeightCm < 20000.0 ? 1 : 0;
 		}
-		SlonkLandmarks::FitToGround(LandmarkProfile, (float)Dry / N);
+		SlonkLandmarks::FitToGround(LandmarkProfile, (float)Dry / N, (float)Low / N);
 	}
 	// A world the tides hold does not turn, keeps no rings (the tides that stopped it would have pulled them down) and
 	// has no polar caps: its cap is the far side's, which the terrain's climate makes. The draws for the spin and the

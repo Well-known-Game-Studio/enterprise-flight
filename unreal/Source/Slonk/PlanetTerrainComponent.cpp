@@ -1058,7 +1058,8 @@ void UPlanetTerrainComponent::UpdateSolidRocks()
 	// A landmark is solid from as far off as it reaches (its origin is the middle of an arch's span, of a ring's
 	// round), and as far up as the tallest stands: someone beamed down onto an arch's crown, or a stone's top, is
 	// more than "near the ground" over the drawn ground and must not fall through when the transport's hold ends.
-	const double MarkReach = Scatter.Landmarks.Any() ? 22000.0 : 0.0, MarkTop = Scatter.Landmarks.Any() ? 30000.0 : 0.0;
+	// (The tallest is a rock hanging four hundred metres up, with its own height on that.)
+	const double MarkReach = Scatter.Landmarks.Any() ? 22000.0 : 0.0, MarkTop = Scatter.Landmarks.Any() ? 60000.0 : 0.0;
 	if (!bPinned && (Moved.Size() > 2000.0 || !DrawnHeightAtLocalDir(PawnDir, Ground) || PawnLocal.Size() - Params.RadiusCm - Ground > 3000.0 + MarkTop))
 	{
 		if (SolidRocks > 0) { ClearSolidRocks(); }

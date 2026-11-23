@@ -10,7 +10,8 @@
 // is the world's flora (FFloraProfile, FloraTypes.h): its species by slot, the Earth's grass, bush, broadleaf and
 // conifer in the four roles on the worlds near home, other life forms in their places and beside them on a strange
 // world, and giants of a hundred metres and more on a lattice of their own. A strange world's landmarks (Landmarks.h:
-// arches, a vanished people's stones, reef towers, mound cities) stand on lattices of theirs, one or two to a hundred
+// arches, a vanished people's stones, reef towers, mound cities, giant shells, rocks that hang in the air) stand on
+// lattices of theirs, one or two to a hundred
 // square kilometres. Everything here is a pure function of the planet, the settings and the chunk: safe off the game
 // thread, and every visit puts everything back where it was.
 
@@ -236,6 +237,8 @@ namespace SlonkScatter
 		double U = 0.0, V = 0.0;
 		/** How it is turned about its up, radians from the first tangent at its place (SlonkScatter::LandmarkTangents). */
 		double Yaw = 0.0;
+		/** How far over what it stands on its origin hangs, cm: nothing, but for a kind that hangs in the air. */
+		double LiftCm = 0.0;
 	};
 	/** How well the ground at a direction suits a landmark of a kind and a size, 0 (not at all: none stands there) to 1,
 	 *  read from the field as the sites are; Life is how much grows on the world (its woods keep the stones out). */
