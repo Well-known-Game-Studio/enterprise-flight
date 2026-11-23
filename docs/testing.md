@@ -86,6 +86,16 @@ a species' own height scaling its trees and moving none; the giants on their own
 the drawn ground, the same on the finer chunks and thinned on the far level, none on a world without one, a dead world
 or the sea); the meshes kept while a world holds their forms and let go after; and the terrain drawing a strange
 species in a material of its own carrying its look, every parameter of which the foliage material has.
+`Slonk.Geology.*` (Tests/SlonkGeologyTests.cpp) covers a strange world's own geology (EGeology, PlanetTerrain.h): none
+rolled to strangeness 0.15 and on about three strange worlds in four at 1, each of a kind its archetype's ground can
+make, the same on every roll and kept as the world grows stranger, reaching the terrain of every world that rolled one
+unless its crust is lineae; the field marking it on a share of the land in provinces, never in the water, on a world
+without rain too, and moving nothing of the world's structure; what the refinement makes of the marked ground (a pan and
+a plain of glass smoother than the soil, crystal columns and prisms and spires standing tens of metres out of it,
+terraces stepping a slope into level treads); the coarser levels of detail still carrying a spire forest and a crystal
+field, lower, down to nothing where the refinement begins, a chunk's skirt hanging as far as they stand, and the ground a
+flier reads clearing every one; no tree on it, nor the forest's painted cover, no herd grazing or crossing it, and the
+chunk's vertices carrying its mark to the material; and the terrain material having its three parameters.
 
 Writing one: make an `FSystems` (a roster seed gives the same people every time), drive the subsystems through
 their public API, assert with `TestEqual`/`TestTrue`. For anything that depends on the world (targets picked from

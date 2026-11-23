@@ -2127,24 +2127,38 @@ void AStarshipPawn::ProcessDebugCommand()
 	}
 	else if (Op == TEXT("spawnplanet"))
 	{
-		// spawnplanet <archetype> [radius km] [hazy] [strange <0..1>] [seed <n>] [locked] [star <m|k|g|f|a>]: a planet of that archetype four
+		// spawnplanet <archetype> [radius km] [hazy] [strange <0..1>] [seed <n>] [locked] [star <m|k|g|f|a>]
+		// [geology <crystals|polygons|terraces|spires|glass>]: a planet of that archetype four
 		// radii ahead, for looking at worlds the system did not roll. "hazy" re-rolls a moon's seed until it comes out with
 		// the orange haze; "strange" gives it a genome that far from Earth's (FWorldGenome), "seed" another roll of it;
 		// "locked" holds it to the nearest star by the tides (at least half strange, so it has a genome to lock), its
-		// climate laid about that star's bearing.
+		// climate laid about that star's bearing; "geology" gives it that geology of its own whatever it rolled (at least
+		// half strange likewise).
 		const FString Kind = ArgStr(1);
 		float Strange = 0.f; int32 SeedPick = 0;
 		bool bLocked = false;
+		uint8 Geology = 0;
 		// "star <m|k|g|f|a>": the light its plants grow under (FloraTypes.h), which sets their pigment on a strange world;
 		// without it the nearest star's, by its colour.
 		EStarLight Light = EStarLight::Yellow;
 		bool bLightGiven = false;
-		for (int32 i = 2; i < 10; ++i)
+		for (int32 i = 2; i < 14; ++i)
 		{
 			if (ArgStr(i) == TEXT("star")) { bLightGiven = SlonkFloraCommands::LightNamed(ArgStr(i + 1), Light); }
 			if (ArgStr(i) == TEXT("strange")) { Strange = FMath::Clamp(Arg(i + 1, 0.f), 0.f, 1.f); }
 			if (ArgStr(i) == TEXT("seed")) { SeedPick = (int32)Arg(i + 1, 0.f); }
 			if (ArgStr(i) == TEXT("locked")) { bLocked = true; }
+			if (ArgStr(i) == TEXT("geology"))
+			{
+				for (uint8 G = 1; G < (uint8)EGeology::Count; ++G)
+				{
+					// By its name's first word: "crystal fields" is crystals (or crystal), "polygon pans" polygons.
+					FString First, Rest;
+					FString(SlonkGenome::GeologyName(G)).Split(TEXT(" "), &First, &Rest);
+					if (ArgStr(i + 1).StartsWith(First.Left(5))) { Geology = G; }
+				}
+				if (Geology == 0) { UE_LOG(LogTemp, Warning, TEXT("spawnplanet: no geology named %s (crystals, polygons, terraces, spires, glass)"), *ArgStr(i + 1)); }
+			}
 		}
 		static const TMap<FString, TPair<EPlanetArchetype, float>> Kinds = {
 			{ TEXT("terrestrial"), { EPlanetArchetype::Terrestrial, 6371.f } }, { TEXT("ocean"), { EPlanetArchetype::Ocean, 6800.f } },
@@ -2159,7 +2173,7 @@ void AStarshipPawn::ProcessDebugCommand()
 				UE_LOG(LogTemp, Warning, TEXT("spawnplanet: a %s world has no climate to lock (temperate, ocean, desert and ice worlds do); it spins"), *Kind);
 				bLocked = false;
 			}
-			if (bLocked) { Strange = FMath::Max(Strange, 0.5f); }
+			if (bLocked || Geology != 0) { Strange = FMath::Max(Strange, 0.5f); }
 			const float RadiusKm = Arg(2, 0.f) > 0.f ? Arg(2, 0.f) : K->Value;
 			const bool bHazy = ArgStr(3) == TEXT("hazy");
 			// Four radii ahead, stepped sideways until it is clear of every other body by three radii (three
@@ -2196,6 +2210,7 @@ void AStarshipPawn::ProcessDebugCommand()
 				if (!P) { break; }
 				P->Archetype = K->Key; P->RadiusKm = RadiusKm; P->Strangeness = Strange;
 				P->StarBearing = Bearing; P->bForceTidalLock = bLocked;
+				P->ForcedGeology = Geology;
 				if (!bLightGiven)
 				{
 					double NearestD = TNumericLimits<double>::Max();
@@ -2210,6 +2225,12 @@ void AStarshipPawn::ProcessDebugCommand()
 				P->FinishSpawning(FTransform(Loc));
 				if (!bHazy || P->bHazyMoon)
 				{
+					// A geology asked for that the world did not take: its genome does not apply (no air, a moon, a giant)
+					// or its crust is already cracked into lineae.
+					if (Geology != 0 && P->MakeTerrainParams().Geology == EGeology::None)
+					{
+						UE_LOG(LogTemp, Warning, TEXT("spawnplanet: this %s world takes no geology of its own (only a world with air whose crust is not lineae does)"), *Kind);
+					}
 					UE_LOG(LogTemp, Log, TEXT("spawnplanet: %s %.0f km at %s (hazy %d, attempt %d; %s; %s)"), *Kind, RadiusKm, *Loc.ToString(), P->bHazyMoon ? 1 : 0, Attempt, *SlonkGenome::Describe(P->Genome),
 						*SlonkFlora::Describe(P->FloraProfile));
 					break;
@@ -3283,9 +3304,9 @@ void AStarshipPawn::ProcessDebugCommand()
 			TEXT("ship impact [status|raise [<world>]|deflect|shatter|hit]  (a rock on a course for an inhabited world; the dev ops for testing)"),
 			TEXT("ship camera [chase|bridge|cinematic|front|port|starboard|top|bottom] | zoom <x> | look <yaw> <pitch> [s]"),
 			TEXT("ship warpvis [classic|real] | cscale <0..1> | systems | shipwarp [km] [far]"),
-			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mesa|badlands|cliffs|city|mountain|coast|river|linea|green|forest|giants|land|substellar|ring|nightcap> <alt m> [across|sun|away|along|uphill|giant] [night] | terrain rocks [on|off|density <x>|check]"),
+			TEXT("ship hover <m> [canyon] | hover off | terrain goto <canyon|mesa|badlands|cliffs|city|mountain|coast|river|linea|green|forest|giants|geology|land|substellar|ring|nightcap> <alt m> [across|sun|away|along|uphill|giant] [night] | terrain rocks [on|off|density <x>|check]"),
 			TEXT("ship fauna [status|on|off|density <x>|only <flier|herd|mote|leaper|floater|all>|startle|time <s>|strange <0..1>|cells|plans|habitat [km]] | fauna goto <flier|herd|leaper|floater> <alt m> [night] [species <n>] | fauna goto mote <alt m> [night|dusk|day] | fauna watch [kind|any] [m] [low|off]  (the animals of the world below: flocks, herds, motes, leaping fish, the strange worlds' sky-jellies; slonk.Fauna.Splash 0 throws no splashes)"),
-			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km] [hazy] [strange <0..1>] [seed <n>] [locked] [star <m|k|g|f|a>] | people [none|stone|iron|industrial|modern|starfaring] [organic] [cliff]"),
+			TEXT("ship target [nearest|clear] | phasers [off] | torpedo | tractor | spawnplanet <archetype> [radius km] [hazy] [strange <0..1>] [seed <n>] [locked] [star <m|k|g|f|a>] [geology <kind>] | people [none|stone|iron|industrial|modern|starfaring] [organic] [cliff]"),
 			TEXT("ship shuttle  (launch the shuttlecraft; aboard it, dock when the bay is within 500 m) | ship takeoff"),
 			TEXT("ship scan [stop]  (sensors on the locked / nav target; landed: survey the ground) | ship science [reset]"),
 			TEXT("ship ui menu | chart | science | engineering | tactical | medical | crew | msd | controls | settings | close | click <button>   (the LCARS panels)"),

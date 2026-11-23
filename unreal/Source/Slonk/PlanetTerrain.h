@@ -23,6 +23,28 @@ enum class EClimateModel : uint8
 	Locked
 };
 
+/** What a strange world's ground is made into in places, over what its archetype gives it: one kind a world. The field
+ *  marks where (FPlanetTerrainSample::Geo), the refinement shapes the last two hundred metres there, and the terrain
+ *  material and the scatter read the mark. */
+enum class EGeology : uint8
+{
+	None,
+	/** Fields of crystal: columns jointed like basalt, shoulder to shoulder at every height, with tall prisms standing
+	 *  out of them. */
+	Crystals,
+	/** Pans cracked into polygons: salt on a dry world's flats, frost-heaved ground on a cold one's. The pan lies level;
+	 *  the material draws its cracks. */
+	Polygons,
+	/** Terraces: a slope stepped into level, rimmed treads one above the next, a hot spring's travertine, each tread a
+	 *  pool. */
+	Terraces,
+	/** Forests of spires: hoodoos and needles of rock tens of metres tall, crowded on the dry ground. */
+	Spires,
+	/** Plains of glass: ground fused level and smooth, dark, crazed with cracks. */
+	Glass,
+	Count
+};
+
 /** Everything the height function needs, derived from the planet's style once per planet. */
 struct FPlanetTerrainParams
 {
@@ -84,6 +106,10 @@ struct FPlanetTerrainParams
 	float TermN = 0.f;
 	float NightN = 0.f;
 	float NightWidth = 0.35f;
+	/** A strange world's own geology (SlonkGenome::ApplyGeology), and how much of its land it takes, 0..1. None on every
+	 *  world near home, which leaves the field exactly as it was. */
+	EGeology Geology = EGeology::None;
+	float GeoStrength = 0.f;
 
 	bool operator==(const FPlanetTerrainParams& O) const
 	{
@@ -91,7 +117,8 @@ struct FPlanetTerrainParams
 			&& ContinentScale == O.ContinentScale && Mountains == O.Mountains && MountainHeight == O.MountainHeight && Canyons == O.Canyons && CanyonDepthCm == O.CanyonDepthCm
 			&& CanyonWidthCm == O.CanyonWidthCm && Strata == O.Strata && Craters == O.Craters && CraterScale == O.CraterScale && Maria == O.Maria && Lineae == O.Lineae
 			&& IceCapStart == O.IceCapStart && Moisture == O.Moisture && SnowlineCm == O.SnowlineCm && bLava == O.bLava && bAirless == O.bAirless
-			&& Climate == O.Climate && ClimateAxis == O.ClimateAxis && WarmthN == O.WarmthN && DayN == O.DayN && TermN == O.TermN && NightN == O.NightN && NightWidth == O.NightWidth;
+			&& Climate == O.Climate && ClimateAxis == O.ClimateAxis && WarmthN == O.WarmthN && DayN == O.DayN && TermN == O.TermN && NightN == O.NightN && NightWidth == O.NightWidth
+			&& Geology == O.Geology && GeoStrength == O.GeoStrength;
 	}
 	bool operator!=(const FPlanetTerrainParams& O) const { return !(*this == O); }
 };
@@ -132,6 +159,8 @@ struct FPlanetTerrainSample
 	float Stratum = 0.f;
 	/** 0..1 badlands: the soft beds bared below an escarpment, which the refinement cuts into gullies. */
 	float Badland = 0.f;
+	/** 0..1 the world's own geology here (FPlanetTerrainParams::Geology): 0 everywhere on a world without one. */
+	float Geo = 0.f;
 	bool bWater = false;
 };
 
@@ -168,6 +197,12 @@ namespace SlonkTerrain
 
 	/** Just the surface height (cm above the sea-level sphere; the sea itself is 0) at full detail. */
 	SLONK_API double SurfaceHeightCm(const FPlanetTerrainParams& P, const FVector& Dir);
+	/** How far a strange world's own geology can stand over or under the ground a coarser sample gives, cm, where its
+	 *  mark is Geo (FPlanetTerrainSample::Geo): a crystal field's prisms on their columns, a spire with a needle on its
+	 *  shoulder, a terrace's riser and rim; nothing for a pan or a plain of glass, on unmarked ground, or on a world
+	 *  without a geology. What a chunk's skirt has to cover against a neighbour at another level, and what a flier has
+	 *  to clear over the ground it reads. */
+	SLONK_API double GeologyReliefCm(const FPlanetTerrainParams& P, float Geo);
 
 	/** The permanent snowline at a direction, cm above the sea: P.SnowlineCm at the equator falling as cos(latitude)^1.5
 	 *  (an Earth's 5 km gives 3 km at 45 degrees, 1.8 km at 60, 1 km at 70), 0 at the poles. It is the freezing

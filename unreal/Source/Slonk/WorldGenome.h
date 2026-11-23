@@ -65,6 +65,10 @@ struct FWorldGenome
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Genome") float DayHeat = 0.f;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Genome") float TermHeat = 0.f;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Genome") float NightCold = 0.f;
+	/** The world's own geology (EGeology, PlanetTerrain.h: 0 none), and how much of its land it takes, 0..1: fields of
+	 *  crystal, pans cracked into polygons, terraced pools, forests of spires or plains of glass. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Genome") uint8 Geology = 0;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Genome") float GeologyStrength = 0.f;
 };
 
 namespace SlonkGenome
@@ -96,6 +100,16 @@ namespace SlonkGenome
 	/** Applies the genome's climate to the terrain's parameters: a locked world's laid about StarBearing (planet-local,
 	 *  unit), a spinning one's warmth. Strangeness 0, or a world without a climate, changes nothing. */
 	SLONK_API void ApplyClimate(const FWorldGenome& G, EPlanetArchetype Type, const FVector& StarBearing, FPlanetTerrainParams& P);
+	/** Gives the terrain's parameters the genome's geology. Strangeness 0, a world without one or one whose crust is
+	 *  already cracked into lineae changes nothing. (A Mars's and a Venus's ground, which the terrain shapes without
+	 *  rain as it does an airless world's, takes its geology like any other: only worlds with air roll one.) */
+	SLONK_API void ApplyGeology(const FWorldGenome& G, FPlanetTerrainParams& P);
+	/** The two colours the terrain material draws a world's geology in (its GeoColor and GeoColor2), from the style the
+	 *  genome has been applied to: a crystal field's own hue and its shadowed faces; a pan's pale crust and its cracks;
+	 *  a terrace's stone and its pools (the world's shallows); a spire's rock and its darker beds; a glass plain's dark
+	 *  sheet and the pale lines it is crazed with. */
+	SLONK_API void GeologyColors(const FWorldGenome& G, const FPlanetStyle& S, FLinearColor& OutA, FLinearColor& OutB);
+	SLONK_API const TCHAR* GeologyName(uint8 Geology);
 	/** A solvent's freezing point and its liquid range, K: the temperature a share of the range (TempN) reads as is
 	 *  FreezeK + RangeK x TempN. Water 273 and 100, ammonia 195 and 45, methane 91 and 21, sulphuric acid 283 and 327. */
 	SLONK_API float FreezeK(ESolvent S);

@@ -674,6 +674,12 @@ void APlanetBody::ResolveStyleFromArchetype()
 	// strangeness 0 (home, the charted neighbours) it is the archetype's own and changes nothing.
 	Genome = SlonkGenome::Roll(Type, SlonkGenome::AppliesTo(Type, Style.bAtmosphere) ? Strangeness : 0.f, Hash, TidalPull);
 	SlonkGenome::SettleLock(Genome, Type, StarBearing, bForceTidalLock);
+	// A geology asked for by name (ForcedGeology) in place of the one rolled, at no less than four fifths of its strength.
+	if (ForcedGeology != 0 && Genome.Strangeness > 0.f)
+	{
+		Genome.Geology = ForcedGeology;
+		Genome.GeologyStrength = FMath::Max(Genome.GeologyStrength, 0.8f);
+	}
 	// Its animals, rolled from the genome on a stream of their own (nothing above or below moves): the Earth's at
 	// strangeness 0. Given to the animals about if there are any (a world resolved again keeps its terrain).
 	FaunaProfile = SlonkFauna::Roll(Genome, Type, Hash);
@@ -1522,6 +1528,8 @@ FPlanetTerrainParams APlanetBody::MakeTerrainParams() const
 	// The genome's climate: a strange world warmer or colder than its archetype, or one held to its star. The star's
 	// bearing is planet-local as it stands, since a world spawns unrotated and a locked one never turns.
 	SlonkGenome::ApplyClimate(Genome, ResolvedArchetype, StarBearing, P);
+	// And its geology, where it has one of its own.
+	SlonkGenome::ApplyGeology(Genome, P);
 	return P;
 }
 
@@ -1606,6 +1614,16 @@ void APlanetBody::ApplyTerrainMaterialParams()
 	Terrain->SetScalarParameter(TEXT("CloudScale"), S.CloudScale);
 	Terrain->SetScalarParameter(TEXT("Coverage"), S.bClouds ? S.CloudCoverage : 0.f);
 	Terrain->SetVectorParameter(TEXT("SunDirection"), FLinearColor(CachedStarDirection.X, CachedStarDirection.Y, CachedStarDirection.Z, 0.f));
+	// A strange world's own geology: which kind the ground's mark means (none on a world without one: the mark is
+	// then its lineae's, as the material's default has it), and its two colours.
+	Terrain->SetScalarParameter(TEXT("GeoKind"), (float)(uint8)TerrainParams.Geology);
+	if (TerrainParams.Geology != EGeology::None)
+	{
+		FLinearColor GeoA, GeoB;
+		SlonkGenome::GeologyColors(Genome, S, GeoA, GeoB);
+		Terrain->SetVectorParameter(TEXT("GeoColor"), GeoA);
+		Terrain->SetVectorParameter(TEXT("GeoColor2"), GeoB);
+	}
 	// What the seas carry: plankton that glow where the sea is stirred at night, shoals under it by day, on a living
 	// world whose seas are liquid. A dead, airless or molten world's seas get none, which leaves them as they were.
 	// None at all with slonk.Fauna.Enable 0: the seas as they were before they carried any.

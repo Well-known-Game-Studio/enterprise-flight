@@ -45,6 +45,11 @@ namespace SlonkScatter
 	struct FSpot
 	{
 		double Slope = 0, Rock = 0, Wet = 0, Ice = 0, Canyon = 0, Wall = 0, Crater = 0, Table = 0, River = 0, HeightCm = 0, Stratum = 0;
+		/** A strange world's own geology there (FPlanetTerrainSample::Geo): nothing grows on it. */
+		double Geo = 0;
+		/** The share of what would grow there that does: all of it off the geology (exactly 1 where there is none), none
+		 *  where the ground is the geology's, as the material draws it (terrain_material.py's geo). */
+		double Grows() const { const double T = FMath::Clamp((Geo - 0.1) / 0.4, 0.0, 1.0); return 1.0 - T * T * (3.0 - 2.0 * T); }
 		/** On the drawn triangle, chunk-relative; the triangle's normal; the radial up and unit direction there. */
 		FVector Pt, Nt, Up;
 		/** The refinement's regimes from the structure's slope (the same at every level of the quadtree). */
@@ -89,6 +94,7 @@ namespace SlonkScatter
 			S.Table = Bi(SA.Table, SB.Table, SC.Table, SD.Table);
 			S.River = Bi(SA.River, SB.River, SC.River, SD.River);
 			S.HeightCm = Bi(SA.HeightCm, SB.HeightCm, SC.HeightCm, SD.HeightCm);
+			S.Geo = Bi(SA.Geo, SB.Geo, SC.Geo, SD.Geo);
 			S.Stratum = FMath::Max(FMath::Max(SA.Stratum, SB.Stratum), FMath::Max(SC.Stratum, SD.Stratum));
 			// On the drawn triangle: the cell's two triangles split along the (i+1, j)-(i, j+1) diagonal, as built.
 			FVector Pa, Pb, Pc;
@@ -217,7 +223,7 @@ namespace SlonkScatter
 		const double SnowLying = SmoothStep(0.2, 0.6, Sp.Ice);
 		const double D = (Forest * SmoothStep(0.3, 0.65, Sp.Wet) * (1.0 - SmoothStep(0.35, 0.75, Sp.Slope)) * (1.0 - 0.7 * Sp.Rocky) * 0.8
 			+ Sp.Gorge * Sp.Wet * 0.35)
-			* (1.0 - SmoothStep(0.65, 0.9, Clim.Alpine)) * (1.0 - SnowLying);
+			* (1.0 - SmoothStep(0.65, 0.9, Clim.Alpine)) * (1.0 - SnowLying) * Sp.Grows();
 		// A climate of its own: no tree where the air runs past three quarters of the liquid range, and none in the tundra
 		// just above freezing, where only the grass holds on.
 		return Clim.bClimate ? D * (1.0 - SmoothStep(0.45, 0.75, Clim.Heat)) * SmoothStep(0.0, 0.06, Clim.Heat) : D;
@@ -231,7 +237,7 @@ namespace SlonkScatter
 	{
 		const double Groves = SmoothStep(0.05, 0.45, SlonkTerrain::Fbm(Sp.Up * (P.RadiusCm / 900000.0) + P.Seed * 5.3 + FVector(2.0, 7.0, 4.0), 2));
 		const double SnowLying = SmoothStep(0.2, 0.6, Sp.Ice);
-		const double D = Groves * SmoothStep(0.2, 0.5, Sp.Wet) * Sp.Flat * (1.0 - 0.8 * Sp.Rocky) * (1.0 - SnowLying) * (1.0 - SmoothStep(0.6, 0.85, Clim.Alpine)) * 0.45;
+		const double D = Groves * SmoothStep(0.2, 0.5, Sp.Wet) * Sp.Flat * (1.0 - 0.8 * Sp.Rocky) * (1.0 - SnowLying) * (1.0 - SmoothStep(0.6, 0.85, Clim.Alpine)) * 0.45 * Sp.Grows();
 		return Clim.bClimate ? D * (1.0 - SmoothStep(0.45, 0.75, Clim.Heat)) * SmoothStep(0.0, 0.06, Clim.Heat) : D;
 	}
 

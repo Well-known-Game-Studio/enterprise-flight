@@ -142,7 +142,8 @@ public:
 	 *  origin, planet-local; and, if asked, the forest's cover at each grid vertex as the material reads it (UV3.y,
 	 *  SlonkScatter::TreeCover). For tests. */
 	static void BuildChunkScatterForTest(const FPlanetTerrainParams& P, const FScatterSettings& S, int32 Face, int32 Depth, int64 X, int64 Y, int32 Steps,
-		TArray<FTransform> (&OutPlanetLocal)[SlonkScatter::NumMeshes], TArray<double> (&OutDrawnHeightCm)[SlonkScatter::NumMeshes], FVector* OutOrigin = nullptr, TArray<float>* OutTreeCover = nullptr);
+		TArray<FTransform> (&OutPlanetLocal)[SlonkScatter::NumMeshes], TArray<double> (&OutDrawnHeightCm)[SlonkScatter::NumMeshes], FVector* OutOrigin = nullptr, TArray<float>* OutTreeCover = nullptr,
+		TArray<float>* OutMark = nullptr, double* OutSkirtCm = nullptr);
 	/** Everything a chunk build makes, as one CRC: the drawn vertices, their normals and every attribute the material
 	 *  reads (the forest's cover among them), the grid's heights, the triangles, and the rocks' and plants' transforms
 	 *  and custom data. Two builds agree bit for bit when their CRCs do. For the tests that hold a world's look fixed. */

@@ -153,13 +153,14 @@ namespace
 		}
 	}
 	/** The shader's land gating at a point: dry-shod, wet enough for the people (a desert people needs no wet ground),
-	 *  low, level. Returns the slope penalty factor, or -1 to reject. */
+	 *  low, level, and not a strange world's own geology (crystal, spires, a pan: no one founds a town on it). Returns
+	 *  the slope penalty factor, or -1 to reject. */
 	float LandFactor(const FPlanetTerrainParams& P, const FCivilization& Civ, const FVector& Dir, int32& NWater, int32& NDry, int32& NHigh, int32& NSteep)
 	{
 		const FPlanetTerrainSample S = SlonkTerrain::SampleStructure(P, Dir);
 		if (S.bWater) { ++NWater; return -1.f; }
 		if (S.Wet < Civ.WetMin) { ++NDry; return -1.f; }
-		if (S.HeightCm > 200000.0 || S.Canyon > 0.3f) { ++NHigh; return -1.f; }
+		if (S.HeightCm > 200000.0 || S.Canyon > 0.3f || S.Geo > 0.1f) { ++NHigh; return -1.f; }
 		const double R = P.RadiusCm;
 		const FVector East = FVector::CrossProduct(FVector::ZAxisVector, Dir).GetSafeNormal();
 		const FVector North = FVector::CrossProduct(Dir, East);
@@ -334,7 +335,7 @@ namespace
 	};
 
 	/** Ground a building can stand on: dry, not a wall, not steep. */
-	bool Buildable(const FPlanetTerrainSample& S) { return !S.bWater && S.Wall <= 0.3f && S.Slope <= 0.5f; }
+	bool Buildable(const FPlanetTerrainSample& S) { return !S.bWater && S.Wall <= 0.3f && S.Slope <= 0.5f && S.Geo <= 0.1f; }
 	/** From a building's centre to its farthest corner. */
 	double HalfDiag(double W, double D) { return 0.5 * FMath::Sqrt(W * W + D * D); }
 }
