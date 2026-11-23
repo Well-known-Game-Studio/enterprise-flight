@@ -12,6 +12,7 @@
 #include "WorldGenome.h"
 #include "FaunaProfile.h"
 #include "FloraProfile.h"
+#include "Landmarks.h"
 #include "Async/Future.h"
 #include "PlanetBody.generated.h"
 
@@ -274,6 +275,9 @@ public:
 	/** For debug (ship spawnplanet ... geology <kind>): the geology a strange world has whatever its genome rolled (an
 	 *  EGeology, PlanetTerrain.h); 0 leaves it the genome's. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet") uint8 ForcedGeology = 0;
+	/** For debug (ship spawnplanet ... landmarks <kind|all>): the kinds of landmark that stand on the world whatever it
+	 *  rolled, a bit to each ELandmark (Landmarks.h); 0 leaves it its roll. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet") uint8 ForcedLandmarks = 0;
 	/** Whether the tides hold this world's face to its star: it does not turn, and its climate is laid about the star. */
 	bool IsTidallyLocked() const { return Genome.bTidallyLocked; }
 
@@ -314,6 +318,9 @@ public:
 	 *  strangeness 0, whatever its star. The style's land colours wear its pigment (SlonkFlora::ApplyPigment), and the
 	 *  terrain places its species. */
 	FFloraProfile FloraProfile;
+	/** The landmarks that stand on the world (SlonkLandmarks::Roll), rolled from the genome when the style is resolved:
+	 *  none on any world near home. The terrain places them. */
+	FLandmarkProfile LandmarkProfile;
 	/** Debug (the `ship flora` command): gives the world the flora it would roll at another strangeness, or under another
 	 *  star's light, from now on. The land colours go back to what they were before any pigment and take the new flora's,
 	 *  the ground's materials near and far and the animals' palette follow, and the terrain places the new species. The

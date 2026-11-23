@@ -480,7 +480,21 @@ void UScienceScannerComponent::FactsForWorld(const APlanetBody* P, FScanRecord& 
 		if (S.Lineae > 0.05f) { Surface.Add(TEXT("surface lineae")); }
 		// A strange world's own geology, as its terrain has it (EGeology): crystal fields, spire forests and the rest.
 		if (TP.Geology != EGeology::None) { Surface.Add(SlonkGenome::GeologyName((uint8)TP.Geology)); }
+		// What stands on a strange world (Landmarks.h): its rock's own arches with the surface; what its life has built
+		// and what a vanished people left, on lines of their own.
+		const FLandmarkProfile& Marks = P->LandmarkProfile;
+		if (Marks.Has(ELandmark::Arch)) { Surface.Add(TEXT("natural arches")); }
 		if (Surface.Num() > 0) { R.Facts.Add(TEXT("Surface: ") + FString::Join(Surface, TEXT(", "))); }
+		if (Marks.Has(ELandmark::ReefTower) || Marks.Has(ELandmark::Mound))
+		{
+			R.Facts.Add(FString::Printf(TEXT("Biostructures: %s%s%s"), Marks.Has(ELandmark::ReefTower) ? TEXT("reef towers in the shallows") : TEXT(""),
+				Marks.Has(ELandmark::ReefTower) && Marks.Has(ELandmark::Mound) ? TEXT(", ") : TEXT(""), Marks.Has(ELandmark::Mound) ? TEXT("mound cities on the plains") : TEXT("")));
+		}
+		if (Marks.Has(ELandmark::Monolith) || Marks.Has(ELandmark::Ring))
+		{
+			R.Facts.Add(FString::Printf(TEXT("Worked stone on the surface, of no living people: %s%s%s"), Marks.Has(ELandmark::Monolith) ? TEXT("standing monoliths") : TEXT(""),
+				Marks.Has(ELandmark::Monolith) && Marks.Has(ELandmark::Ring) ? TEXT(", ") : TEXT(""), Marks.Has(ELandmark::Ring) ? TEXT("great rings") : TEXT("")));
+		}
 		if (bLocked)
 		{
 			// The sea-level temperatures, in kelvin of the world's own seas' freezing point and liquid range.
@@ -506,6 +520,12 @@ void UScienceScannerComponent::FactsForWorld(const APlanetBody* P, FScanRecord& 
 		R.Discovery = FString::Printf(TEXT("%s %s %s%s%s%s"), bVowel ? TEXT("An") : TEXT("A"), *Age, Who.Age <= ETechAge::Iron ? TEXT("people") : TEXT("civilisation"), Who.IsOrganic() ? TEXT(" that grows its cities") : TEXT(""),
 			bPreWarp ? TEXT(", pre-warp") : TEXT(", warp-capable"), Who.CliffAffinity >= 0.5f ? TEXT(", cliff dwellers") : TEXT(""));
 		R.Bonus += 200 + (Who.Age <= ETechAge::Iron ? 100 : 0) + (Who.IsOrganic() || Who.CliffAffinity >= 0.5f ? 50 : 0);
+	}
+	// A vanished people's stones, where the world has them standing: the find is certain, and there to be landed beside.
+	else if (!bGiant && (P->LandmarkProfile.Has(ELandmark::Monolith) || P->LandmarkProfile.Has(ELandmark::Ring)))
+	{
+		R.Discovery = P->LandmarkProfile.Has(ELandmark::Monolith) ? TEXT("Ruins of an unknown culture: monoliths standing on the plains") : TEXT("Ruins of an unknown culture: great rings half sunk in the ground");
+		R.Bonus += 300;
 	}
 	else if (S.Lineae > 0.05f) { R.Discovery = TEXT("Subsurface ocean under the ice"); R.Bonus += 200; }
 	else if (Roll(R.Key, 1) < 0.4f)

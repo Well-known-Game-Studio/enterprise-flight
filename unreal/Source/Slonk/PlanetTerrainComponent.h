@@ -100,6 +100,14 @@ public:
 	bool FindPlant(int32 Slot, const FVector& FromDir, double MaxCm, FVector& OutLocalCm, double& OutHeightCm) const;
 	/** One line a live slot for the debug readout: what stands in it, what it is drawn in, how many show now. */
 	void DescribeFlora(TArray<FString>& OutLines) const;
+	/** The world's landmarks (Landmarks.h): none unless the world rolled some. Set before the terrain is configured, or
+	 *  after: a change builds the chunks that carried any, or will, again. They are drawn in the rocks' material. */
+	void SetLandmarks(const FLandmarkProfile& InLandmarks);
+	const FLandmarkProfile& GetLandmarks() const { return Scatter.Landmarks; }
+	/** The landmark of a kind (any kind for ELandmark::Count) standing nearest a planet-local unit direction, on that
+	 *  direction's face of the planet and within 400 km over the ground, or the first of its site if it is one of a
+	 *  row or a cluster: read from the planet's field, as the chunks place them. False if the world has none there. */
+	bool FindLandmark(ELandmark Kind, const FVector& FromDir, SlonkScatter::FLandmarkStand& Out) const;
 	/** Rocks and plants on the chunks showing, the rocks and trunks with collision round the pawn, and the instance
 	 *  components made. */
 	int32 GetVisibleRockCount() const { return VisibleRocks; }
@@ -132,8 +140,9 @@ public:
 	/** The scatter settings the chunk builds take: the settings, with the fade set from the split factor. */
 	FScatterSettings BuildScatterSettings() const;
 	/** Traces the boots' channel down through the solid rocks nearest the pawn, up to MaxRocks of them: how many
-	 *  were tried, and in OutHits how many the trace found solid. A check that what is drawn is what is stood on. */
-	int32 CheckSolidRocks(int32 MaxRocks, int32& OutHits) const;
+	 *  were tried, and in OutHits how many the trace found solid. A check that what is drawn is what is stood on.
+	 *  bLandmarks: through the solid landmarks nearest the pawn instead (Landmarks.h). */
+	int32 CheckSolidRocks(int32 MaxRocks, int32& OutHits, bool bLandmarks = false) const;
 
 	/** The face and the chunk (X, Y) at a depth under a planet-local direction. */
 	static bool ChunkAt(const FVector& Dir, int32 Depth, int32& OutFace, int64& OutX, int64& OutY);

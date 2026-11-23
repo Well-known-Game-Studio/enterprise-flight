@@ -9,8 +9,10 @@
 // cliff the shader draws as cliff; the shrubs stand on the very dots the material paints as scrub. What the plants are
 // is the world's flora (FFloraProfile, FloraTypes.h): its species by slot, the Earth's grass, bush, broadleaf and
 // conifer in the four roles on the worlds near home, other life forms in their places and beside them on a strange
-// world, and giants of a hundred metres and more on a lattice of their own. Everything here is a pure function of the
-// planet, the settings and the chunk: safe off the game thread, and every visit puts everything back where it was.
+// world, and giants of a hundred metres and more on a lattice of their own. A strange world's landmarks (Landmarks.h:
+// arches, a vanished people's stones, reef towers, mound cities) stand on lattices of theirs, one or two to a hundred
+// square kilometres. Everything here is a pure function of the planet, the settings and the chunk: safe off the game
+// thread, and every visit puts everything back where it was.
 
 #pragma once
 
@@ -18,6 +20,7 @@
 #include "Civilization.h"
 #include "PlanetTerrain.h"
 #include "GroundRocks.h"
+#include "Landmarks.h"
 #include "PlantMeshes.h"
 
 /** The terrain material's colour parameters, which the rocks and the plants are tinted from. */
@@ -44,6 +47,8 @@ struct FScatterSettings
 	float Life = 0.f;
 	/** What grows: the world's species by slot. The Earth's, unless the world rolled its own (SlonkFlora::Roll). */
 	FFloraProfile Flora;
+	/** The landmarks that stand on it (SlonkLandmarks::Roll): none, on every world near home. */
+	FLandmarkProfile Landmarks;
 	FScatterPalette Palette;
 	/** A plant fades out this many edges of the coarsest chunk carrying it from the camera: under the distance at which
 	 *  finer chunks carrying it arrive (the terrain component sets it from its split factor), so none pops in. */
@@ -54,15 +59,20 @@ struct FScatterSettings
 
 namespace SlonkScatter
 {
-	/** The meshes the scatter places, one instanced set each: the rock shapes, then the flora's slots (SlonkFlora::Slot).
-	 *  The Earth's four plants are the first four slots, on every world: a strange world's species of the same roles
-	 *  stand in them, and its others in the slots after. A slot with no species carries nothing. */
+	/** The meshes the scatter places, one instanced set each: the rock shapes, then the flora's slots (SlonkFlora::Slot),
+	 *  then the landmarks' kinds (ELandmark). The Earth's four plants are the first four slots, on every world: a strange
+	 *  world's species of the same roles stand in them, and its others in the slots after. A slot with no species, and a
+	 *  kind a world has none of, carries nothing. */
 	constexpr int32 FirstPlant = SlonkGroundRocks::NumKinds;
-	constexpr int32 NumMeshes = SlonkGroundRocks::NumKinds + SlonkFlora::MaxSpecies;
+	constexpr int32 FirstLandmark = FirstPlant + SlonkFlora::MaxSpecies;
+	constexpr int32 NumMeshes = FirstLandmark + SlonkLandmarks::NumKinds;
 	constexpr int32 PlantMesh(EPlant Kind) { return FirstPlant + (int32)Kind; }
 	constexpr int32 FloraMesh(int32 Slot) { return FirstPlant + Slot; }
 	constexpr int32 SlotOf(int32 Mesh) { return Mesh - FirstPlant; }
-	constexpr bool IsPlant(int32 Mesh) { return Mesh >= FirstPlant; }
+	constexpr bool IsPlant(int32 Mesh) { return Mesh >= FirstPlant && Mesh < FirstLandmark; }
+	constexpr int32 LandmarkMesh(ELandmark Kind) { return FirstLandmark + (int32)Kind; }
+	constexpr ELandmark LandmarkOf(int32 Mesh) { return (ELandmark)(Mesh - FirstLandmark); }
+	constexpr bool IsLandmark(int32 Mesh) { return Mesh >= FirstLandmark && Mesh < NumMeshes; }
 
 	/** Per-instance custom data. For a rock: tint RGB, snow cover, seed, the size in metres along the mesh's three
 	 *  axes (its texture is laid in centimetres of rock, whatever the scale), and for a rock fallen from a canyon
@@ -89,6 +99,19 @@ namespace SlonkScatter
 	constexpr double GiantKeep = 0.5;
 	constexpr double GiantMinCm = 6000.0;
 	constexpr double GiantMaxCm = 20000.0;
+	/**
+	 * A strange world's landmarks: each kind on a lattice of its own of about LandmarkSpacingCm, a share of whose cells
+	 * are sites for it (SlonkLandmarks::FKindSpec::Sites) where the ground suits the kind (an arch on rocky or dry
+	 * ground, a vanished people's stones on open level ground, a reef's towers in the shallows off a coast, a mound city
+	 * on open grassland; none on a cliff, in a river, or on the world's own geology). At a site one stands, or a row or a
+	 * cluster of them. Which cells are sites, what stands there, where and how big are read from the planet's field and
+	 * the cell's own draws (SlonkScatter::LandmarksNear reads them the same way), never from a chunk's drawn mesh: every
+	 * level of the quadtree carries the same landmarks, on chunks up to LandmarkMaxEdgeCm across (seen from thirty
+	 * kilometres and more, a few pixels tall), and nothing else the scatter places stands in one's foot. A world without
+	 * any carries none, and its chunks are no coarser for them (MaxChunkEdgeCm).
+	 */
+	constexpr double LandmarkSpacingCm = 250000.0;
+	constexpr double LandmarkMaxEdgeCm = 2.0e6;
 	/** Chunks up to this edge keep their solid copies, cm: round someone on the ground, and under a ship hovering up to
 	 *  about 6 km, whose transporter's arrival trace needs them (every level of every class at the default ground
 	 *  detail). The coarser chunks further off keep none: on Horizon, most of the trees. */
@@ -195,6 +218,33 @@ namespace SlonkScatter
 	 *  (finer than ten metres left out) rather than a chunk's drawn mesh, before the world's life and the density
 	 *  setting: 0 over water. For the searches and the tests. */
 	SLONK_API double GiantDensityAt(const FPlanetTerrainParams& P, const FVector& Dir);
+
+	/** A landmark standing on a world. */
+	struct FLandmarkStand
+	{
+		ELandmark Kind = ELandmark::Arch;
+		/** Its direction from the planet's middle, a unit vector in the planet's frame. */
+		FVector Up = FVector::ZeroVector;
+		/** Its size in its kind's own measure and how far round it nothing else stands, cm; and what it stands on, cm over
+		 *  the sea's level: the field's ground there, or the sea's surface for a kind that stands in the sea. */
+		double SizeCm = 0.0, FootCm = 0.0, BaseCm = 0.0;
+		/** The site's cell on its face, and which of the site's it is: what its own draws are made of. */
+		int32 Face = 0, Member = 0;
+		int64 GX = 0, GY = 0;
+		/** Its place on its face. */
+		double U = 0.0, V = 0.0;
+		/** How it is turned about its up, radians from the first tangent at its place (SlonkScatter::LandmarkTangents). */
+		double Yaw = 0.0;
+	};
+	/** How well the ground at a direction suits a landmark of a kind and a size, 0 (not at all: none stands there) to 1,
+	 *  read from the field as the sites are; Life is how much grows on the world (its woods keep the stones out). */
+	SLONK_API double LandmarkGroundAt(const FPlanetTerrainParams& P, ELandmark Kind, const FVector& Dir, double SizeCm, float Life);
+	/** The landmarks of a kind (all kinds for ELandmark::Count) standing within MaxCm over the ground of a direction, on
+	 *  that direction's face of the planet, the nearest first: exactly those ScatterChunk places there (but any it finds
+	 *  in a town's ground or across a way). A pure function of the planet and the settings. */
+	SLONK_API void LandmarksNear(const FPlanetTerrainParams& P, const FScatterSettings& S, ELandmark Kind, const FVector& FromDir, double MaxCm, TArray<FLandmarkStand>& Out);
+	/** The two level directions a landmark's place is laid out by, at right angles to its up and each other. */
+	SLONK_API void LandmarkTangents(const FVector& Up, FVector& OutA, FVector& OutB);
 
 	/** A planet-local position in the terrain material's noise space: each axis modulo NoisePeriodCm, as the chunk
 	 *  origins reach the shader. */

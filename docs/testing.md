@@ -104,6 +104,18 @@ middle, half way to the next and round the seam; where the sun's light crosses t
 deck shading all the ground under it and a broken sky none of it as a whole; and the herds' dust and the leapers'
 spray, which light themselves, dimmed by the sun's share of their light under a deck and exactly as they were under a
 clear sky.
+`Slonk.Landmarks.*` (Tests/SlonkLandmarkTests.cpp) covers a strange world's landmarks (Landmarks.h): none rolled to
+strangeness 0.15 or on a world with no ground, the same on every roll and kept as the world grows stranger, arches, a
+vanished people's stones (monoliths or great rings, never both), reef towers and mound cities at their shares of the
+strange worlds, nothing its life would have built on a dead world and no reef where the sea is not liquid, and a kind
+asked for by name (`ship spawnplanet ... landmarks <kind|all>`) standing whatever the roll, though none on a world that
+is all sea and no reef on one with no sea; each kind's mesh at each
+level of detail a closed solid wound outward, a hundred of its own centimetres in its kind's measure, its collision
+convex parts that leave the way under an arch and through a ring open; the stands the field gives
+(SlonkScatter::LandmarksNear, what `ship terrain goto <arch|monolith|greatring|reef|mound|landmark>` flies to) being the
+pieces the chunks carry, of their kind's size, upright, their feet in the drawn ground or on the floor of a sea's
+shallows, the same on the chunks twenty kilometres across as on the nearest, and none on a world without them; nothing
+else the scatter places standing in one's foot; and the nearest found first, the same every time.
 
 Writing one: make an `FSystems` (a roster seed gives the same people every time), drive the subsystems through
 their public API, assert with `TestEqual`/`TestTrue`. For anything that depends on the world (targets picked from
