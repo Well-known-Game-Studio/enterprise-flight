@@ -18,6 +18,7 @@
 #include "../HerdDust.h"
 #include "../PlanetBody.h"
 #include "../PlanetCities.h"
+#include "../PlanetFaunaComponent.h"
 #include "../PlanetInstancesComponent.h"
 #include "../PlanetTerrain.h"
 #include "../PlanetTerrainComponent.h"
@@ -152,7 +153,9 @@ bool FSlonkFaunaPlanktonParamsTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("seas of molten rock carry nothing"), SlonkFauna::SeaLifeOf(1.f, Molten).PlanktonGlow, 0.f);
 	TestEqual(TEXT("a world with no life carries nothing in its seas"), SlonkFauna::SeaLifeOf(0.f, FWorldGenome()).ShoalDensity, 0.f);
 
-	// The glow is blue-green at strangeness 0, and turns round the wheel with a strange world's sky, as bright as ever.
+	// The glow is blue-green at strangeness 0, and turns round the wheel with a strange world's sky from its seas' solvent's
+	// own (water's that blue-green: Slonk.Fauna.PlanktonSolvent): a water sea's its brightest channel kept, as it always
+	// was; an alien sea's no brighter to the eye than its own base, nor its brightest channel past the base's.
 	const FLinearColor Earth = SeaOf(EPlanetArchetype::Terrestrial, true).PlanktonColor;
 	AddInfo(FString::Printf(TEXT("strangeness 0: plankton glow %.2f in %.2f %.2f %.2f (hue %.0f deg), shoals in %.2f of the cells"),
 		SeaOf(EPlanetArchetype::Terrestrial, true).PlanktonGlow, Earth.R, Earth.G, Earth.B, HueOf(Earth), SeaOf(EPlanetArchetype::Terrestrial, true).ShoalDensity));
@@ -164,15 +167,86 @@ bool FSlonkFaunaPlanktonParamsTest::RunTest(const FString& Parameters)
 		const SlonkFauna::FSeaLife Sea = SlonkFauna::SeaLifeOf(1.f, G);
 		const float Want = G.SkyHueShiftDeg * G.Strangeness;
 		if (FMath::Abs(Want) > 30.f) { ++Turned; }
-		TurnWrong += (HueGap(HueOf(Sea.PlanktonColor), FMath::Fmod(HueOf(Earth) + Want + 720.f, 360.f)) > 0.5f
-			|| !FMath::IsNearlyEqual(Sea.PlanktonColor.GetMax(), Earth.GetMax(), 1e-3f)) ? 1 : 0;
+		const FLinearColor Base = SlonkFauna::PlanktonBase(G.Solvent);
+		const bool bWater = Base == SlonkFauna::FFaunaLook().Glow;
+		const bool bBright = bWater ? !FMath::IsNearlyEqual(Sea.PlanktonColor.GetMax(), Base.GetMax(), 1e-3f)
+			: (SlonkFauna::PlanktonLuma(Sea.PlanktonColor) > SlonkFauna::PlanktonLuma(Base) * 1.001f || Sea.PlanktonColor.GetMax() > Base.GetMax() + 1e-3f);
+		TurnWrong += (HueGap(HueOf(Sea.PlanktonColor), FMath::Fmod(HueOf(Base) + Want + 720.f, 360.f)) > 0.5f || bBright) ? 1 : 0;
 		if (G.Solvent != ESolvent::Water) { ++AlienSeas; AlienDead += Sea.PlanktonGlow > 0.f ? 0 : 1; }
 	}
 	AddInfo(FString::Printf(TEXT("400 ocean worlds at strangeness 1: %d glows turned past 30 deg (%d off the sky's turn), %d alien seas (%d lifeless)"), Turned, TurnWrong, AlienSeas, AlienDead));
 	TestTrue(TEXT("strange worlds' glows turn"), Turned > 100);
-	TestEqual(TEXT("a glow turns by the sky's turn times the strangeness, its brightness kept"), TurnWrong, 0);
+	TestEqual(TEXT("a glow turns from its solvent's by the sky's turn times the strangeness, a water sea's brightest channel kept, an alien sea's no brighter than its base"), TurnWrong, 0);
 	TestTrue(TEXT("alien seas are rolled"), AlienSeas > 100);
 	TestEqual(TEXT("ammonia, methane and acid seas live as water does"), AlienDead, 0);
+
+	// The sea's milky glow at night seen from a wader's eye (1.7 m) and a ship hovering low (15 m), higher (30 m) and at
+	// fauna goto's 40 m over a sea of an Earth's radius. The far sea that perspective squashes into the rows under the
+	// horizon until its bloom's 400 m cells are under a pixel tall (at 800 pixels a radian, in the four rows under it, within
+	// 0.005 rad), kilometres of it evened into a flat line, lets out a few hundredths of the glow at the most (the surface
+	// mirroring the night sky), so it is no bright line over a dark near sea, a water world's or an alien one's. The surface
+	// still dims the blooms a little while their cells are 1 to 3 pixels tall (the Fresnel weight in full under 1.26 px, gone
+	// by 3.06), and every view in which they are well resolved (cells over about 3 px) lets out all of it, exactly as before:
+	// those rows' nearer sea, the wader's sea 10 to 200 m off, the ships' 100 m to a kilometre off, and the sea straight under
+	// the wader's eye and out to 45 degrees off it. The terrain material lets it out so (its milky glow only: the foam's
+	// stirred glow as before).
+	const double Rad = 6.371e8;
+	const double CellCm = SlonkScatter::NoisePeriodCm / 26.0;
+	// The glow let out at the point of the sea D cm along it from under an eye H cm over it, how many pixels tall the bloom's
+	// cells look there, and how far under the horizon it is seen.
+	auto SeenAt = [Rad, CellCm](double H, double D, double* OutCellPx = nullptr, double* OutBelow = nullptr)
+	{
+		const FVector Cam(0.0, 0.0, Rad + H);
+		const FVector At(Rad * FMath::Sin(D / Rad), 0.0, Rad * FMath::Cos(D / Rad));
+		const double Cos = FVector::DotProduct(At.GetSafeNormal(), (Cam - At).GetSafeNormal());
+		const double Dist = FVector::Dist(Cam, At);
+		if (OutCellPx) { *OutCellPx = CellCm * FMath::Max(Cos, 0.0) / Dist * 800.0; }
+		if (OutBelow) { *OutBelow = -FMath::Asin(FVector::DotProduct((At - Cam).GetSafeNormal(), Cam.GetSafeNormal())) - FMath::Acos(Rad / (Rad + H)); }
+		return SlonkFauna::MilkySeenThrough((float)Cos, (float)Dist);
+	};
+	FString Horizon;
+	double FarMost = 0.0;
+	int32 NoLine = 0, RampOff = 0, RampSeen = 0;
+	for (const double H : { 170.0, 1500.0, 3000.0, 4000.0 })
+	{
+		const double HorizonCm = FMath::Sqrt(2.0 * Rad * H + H * H);
+		double Sum = 0.0, Nearest = HorizonCm, Resolved = 0.0;
+		int32 N = 0;
+		for (int32 i = 0; i <= 4000; ++i)
+		{
+			const double D = FMath::Lerp(5.0e3, HorizonCm * 0.999, i / 4000.0);
+			double CellPx = 0.0, Below = 0.0;
+			const float Out = SeenAt(H, D, &CellPx, &Below);
+			// Anywhere from 50 m out to the horizon, wherever the blooms' cells are well resolved (over about 3 px), all of it.
+			if (CellPx >= 3.6 * 0.85) { RampOff += Out == 1.f ? 0 : 1; ++RampSeen; }
+			if (Below > 0.005) { continue; }
+			// Nearer, in those rows: the blooms' cells are a pixel tall or more, dimmed a little while under about 3 px.
+			if (CellPx >= 1.0) { Resolved = FMath::Max(Resolved, D); continue; }
+			Nearest = FMath::Min(Nearest, D);
+			Sum += Out;
+			++N;
+			FarMost = FMath::Max(FarMost, (double)Out);
+		}
+		NoLine += N > 0 ? 0 : 1;
+		Horizon += FString::Printf(TEXT("%s%.1f m up: the sea under the horizon with its cells under a pixel (%.2f to %.1f km off) lets out %.4f of it on average%s"), Horizon.IsEmpty() ? TEXT("") : TEXT("; "), H / 100.0,
+			Nearest / 1e5, HorizonCm / 1e5, Sum / FMath::Max(N, 1), Resolved > 0.0 ? *FString::Printf(TEXT(" (the four rows' nearer sea, out to %.2f km, has cells a pixel tall or more, partly dimmed while under about 3 px)"), Resolved / 1e5) : TEXT(""));
+	}
+	double NearLeast = 1.0;
+	int32 NearOff = 0, Near = 0;
+	auto NearView = [&](double H, double D) { const float Out = SeenAt(H, D); NearLeast = FMath::Min(NearLeast, (double)Out); NearOff += Out == 1.f ? 0 : 1; ++Near; };
+	for (double D = 1.0e3; D <= 2.0e4 + 1.0; D += 100.0) { NearView(170.0, D); }
+	for (const double H : { 1500.0, 3000.0, 4000.0 }) { for (double D = 1.0e4; D <= 1.0e5 + 1.0; D += 1000.0) { NearView(H, D); } }
+	for (const double Deg : { 0.0, 15.0, 30.0, 45.0 }) { NearView(170.0, 170.0 * FMath::Tan(FMath::DegreesToRadians(Deg))); }
+	FString Terrain;
+	FFileHelper::LoadFileToString(Terrain, *FPaths::Combine(FPaths::ProjectDir(), TEXT("../tools/planet_materials/terrain_material.py")));
+	const bool bLetOut = Terrain.Contains(TEXT("float cosV = saturate(dot(Nn, normalize(Cam - WP)));"))
+		&& Terrain.Contains(TEXT("float bloomSeen = saturate(2.0 * ((NoisePeriodCm / 26.0) * cosV / (dist * 0.0045) - 0.35));"))
+		&& Terrain.Contains(TEXT("float milkyOut = 1.0 - (1.0 - bloomSeen) * pow(1.0 - cosV, 5.0);")) && Terrain.Contains(TEXT("plankton = PlanktonGlow * (stirred + milky * milkyOut) * water"));
+	AddInfo(FString::Printf(TEXT("the milky glow seen through the sea's surface: %s; the most any of it lets out %.4f; %d points from 50 m to the horizon with cells over 3.06 px, %d letting out less than all of it; %d near views (a wader's sea 10 to 200 m off, the ships' 100 m to 1 km, straight under to 45 degrees off it), %d letting out less than all of it, the least %.4f; terrain_material.py lets it out so: %s"),
+		*Horizon, FarMost, RampSeen, RampOff, Near, NearOff, NearLeast, bLetOut ? TEXT("yes") : TEXT("no")));
+	TestTrue(TEXT("the far sea seen edge-on, its blooms under a pixel, lets out a few hundredths of its milky glow at the most: no bright line at the horizon"), FarMost < 0.05 && NoLine == 0);
+	TestTrue(TEXT("every view in which the blooms are well resolved lets out all of it, as it always did"), NearOff == 0 && NearLeast >= 0.99 && RampOff == 0);
+	TestTrue(TEXT("the terrain material lets the milky glow out so, the stirred glow as before"), bLetOut);
 	return true;
 }
 
@@ -446,7 +520,7 @@ bool FSlonkFaunaDeterministicTest::RunTest(const FString& Parameters)
 				++Rolled;
 				if (S == 0.f)
 				{
-					for (int32 K = 0; K < SlonkFauna::NumKinds; ++K) { EarthOff += A.Plans[K] == SlonkFauna::EarthPlan((EFaunaKind)K) ? 0 : 1; }
+					for (int32 K = 0; K < SlonkFauna::NumKinds; ++K) { EarthOff += A.Species[K].Num == 1 && A.PlanOf((EFaunaKind)K) == SlonkFauna::EarthPlan((EFaunaKind)K) ? 0 : 1; }
 					EarthOff += A.Look.HueTurnDeg == 0.f && A.Look.Vivid == 0.f && A.Look.Glow == SlonkFauna::FFaunaLook().Glow ? 0 : 1;
 				}
 			}
@@ -1243,8 +1317,9 @@ bool FSlonkFaunaFlightTest::RunTest(const FString& Parameters)
 namespace
 {
 	/** The parts of fauna_material.py's WPO_CODE a float copy is held to: the fliers' motion (all of it but its
-	 *  branches), its mote branch, its walker branch, its leaper branch and its floater branch. */
-	enum class EMotionBlock : uint8 { Fliers, Motes, Walkers, Leapers, Floaters };
+	 *  branches), its mote branch, its walker branch, its leaper branch and its floater branch; and of its CODE, its glow
+	 *  organs' block. */
+	enum class EMotionBlock : uint8 { Fliers, Motes, Walkers, Leapers, Floaters, Glow };
 	/** fauna_material.py's WPO_CODE (or with bPixel its CODE), its lines trimmed, the blank ones and the comments left out:
 	 *  the fliers' motion, which SlonkFauna::FlierMotion copies; its mote branch (from its test of Motes to the brace that
 	 *  closes it), whose turn to the camera Slonk.Fauna.MoteCloud copies; its walker branch (from its test of Walkers to
@@ -1273,6 +1348,7 @@ namespace
 				else if (L.StartsWith(TEXT("[branch] if (Walkers"))) { In = EMotionBlock::Walkers; Depth = 0; }
 				else if (L.StartsWith(TEXT("[branch] if (Leapers"))) { In = EMotionBlock::Leapers; Depth = 0; }
 				else if (L.StartsWith(TEXT("[branch] if (Floaters"))) { In = EMotionBlock::Floaters; Depth = 0; }
+				else if (L.StartsWith(TEXT("[branch] if (GlowSpots"))) { In = EMotionBlock::Glow; Depth = 0; }
 			}
 			const EMotionBlock Line = In;
 			if (In != EMotionBlock::Fliers)
@@ -1284,20 +1360,27 @@ namespace
 		}
 		return FString();
 	}
-	/** The fliers' part's CRC (FCrc::StrCrc32) when SlonkFauna::FlierMotion was last brought in line with it. */
-	constexpr uint32 MaterialMotionBlockCrc = 0x0a6c86cdu;
+	/** The fliers' part's CRC (FCrc::StrCrc32) when SlonkFauna::FlierMotion was last brought in line with it (the alien
+	 *  plans' wings taken in, a four-winged flock's darts its own, every member together; a bird's WingForm 0 the motion it
+	 *  was: Slonk.Fauna.EarthGolden holds the copy's bird to the bit as it was). */
+	constexpr uint32 MaterialMotionBlockCrc = 0x6423d356u;
 	/** The mote branch's CRC when Slonk.Fauna.MoteCloud's copy of its turn to the camera was last brought in line with it. */
 	constexpr uint32 MaterialMoteBlockCrc = 0xa89449edu;
-	/** The walker branch's CRC when SlonkFauna::WalkerMotion was last brought in line with it. */
-	constexpr uint32 MaterialWalkerBlockCrc = 0x42806976u;
+	/** The walker branch's CRC when SlonkFauna::WalkerMotion was last brought in line with it (its plan's rig taken in, the
+	 *  Earth grazer's the branch's defaults: Slonk.Fauna.EarthGolden holds the copy's Earth motion to the bit as it was). */
+	constexpr uint32 MaterialWalkerBlockCrc = 0xbe9591e8u;
 	/** The leaper branch's CRCs, in WPO_CODE and in CODE, when SlonkFauna::LeaperMotion, LeaperShown and LeaperTurn were
-	 *  last brought in line with them. */
-	constexpr uint32 MaterialLeaperBlockCrc = 0x706d3a3cu;
-	constexpr uint32 MaterialLeaperPixelBlockCrc = 0xff013bddu;
+	 *  last brought in line with them (the alien fish's forms and the glow organs taken in, their light dimmed by the speck
+	 *  floor's growth as SlonkFauna::GlowSpeckDim has it; an Earth fish's FishForm 0 the motion and the reading of its leap
+	 *  they were: Slonk.Fauna.EarthGolden holds the copies to the bit as they were). */
+	constexpr uint32 MaterialLeaperBlockCrc = 0x1ccf1728u;
+	constexpr uint32 MaterialLeaperPixelBlockCrc = 0x8ab6e9bdu;
 	/** The floater branch's CRCs, in WPO_CODE and in CODE, when SlonkFauna::FloaterMotion, FloaterCover and FloaterLight were
 	 *  last brought in line with them. */
 	constexpr uint32 MaterialFloaterBlockCrc = 0x35f5c6a5u;
 	constexpr uint32 MaterialFloaterPixelBlockCrc = 0x0cc1e980u;
+	/** The glow organs' block's CRC, in CODE, when SlonkFauna::GlowSpotAt and GlowBreath were last brought in line with it. */
+	constexpr uint32 MaterialGlowBlockCrc = 0xa42f569du;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaMeshesTest, "Slonk.Fauna.Meshes", SLONK_TEST_FLAGS)
@@ -2284,13 +2367,49 @@ namespace
 	const float WalkerHoofPhase[4] = { 0.f, 0.25f, 0.5f, 0.75f };
 
 	/** Where the material draws a walker's vertex (at LP in its unit mesh, with its vertex colour) for a herd as stepped,
-	 *  planet-local: its instance unturned in its herd's frame, scaled by its length. */
-	FVector WalkerVertexAt(const SlonkFauna::FHerdState& S, const FTransform& Xf, const float* C, const float* Gd, const FVector3f& LP, const FLinearColor& VC, float T, float DistCm = 3000.f)
+	 *  planet-local: its instance unturned in its herd's frame, scaled by its length; its plan's rig as its herd's material
+	 *  instance gives it (the Earth grazer's by default). */
+	FVector WalkerVertexAt(const SlonkFauna::FHerdState& S, const FTransform& Xf, const float* C, const float* Gd, const FVector3f& LP, const FLinearColor& VC, float T, float DistCm = 3000.f,
+		const SlonkFauna::Walker::FRig& Rig = SlonkFauna::Walker::FRig())
 	{
 		const float Size = C[SlonkFauna::Custom::SizeM];
 		const FVector3f LPP = (FVector3f)Xf.GetTranslation() + LP * Size;
-		const FVector3f Off = SlonkFauna::WalkerMotion(LP, LPP, VC, T, C, Gd, DistCm, 960.f);
+		const FVector3f Off = SlonkFauna::WalkerMotion(LP, LPP, VC, T, C, Gd, DistCm, 960.f, Rig);
 		return S.FramePos + S.FrameRot.RotateVector(FVector(LPP + Off * Size));
+	}
+
+	/** The feet a test follows of a herd's walkers, in the unit mesh, and the colours their vertices carry: the Earth
+	 *  grazer's four hooves (WalkerHooves, as the material is given them), else each of its form's feet as its mesh is built,
+	 *  its colour the mesh's own at the foot (so a foot built off the colour contract shows). */
+	void WalkerFeetOf(const FFaunaBodyPlan& Plan, TArray<FVector3f>& OutAt, TArray<FLinearColor>& OutColour)
+	{
+		OutAt.Reset();
+		OutColour.Reset();
+		const SlonkFauna::Walker::FShape Shape = SlonkFauna::Walker::ShapeOf(Plan);
+		if (Shape.Form == SlonkFauna::Walker::EForm::Grazer)
+		{
+			for (int32 f = 0; f < 4; ++f) { OutAt.Add(WalkerHooves[f]); OutColour.Add(FLinearColor(SlonkFauna::Vc::SurfaceBeak, 1.f, WalkerHoofPhase[f], SlonkFauna::Vc::JointLeg)); }
+			return;
+		}
+		UE::Geometry::FDynamicMesh3 M;
+		SlonkFaunaMeshes::BuildLod(Plan, 0, M);
+		const UE::Geometry::FDynamicMeshColorOverlay* C = M.Attributes()->PrimaryColors();
+		for (int32 f = 0; f < Shape.NumLegs; ++f)
+		{
+			const FVector3f Foot = Shape.Legs[f].Foot;
+			// The leg vertex nearest the foot's place: its cap's.
+			double Best = TNumericLimits<double>::Max();
+			FLinearColor Col(0.f, 0.f, 0.f, 0.f);
+			for (const int32 El : C->ElementIndicesItr())
+			{
+				const FVector4f Cv = C->GetElement(El);
+				if (!FMath::IsNearlyEqual(Cv.W, SlonkFauna::Vc::JointLeg)) { continue; }
+				const double D = FVector::Dist((FVector)M.GetVertex(C->GetParentVertex(El)), (FVector)Foot);
+				if (D < Best) { Best = D; Col = FLinearColor(Cv.X, Cv.Y, Cv.Z, Cv.W); }
+			}
+			OutAt.Add(Foot);
+			OutColour.Add(Col);
+		}
 	}
 
 	/** What following a herd's hooves found. */
@@ -2309,6 +2428,10 @@ namespace
 		int32 TurnSlips = 0;
 		double WorstSlip = 0.0, SumSlip = 0.0, WorstSlipAt = 0.0;
 		int32 Slips = 0, Slides = 0;
+		/** The worst slip of each foot followed (by its place in its walker's feet), the herd's share on the move and its
+		 *  way's turning (radians a metre) at the worst slip of all. */
+		double WorstByFoot[6] = {};
+		double TravelAtWorst = 0.0, KapAtWorst = 0.0;
 		/** The most any walker's yaw turned between two steps, radians, and the least and most of the herd on the move; how
 		 *  sharply its way turned at most as it walked (radians a metre) and the most that changed between two steps. */
 		double WorstYawStep = 0.0, MinTravel = 1.0, MaxTravel = 0.0, MaxKap = 0.0, MaxKapStep = 0.0;
@@ -2346,11 +2469,17 @@ namespace
 		SlonkFauna::MembersOf(G, Xf, Cu);
 		SlonkFauna::FHerdState S;
 		SlonkFauna::StartHerd(S, G, Start);
+		// Its walkers' feet (four hooves of an Earth grazer, six feet of a strange world's walker) and its plan's rig.
+		TArray<FVector3f> FeetAt;
+		TArray<FLinearColor> FeetColour;
+		WalkerFeetOf(G.Plan, FeetAt, FeetColour);
+		const int32 NumFeet = FeetAt.Num();
+		const SlonkFauna::Walker::FRig Rig = SlonkFauna::Walker::ShapeOf(G.Plan).Rig;
 		TArray<FVector> Last;
 		TArray<uint8> WasPlanted;
 		TArray<float> LastYaw;
-		Last.SetNum(Xf.Num() * 4);
-		WasPlanted.Init(0, Xf.Num() * 4);
+		Last.SetNum(Xf.Num() * NumFeet);
+		WasPlanted.Init(0, Xf.Num() * NumFeet);
 		LastYaw.Init(0.f, Xf.Num());
 		float Frozen = -1.f;
 		double LastKap = 0.0;
@@ -2388,13 +2517,13 @@ namespace
 				if (m % FMath::Max(MemberStride, 1) != 0) { continue; }
 				const float Strides = SlonkFauna::WalkerStrides(T, C, Gd);
 				const float Speed = SlonkFauna::WalkerSpeedMS(T, C, Gd);
-				for (int32 f = 0; f < 4; ++f)
+				for (int32 f = 0; f < NumFeet; ++f)
 				{
-					const FLinearColor VC(SlonkFauna::Vc::SurfaceBeak, 1.f, WalkerHoofPhase[f], SlonkFauna::Vc::JointLeg);
-					const FVector P = WalkerVertexAt(S, Xf[m], C, Gd, WalkerHooves[f], VC, T);
+					const FLinearColor& VC = FeetColour[f];
+					const FVector P = WalkerVertexAt(S, Xf[m], C, Gd, FeetAt[f], VC, T, 3000.f, Rig);
 					const FVector Up = P.GetSafeNormal();
 					const double Off = FMath::Abs(P.Size() - R - HeightAt(Up));
-					const bool bPlanted = FMath::Frac(Strides - WalkerHoofPhase[f]) < SlonkFauna::Walker::Duty;
+					const bool bPlanted = FMath::Frac(Strides - VC.B) < SlonkFauna::Walker::Duty;
 					++Out.Feet;
 					Out.WorstFootCm = FMath::Max(Out.WorstFootCm, Off);
 					if (bPlanted)
@@ -2403,7 +2532,7 @@ namespace
 						Out.WorstPlantedCm = FMath::Max(Out.WorstPlantedCm, Off);
 						Out.SumPlantedCm += Off;
 					}
-					const int32 I = m * 4 + f;
+					const int32 I = m * NumFeet + f;
 					if (k > 0 && bPlanted && WasPlanted[I])
 					{
 						FVector D = P - Last[I];
@@ -2411,8 +2540,9 @@ namespace
 						const double Slip = D.Size() * Hz;
 						++Out.Slips;
 						Out.SumSlip += Slip;
-						if (Slip > Out.WorstSlip) { Out.WorstSlip = Slip; Out.WorstSlipAt = Now - Start; }
+						if (Slip > Out.WorstSlip) { Out.WorstSlip = Slip; Out.WorstSlipAt = Now - Start; Out.TravelAtWorst = S.Travel; Out.KapAtWorst = S.WalkKap; }
 						Out.Slides += Slip > 10.0 ? 1 : 0;
+						if (f < 6) { Out.WorstByFoot[f] = FMath::Max(Out.WorstByFoot[f], Slip); }
 						if (bMoving)
 						{
 							++Out.TravelSlips;
@@ -5986,7 +6116,7 @@ bool FSlonkFaunaFloaterWorldsTest::RunTest(const FString& Parameters)
 			W.Life = 1.f;
 			++Tame;
 			TameWith += F.FloaterShare > 0.f || F.bThickAir || W.Spawns(EFaunaKind::Floater) ? 1 : 0;
-			TamePlansOff += F.Plans[(int32)EFaunaKind::Floater] == EarthPlan(EFaunaKind::Floater) ? 0 : 1;
+			TamePlansOff += F.PlanOf(EFaunaKind::Floater) == EarthPlan(EFaunaKind::Floater) ? 0 : 1;
 		}
 	}
 	// Just short of the strangeness (hazy or not), and from it up: thin-aired and thick-aired.
@@ -6364,7 +6494,7 @@ bool FSlonkFaunaFloaterStartleTest::RunTest(const FString& Parameters)
 
 	// Startled again 10, 25 and 60 s on from the other side: the velocity runs on through each; the material's squeeze is the
 	// first's while it is in its forty seconds, and a frame across each startle moves no vertex more than the frames before.
-	FFaunaBodyPlan Plan = W.Profile.Plans[(int32)EFaunaKind::Floater];
+	FFaunaBodyPlan Plan = W.Profile.PlanOf(EFaunaKind::Floater);
 	UE::Geometry::FDynamicMesh3 Lod0;
 	SlonkFaunaMeshes::BuildLod(Plan, 0, Lod0);
 	const TArray<FLinearColor> Vcs = VertexColours(Lod0);
@@ -6860,7 +6990,7 @@ bool FSlonkFaunaFloaterBudgetTest::RunTest(const FString& Parameters)
 		Over += Groups <= D.MaxGroups && F.ActiveMembers(EFaunaKind::Floater) <= D.MaxMembers ? 0 : 1;
 		Full += Groups == D.MaxGroups ? 1 : 0;
 		if (Groups > MaxGroups) { MaxGroups = Groups; Busiest = F; }
-		MaxTris = FMath::Max(MaxTris, Groups * SlonkFaunaMeshes::JellyTriangles(W.Profile.Plans[(int32)EFaunaKind::Floater], 0));
+		MaxTris = FMath::Max(MaxTris, Groups * SlonkFaunaMeshes::JellyTriangles(W.Profile.PlanOf(EFaunaKind::Floater), 0));
 		if (i == 0)
 		{
 			FirstMs = Ms;
@@ -6970,7 +7100,7 @@ bool FSlonkFaunaFloaterGateTest::RunTest(const FString& Parameters)
 	if (!JellyWorld(0.9f, 0.45f, 0.6f, W)) { AddError(TEXT("no teeming jelly world found")); return false; }
 	const FFaunaKindDesc& D = KindDesc(EFaunaKind::Floater);
 	const double R = W.P.RadiusCm;
-	const double H = Floater::HalfHeightCm(W.Profile.Plans[(int32)EFaunaKind::Floater]);
+	const double H = Floater::HalfHeightCm(W.Profile.PlanOf(EFaunaKind::Floater));
 	// How far from its middle a jelly is drawn at most: its instance's padded box (its mesh's box grown by 0.15 of it and
 	// 20 units, and by the kind's padding) at its span.
 	const double BoxAcross = 1.15 * Floater::RimCm + 20.0 + D.CullPaddingUnits, BoxAlong = 1.15 * H + 20.0 + D.CullPaddingUnits;
@@ -7229,6 +7359,3459 @@ bool FSlonkFaunaFloaterShadowTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("and down the sun's rays to the ground with it 30 degrees up"), FMath::IsNearlyEqual(Along30, Over / FMath::Tan(UE_DOUBLE_PI / 6.0), 10.0) && FMath::Abs(Level30) < 1.0);
 	TestTrue(TEXT("crew standing in it past the reach of the jelly itself have it drawn"), JellyOff > D.ShadowReachCm && Switched < D.ShadowReachCm);
 	TestTrue(TEXT("none to speak of with the sun on the horizon or under it"), AtDusk.Equals(Pos, 1e-3) && AtNight.Equals(Pos, 1e-3));
+	return true;
+}
+
+namespace
+{
+	/** Bytes appended field by field, for a CRC that hangs on the values alone (no padding between them). */
+	struct FGoldenBytes
+	{
+		TArray<uint8> B;
+		template <typename T> void Put(const T& V) { B.Append(reinterpret_cast<const uint8*>(&V), sizeof(T)); }
+		void PutVec(const FVector& V) { Put(V.X); Put(V.Y); Put(V.Z); }
+		uint32 Crc() const { return FCrc::MemCrc32(B.GetData(), B.Num()); }
+	};
+	/** A kind's plan as a profile has it (the first of its species). */
+	const FFaunaBodyPlan& GoldenPlanOf(const SlonkFauna::FFaunaProfile& F, EFaunaKind K) { return F.PlanOf(K); }
+	/** A body plan's fields as they were before the species came (the Earth's walk the same fields). */
+	void PutPlan(FGoldenBytes& Out, const FFaunaBodyPlan& P)
+	{
+		Out.Put(P.Symmetry); Out.Put(P.Segments); Out.Put(P.LimbPairs); Out.Put((uint8)P.Limbs); Out.Put((uint8)P.Wings);
+		Out.Put(P.Length); Out.Put(P.Girth); Out.Put(P.Tail); Out.Put(P.Chord); Out.Put(P.GlowOrgans);
+	}
+	/** A mesh's every vertex, normal, UV, colour and triangle, in order. */
+	uint32 GoldenMeshCrc(const UE::Geometry::FDynamicMesh3& M)
+	{
+		FGoldenBytes Out;
+		for (const int32 V : M.VertexIndicesItr()) { Out.Put(V); Out.PutVec((FVector)M.GetVertex(V)); }
+		const UE::Geometry::FDynamicMeshNormalOverlay* N = M.Attributes()->PrimaryNormals();
+		const UE::Geometry::FDynamicMeshUVOverlay* U = M.Attributes()->PrimaryUV();
+		const UE::Geometry::FDynamicMeshColorOverlay* C = M.Attributes()->PrimaryColors();
+		for (const int32 E : N->ElementIndicesItr()) { Out.Put(N->GetElement(E)); }
+		for (const int32 E : U->ElementIndicesItr()) { Out.Put(U->GetElement(E)); }
+		for (const int32 E : C->ElementIndicesItr()) { Out.Put(C->GetElement(E)); }
+		for (const int32 T : M.TriangleIndicesItr()) { Out.Put(M.GetTriangle(T)); Out.Put(N->GetTriangle(T)); Out.Put(U->GetTriangle(T)); Out.Put(C->GetTriangle(T)); }
+		return Out.Crc();
+	}
+	/** Every field a group had before the species came, and its members as MembersOf makes them. */
+	void PutGroup(FGoldenBytes& Out, const SlonkFauna::FFaunaGroup& G)
+	{
+		Out.Put(G.Id); Out.Put((uint8)G.Kind); Out.Put((uint8)G.Habitat); Out.Put(G.Seed); Out.PutVec(G.Centre); Out.PutVec(G.East); Out.PutVec(G.North);
+		Out.Put(G.RadiusCm); Out.Put(G.Lobe); Out.Put(G.LobePhase); Out.Put(G.MeanderCm); Out.Put(G.Lobes); Out.Put(G.MeanderK); Out.Put(G.BobK);
+		Out.Put(G.PeriodSec); Out.Put(G.Phase0); Out.Put(G.Turn); Out.Put(G.CruiseCm); Out.Put(G.BobCm); Out.Put(G.LengthCm); Out.Put(G.SpeedCmS);
+		for (const float H : G.Ground) { Out.Put(H); }
+		Out.Put(G.Members); Out.Put(G.SpanM); Out.Put(G.SpacingM); Out.Put(G.FlapHz); Out.Put(G.Pigment); Out.Put(G.Glow);
+		Out.Put(G.CycleSec); Out.Put(G.WalkCmS); Out.Put(G.TrotCmS); Out.Put(G.WalkA); Out.Put(G.WalkB); Out.Put(G.TrotA); Out.Put(G.TrotB); Out.Put(G.RampSec); Out.Put(G.StartCm);
+		for (const float A : G.ArcCm) { Out.Put(A); }
+		Out.Put(G.FormationCm); Out.Put(G.HerdRadiusCm); Out.Put(G.GroundHalfCm); Out.Put(G.DryCm); Out.Put(G.ShoalDensity); Out.Put(G.ShoalHalfLengthCm);
+		Out.Put(G.ShoalHalfWidthCm); Out.Put(G.ShoalDepthCm); Out.Put(G.WaterCm); Out.Put(G.Ribs); Out.Put(G.HangCm);
+		TArray<FTransform> Xf;
+		TArray<float> Cu;
+		SlonkFauna::MembersOf(G, Xf, Cu);
+		for (const FTransform& T : Xf)
+		{
+			Out.PutVec(T.GetTranslation());
+			Out.Put(T.GetRotation().X); Out.Put(T.GetRotation().Y); Out.Put(T.GetRotation().Z); Out.Put(T.GetRotation().W);
+			Out.PutVec(T.GetScale3D());
+		}
+		for (const float F : Cu) { Out.Put(F); }
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaEarthGoldenTest, "Slonk.Fauna.EarthGolden", SLONK_TEST_FLAGS)
+bool FSlonkFaunaEarthGoldenTest::RunTest(const FString& Parameters)
+{
+	// What the Earth's animals were before the alien body plans came, held to the bit: their meshes, the profiles every
+	// world rolls at strangeness 0, the flocks, herds and leaping fish of the Earth-like world and their members, a herd
+	// stepped through a minute of walking, a startle and its flight and someone walking at it, and the walker branch's
+	// float copy over random cases; and the sky-jellies of a strange world, which keep their own plan.
+	using namespace UE::Geometry;
+	FString Lines;
+	auto Note = [&Lines](const TCHAR* What, uint32 Crc) { Lines += FString::Printf(TEXT("%s 0x%08x; "), What, Crc); return Crc; };
+	// The meshes, every LOD.
+	uint32 MeshCrc[4] = {};
+	{
+		const FFaunaBodyPlan Plans[4] = { SlonkFauna::EarthPlan(EFaunaKind::Flier), SlonkFauna::EarthPlan(EFaunaKind::Herd), SlonkFauna::EarthPlan(EFaunaKind::Leaper), SlonkFauna::FloaterPlan(3u * 7919u) };
+		for (int32 p = 0; p < 4; ++p)
+		{
+			FGoldenBytes Out;
+			for (int32 L = 0; L < SlonkFaunaMeshes::NumLods; ++L)
+			{
+				FDynamicMesh3 M;
+				Out.Put(SlonkFaunaMeshes::BuildLod(Plans[p], L, M));
+				Out.Put(GoldenMeshCrc(M));
+			}
+			Out.Put(Plans[p].Hash());
+			MeshCrc[p] = Out.Crc();
+		}
+	}
+	Note(TEXT("bird mesh"), MeshCrc[0]);
+	Note(TEXT("walker mesh"), MeshCrc[1]);
+	Note(TEXT("fish mesh"), MeshCrc[2]);
+	Note(TEXT("jelly mesh"), MeshCrc[3]);
+	// The profiles at strangeness 0, every archetype, 24 worlds each: each kind's plan, the look, the air, the jellies' share.
+	uint32 ProfileCrc = 0;
+	{
+		FGoldenBytes Out;
+		for (const EPlanetArchetype Kind : FaunaKinds)
+		{
+			for (uint32 Hash = 1; Hash <= 24; ++Hash)
+			{
+				const SlonkFauna::FFaunaProfile F = SlonkFauna::Roll(SlonkGenome::Roll(Kind, 0.f, Hash * 7919u), Kind, Hash * 7919u);
+				Out.Put(F.Strangeness); Out.Put((uint8)F.Type); Out.Put(F.Hash); Out.Put(F.Seed);
+				for (int32 K = 0; K < SlonkFauna::NumKinds; ++K) { PutPlan(Out, GoldenPlanOf(F, (EFaunaKind)K)); }
+				Out.Put(F.Look.Glow); Out.Put(F.Look.Firefly); Out.Put(F.Look.Pollen); Out.Put(F.Look.Jelly); Out.Put(F.Look.HueTurnDeg); Out.Put(F.Look.Vivid);
+				Out.Put(F.bThickAir); Out.Put(F.FloaterShare);
+			}
+		}
+		ProfileCrc = Note(TEXT("profiles at 0"), Out.Crc());
+	}
+	// The Earth-like world's flocks, herds and leapers, and a strange world's jellies.
+	auto GroupsCrc = [](const TArray<SlonkFauna::FFaunaGroup>& Groups) { FGoldenBytes Out; for (const SlonkFauna::FFaunaGroup& G : Groups) { PutGroup(Out, G); } return Out.Crc(); };
+	TArray<SlonkFauna::FFaunaGroup> Flocks, Herds, Leapers, Jellies;
+	GroupsOverGlobe(EarthFauna(), 3000, Flocks);
+	HerdsOverGlobe(EarthHerds(), 12000, Herds);
+	LeaperGroupsOverSeas(EarthSeas(), 30, Leapers);
+	SlonkFauna::FFaunaWorld JW;
+	const bool bJellyWorld = JellyWorld(0.6f, 0.3f, 0.7f, JW);
+	if (bJellyWorld) { KindOverGlobe(JW, EFaunaKind::Floater, 3000, Jellies); }
+	const uint32 FlockCrc = Note(TEXT("flocks"), GroupsCrc(Flocks));
+	const uint32 HerdCrc = Note(TEXT("herds"), GroupsCrc(Herds));
+	const uint32 LeaperCrc = Note(TEXT("leapers"), GroupsCrc(Leapers));
+	const uint32 JellyCrc = Note(TEXT("jellies at 0.6"), GroupsCrc(Jellies));
+	// A herd stepped as the game steps it: a minute and a half from before its walk, a craft low over it, and someone
+	// walking at it.
+	uint32 StepCrc = 0;
+	{
+		FGoldenBytes Out;
+		const SlonkFauna::FFaunaWorld W = EarthHerds();
+		SlonkFauna::FFaunaGroup G;
+		if (TestHerd(W, G))
+		{
+			const double R = W.P.RadiusCm;
+			const SlonkFauna::FFaunaKindDesc& D = SlonkFauna::KindDesc(EFaunaKind::Herd);
+			auto Height = [&W](const FVector& Dir) { return FMath::Max(SlonkTerrain::Sample(W.P, Dir, 2000.0).HeightCm, 0.0); };
+			Out.Put(SlonkFauna::HerdRiseSec(G, D));
+			Out.Put(SlonkFauna::HerdTurnRateOf(G, true));
+			SlonkFauna::FHerdState S;
+			SlonkFauna::FPanic P;
+			const double Start = 3.0 * G.CycleSec + G.WalkA - 20.0;
+			SlonkFauna::StartHerd(S, G, Start);
+			for (int32 k = 0; k <= 2700; ++k)
+			{
+				const double Now = Start + k / 30.0;
+				if (k == 900)
+				{
+					SlonkFauna::FFaunaThreat Craft;
+					Craft.PosCm = S.FramePos + S.FrameRot.GetAxisY() * 5000.0 + S.FramePos.GetSafeNormal() * 3000.0;
+					Craft.AltitudeCm = 3000.0;
+					Out.Put(SlonkFauna::StartleHerd(P, S, G, D, R, Craft, Now));
+				}
+				TArray<FVector> Crew;
+				if (k > 2000) { Crew.Add(S.FramePos + S.FrameRot.GetAxisX() * (G.HerdRadiusCm + 4000.0)); }
+				const bool bMoving = SlonkFauna::KeepFromCrew(S, G, D, Crew, k == 0 ? 0.0 : 1.0 / 30.0);
+				const FVector Ahead = SlonkFauna::HerdFrightOffset(G, D, P, R, Now + 1.0) + S.Avoid + (bMoving ? S.AvoidWay : FVector::ZeroVector);
+				float Gd[SlonkFauna::HerdData::Num] = {};
+				SlonkFauna::StepHerd(S, G, R, Now, k == 0 ? 0.0 : 1.0 / 30.0, SlonkFauna::HerdFrightOffset(G, D, P, R, Now) + S.Avoid, P.IsLive(Now), bMoving, k % 6 == 0, Height, 0.0, Gd, &Ahead);
+				SlonkFauna::HerdFrightData(P, Now, 0.0, Gd);
+				Out.B.Append(reinterpret_cast<const uint8*>(Gd), sizeof(Gd));
+				Out.PutVec(S.FramePos);
+				Out.Put(S.FrameRot.X); Out.Put(S.FrameRot.Y); Out.Put(S.FrameRot.Z); Out.Put(S.FrameRot.W);
+			}
+		}
+		StepCrc = Note(TEXT("a herd stepped"), Out.Crc());
+	}
+	// The walker branch's float copy over the Earth walker's LOD 0 vertices, random cases as Slonk.Fauna.Walker makes them.
+	uint32 MotionCrc = 0;
+	{
+		FGoldenBytes Out;
+		FDynamicMesh3 Lod0;
+		SlonkFaunaMeshes::BuildLod(SlonkFauna::EarthPlan(EFaunaKind::Herd), 0, Lod0);
+		const TArray<FLinearColor> Vcs = VertexColours(Lod0);
+		FRandomStream Rng(4242);
+		for (int32 Case = 0; Case < 160; ++Case)
+		{
+			float Cu[SlonkFauna::Custom::Num] = {};
+			float Gd[SlonkFauna::HerdData::Num] = {};
+			const float Size = Rng.FRandRange((float)SlonkFauna::Walker::MinSizeM, 2.6f);
+			const float Stride = (float)SlonkFauna::Walker::StrideShare * Size * Rng.FRandRange(0.97f, 1.03f);
+			Cu[SlonkFauna::Custom::SizeM] = Size;
+			Cu[SlonkFauna::Custom::Seed] = Rng.FRand();
+			Cu[SlonkFauna::Custom::Phase] = Rng.FRand();
+			Cu[SlonkFauna::Custom::RateHz] = Stride;
+			Cu[SlonkFauna::Custom::PerKind] = (Rng.FRand() < 0.5f ? -1.f : 1.f) * Rng.FRandRange(0.5f, 2.8f);
+			const float T = Rng.FRandRange(0.f, 3600.f);
+			for (int32 s = 0; s < SlonkFauna::HerdData::Num; ++s) { Gd[s] = Rng.FRandRange(-1.f, 1.f); }
+			Gd[SlonkFauna::HerdData::Heading] = Rng.FRandRange(-3.2f, 3.2f);
+			Gd[SlonkFauna::HerdData::SpeedMS] = Case % 4 == 0 ? Rng.FRandRange(4.f, 13.f) : Rng.FRandRange(0.f, 3.4f);
+			Gd[SlonkFauna::HerdData::DistM] = Rng.FRandRange(0.f, 2600.f);
+			Gd[SlonkFauna::HerdData::GrazeSec] = Rng.FRandRange(0.f, 3600.f);
+			Gd[SlonkFauna::HerdData::ClockT0] = FMath::Fmod(T - Rng.FRandRange(0.f, 0.1f) + 3600.f, 3600.f);
+			Gd[SlonkFauna::HerdData::Travel] = Case % 3 == 0 ? 0.f : (Case % 3 == 1 ? 1.f : Rng.FRand());
+			Gd[SlonkFauna::HerdData::PivotRef] = Gd[SlonkFauna::HerdData::DistM] - (Case % 3 == 0 ? 1000.f : Rng.FRandRange(0.f, 8.f)) + (Case % 5 < 2 ? (float)SlonkFauna::HerdData::PivotBack : 0.f);
+			Gd[SlonkFauna::HerdData::GrazeRef] = Gd[SlonkFauna::HerdData::GrazeSec] - Rng.FRandRange(0.f, 60.f);
+			Gd[SlonkFauna::HerdData::WalkKap] = Rng.FRandRange(-1.f, 1.f) * (float)SlonkFauna::Walker::MaxWalkKap;
+			Gd[SlonkFauna::HerdData::TurnHeading] = SlonkFauna::HerdData::PackTurns(Rng.FRandRange(-3.2f, 3.2f), Rng.FRandRange(-3.2f, 3.2f));
+			Gd[SlonkFauna::HerdData::Startled] = Case % 2 == 0 ? 1.f : 0.f;
+			Gd[SlonkFauna::HerdData::PanicT0] = FMath::Fmod(T - Rng.FRandRange(0.f, 120.f) + 3600.f, 3600.f);
+			Gd[SlonkFauna::HerdData::OnsetT0] = FMath::Fmod(T - Rng.FRandRange(0.f, 121.f) + 3600.f, 3600.f);
+			for (int32 m = 0; m < SlonkFauna::HerdData::GroundNodes; ++m) { Gd[SlonkFauna::HerdData::Ground0 + m] = Rng.FRandRange(-1.f, 1.f) * (float)SlonkFauna::HerdData::MaxGroundCm; }
+			Gd[SlonkFauna::HerdData::GroundHalfCm] = Rng.FRandRange(1500.f, 4500.f);
+			const FVector3f Home(Rng.FRandRange(-3500.f, 3500.f), Rng.FRandRange(-3500.f, 3500.f), 0.f);
+			const float Dist = Case % 3 == 0 ? 2000.f : (Case % 3 == 1 ? Size * 100.f * 960.f / 3.5f : 4.0e5f);
+			Out.Put(SlonkFauna::WalkerYaw(T, Cu, Gd));
+			Out.Put(SlonkFauna::WalkerStrides(T, Cu, Gd));
+			Out.Put(SlonkFauna::WalkerSpeedMS(T, Cu, Gd));
+			for (const int32 V : Lod0.VertexIndicesItr())
+			{
+				const FVector3f LP = (FVector3f)Lod0.GetVertex(V);
+				Out.Put(SlonkFauna::WalkerMotion(LP, Home + LP * Size, Vcs[V], T, Cu, Gd, Dist, 960.f));
+			}
+		}
+		MotionCrc = Note(TEXT("walker motion"), Out.Crc());
+	}
+	// The fliers' and the leapers' float copies over the Earth bird's and fish's LOD 0 vertices, random cases as
+	// Slonk.Fauna.Meshes and Slonk.Fauna.Fish make them (the alien plans' wings and fish came into the same code).
+	uint32 FlierMotionCrc = 0, LeaperMotionCrc = 0;
+	{
+		FGoldenBytes Out;
+		FDynamicMesh3 Lod0;
+		SlonkFaunaMeshes::BuildLod(SlonkFauna::EarthPlan(EFaunaKind::Flier), 0, Lod0);
+		const TArray<FLinearColor> Vcs = VertexColours(Lod0);
+		FRandomStream Rng(5151);
+		for (int32 Case = 0; Case < 160; ++Case)
+		{
+			float Cu[SlonkFauna::Custom::Num] = {};
+			float Gd[SlonkFauna::GroupData::Num] = {};
+			const float Size = Rng.FRandRange(0.33f, 1.5f);
+			Cu[SlonkFauna::Custom::SizeM] = Size;
+			Cu[SlonkFauna::Custom::Seed] = Rng.FRand();
+			Cu[SlonkFauna::Custom::Phase] = Rng.FRand();
+			Cu[SlonkFauna::Custom::RateHz] = FMath::RoundToFloat(Rng.FRandRange(2.4f, 12.f) * 60.f) / 60.f;
+			Cu[SlonkFauna::Custom::PerKind] = Rng.FRandRange(-3.2f, 3.2f);
+			const FVector Fled = Rng.GetUnitVector();
+			Gd[SlonkFauna::GroupData::ScatterDirX] = (float)Fled.X;
+			Gd[SlonkFauna::GroupData::ScatterDirY] = (float)Fled.Y;
+			Gd[SlonkFauna::GroupData::ScatterDirZ] = (float)Fled.Z;
+			Gd[SlonkFauna::GroupData::Bank] = Rng.FRandRange(-0.8f, 0.8f);
+			Gd[SlonkFauna::GroupData::Startled] = Case % 2 == 0 ? 1.f : 0.f;
+			Gd[SlonkFauna::GroupData::SpreadM] = Rng.FRandRange(0.f, 10.f);
+			const float T = Rng.FRandRange(0.f, 3600.f);
+			Gd[SlonkFauna::GroupData::ScatterT0] = FMath::Fmod(T - Rng.FRandRange(0.f, 60.f) + 3600.f, 3600.f);
+			const float PanicAge = Rng.FRandRange(0.f, 120.f);
+			Gd[SlonkFauna::GroupData::PanicT0] = FMath::Fmod(T - PanicAge + 3600.f, 3600.f);
+			Gd[SlonkFauna::GroupData::OnsetT0] = FMath::Fmod(T - PanicAge - Rng.FRandRange(0.f, 1.f) + 3600.f, 3600.f);
+			const float Dist = Case % 3 == 0 ? 1000.f : (Case % 3 == 1 ? Size * 100.f * 960.f / 1.f : 5.0e5f);
+			for (const int32 V : Lod0.VertexIndicesItr())
+			{
+				const FVector3f LP = (FVector3f)Lod0.GetVertex(V);
+				Out.Put(SlonkFauna::FlierMotion(LP, Vcs[V], T, Cu, Gd, Dist, 960.f));
+			}
+		}
+		FlierMotionCrc = Note(TEXT("flier motion"), Out.Crc());
+	}
+	{
+		FGoldenBytes Out;
+		FDynamicMesh3 Lod0;
+		SlonkFaunaMeshes::BuildLod(SlonkFauna::EarthPlan(EFaunaKind::Leaper), 0, Lod0);
+		const TArray<FLinearColor> Vcs = VertexColours(Lod0);
+		FRandomStream Rng(6161);
+		for (int32 Case = 0; Case < 400; ++Case)
+		{
+			float Cu[SlonkFauna::Custom::Num] = {};
+			float Gd[SlonkFauna::LeaperData::Num] = {};
+			const float Size = Case % 5 == 0 ? (float)SlonkFauna::Leaper::MinSizeM : Rng.FRandRange((float)SlonkFauna::Leaper::MinSizeM, (float)SlonkFauna::Leaper::MaxSizeM);
+			const int32 Count = Rng.RandRange(1, SlonkFauna::Leaper::MaxPerGroup), Idx = Rng.RandRange(0, Count - 1);
+			Cu[SlonkFauna::Custom::SizeM] = Size;
+			Cu[SlonkFauna::Custom::Seed] = Rng.FRand();
+			Cu[SlonkFauna::Custom::Phase] = Rng.FRand();
+			Cu[SlonkFauna::Custom::RateHz] = (float)SlonkFauna::Leaper::Cycles[Rng.RandRange(0, (int32)UE_ARRAY_COUNT(SlonkFauna::Leaper::Cycles) - 1)];
+			Cu[SlonkFauna::Custom::PerKind] = (float)(8 * Idx + Count);
+			for (int32 k = 0; k < 2 * SlonkFauna::Leaper::MaxPerGroup; ++k) { Gd[SlonkFauna::LeaperData::Surface0 + k] = Rng.FRandRange(-1.f, 1.f) * SlonkFauna::Leaper::MaxSurfaceCm; }
+			Gd[SlonkFauna::LeaperData::Diving] = Case % 4 == 0 ? 1.f : 0.f;
+			Gd[SlonkFauna::LeaperData::DiveT0] = Rng.FRandRange(0.f, 3600.f);
+			Gd[SlonkFauna::LeaperData::DiveLen] = Rng.FRandRange(0.f, 70.f);
+			float T = Rng.FRandRange(0.f, 3600.f);
+			if (Case % 4 != 3)
+			{
+				const SlonkFauna::FLeap L = SlonkFauna::LeapOf(Cu, Rng.RandRange(0, 200));
+				T = MaterialTime(L.T0 - L.LeadSec + (L.FlightSec + 2.0 * L.LeadSec) * Rng.FRand());
+			}
+			Out.Put(SlonkFauna::LeaperShown(T, Cu, Gd));
+			Out.Put(SlonkFauna::LeaperTurn(T, Cu, Gd));
+			const float Dist = Case % 3 == 0 ? 2000.f : (Case % 3 == 1 ? Size * 100.f * 960.f / 1.5f : 4.0e5f);
+			for (const int32 V : Lod0.VertexIndicesItr())
+			{
+				const FVector3f LP = (FVector3f)Lod0.GetVertex(V);
+				Out.Put(SlonkFauna::LeaperMotion(LP, Vcs[V], T, Cu, Gd, Dist, 960.f));
+			}
+		}
+		LeaperMotionCrc = Note(TEXT("leaper motion"), Out.Crc());
+	}
+	AddInfo(FString::Printf(TEXT("the Earth's animals (%d flocks, %d herds, %d leaper groups, %d jellies%s): %s"), Flocks.Num(), Herds.Num(), Leapers.Num(), Jellies.Num(),
+		bJellyWorld ? TEXT("") : TEXT(", no jelly world"), *Lines));
+	TestTrue(TEXT("groups of every kind to hold"), Flocks.Num() == 424 && Herds.Num() == 410 && Leapers.Num() == 30 && Jellies.Num() == 917);
+	// As they were before the species and the alien plans came (this test, run on that code, gave these).
+	TestEqual(TEXT("the Earth bird's mesh as it was"), MeshCrc[0], 0x2b5c9454u);
+	TestEqual(TEXT("the Earth grazer's mesh as it was"), MeshCrc[1], 0x794bc941u);
+	TestEqual(TEXT("the Earth fish's mesh as it was"), MeshCrc[2], 0xc1e84ec9u);
+	TestEqual(TEXT("a jelly's mesh as it was"), MeshCrc[3], 0x0c84f68du);
+	TestEqual(TEXT("every world's profile at strangeness 0 as it was"), ProfileCrc, 0xae201e53u);
+	TestEqual(TEXT("the Earth-like world's flocks as they were"), FlockCrc, 0x987cd155u);
+	TestEqual(TEXT("its herds as they were"), HerdCrc, 0x72d681cdu);
+	TestEqual(TEXT("its leapers as they were"), LeaperCrc, 0xcd898b04u);
+	TestEqual(TEXT("a strange world's jellies as they were"), JellyCrc, 0x2c603a68u);
+	TestEqual(TEXT("a herd stepped as it was"), StepCrc, 0x00a33f86u);
+	TestEqual(TEXT("the walker branch's copy as it was, for the Earth grazer's rig"), MotionCrc, 0x433b0e77u);
+	// The alien wings and fish came into the fliers' part and the leaper branch: their copies for a bird and an Earth fish
+	// (WingForm and FishForm 0) as they were before (this test, run on that code, gave these), so the CRC lines of those
+	// blocks changed with the Earth's motion as it was.
+	TestEqual(TEXT("the fliers' copy as it was, for a bird"), FlierMotionCrc, 0x85281adfu);
+	TestEqual(TEXT("the leaper branch's copies as they were, for an Earth fish"), LeaperMotionCrc, 0x097f19fdu);
+	return true;
+}
+
+
+namespace
+{
+	namespace Wk = SlonkFauna::Walker;
+
+	/** An alien grazer's plan of a form (0 a six-legged grazer, 1 an insectoid), every proportion's draw At (0, the low end
+	 *  of its range, to 1, the high), wearing what OrnamentDraw gives; and its size against an Earth grazer's. */
+	FFaunaBodyPlan AlienHerdPlan(int32 Form, float At, float OrnamentDraw, float* OutScale = nullptr)
+	{
+		float Shape[SlonkFauna::SpeciesShapeDraws];
+		for (int32 j = 0; j < SlonkFauna::SpeciesShapeDraws; ++j) { Shape[j] = At; }
+		Shape[5] = OrnamentDraw;
+		float Scale = 1.f;
+		const FFaunaBodyPlan P = SlonkFauna::AlienPlan(EFaunaKind::Herd, Form, Shape, Scale);
+		if (OutScale) { *OutScale = Scale; }
+		return P;
+	}
+	/** Every alien grazer plan the tests run over: each form at the low end, the middle and the high end of its ranges,
+	 *  each wearing every ornament it can; and each with its size against an Earth grazer's. */
+	struct FAlienPlan { FFaunaBodyPlan Plan; float Scale = 1.f; };
+	TArray<FAlienPlan> AlienHerdPlans()
+	{
+		TArray<FAlienPlan> Out;
+		for (int32 Form = 0; Form < SlonkFauna::AlienForms(EFaunaKind::Herd); ++Form)
+		{
+			for (const float At : { 0.f, 0.5f, 1.f })
+			{
+				for (const float Orn : { 0.1f, 0.4f, 0.6f, 0.9f })
+				{
+					FAlienPlan A;
+					A.Plan = AlienHerdPlan(Form, At, Orn, &A.Scale);
+					if (!Out.ContainsByPredicate([&A](const FAlienPlan& O) { return O.Plan == A.Plan; })) { Out.Add(A); }
+				}
+			}
+		}
+		return Out;
+	}
+	/** The Earth-like world, its herds all of one species of a plan at a size against an Earth grazer's. */
+	SlonkFauna::FFaunaWorld AlienHerdWorld(const FFaunaBodyPlan& Plan, float Scale)
+	{
+		SlonkFauna::FFaunaWorld W = EarthHerds();
+		SlonkFauna::FFaunaKindSpecies& S = W.Profile.Species[(int32)EFaunaKind::Herd];
+		S = SlonkFauna::FFaunaKindSpecies();
+		S.List[0].Plan = Plan;
+		S.List[0].SizeScale = Scale;
+		return W;
+	}
+	/** A strange world's profile on the Earth-like world's ground, its herds alone: the first hash (7919 apart) whose herds
+	 *  at strangeness S have at least MinSpecies species, at least one of each alien form among them when bBothForms. */
+	bool StrangeHerds(float S, int32 MinSpecies, bool bBothForms, SlonkFauna::FFaunaWorld& Out, uint32* OutHash = nullptr)
+	{
+		for (uint32 k = 1; k < 5000; ++k)
+		{
+			const uint32 Hash = k * 7919u;
+			const SlonkFauna::FFaunaProfile F = SlonkFauna::Roll(SlonkGenome::Roll(EPlanetArchetype::Terrestrial, S, Hash), EPlanetArchetype::Terrestrial, Hash);
+			const SlonkFauna::FFaunaKindSpecies& Sp = F.Species[(int32)EFaunaKind::Herd];
+			if (Sp.Num < MinSpecies) { continue; }
+			bool bHexa = false, bInsect = false;
+			for (int32 i = 0; i < Sp.Num; ++i)
+			{
+				const Wk::EForm Form = Wk::ShapeOf(Sp.List[i].Plan).Form;
+				bHexa |= Form == Wk::EForm::Hexapod;
+				bInsect |= Form == Wk::EForm::Insectoid;
+			}
+			if (bBothForms && !(bHexa && bInsect)) { continue; }
+			Out = EarthHerds();
+			Out.Profile = F;
+			if (OutHash) { *OutHash = Hash; }
+			return true;
+		}
+		return false;
+	}
+	/** An alien herd to test with on a world: of its herds over the globe, the first of at least 24 walkers (else the
+	 *  first), or with bLargest the one of the longest walkers. */
+	bool TestAlienHerd(const SlonkFauna::FFaunaWorld& W, bool bLargest, SlonkFauna::FFaunaGroup& Out)
+	{
+		TArray<SlonkFauna::FFaunaGroup> Herds;
+		HerdsOverGlobe(W, 8000, Herds);
+		if (Herds.Num() == 0) { return false; }
+		if (bLargest)
+		{
+			const SlonkFauna::FFaunaGroup* Best = &Herds[0];
+			for (const SlonkFauna::FFaunaGroup& G : Herds) { if (G.SpanM > Best->SpanM) { Best = &G; } }
+			Out = *Best;
+			return true;
+		}
+		for (const SlonkFauna::FFaunaGroup& G : Herds) { if (G.Members >= 24) { Out = G; return true; } }
+		Out = Herds[0];
+		return true;
+	}
+	const TCHAR* FormName(Wk::EForm F)
+	{
+		switch (F)
+		{
+		case Wk::EForm::Grazer: return TEXT("Earth grazer");
+		case Wk::EForm::Hexapod: return TEXT("six-legged grazer");
+		case Wk::EForm::Insectoid: return TEXT("insectoid");
+		default: return TEXT("none");
+		}
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaEarthAtZeroTest, "Slonk.Fauna.EarthAtZero", SLONK_TEST_FLAGS)
+bool FSlonkFaunaEarthAtZeroTest::RunTest(const FString& Parameters)
+{
+	// At strangeness 0 every world's every kind is one species, its Earth plan, holding all of its kind's cells at the
+	// kind's own size: two feathered wings for its fliers, four legs for its herds, fins for its fish; and no jellies. So too
+	// to 0.15, where no species departs yet. Every archetype, 200 worlds each. On the Earth-like world every group of every
+	// kind is of that one species and its plan. At strangeness 1, of 300 seeds, most depart in each kind with alien forms:
+	// their fliers, their herds and their fish. (Slonk.Fauna.EarthGolden holds the Earth's meshes and animals to the bit.)
+	int32 Worlds = 0, Off = 0, Jellies = 0, NotTwoWings = 0, NotFourLegs = 0, NotFins = 0;
+	for (const EPlanetArchetype Kind : FaunaKinds)
+	{
+		for (uint32 Hash = 1; Hash <= 200; ++Hash)
+		{
+			for (const float S : { 0.f, 0.1f, 0.15f })
+			{
+				const SlonkFauna::FFaunaProfile F = SlonkFauna::Roll(SlonkGenome::Roll(Kind, S, Hash * 7919u), Kind, Hash * 7919u);
+				++Worlds;
+				for (int32 K = 0; K < SlonkFauna::NumKinds; ++K)
+				{
+					const SlonkFauna::FFaunaKindSpecies& Sp = F.Species[K];
+					Off += Sp.Num == 1 && Sp.List[0].Plan == SlonkFauna::EarthPlan((EFaunaKind)K) && Sp.List[0].Share == 1.f && Sp.List[0].SizeScale == 1.f ? 0 : 1;
+				}
+				Jellies += F.FloaterShare > 0.f ? 1 : 0;
+				NotTwoWings += F.PlanOf(EFaunaKind::Flier).Wings == EFaunaWings::Feathered ? 0 : 1;
+				const Wk::FShape Herd = Wk::ShapeOf(F.PlanOf(EFaunaKind::Herd));
+				NotFourLegs += Herd.Form == Wk::EForm::Grazer && Herd.NumLegs == 4 ? 0 : 1;
+				NotFins += F.PlanOf(EFaunaKind::Leaper).Limbs == EFaunaLimbs::Fins ? 0 : 1;
+			}
+		}
+	}
+	AddInfo(FString::Printf(TEXT("%d worlds at strangeness 0, 0.1 and 0.15: %d kinds off their one Earth species, %d with jellies, %d fliers without two feathered wings, %d herds not on four legs, %d fish without fins; a species departs with chance %.3f, %.3f and %.3f there"),
+		Worlds, Off, Jellies, NotTwoWings, NotFourLegs, NotFins, SlonkFauna::DepartChance(0.f), SlonkFauna::DepartChance(0.1f), SlonkFauna::DepartChance(0.15f)));
+	TestEqual(TEXT("every kind one species, its Earth plan, all of its cells, its own size"), Off, 0);
+	TestEqual(TEXT("no jellies"), Jellies, 0);
+	TestEqual(TEXT("two feathered wings, four legs, fins"), NotTwoWings + NotFourLegs + NotFins, 0);
+	TestTrue(TEXT("no species departs to 0.15"), SlonkFauna::DepartChance(0.f) == 0.f && SlonkFauna::DepartChance(0.15f) == 0.f && SlonkFauna::DepartChance(0.2f) > 0.f);
+	// The Earth-like world's groups, every kind: species 0, its Earth plan, the Earth grazer's rig for its herds.
+	TArray<SlonkFauna::FFaunaGroup> Flocks, Herds, Leapers;
+	GroupsOverGlobe(EarthFauna(), 1500, Flocks);
+	HerdsOverGlobe(EarthHerds(), 6000, Herds);
+	LeaperGroupsOverSeas(EarthSeas(), 20, Leapers);
+	int32 Groups = 0, GroupsOff = 0;
+	for (const TArray<SlonkFauna::FFaunaGroup>* Set : { &Flocks, &Herds, &Leapers })
+	{
+		for (const SlonkFauna::FFaunaGroup& G : *Set)
+		{
+			++Groups;
+			GroupsOff += G.Species == 0 && G.Plan == SlonkFauna::EarthPlan(G.Kind) && (G.Kind != EFaunaKind::Herd || Wk::ShapeOf(G.Plan).Rig == Wk::FRig()) ? 0 : 1;
+		}
+	}
+	AddInfo(FString::Printf(TEXT("the Earth-like world: %d flocks, %d herds and %d leaper groups, %d off their Earth species"), Flocks.Num(), Herds.Num(), Leapers.Num(), GroupsOff));
+	TestTrue(TEXT("groups of each kind"), Flocks.Num() > 20 && Herds.Num() > 20 && Leapers.Num() > 5);
+	TestEqual(TEXT("every group its Earth species"), GroupsOff, 0);
+	// And at strangeness 1 most seeds depart, in every kind with alien forms: their fliers, their herds and their fish.
+	int32 Departed[SlonkFauna::NumKinds] = {}, Seeds = 0;
+	for (uint32 Hash = 1; Hash <= 300; ++Hash)
+	{
+		const SlonkFauna::FFaunaProfile F = SlonkFauna::Roll(SlonkGenome::Roll(EPlanetArchetype::Terrestrial, 1.f, Hash * 7919u), EPlanetArchetype::Terrestrial, Hash * 7919u);
+		++Seeds;
+		for (const EFaunaKind K : { EFaunaKind::Flier, EFaunaKind::Herd, EFaunaKind::Leaper })
+		{
+			bool bAlien = false;
+			for (int32 i = 0; i < F.Species[(int32)K].Num; ++i) { bAlien |= !SlonkFauna::IsEarthPlan(K, F.Species[(int32)K].List[i].Plan); }
+			Departed[(int32)K] += bAlien ? 1 : 0;
+		}
+	}
+	AddInfo(FString::Printf(TEXT("%d seeds at strangeness 1: %d departed in their fliers, %d in their herds, %d in their fish"), Seeds, Departed[(int32)EFaunaKind::Flier], Departed[(int32)EFaunaKind::Herd], Departed[(int32)EFaunaKind::Leaper]));
+	TestTrue(TEXT("most seeds depart at 1, in their fliers, their herds and their fish"), Departed[(int32)EFaunaKind::Flier] > Seeds * 9 / 10 && Departed[(int32)EFaunaKind::Herd] > Seeds * 9 / 10
+		&& Departed[(int32)EFaunaKind::Leaper] > Seeds * 9 / 10);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaDepartureTest, "Slonk.Fauna.Departure", SLONK_TEST_FLAGS)
+bool FSlonkFaunaDepartureTest::RunTest(const FString& Parameters)
+{
+	// A world's animals depart from the Earth's plans smoothly as it grows strange: of 600 worlds at each tenth of
+	// strangeness, the share whose herds have a species of another plan rises with it (none to 0.1, few at 0.2 and 0.3,
+	// nearly all at 1), and the share of the cells those species hold with it; a world that has departed has departed at
+	// every strangeness past that, keeping every alien plan it had (the same proportions, the same form). Both forms come,
+	// in about even numbers. At 1, most worlds have departed in every kind that has forms to depart to (the herds, the
+	// fliers and the fish), each of their forms coming; their fliers and their fish, too, rise with it and keep every alien
+	// plan they had. Of more than one species, each holds a fair share of its kind's cells. The profile's
+	// other draws never move: its seed, its look and its jellies are those its stream gave before the species came, at
+	// every strangeness.
+	constexpr int32 N = 600;
+	double WorldShare[11] = {}, CellShare[11] = {}, SpeciesMean[11] = {};
+	int32 Lost = 0, Moved = 0, Hexa = 0, Insect = 0, EveryKind = 0, Skewed = 0, Several = 0;
+	TArray<TArray<FFaunaBodyPlan>> Was;
+	Was.SetNum(N);
+	// The fliers' (0) and the fish's (1): each world's alien plans at the last tenth, the share of worlds departing in them
+	// at each tenth, and their forms at 1.
+	TArray<TArray<FFaunaBodyPlan>> WasOther[2];
+	WasOther[0].SetNum(N);
+	WasOther[1].SetNum(N);
+	double OtherShare[2][11] = {};
+	int32 OtherForms[2][3] = {};
+	for (int32 t = 0; t <= 10; ++t)
+	{
+		const float S = t / 10.f;
+		for (int32 h = 0; h < N; ++h)
+		{
+			const uint32 Hash = (uint32)(h + 1) * 7919u;
+			const FWorldGenome G = SlonkGenome::Roll(EPlanetArchetype::Terrestrial, S, Hash);
+			const SlonkFauna::FFaunaProfile F = SlonkFauna::Roll(G, EPlanetArchetype::Terrestrial, Hash);
+			// The profile's own stream, drawn as it was: its seed, a draw a kind, the jellies' share from the floaters' draw.
+			FRandomStream R((int32)(Hash * 0x9E3779B1u + 0x27d4eb2fu));
+			const uint32 Seed = (uint32)R.GetUnsignedInt();
+			float Draws[SlonkFauna::NumKinds];
+			for (int32 K = 0; K < SlonkFauna::NumKinds; ++K) { Draws[K] = R.FRand(); }
+			const SlonkFauna::FFaunaLook L = SlonkFauna::LookOf(G);
+			Moved += F.Seed == Seed && F.FloaterShare == SlonkFauna::FloaterShareOf(G, Draws[(int32)EFaunaKind::Floater]) && F.Look.Glow == L.Glow && F.Look.HueTurnDeg == L.HueTurnDeg
+				&& F.Look.Vivid == L.Vivid ? 0 : 1;
+			const SlonkFauna::FFaunaKindSpecies& Hs = F.Species[(int32)EFaunaKind::Herd];
+			TArray<FFaunaBodyPlan> Alien;
+			double Share = 0.0;
+			float Least = 1.f;
+			for (int32 i = 0; i < Hs.Num; ++i)
+			{
+				Least = FMath::Min(Least, Hs.List[i].Share);
+				if (SlonkFauna::IsEarthPlan(EFaunaKind::Herd, Hs.List[i].Plan)) { continue; }
+				Alien.Add(Hs.List[i].Plan);
+				Share += Hs.List[i].Share;
+				if (t == 10)
+				{
+					Hexa += Wk::ShapeOf(Hs.List[i].Plan).Form == Wk::EForm::Hexapod ? 1 : 0;
+					Insect += Wk::ShapeOf(Hs.List[i].Plan).Form == Wk::EForm::Insectoid ? 1 : 0;
+				}
+			}
+			if (Hs.Num > 1)
+			{
+				++Several;
+				Skewed += Least >= 0.4f / (0.4f + 2.f * 1.f) - 1e-4f ? 0 : 1;
+			}
+			WorldShare[t] += Alien.Num() > 0 ? 1.0 / N : 0.0;
+			CellShare[t] += Share / N;
+			SpeciesMean[t] += (double)Hs.Num / N;
+			// Every alien plan it had at the last tenth it has still.
+			for (const FFaunaBodyPlan& P : Was[h]) { Lost += Alien.Contains(P) ? 0 : 1; }
+			Was[h] = Alien;
+			for (int32 k = 0; k < 2; ++k)
+			{
+				const EFaunaKind Kk = k == 0 ? EFaunaKind::Flier : EFaunaKind::Leaper;
+				const SlonkFauna::FFaunaKindSpecies& Ks = F.Species[(int32)Kk];
+				TArray<FFaunaBodyPlan> Others;
+				for (int32 i = 0; i < Ks.Num; ++i)
+				{
+					if (SlonkFauna::IsEarthPlan(Kk, Ks.List[i].Plan)) { continue; }
+					Others.Add(Ks.List[i].Plan);
+					if (t == 10) { ++OtherForms[k][FMath::Clamp(k == 0 ? SlonkFauna::Wings::FormOf(Ks.List[i].Plan) : SlonkFauna::FishForm::FormOf(Ks.List[i].Plan), 0, 2)]; }
+				}
+				for (const FFaunaBodyPlan& P : WasOther[k][h]) { Lost += Others.Contains(P) ? 0 : 1; }
+				WasOther[k][h] = Others;
+				OtherShare[k][t] += Others.Num() > 0 ? 1.0 / N : 0.0;
+			}
+			if (t == 10)
+			{
+				bool bEvery = true;
+				for (int32 K = 0; K < SlonkFauna::NumKinds; ++K)
+				{
+					if (SlonkFauna::AlienForms((EFaunaKind)K) <= 0) { continue; }
+					bool bAlien = false;
+					for (int32 i = 0; i < F.Species[K].Num; ++i) { bAlien |= !SlonkFauna::IsEarthPlan((EFaunaKind)K, F.Species[K].List[i].Plan); }
+					bEvery &= bAlien;
+				}
+				EveryKind += bEvery ? 1 : 0;
+			}
+		}
+	}
+	FString Table;
+	for (int32 t = 0; t <= 10; ++t) { Table += FString::Printf(TEXT("%s%.1f: %.1f%% (%.1f%% of the cells, %.2f species)"), t == 0 ? TEXT("") : TEXT("; "), t / 10.0, 100.0 * WorldShare[t], 100.0 * CellShare[t], SpeciesMean[t]); }
+	AddInfo(FString::Printf(TEXT("of %d worlds, those whose herds depart from the Earth's plan, by strangeness: %s"), N, *Table));
+	AddInfo(FString::Printf(TEXT("at 1: %d six-legged grazer species and %d insectoid ones; %.1f%% of the worlds departed in every kind with forms to depart to; %d worlds lost an alien plan as they grew stranger; %d profiles' other draws moved; %d worlds of several herd species, %d with one holding less than its least share"),
+		Hexa, Insect, 100.0 * EveryKind / N, Lost, Moved, Several, Skewed));
+	FString Others;
+	for (int32 t = 0; t <= 10; t += 2) { Others += FString::Printf(TEXT("%s%.1f: %.1f%% and %.1f%%"), t == 0 ? TEXT("") : TEXT("; "), t / 10.0, 100.0 * OtherShare[0][t], 100.0 * OtherShare[1][t]); }
+	AddInfo(FString::Printf(TEXT("those departing in their fliers and in their fish, by strangeness: %s; at 1, %d four-winged and %d membrane-winged flier species, %d eel and %d spinefin species"), *Others,
+		OtherForms[0][SlonkFauna::Wings::Four], OtherForms[0][SlonkFauna::Wings::Membrane], OtherForms[1][SlonkFauna::FishForm::Eel], OtherForms[1][SlonkFauna::FishForm::Spinefin]));
+	bool bRising = true;
+	for (int32 t = 1; t <= 10; ++t) { bRising &= WorldShare[t] >= WorldShare[t - 1] && CellShare[t] >= CellShare[t - 1] - 1e-9; }
+	TestTrue(TEXT("none departs to 0.1"), WorldShare[0] == 0.0 && WorldShare[1] == 0.0);
+	TestTrue(TEXT("few at 0.2 and 0.3"), WorldShare[2] > 0.0 && WorldShare[2] < 0.04 && WorldShare[3] < 0.15);
+	TestTrue(TEXT("about half at 0.5, nearly all at 1"), WorldShare[5] > 0.35 && WorldShare[5] < 0.65 && WorldShare[10] > 0.95);
+	TestTrue(TEXT("rising smoothly with strangeness"), bRising);
+	TestEqual(TEXT("a world grown stranger keeps every alien plan it had"), Lost, 0);
+	TestTrue(TEXT("both forms, about evenly"), Hexa > 200 && Insect > 200 && FMath::Abs(Hexa - Insect) < (Hexa + Insect) / 4);
+	bool bOthersRising = true;
+	for (int32 k = 0; k < 2; ++k) { for (int32 t = 1; t <= 10; ++t) { bOthersRising &= OtherShare[k][t] >= OtherShare[k][t - 1]; } }
+	TestTrue(TEXT("the fliers and the fish depart as the herds do, none to 0.1, nearly all at 1, rising"), bOthersRising && OtherShare[0][1] == 0.0 && OtherShare[1][1] == 0.0 && OtherShare[0][10] > 0.95 && OtherShare[1][10] > 0.95);
+	TestTrue(TEXT("both forms of each, about evenly"), OtherForms[0][1] > 200 && OtherForms[0][2] > 200 && OtherForms[1][1] > 200 && OtherForms[1][2] > 200
+		&& FMath::Abs(OtherForms[0][1] - OtherForms[0][2]) < (OtherForms[0][1] + OtherForms[0][2]) / 4 && FMath::Abs(OtherForms[1][1] - OtherForms[1][2]) < (OtherForms[1][1] + OtherForms[1][2]) / 4);
+	TestTrue(TEXT("most worlds at 1 departed in every kind with forms to depart to"), EveryKind > N * 9 / 10);
+	TestTrue(TEXT("of several species, each a fair share"), Several > 100 && Skewed == 0);
+	TestEqual(TEXT("the profile's other draws as its stream gave them"), Moved, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaSpeciesStayPutTest, "Slonk.Fauna.SpeciesStayPut", SLONK_TEST_FLAGS)
+bool FSlonkFaunaSpeciesStayPutTest::RunTest(const FString& Parameters)
+{
+	// A cell's species is its own: on a strange world of three herd species of both forms, the same whichever order the
+	// cells are read in, the group in it of that species (its plan the species'); over the world's cells each species holds
+	// its share of them; gone 30 km off and come back, the same herds of the same species are about. The debug's search
+	// for a species finds the nearest group of it. A world makes a mesh for each species, none for each herd: at most
+	// MaxSpecies a kind. The jellies and the motes keep one species each, the jellies' a plan of their own (the fliers and
+	// the fish have forms of their own).
+	SlonkFauna::FFaunaWorld W;
+	uint32 Hash = 0;
+	if (!StrangeHerds(0.9f, 3, true, W, &Hash)) { AddError(TEXT("no world of three herd species of both forms")); return false; }
+	const SlonkFauna::FFaunaKindSpecies& Sp = W.Profile.Species[(int32)EFaunaKind::Herd];
+	const double R = W.P.RadiusCm;
+	// The shares over the world's cells.
+	int32 Counts[SlonkFauna::MaxSpecies] = {}, Cells = 0;
+	{
+		TSet<uint64> Seen;
+		for (int32 i = 0; i < 40000; ++i)
+		{
+			const SlonkFauna::FFaunaCell C = SlonkFauna::CellOf(W.P, EFaunaKind::Herd, Spread(i, 40000));
+			bool bAlready = false;
+			Seen.Add(C.Id(), &bAlready);
+			if (bAlready) { continue; }
+			++Cells;
+			++Counts[FMath::Clamp(SlonkFauna::SpeciesInCell(W, C), 0, SlonkFauna::MaxSpecies - 1)];
+		}
+	}
+	double WorstShare = 0.0;
+	FString Shares;
+	for (int32 i = 0; i < Sp.Num; ++i)
+	{
+		const double Got = (double)Counts[i] / FMath::Max(Cells, 1);
+		WorstShare = FMath::Max(WorstShare, FMath::Abs(Got - Sp.List[i].Share));
+		Shares += FString::Printf(TEXT("%s#%d %s %.3f of the cells (its share %.3f)"), i == 0 ? TEXT("") : TEXT(", "), i, FormName(Wk::ShapeOf(Sp.List[i].Plan).Form), Got, Sp.List[i].Share);
+	}
+	// The herds of the world, each of its cell's species and plan; the meshes they make.
+	TArray<SlonkFauna::FFaunaGroup> Herds;
+	HerdsOverGlobe(W, 12000, Herds);
+	int32 OffSpecies = 0, BySpecies[SlonkFauna::MaxSpecies] = {};
+	TSet<uint32> PlanHashes;
+	TSet<UStaticMesh*> Meshes;
+	for (const SlonkFauna::FFaunaGroup& G : Herds)
+	{
+		const SlonkFauna::FFaunaCell C = SlonkFauna::CellOf(W.P, EFaunaKind::Herd, G.Centre);
+		OffSpecies += G.Species == SlonkFauna::SpeciesInCell(W, C) && G.Plan == Sp[G.Species].Plan ? 0 : 1;
+		++BySpecies[FMath::Clamp(G.Species, 0, SlonkFauna::MaxSpecies - 1)];
+		PlanHashes.Add(G.Plan.Hash());
+		Meshes.Add(SlonkFaunaMeshes::GetMesh(G.Plan, G.Kind));
+	}
+	// The cells round a herd read forward, backward and shuffled.
+	TArray<SlonkFauna::FFaunaCell> Near;
+	SlonkFauna::CellsNear(W.P, EFaunaKind::Herd, Herds.Num() > 0 ? Herds[0].Centre : FVector::ZAxisVector, 1.2e6, Near);
+	TArray<int32> Order;
+	for (int32 i = 0; i < Near.Num(); ++i) { Order.Add(i); }
+	TArray<TOptional<SlonkFauna::FFaunaGroup>> Ahead, Back, Mixed;
+	TArray<int32> SpAhead, SpBack, SpMixed;
+	Ahead.SetNum(Near.Num()); Back.SetNum(Near.Num()); Mixed.SetNum(Near.Num());
+	SpAhead.SetNum(Near.Num()); SpBack.SetNum(Near.Num()); SpMixed.SetNum(Near.Num());
+	auto Read = [&](int32 i, TArray<TOptional<SlonkFauna::FFaunaGroup>>& G, TArray<int32>& Spc)
+	{
+		Spc[i] = SlonkFauna::SpeciesInCell(W, Near[i]);
+		SlonkFauna::FFaunaGroup One;
+		if (SlonkFauna::GroupInCell(W, Near[i], One)) { G[i] = One; }
+	};
+	for (int32 i = 0; i < Near.Num(); ++i) { Read(i, Ahead, SpAhead); }
+	for (int32 i = Near.Num() - 1; i >= 0; --i) { Read(i, Back, SpBack); }
+	FRandomStream Rng(91);
+	for (int32 i = Order.Num() - 1; i > 0; --i) { Order.Swap(i, Rng.RandRange(0, i)); }
+	for (const int32 i : Order) { Read(i, Mixed, SpMixed); }
+	int32 Mismatch = 0, Held = 0;
+	auto Same = [](const TOptional<SlonkFauna::FFaunaGroup>& A, const TOptional<SlonkFauna::FFaunaGroup>& B) { return A.IsSet() == B.IsSet() && (!A.IsSet() || A.GetValue() == B.GetValue()); };
+	for (int32 i = 0; i < Near.Num(); ++i)
+	{
+		Held += Ahead[i].IsSet() ? 1 : 0;
+		Mismatch += SpAhead[i] == SpBack[i] && SpAhead[i] == SpMixed[i] && Same(Ahead[i], Back[i]) && Same(Ahead[i], Mixed[i]) && (!Ahead[i].IsSet() || Ahead[i]->Species == SpAhead[i]) ? 0 : 1;
+	}
+	// About A, about B 30 km off, back at A: the same herds, each of the same species and where one never left would be.
+	const FVector CamA = CameraOver(W, Herds.Num() > 0 ? Herds[0].Centre : FVector::ZAxisVector);
+	const FVector CamB = CameraOver(W, AlongGround(CamA.GetSafeNormal(), 3.0e6, R, 2.0));
+	SlonkFauna::FFaunaField F, Stayed;
+	F.SetWorld(W);
+	Stayed.SetWorld(W);
+	TArray<uint64> A1, B1, A2, Kept;
+	ScanAndSelect(F, CamA, A1);
+	ScanAndSelect(Stayed, CamA, Kept);
+	ScanAndSelect(F, CamB, B1);
+	ScanAndSelect(F, CamA, A2);
+	int32 Changed = 0;
+	for (const TPair<uint64, SlonkFauna::FFaunaField::FGroupRef>& A : F.GetActive())
+	{
+		const SlonkFauna::FFaunaField::FGroupRef* Never = Stayed.GetActive().Find(A.Key);
+		Changed += Never && **Never == *A.Value && (*Never)->Species == A.Value->Species ? 0 : 1;
+	}
+	// The debug's search for each species, from a herd's middle 25 km off: one of it, and the nearest there is.
+	int32 SearchOff = 0;
+	FString Searches;
+	const FVector From = AlongGround(CamA.GetSafeNormal(), 2.5e6, R, 0.7);
+	for (int32 s = 0; s < Sp.Num; ++s)
+	{
+		SlonkFauna::FFaunaGroup Found;
+		SlonkFauna::FGroupSearch Search;
+		const bool bFound = SlonkFauna::FindGroupNear(W, EFaunaKind::Herd, From, 4.0e7, 120000, Found, &Search, s);
+		const double At = bFound ? FVector::Dist(Found.Centre, From) * R : -1.0;
+		double Nearest = 1.0e12;
+		if (bFound)
+		{
+			TArray<SlonkFauna::FFaunaCell> Round;
+			SlonkFauna::CellsNear(W.P, EFaunaKind::Herd, From, At + 4.0e5, Round);
+			for (const SlonkFauna::FFaunaCell& C : Round)
+			{
+				SlonkFauna::FFaunaGroup G;
+				if (SlonkFauna::GroupInCell(W, C, G) && G.Species == s) { Nearest = FMath::Min(Nearest, FVector::Dist(G.Centre, From) * R); }
+			}
+		}
+		SearchOff += bFound && Found.Species == s && FMath::IsNearlyEqual(At, Nearest, 1.0) ? 0 : 1;
+		Searches += FString::Printf(TEXT("%s#%d %.1f km off (%d cells)"), s == 0 ? TEXT("") : TEXT(", "), s, At / 1e5, Search.Cells);
+	}
+	// The jellies' and the motes' one species on the strange world, the jellies' its own plan (the fliers and the fish have
+	// forms of their own: Slonk.Fauna.AlienFlocks and Slonk.Fauna.AlienFish).
+	int32 OthersOff = 0;
+	for (const EFaunaKind K : { EFaunaKind::Floater, EFaunaKind::Mote })
+	{
+		OthersOff += W.Profile.Species[(int32)K].Num == 1 ? 0 : 1;
+	}
+	if (W.Profile.FloaterShare > 0.f) { OthersOff += W.Profile.PlanOf(EFaunaKind::Floater) == SlonkFauna::FloaterPlan(Hash) ? 0 : 1; }
+	AddInfo(FString::Printf(TEXT("a world of hash %u at strangeness 0.9, %d herd species: over %d cells %s (%.3f off at worst); %d herds (%d, %d and %d of each), %d off their cell's species, %d plans and %d meshes among them"),
+		Hash, Sp.Num, Cells, *Shares, WorstShare, Herds.Num(), BySpecies[0], BySpecies[1], BySpecies[2], OffSpecies, PlanHashes.Num(), Meshes.Num()));
+	AddInfo(FString::Printf(TEXT("%d cells round a herd (%d holding one), %d read otherwise in another order; about A %d herds, back from B %d, %d changed; the search for each species: %s, %d off; %d other kinds of more than one species"),
+		Near.Num(), Held, Mismatch, A1.Num(), A2.Num(), Changed, *Searches, SearchOff, OthersOff));
+	TestTrue(TEXT("each species holds its share of the cells"), Cells > 20000 && WorstShare < 0.02);
+	TestEqual(TEXT("every herd of its cell's species and that species' plan"), OffSpecies, 0);
+	TestTrue(TEXT("herds of every species"), BySpecies[0] > 10 && BySpecies[1] > 10 && BySpecies[2] > 10);
+	TestTrue(TEXT("a mesh for each species, none for each herd"), PlanHashes.Num() == Sp.Num && Meshes.Num() == Sp.Num && !Meshes.Contains(nullptr));
+	TestEqual(TEXT("a cell's species and group the same whatever order the cells are read in"), Mismatch, 0);
+	TestTrue(TEXT("cells holding herds"), Held > 5);
+	TestTrue(TEXT("back at A, the same herds, each of the same species"), A1.Num() > 0 && A2 == A1 && Kept == A1 && Changed == 0);
+	TestEqual(TEXT("the search for a species finds the nearest of it"), SearchOff, 0);
+	TestEqual(TEXT("one species of every other kind, the jellies' their own plan"), OthersOff, 0);
+	return true;
+}
+
+namespace
+{
+	/** Which of a walker's legs a vertex of its mesh belongs to: the one whose hip, knee and foot it lies nearest the line
+	 *  through (and where along it: 0 the hip, 1 the foot, by the leg's length). */
+	int32 LegOfVertex(const Wk::FShape& S, const FVector& P, double& OutAlong)
+	{
+		int32 Best = -1;
+		double BestD = TNumericLimits<double>::Max();
+		OutAlong = 0.0;
+		for (int32 i = 0; i < S.NumLegs; ++i)
+		{
+			const FVector Pts[3] = { (FVector)S.Legs[i].Hip, (FVector)S.Legs[i].Knee, (FVector)S.Legs[i].Foot };
+			const double L0 = FVector::Dist(Pts[0], Pts[1]), L1 = FVector::Dist(Pts[1], Pts[2]);
+			for (int32 sgm = 0; sgm < 2; ++sgm)
+			{
+				const FVector A = Pts[sgm], B = Pts[sgm + 1];
+				const FVector Ab = B - A;
+				const double T = FMath::Clamp(FVector::DotProduct(P - A, Ab) / FMath::Max(Ab.SizeSquared(), 1e-9), 0.0, 1.0);
+				const double D = FVector::Dist(P, A + Ab * T);
+				if (D < BestD) { BestD = D; Best = i; OutAlong = (sgm == 0 ? T * L0 : L0 + T * L1) / FMath::Max(L0 + L1, 1e-6); }
+			}
+		}
+		return Best;
+	}
+	/** A mesh's triangles laid on a plane and filled on a grid of cells Cell apart (the plane's two axes A and B, over the
+	 *  ranges given): which cells it covers, for its silhouette seen along the plane's normal. */
+	TArray<uint8> Silhouette(const UE::Geometry::FDynamicMesh3& M, const FVector& A, const FVector& B, double Lo, double Hi, double Cell, int32& OutN)
+	{
+		const int32 N = FMath::CeilToInt32((Hi - Lo) / Cell);
+		OutN = N;
+		TArray<uint8> Cover;
+		Cover.Init(0, N * N);
+		for (const int32 T : M.TriangleIndicesItr())
+		{
+			const UE::Geometry::FIndex3i Tri = M.GetTriangle(T);
+			FVector2D S[3];
+			for (int32 k = 0; k < 3; ++k) { const FVector P = (FVector)M.GetVertex(Tri[k]); S[k] = FVector2D(FVector::DotProduct(P, A), FVector::DotProduct(P, B)); }
+			const double Area2 = (S[1].X - S[0].X) * (S[2].Y - S[0].Y) - (S[2].X - S[0].X) * (S[1].Y - S[0].Y);
+			if (FMath::Abs(Area2) < 1e-9) { continue; }
+			const int32 X0 = FMath::Clamp(FMath::FloorToInt32((FMath::Min3(S[0].X, S[1].X, S[2].X) - Lo) / Cell), 0, N - 1), X1 = FMath::Clamp(FMath::FloorToInt32((FMath::Max3(S[0].X, S[1].X, S[2].X) - Lo) / Cell), 0, N - 1);
+			const int32 Y0 = FMath::Clamp(FMath::FloorToInt32((FMath::Min3(S[0].Y, S[1].Y, S[2].Y) - Lo) / Cell), 0, N - 1), Y1 = FMath::Clamp(FMath::FloorToInt32((FMath::Max3(S[0].Y, S[1].Y, S[2].Y) - Lo) / Cell), 0, N - 1);
+			for (int32 y = Y0; y <= Y1; ++y)
+			{
+				for (int32 x = X0; x <= X1; ++x)
+				{
+					const FVector2D Q(Lo + (x + 0.5) * Cell, Lo + (y + 0.5) * Cell);
+					const double W0 = ((S[1].X - Q.X) * (S[2].Y - Q.Y) - (S[2].X - Q.X) * (S[1].Y - Q.Y)) / Area2;
+					const double W1 = ((S[2].X - Q.X) * (S[0].Y - Q.Y) - (S[0].X - Q.X) * (S[2].Y - Q.Y)) / Area2;
+					if (W0 >= 0.0 && W1 >= 0.0 && 1.0 - W0 - W1 >= 0.0) { Cover[y * N + x] = 1; }
+				}
+			}
+		}
+		return Cover;
+	}
+	/** How much two silhouettes share of all either covers. */
+	double SilhouetteOverlap(const TArray<uint8>& A, const TArray<uint8>& B)
+	{
+		int32 Both = 0, Either = 0;
+		for (int32 i = 0; i < A.Num(); ++i) { Both += A[i] && B[i] ? 1 : 0; Either += A[i] || B[i] ? 1 : 0; }
+		return Either > 0 ? (double)Both / Either : 1.0;
+	}
+	/** Of a silhouette seen from the side (x along it, z up), the runs of cells it covers along x in the row Z cm up: its
+	 *  legs as they stand below its body. */
+	int32 LegRuns(const TArray<uint8>& Side, int32 N, double Lo, double Cell, double Z)
+	{
+		const int32 Row = FMath::Clamp(FMath::FloorToInt32((Z - Lo) / Cell), 0, N - 1);
+		int32 Runs = 0;
+		for (int32 x = 0; x < N; ++x) { Runs += Side[Row * N + x] && (x == 0 || !Side[Row * N + x - 1]) ? 1 : 0; }
+		return Runs;
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaAlienWalkersTest, "Slonk.Fauna.AlienWalkers", SLONK_TEST_FLAGS)
+bool FSlonkFaunaAlienWalkersTest::RunTest(const FString& Parameters)
+{
+	// The strange worlds' walkers, every plan at the ends and the middle of its ranges and wearing every ornament it can:
+	// a six-legged grazer of 174 to 179, 32 and 5 triangles, an insectoid of 168 to 171, 38 and 4 (each speck's side its
+	// flank whole, for its glow organs: Slonk.Fauna.GlowOrgans); a metre long, its feet
+	// on z 0; its vertex colours as the material reads them (each leg's flex from 0 at the hip to 1 at its dark foot, an
+	// insectoid's 0.45 at its knee, its blue its place in the tripod gait, the fore and hind of a side with the middle of the
+	// other, half a stride from the other three; the neck and head, the antennae, mandibles and horns flexing as the neck;
+	// the tail's from its root; the body rigid, its side by its sign); every face wound to show the side its normals point
+	// to; a tangent basis at every vertex; the material's motion keeping every vertex in the instance's padded box at every
+	// size its form comes in (an insectoid to 3.5 m), every gait, circle, ground and speck floor, with its plan's rig; its LODs
+	// coming in where it is about 30 and 6 pixels long. From the side and from above they read as other animals than the
+	// Earth's grazer and each other, at the LODs a herd is seen by from 30 to 300 m: three legs a side standing under them
+	// (the grazer's two), a lower barrel and a heavier head, a wide, flat insectoid of legs splayed out.
+	using namespace UE::Geometry;
+	namespace Vc = SlonkFauna::Vc;
+	const SlonkFauna::FFaunaKindDesc& D = SlonkFauna::KindDesc(EFaunaKind::Herd);
+	const TArray<FAlienPlan> Plans = AlienHerdPlans();
+	int32 BadTris = 0, BadColour = 0, BadWinding = 0, BadFeet = 0, BadGait = 0, Escaped = 0, Tried = 0, NoTangent = 0, Vertices = 0, BadLod = 0, BadReach = 0;
+	double Margin = TNumericLimits<double>::Max(), WorstPx1Lo = 1e9, WorstPx1Hi = 0.0, WorstPx2Lo = 1e9, WorstPx2Hi = 0.0, MostTris = 0.0;
+	FString Seen;
+	int32 BoxOver = 0, LinedUp = 0, LinedUpOut = 0;
+	double BoxBound = -TNumericLimits<double>::Max(), LinedUpMargin = TNumericLimits<double>::Max();
+	FString BoundsSeen;
+	TMap<FString, int32> InwardAt;
+	for (int32 p = 0; p < Plans.Num(); ++p)
+	{
+		const FFaunaBodyPlan& Plan = Plans[p].Plan;
+		const Wk::FShape S = Wk::ShapeOf(Plan);
+		const bool bInsect = S.Form == Wk::EForm::Insectoid;
+		const int32 Want[3] = { bInsect ? 168 + ((Plan.Ornament & 1) ? 2 : 0) + ((Plan.Ornament & 2) ? 1 : 0) : 174 + ((Plan.Ornament & 1) ? 2 : 0) + ((Plan.Ornament & 2) ? 3 : 0), bInsect ? 38 : 32, bInsect ? 4 : 5 };
+		FBox Box0(ForceInit);
+		FDynamicMesh3 Lod0;
+		for (int32 L = 0; L < SlonkFaunaMeshes::NumLods; ++L)
+		{
+			FDynamicMesh3 M;
+			if (!SlonkFaunaMeshes::BuildLod(Plan, L, M)) { AddError(TEXT("no alien walker built")); return false; }
+			BadTris += M.TriangleCount() == Want[L] ? 0 : 1;
+			MostTris = L == 0 ? FMath::Max(MostTris, (double)M.TriangleCount()) : MostTris;
+			const FDynamicMeshColorOverlay* C = M.Attributes()->PrimaryColors();
+			const FDynamicMeshNormalOverlay* Nm = M.Attributes()->PrimaryNormals();
+			TSet<int32> PhasesSeen;
+			for (const int32 T : M.TriangleIndicesItr())
+			{
+				FVector3d Fn, Centroid; double Area;
+				M.GetTriInfo(T, Fn, Area, Centroid);
+				const FIndex3i E = Nm->GetTriangle(T);
+				const FIndex3i Ce = C->GetTriangle(T);
+				const FIndex3i Tv = M.GetTriangle(T);
+				if (Fn.Dot(FVector3d(Nm->GetElement(E.A) + Nm->GetElement(E.B) + Nm->GetElement(E.C))) <= 0.0)
+				{
+					++BadWinding;
+					InwardAt.FindOrAdd(FString::Printf(TEXT("%s LOD %d joint %.3f"), FormName(S.Form), L, C->GetElement(Ce.A).W))++;
+				}
+				for (int32 k = 0; k < 3; ++k)
+				{
+					const FVector4f Col = C->GetElement(Ce[k]);
+					const FVector P = (FVector)M.GetVertex(Tv[k]);
+					if (L == 0) { Box0 += P; }
+					bool bOk = true;
+					if (FMath::IsNearlyEqual(Col.W, Vc::JointLeg))
+					{
+						// Its leg, by where it lies, its blue that leg's place in the gait and its green how far down it it is.
+						double Along = 0.0;
+						const int32 Leg = LegOfVertex(S, P, Along);
+						const float WantFlex = bInsect ? (Along < 0.25 ? 0.f : (Along < 0.75 ? Wk::InsectKneeFlex : 1.f)) : (float)FMath::Clamp((S.Legs[FMath::Max(Leg, 0)].Hip.Z - P.Z) / S.Legs[FMath::Max(Leg, 0)].Hip.Z, 0.0, 1.0);
+						bOk = Leg >= 0 && Col.Z == S.Legs[Leg].Phase && FMath::IsNearlyEqual(Col.Y, WantFlex, bInsect ? 1e-3f : 0.02f) && (Col.X == (Col.Y > 0.99f ? Vc::SurfaceBeak : Vc::SurfaceBody));
+						PhasesSeen.Add(FMath::RoundToInt32(Col.Z * 1000.f));
+						if (Col.Y > 0.99f && L == 0 && Leg >= 0) { BadFeet += FMath::Abs(P.Z) < 1e-3 && FVector2D::Distance(FVector2D(P.X, P.Y), FVector2D(S.Legs[Leg].Foot.X, S.Legs[Leg].Foot.Y)) < 3.0 ? 0 : 1; }
+					}
+					else if (FMath::IsNearlyEqual(Col.W, Vc::JointNeck)) { bOk = (Col.X == Vc::SurfaceBody || Col.X == Vc::SurfaceBeak) && Col.Y >= 0.f && Col.Y <= 1.f && P.X > 5.0; }
+					else if (FMath::IsNearlyEqual(Col.W, Vc::JointTail)) { bOk = Col.X == Vc::SurfaceTail && Col.Y >= 0.f && Col.Y <= 1.f && Col.Z == Vc::SideMiddle && P.X < -40.0; }
+					else if (Col.W == Vc::JointRigid) { bOk = (Col.X == Vc::SurfaceBody || (Col.X == Vc::SurfaceBeak && Col.Z == Vc::SideMiddle)) && Col.Y == 0.f && Col.Z == (P.Y > 0.5 ? Vc::SideRight : (P.Y < -0.5 ? Vc::SideLeft : Vc::SideMiddle)); }
+					else { bOk = false; }
+					BadColour += bOk ? 0 : 1;
+				}
+			}
+			// Six legs of six places in the gait at LODs 0 and 1: the tripods half a stride apart, each leg of one a ripple after
+			// the one behind it.
+			if (L < 2) { BadGait += PhasesSeen.Num() == 6 ? 0 : 1; }
+			if (L == 0) { Lod0 = MoveTemp(M); }
+		}
+		const float* Ph = Wk::TripodPhase;
+		BadGait += S.NumLegs == 6 && FMath::IsNearlyEqual(Ph[3] - Ph[0], 0.5f) && FMath::IsNearlyEqual(Ph[1] - Ph[4], 0.5f) && FMath::IsNearlyEqual(Ph[5] - Ph[2], 0.5f)
+			&& FMath::IsNearlyEqual(Ph[4] - Ph[0], Wk::Ripple) && FMath::IsNearlyEqual(Ph[2] - Ph[4], Wk::Ripple) ? 0 : 1;
+		BadFeet += FMath::IsNearlyEqual(Box0.Min.Z, 0.0, 1e-3) && FMath::IsNearlyEqual(Box0.Min.X, -50.0, 0.6) ? 0 : 1;
+		// Its footprint's reach is its feet's (Walker::FShape::Reach), which its herd keeps its walkers apart by.
+		double Far = 50.0;
+		for (int32 i = 0; i < S.NumLegs; ++i) { Far = FMath::Max(Far, (double)FVector2f(S.Legs[i].Foot.X, S.Legs[i].Foot.Y).Size() + 3.0); }
+		BadReach += FMath::IsNearlyEqual(S.Reach, Far / 50.0, 1e-9) && S.Reach >= 1.0 ? 0 : 1;
+		// The material's motion over LOD 0's vertices with its plan's rig, inside the box each instance is culled by.
+		const FBox Padded = Box0.ExpandBy(Box0.GetExtent() * 0.15 + FVector(20.0 + D.CullPaddingUnits));
+		const TArray<FLinearColor> Vcs = VertexColours(Lod0);
+		FRandomStream Rng(57 + p);
+		for (int32 Case = 0; Case < 160; ++Case)
+		{
+			float Cu[SlonkFauna::Custom::Num] = {};
+			float Gd[SlonkFauna::HerdData::Num] = {};
+			const float Size = Case % 5 == 0 ? (float)S.MinSizeM : (Case % 5 == 1 ? (float)S.MaxSizeM : Rng.FRandRange((float)S.MinSizeM, (float)S.MaxSizeM));
+			const float Stride = (float)S.StrideShare * Size * Rng.FRandRange(0.97f, 1.03f);
+			const int32 K = FMath::Max(3, FMath::FloorToInt32(UE_TWO_PI * (float)Wk::MaxCircleM / Stride * Rng.FRand()));
+			Cu[SlonkFauna::Custom::SizeM] = Size;
+			Cu[SlonkFauna::Custom::Seed] = Rng.FRand();
+			Cu[SlonkFauna::Custom::Phase] = Rng.FRand();
+			Cu[SlonkFauna::Custom::RateHz] = Stride;
+			Cu[SlonkFauna::Custom::PerKind] = (Rng.FRand() < 0.5f ? -1.f : 1.f) * FMath::Min(FMath::Min(K * Stride / UE_TWO_PI, (float)Wk::MaxCircleM), Size * (float)FMath::Min(S.CircleShare, 1.0e6));
+			const float T = Rng.FRandRange(0.f, 3600.f);
+			Gd[SlonkFauna::HerdData::Heading] = Rng.FRandRange(-3.2f, 3.2f);
+			Gd[SlonkFauna::HerdData::SpeedMS] = Case % 4 == 0 ? Rng.FRandRange(4.f, 13.f) : Rng.FRandRange(0.f, 3.4f);
+			Gd[SlonkFauna::HerdData::DistM] = Rng.FRandRange(0.f, 2600.f);
+			Gd[SlonkFauna::HerdData::GrazeSec] = Rng.FRandRange(0.f, 3600.f);
+			Gd[SlonkFauna::HerdData::ClockT0] = FMath::Fmod(T - Rng.FRandRange(0.f, 0.1f) + 3600.f, 3600.f);
+			Gd[SlonkFauna::HerdData::Travel] = Rng.FRand();
+			Gd[SlonkFauna::HerdData::PivotRef] = Gd[SlonkFauna::HerdData::DistM] - (Case % 3 == 0 ? 1000.f : Rng.FRandRange(0.f, 8.f)) + (Case % 5 < 2 ? (float)SlonkFauna::HerdData::PivotBack : 0.f);
+			Gd[SlonkFauna::HerdData::GrazeRef] = Gd[SlonkFauna::HerdData::GrazeSec] - Rng.FRandRange(0.f, 60.f);
+			Gd[SlonkFauna::HerdData::WalkKap] = Rng.FRandRange(-1.f, 1.f) * (float)Wk::MaxWalkKap;
+			Gd[SlonkFauna::HerdData::TurnHeading] = Rng.FRandRange(-3.2f, 3.2f);
+			Gd[SlonkFauna::HerdData::Startled] = Case % 2 == 0 ? 1.f : 0.f;
+			const float PanicAge = Rng.FRandRange(0.f, 120.f);
+			Gd[SlonkFauna::HerdData::PanicT0] = FMath::Fmod(T - PanicAge + 3600.f, 3600.f);
+			Gd[SlonkFauna::HerdData::OnsetT0] = FMath::Fmod(T - PanicAge - Rng.FRandRange(0.f, 1.f) + 3600.f, 3600.f);
+			for (int32 m = 0; m < SlonkFauna::HerdData::GroundNodes; ++m) { Gd[SlonkFauna::HerdData::Ground0 + m] = Rng.FRandRange(-1.f, 1.f) * (float)SlonkFauna::HerdData::MaxGroundCm; }
+			Gd[SlonkFauna::HerdData::GroundHalfCm] = Rng.FRandRange(1500.f, 4500.f);
+			const FVector3f Home(Rng.FRandRange(-3500.f, 3500.f), Rng.FRandRange(-3500.f, 3500.f), 0.f);
+			// Near (no speck floor), a few hundred metres off, and far (four times its size).
+			const float Dist = Case % 3 == 0 ? 2000.f : (Case % 3 == 1 ? Size * 100.f * 960.f / 3.5f : 4.0e5f);
+			for (const int32 V : Lod0.VertexIndicesItr())
+			{
+				const FVector3f LP = (FVector3f)Lod0.GetVertex(V);
+				const FVector3f Moved = LP + SlonkFauna::WalkerMotion(LP, Home + LP * Size, Vcs[V], T, Cu, Gd, Dist, 960.f, S.Rig);
+				++Tried;
+				const FVector Mv((double)Moved.X, (double)Moved.Y, (double)Moved.Z);
+				Escaped += Padded.IsInside(Mv) ? 0 : 1;
+				Margin = FMath::Min(Margin, FMath::Min3(FMath::Min(Mv.X - Padded.Min.X, Padded.Max.X - Mv.X), FMath::Min(Mv.Y - Padded.Min.Y, Padded.Max.Y - Mv.Y), FMath::Min(Mv.Z - Padded.Min.Z, Padded.Max.Z - Mv.Z)));
+			}
+		}
+		// The box by arithmetic rather than by chance (the cases above seldom line the worst up): a walker going its herd's way
+		// (or turning to it) faces any way at all against where it stands on its grazing circle, so the farthest any vertex of
+		// it reaches from its middle across the ground (its head at every swing, its legs through every stride and turn, the
+		// smallest of its form far off, grown SpeckMax times by the speck floor), and its circle as wide as its herd gives one
+		// that size, may line up: together they stay within the box's nearest side to its middle. Then the worst of them so
+		// lined up, run through the material's copy (its circle turned to that side, the walker turned to put the vertex
+		// there), against each side of the box.
+		{
+			const float SizeLo = (float)S.MinSizeM;
+			const float CircleLo = (float)FMath::Min(Wk::MaxCircleM, S.MinSizeM * S.CircleShare);
+			const double Lim = FMath::Min(FMath::Min(-Padded.Min.X, Padded.Max.X), FMath::Min(-Padded.Min.Y, Padded.Max.Y));
+			const FVector3f Origin = FVector3f::ZeroVector;
+			const FLinearColor RigidMiddle(0.f, 0.f, 0.5f, 0.f);
+			double Farthest = 0.0, FarWalking = 0.0;
+			float WorstCu[SlonkFauna::Custom::Num] = {}, WorstGd[SlonkFauna::HerdData::Num] = {};
+			float WorstT = 0.f;
+			int32 WorstV = -1;
+			FRandomStream Wr(919 + p);
+			for (int32 Case = 0; Case < 240; ++Case)
+			{
+				float Cu[SlonkFauna::Custom::Num] = {};
+				float Gd[SlonkFauna::HerdData::Num] = {};
+				const float Stride = (float)S.StrideShare * SizeLo;
+				Cu[SlonkFauna::Custom::SizeM] = SizeLo;
+				Cu[SlonkFauna::Custom::Seed] = Wr.FRand();
+				Cu[SlonkFauna::Custom::Phase] = Wr.FRand();
+				Cu[SlonkFauna::Custom::RateHz] = Stride;
+				const int32 K = FMath::Max(3, FMath::FloorToInt32(UE_TWO_PI * CircleLo / Stride));
+				Cu[SlonkFauna::Custom::PerKind] = (Wr.FRand() < 0.5f ? -1.f : 1.f) * FMath::Min(K * Stride / UE_TWO_PI, CircleLo);
+				const float T = Wr.FRandRange(0.f, 3600.f);
+				// Walking with its herd (half the cases, its way straight on), turning to it or back, grazing.
+				const int32 State = Case % 4;
+				Gd[SlonkFauna::HerdData::Heading] = Wr.FRandRange(-3.2f, 3.2f);
+				Gd[SlonkFauna::HerdData::SpeedMS] = State == 3 ? 0.f : Wr.FRandRange(0.3f, 9.f);
+				Gd[SlonkFauna::HerdData::DistM] = Wr.FRandRange(0.f, 2600.f);
+				Gd[SlonkFauna::HerdData::GrazeSec] = Wr.FRandRange(0.f, 3600.f);
+				Gd[SlonkFauna::HerdData::ClockT0] = FMath::Fmod(T - Wr.FRandRange(0.f, 0.1f) + 3600.f, 3600.f);
+				Gd[SlonkFauna::HerdData::Travel] = State < 2 ? 1.f : (State == 2 ? Wr.FRandRange(0.05f, 0.95f) : 0.f);
+				Gd[SlonkFauna::HerdData::PivotRef] = Gd[SlonkFauna::HerdData::DistM] - Wr.FRandRange(0.f, 8.f) + (State == 3 ? (float)SlonkFauna::HerdData::PivotBack : 0.f);
+				Gd[SlonkFauna::HerdData::GrazeRef] = Gd[SlonkFauna::HerdData::GrazeSec] - Wr.FRandRange(0.f, 60.f);
+				Gd[SlonkFauna::HerdData::WalkKap] = State < 2 ? 0.f : Wr.FRandRange(-1.f, 1.f) * (float)Wk::MaxWalkKap;
+				Gd[SlonkFauna::HerdData::TurnHeading] = Wr.FRandRange(-3.2f, 3.2f);
+				Gd[SlonkFauna::HerdData::Startled] = Case % 3 == 0 ? 1.f : 0.f;
+				const float PanicAge = Wr.FRandRange(0.f, 120.f);
+				Gd[SlonkFauna::HerdData::PanicT0] = FMath::Fmod(T - PanicAge + 3600.f, 3600.f);
+				Gd[SlonkFauna::HerdData::OnsetT0] = FMath::Fmod(T - PanicAge - Wr.FRandRange(0.f, 1.f) + 3600.f, 3600.f);
+				Gd[SlonkFauna::HerdData::GroundHalfCm] = 3000.f;
+				const FVector3f Circle = SlonkFauna::WalkerMotion(Origin, Origin, RigidMiddle, T, Cu, Gd, 4.0e5f, 960.f, S.Rig);
+				for (const int32 V : Lod0.VertexIndicesItr())
+				{
+					const FVector3f LP = (FVector3f)Lod0.GetVertex(V);
+					const FVector3f Moved = LP + SlonkFauna::WalkerMotion(LP, LP * SizeLo, Vcs[V], T, Cu, Gd, 4.0e5f, 960.f, S.Rig);
+					const double R = FVector2D(Moved.X - Circle.X, Moved.Y - Circle.Y).Size();
+					if (R > FarWalking && State < 2)
+					{
+						FarWalking = R;
+						FMemory::Memcpy(WorstCu, Cu, sizeof(Cu));
+						FMemory::Memcpy(WorstGd, Gd, sizeof(Gd));
+						WorstT = T;
+						WorstV = V;
+					}
+					Farthest = FMath::Max(Farthest, R);
+				}
+			}
+			const double Worst = Farthest + 100.0 * CircleLo / SizeLo;
+			BoxBound = FMath::Max(BoxBound, Worst - Lim);
+			BoxOver += Worst <= Lim ? 0 : 1;
+			// The worst walking vertex lined up with its circle, against each side.
+			if (WorstV >= 0)
+			{
+				const FVector3f LP = (FVector3f)Lod0.GetVertex(WorstV);
+				for (const double Side : { 0.0, 0.5 * UE_DOUBLE_PI, UE_DOUBLE_PI, 1.5 * UE_DOUBLE_PI })
+				{
+					float Cu[SlonkFauna::Custom::Num], Gd[SlonkFauna::HerdData::Num];
+					FMemory::Memcpy(Cu, WorstCu, sizeof(Cu));
+					FMemory::Memcpy(Gd, WorstGd, sizeof(Gd));
+					// Its circle turned to the side (where it stands on it, by its place on the round: its phase), then the walker
+					// turned so the vertex points that way too (going its herd's way, it faces its herd's).
+					FVector3f Circle = SlonkFauna::WalkerMotion(Origin, Origin, RigidMiddle, WorstT, Cu, Gd, 4.0e5f, 960.f, S.Rig);
+					Cu[SlonkFauna::Custom::Phase] += (float)((Side - FMath::Atan2((double)Circle.Y, (double)Circle.X)) / UE_DOUBLE_TWO_PI);
+					Circle = SlonkFauna::WalkerMotion(Origin, Origin, RigidMiddle, WorstT, Cu, Gd, 4.0e5f, 960.f, S.Rig);
+					const FVector3f Was = LP + SlonkFauna::WalkerMotion(LP, LP * SizeLo, Vcs[WorstV], WorstT, Cu, Gd, 4.0e5f, 960.f, S.Rig) - FVector3f(Circle.X, Circle.Y, 0.f);
+					Gd[SlonkFauna::HerdData::Heading] += (float)(Side - FMath::Atan2((double)Was.Y, (double)Was.X));
+					const FVector3f Moved = LP + SlonkFauna::WalkerMotion(LP, LP * SizeLo, Vcs[WorstV], WorstT, Cu, Gd, 4.0e5f, 960.f, S.Rig);
+					const FVector Mv((double)Moved.X, (double)Moved.Y, (double)Moved.Z);
+					LinedUp += 1;
+					LinedUpOut += Padded.IsInside(Mv) ? 0 : 1;
+					LinedUpMargin = FMath::Min(LinedUpMargin, FMath::Min(FMath::Min(Mv.X - Padded.Min.X, Padded.Max.X - Mv.X), FMath::Min(Mv.Y - Padded.Min.Y, Padded.Max.Y - Mv.Y)));
+				}
+			}
+			if (S.Form == Wk::EForm::Insectoid && BoundsSeen.Len() < 600)
+			{
+				BoundsSeen += FString::Printf(TEXT("%s%.0f + %.0f against %.0f (circle %.2f m at %.2f m)"), BoundsSeen.IsEmpty() ? TEXT("") : TEXT(", "), Farthest, 100.0 * CircleLo / SizeLo, Lim, CircleLo, SizeLo);
+			}
+		}
+		// The static mesh: made once and kept, three LODs, a tangent basis everywhere; where its LODs come in for one 2.5 m
+		// long through a 90-degree view at 16:9, in pixels (960 a radian).
+		UStaticMesh* Mesh = SlonkFaunaMeshes::GetMesh(Plan, EFaunaKind::Herd);
+		if (!Mesh || Mesh != SlonkFaunaMeshes::GetMesh(Plan, EFaunaKind::Herd) || Mesh->GetNumLODs() != SlonkFaunaMeshes::NumLods) { ++BadLod; continue; }
+		if (const FStaticMeshRenderData* RD = Mesh->GetRenderData())
+		{
+			for (const FStaticMeshLODResources& LR : RD->LODResources)
+			{
+				const FStaticMeshVertexBuffer& VB = LR.VertexBuffers.StaticMeshVertexBuffer;
+				for (uint32 i = 0; i < VB.GetNumVertices(); ++i)
+				{
+					const FVector3f Tx(VB.VertexTangentX(i)), Tz(VB.VertexTangentZ(i)), Ty(VB.VertexTangentY(i));
+					++Vertices;
+					NoTangent += Tx.Size() > 0.5f && Ty.Size() > 0.5f && FMath::Abs(FVector3f::DotProduct(Tx.GetSafeNormal(), Tz.GetSafeNormal())) < 0.1f ? 0 : 1;
+				}
+			}
+		}
+		const double LengthM = 2.5;
+		UPlanetInstancesComponent* Set = NewObject<UPlanetInstancesComponent>();
+		Set->SetStaticMesh(Mesh);
+		Set->SetCullPadding(D.CullPaddingUnits);
+		Set->SetPieces(TArray<FTransform>{ FTransform(FQuat::Identity, FVector::ZeroVector, FVector(LengthM)) }, TConstArrayView<float>());
+		const double Proj = (16.0 / 9.0) / FMath::Tan(FMath::DegreesToRadians(45.0));
+		const double GpuR = Set->GetMaxInstanceRadius();
+		const double Px1 = LengthM * 960.0 / (Proj * GpuR / D.LodScreenSize[1] / 100.0), Px2 = LengthM * 960.0 / (Proj * GpuR / D.LodScreenSize[2] / 100.0);
+		WorstPx1Lo = FMath::Min(WorstPx1Lo, Px1); WorstPx1Hi = FMath::Max(WorstPx1Hi, Px1);
+		WorstPx2Lo = FMath::Min(WorstPx2Lo, Px2); WorstPx2Hi = FMath::Max(WorstPx2Hi, Px2);
+		if (p == 0 || p == Plans.Num() - 1)
+		{
+			Seen += FString::Printf(TEXT("%s%s (%s): LOD 0 %.0f x %.0f x %.0f cm, reach %.2f, legs %s, its rig's neck at (%.1f, %.1f), lift %.0f, swing %.2f, carapace %.0f"), Seen.IsEmpty() ? TEXT("") : TEXT("; "), FormName(S.Form),
+				*SlonkFauna::DescribePlan(EFaunaKind::Herd, Plan), Box0.GetSize().X, Box0.GetSize().Y, Box0.GetSize().Z, S.Reach, *FString::Printf(TEXT("%d"), S.NumLegs), S.Rig.NeckX, S.Rig.NeckZ, S.Rig.LiftCm, S.Rig.PitchScale, S.Rig.Carapace);
+		}
+	}
+	AddInfo(FString::Printf(TEXT("%d alien walker plans: %d LODs off their triangles (%.0f at LOD 0 at the most), %d vertices off the colour contract, %d faces wound inward, %d feet off the ground or their legs, %d gaits off the tripod, %d reaches off their feet; %d vertices moved by the material, %d outside the box padded %.0f units (the closest %.0f inside); %d vertices over their meshes, %d without a tangent basis, %d meshes not made; LOD 1 from %.1f to %.1f pixels long, LOD 2 from %.1f to %.1f"),
+		Plans.Num(), BadTris, MostTris, BadColour, BadWinding, BadFeet, BadGait, BadReach, Tried, Escaped, D.CullPaddingUnits, Margin, Vertices, NoTangent, BadLod, WorstPx1Lo, WorstPx1Hi, WorstPx2Lo, WorstPx2Hi));
+	AddInfo(Seen);
+	for (const TPair<FString, int32>& In : InwardAt) { AddInfo(FString::Printf(TEXT("wound inward: %d faces of the %s"), In.Value, *In.Key)); }
+	AddInfo(FString::Printf(TEXT("the box by arithmetic: %d plans whose farthest reach grown by the speck floor and widest circle at their smallest, lined up, pass the box's nearest side (by %.1f units at the worst, under 0 inside); the insectoids' farthest and circle against the side, unit-mesh cm: %s; %d runs of the worst walking vertex lined up with its circle against each side, %d outside the box (the closest %.1f inside)"),
+		BoxOver, BoxBound, *BoundsSeen, LinedUp, LinedUpOut, LinedUpMargin));
+	TestTrue(TEXT("plans of both forms"), Plans.Num() >= 16);
+	TestEqual(TEXT("every LOD its triangles"), BadTris, 0);
+	TestTrue(TEXT("no more than 180 triangles at LOD 0"), MostTris <= 180.0);
+	TestEqual(TEXT("every vertex as the material reads it"), BadColour, 0);
+	TestEqual(TEXT("every face shows the side its normals point to"), BadWinding, 0);
+	TestEqual(TEXT("every foot on the ground at its leg's foot"), BadFeet, 0);
+	TestEqual(TEXT("six legs in a tripod gait"), BadGait, 0);
+	TestEqual(TEXT("its footprint's reach its feet's"), BadReach, 0);
+	TestEqual(TEXT("the material keeps every vertex in its instance's box, speck floor and all"), Escaped, 0);
+	TestEqual(TEXT("by arithmetic: the farthest reach grown by the speck floor and the widest circle, lined up, inside the box"), BoxOver, 0);
+	TestTrue(TEXT("and the worst of them lined up with its circle, through the material's copy, inside it"), LinedUp > 0 && LinedUpOut == 0);
+	TestTrue(TEXT("every mesh made and kept, a tangent basis at every vertex"), BadLod == 0 && Vertices > 0 && NoTangent == 0);
+	TestTrue(TEXT("its 32 or 38 triangles from about 30 pixels long, its 5 or 4 from about 6"), WorstPx1Lo > 24.0 && WorstPx1Hi < 38.0 && WorstPx2Lo > 4.5 && WorstPx2Hi < 8.0);
+
+	// Their silhouettes against the Earth grazer's and each other's, from the side, from above and from the air (from 35
+	// degrees up, off its quarter, as a ship's camera at 30 to 300 m sees a herd), at LOD 1 (the LOD a herd is seen by from
+	// about 40 m to 200 m off) and LOD 0: how much of each they share (of all either covers), and the legs standing under
+	// each, seen from the side 4 cm over the ground.
+	const FVector Air = FVector(FMath::Cos(FMath::DegreesToRadians(35.0)) * FVector(0.7071, 0.7071, 0.0) - FVector(0.0, 0.0, FMath::Sin(FMath::DegreesToRadians(35.0)))).GetSafeNormal();
+	const FVector AirRight = FVector::CrossProduct(Air, FVector::ZAxisVector).GetSafeNormal(), AirUp = FVector::CrossProduct(AirRight, Air).GetSafeNormal();
+	auto Look = [&](const FFaunaBodyPlan& P, int32 Lod, TArray<uint8>& Side, TArray<uint8>& Top, TArray<uint8>& Oblique, int32& N)
+	{
+		FDynamicMesh3 M;
+		SlonkFaunaMeshes::BuildLod(P, Lod, M);
+		Side = Silhouette(M, FVector::XAxisVector, FVector::ZAxisVector, -80.0, 90.0, 0.25, N);
+		Top = Silhouette(M, FVector::XAxisVector, FVector::YAxisVector, -80.0, 90.0, 0.25, N);
+		Oblique = Silhouette(M, AirRight, AirUp, -80.0, 90.0, 0.25, N);
+	};
+	const FFaunaBodyPlan Earth = SlonkFauna::EarthPlan(EFaunaKind::Herd), Hexa = AlienHerdPlan(0, 0.5f, 0.6f), Insect = AlienHerdPlan(1, 0.5f, 0.6f);
+	FString Looks;
+	double MostAlike = 0.0, MostAlikeAnyView = 0.0;
+	int32 LegsOff = 0;
+	for (const int32 Lod : { 0, 1 })
+	{
+		TArray<uint8> Es, Et, Eo, Hs, Ht, Ho, Is, It, Io;
+		int32 N = 0;
+		Look(Earth, Lod, Es, Et, Eo, N);
+		Look(Hexa, Lod, Hs, Ht, Ho, N);
+		Look(Insect, Lod, Is, It, Io, N);
+		const double EH = SilhouetteOverlap(Es, Hs), EI = SilhouetteOverlap(Es, Is), HI = SilhouetteOverlap(Hs, Is);
+		const double EHt = SilhouetteOverlap(Et, Ht), EIt = SilhouetteOverlap(Et, It), HIt = SilhouetteOverlap(Ht, It);
+		const double EHo = SilhouetteOverlap(Eo, Ho), EIo = SilhouetteOverlap(Eo, Io), HIo = SilhouetteOverlap(Ho, Io);
+		const int32 Le = LegRuns(Es, N, -80.0, 0.25, 4.0), Lh = LegRuns(Hs, N, -80.0, 0.25, 4.0), Li = LegRuns(Is, N, -80.0, 0.25, 4.0);
+		LegsOff += Le == 2 && Lh == 3 && Li == 3 ? 0 : 1;
+		// From the air, every pair apart; and each pair far apart in one view at least.
+		MostAlike = FMath::Max(MostAlike, FMath::Max3(EHo, EIo, HIo));
+		MostAlikeAnyView = FMath::Max(MostAlikeAnyView, FMath::Max3(FMath::Min3(EH, EHt, EHo), FMath::Min3(EI, EIt, EIo), FMath::Min3(HI, HIt, HIo)));
+		Looks += FString::Printf(TEXT("%sLOD %d: the Earth grazer and the six-legged grazer share %.2f of their side view, %.2f of their top and %.2f from the air; the grazer and the insectoid %.2f, %.2f and %.2f; the two alien forms %.2f, %.2f and %.2f; legs standing seen from the side %d, %d and %d"),
+			Looks.IsEmpty() ? TEXT("") : TEXT("; "), Lod, EH, EHt, EHo, EI, EIt, EIo, HI, HIt, HIo, Le, Lh, Li);
+	}
+	AddInfo(Looks);
+	TestEqual(TEXT("two legs standing under the Earth grazer from the side, three under each alien form"), LegsOff, 0);
+
+	// Every alien plan's head down in the grass as it grazes, up as it looks up now and then, and high when it is alarmed,
+	// standing on level ground, at LOD 0 and LOD 1: no vertex of it under the ground (a six-legged grazer's head swung its
+	// own share of the Earth grazer's, so its muzzle and its horns' tips stay over the grass). The plans above and 300 of each
+	// form drawn at random.
+	TArray<FFaunaBodyPlan> PosePlans;
+	for (const FAlienPlan& A : Plans) { PosePlans.Add(A.Plan); }
+	{
+		FRandomStream Rng(4242);
+		for (int32 Form = 0; Form < SlonkFauna::AlienForms(EFaunaKind::Herd); ++Form)
+		{
+			for (int32 i = 0; i < 300; ++i)
+			{
+				float Shape[SlonkFauna::SpeciesShapeDraws];
+				for (float& U : Shape) { U = Rng.FRand(); }
+				float Scale = 1.f;
+				PosePlans.Add(SlonkFauna::AlienPlan(EFaunaKind::Herd, Form, Shape, Scale));
+			}
+		}
+	}
+	const TCHAR* PoseName[3] = { TEXT("grazing"), TEXT("looking up"), TEXT("alarmed") };
+	double Lowest[3] = { 1e9, 1e9, 1e9 };
+	int32 Under[3] = {}, PoseTried = 0;
+	FString LowestAt;
+	double HexaSwingLo = 1.0, HexaSwingHi = 0.0;
+	for (const FFaunaBodyPlan& Plan : PosePlans)
+	{
+		const Wk::FShape S = Wk::ShapeOf(Plan);
+		if (S.Form == Wk::EForm::Hexapod) { HexaSwingLo = FMath::Min(HexaSwingLo, (double)S.Rig.PitchScale); HexaSwingHi = FMath::Max(HexaSwingHi, (double)S.Rig.PitchScale); }
+		for (int32 L = 0; L < 2; ++L)
+		{
+			FDynamicMesh3 M;
+			SlonkFaunaMeshes::BuildLod(Plan, L, M);
+			const TArray<FLinearColor> Vcs = VertexColours(M);
+			for (int32 Pose = 0; Pose < 3; ++Pose)
+			{
+				float Cu[SlonkFauna::Custom::Num] = {};
+				float Gd[SlonkFauna::HerdData::Num] = {};
+				const float Size = 2.f;
+				Cu[SlonkFauna::Custom::SizeM] = Size;
+				// Its seed 0: it looks up 60 times an hour, at the turn of each minute, for 0.12 of it.
+				Cu[SlonkFauna::Custom::Seed] = 0.f;
+				Cu[SlonkFauna::Custom::Phase] = 0.3f;
+				Cu[SlonkFauna::Custom::RateHz] = (float)S.StrideShare * Size;
+				Cu[SlonkFauna::Custom::PerKind] = 1.5f;
+				const float T = Pose == 1 ? 3.6f : 30.f;
+				Gd[SlonkFauna::HerdData::GrazeSec] = 100.f;
+				Gd[SlonkFauna::HerdData::ClockT0] = T;
+				Gd[SlonkFauna::HerdData::PivotRef] = -1000.f + (float)SlonkFauna::HerdData::PivotBack;
+				Gd[SlonkFauna::HerdData::GrazeRef] = 50.f;
+				Gd[SlonkFauna::HerdData::GroundHalfCm] = 3000.f;
+				if (Pose == 2) { Gd[SlonkFauna::HerdData::Startled] = 1.f; Gd[SlonkFauna::HerdData::PanicT0] = T - 5.f; Gd[SlonkFauna::HerdData::OnsetT0] = T - 5.f; }
+				for (const int32 V : M.VertexIndicesItr())
+				{
+					const FVector3f LP = (FVector3f)M.GetVertex(V);
+					const FVector3f Moved = LP + SlonkFauna::WalkerMotion(LP, LP * Size, Vcs[V], T, Cu, Gd, 2000.f, 960.f, S.Rig);
+					++PoseTried;
+					Under[Pose] += Moved.Z < -1e-3f ? 1 : 0;
+					if (Moved.Z < Lowest[Pose])
+					{
+						Lowest[Pose] = Moved.Z;
+						if (Pose == 0) { LowestAt = FString::Printf(TEXT("%s at LOD %d, its swing %.2f"), *SlonkFauna::DescribePlan(EFaunaKind::Herd, Plan), L, S.Rig.PitchScale); }
+					}
+				}
+			}
+		}
+	}
+	AddInfo(FString::Printf(TEXT("%d alien plans (%d drawn at random), %d vertices posed at LOD 0 and 1: under the ground %s %d, %s %d, %s %d; the lowest over it %.2f, %.2f and %.2f unit-mesh cm (grazing: %s); the six-legged grazers' heads swung %.2f to %.2f of the Earth grazer's"),
+		PosePlans.Num(), PosePlans.Num() - Plans.Num(), PoseTried, PoseName[0], Under[0], PoseName[1], Under[1], PoseName[2], Under[2], Lowest[0], Lowest[1], Lowest[2], *LowestAt, HexaSwingLo, HexaSwingHi));
+	TestEqual(TEXT("no vertex under the ground as it grazes, looks up or stands alarmed"), Under[0] + Under[1] + Under[2], 0);
+	TestTrue(TEXT("each a silhouette of its own from the air"), MostAlike < 0.75);
+	TestTrue(TEXT("and far apart from the side, from above or from the air"), MostAlikeAnyView < 0.6);
+	return true;
+}
+
+namespace
+{
+	/** The worlds and herds the alien herds' tests run over: of each form, a herd of a plan at the middle of its ranges and
+	 *  one of the largest walkers of a plan at their high ends (an insectoid's to 3.4 m long). */
+	struct FAlienHerdCase
+	{
+		SlonkFauna::FFaunaWorld W;
+		SlonkFauna::FFaunaGroup G;
+		FString Name;
+		/** The Earth grazers' herd of the same cell (on the same ground, on the same path), to set its slides against. */
+		SlonkFauna::FFaunaGroup Earth;
+		bool bEarth = false;
+	};
+	TArray<FAlienHerdCase> AlienHerdCases()
+	{
+		TArray<FAlienHerdCase> Out;
+		for (int32 Form = 0; Form < SlonkFauna::AlienForms(EFaunaKind::Herd); ++Form)
+		{
+			for (const bool bLargest : { false, true })
+			{
+				float Scale = 1.f;
+				const FFaunaBodyPlan Plan = AlienHerdPlan(Form, bLargest ? 1.f : 0.5f, 0.9f, &Scale);
+				FAlienHerdCase C;
+				C.W = AlienHerdWorld(Plan, Scale);
+				if (!TestAlienHerd(C.W, bLargest, C.G)) { continue; }
+				C.Name = FString::Printf(TEXT("%s herd of %d of %.2f m (%s)"), FormName(Wk::ShapeOf(Plan).Form), C.G.Members, C.G.SpanM, bLargest ? TEXT("the largest") : TEXT("a middling plan"));
+				C.bEarth = SlonkFauna::GroupInCell(EarthHerds(), SlonkFauna::CellOf(C.W.P, EFaunaKind::Herd, C.G.Centre), C.Earth);
+				Out.Add(MoveTemp(C));
+			}
+		}
+		return Out;
+	}
+}
+
+namespace
+{
+	/** What following a herd's feet through every scenario of Slonk.Fauna.AlienHerdNoSlide found. */
+	struct FSlideSet
+	{
+		FHerdRun Walk, Graze, Frozen, WalkFar, WalkCoarse, SetOff, Stop, CrewRun, Fright, WalkSide, WalkAhead, GallopAhead;
+		int32 CrewStartles = 0, Startles = 0, SideStartles = 0, AheadStartles = 0, TwiceStartles = 0;
+		/** The runs through its turns and flights. */
+		TArray<const FHerdRun*> Turns() const { return { &SetOff, &Stop, &CrewRun, &Fright, &WalkSide, &WalkAhead, &GallopAhead }; }
+	};
+	/** A herd stepped through every scenario: walking into its trot and grazing (its ground read each frame, every sixth, and
+	 *  on coarser chunks), its walk not run on, setting off, stopping, someone walking at it from ahead and away, a craft low
+	 *  ahead of it as it grazes (its whole fright), from its side and from ahead as it walks, and a second from ahead as it
+	 *  gallops. */
+	FSlideSet SlideRuns(const SlonkFauna::FFaunaGroup& G, const SlonkFauna::FFaunaWorld& W)
+	{
+		FSlideSet Out;
+		const double R = W.P.RadiusCm;
+		const SlonkFauna::FFaunaKindDesc& D = SlonkFauna::KindDesc(EFaunaKind::Herd);
+		FDrawnGround Fine;
+		Fine.P = W.P;
+		Fine.Depth = 16;
+		FDrawnGround Coarse;
+		Coarse.P = W.P;
+		Coarse.Depth = 14;
+		auto FineAt = [&Fine](const FVector& Dir) { return Fine.At(Dir); };
+		auto CoarseAt = [&Coarse](const FVector& Dir) { return Coarse.At(Dir); };
+		const double C0 = 3.0 * G.CycleSec;
+		const double WalkStart = C0 + G.TrotA - 25.0, GrazeStart = C0 + G.WalkB + 5.0;
+		Out.Walk = RunHerd(G, R, WalkStart, 60.0, 30.0, 1, FineAt, 2);
+		Out.Graze = RunHerd(G, R, GrazeStart, 90.0, 30.0, 1, FineAt, 2);
+		Out.Frozen = RunHerd(G, R, WalkStart + 20.0, 15.0, 30.0, 1, FineAt, 3, true);
+		Out.WalkFar = RunHerd(G, R, WalkStart, 60.0, 30.0, 6, FineAt, 3);
+		Out.WalkCoarse = RunHerd(G, R, WalkStart, 60.0, 10.0, 6, CoarseAt, 3);
+		Out.SetOff = RunHerd(G, R, C0 + G.WalkA - SlonkFauna::HerdLeadSec - 4.0, 16.0, 30.0, 1, FineAt, 1);
+		Out.Stop = RunHerd(G, R, C0 + G.WalkB - 6.0, 16.0, 30.0, 1, FineAt, 1);
+		auto Facing = [](const SlonkFauna::FHerdState& S) { return S.FrameRot.GetAxisX() * FMath::Cos(S.Heading) + S.FrameRot.GetAxisY() * FMath::Sin(S.Heading); };
+		// Someone walking at it from ahead as it grazes, from 100 m off its edge at 1.4 m/s for 45 s, then away again.
+		FVector Crew = FVector::ZeroVector, Toward = FVector::ZeroVector;
+		SlonkFauna::FPanic CrewPanic;
+		const double CrewStart = GrazeStart + 10.0;
+		Out.CrewRun = RunHerdWith(G, R, CrewStart, 150.0, 30.0, 1, FineAt, [&](SlonkFauna::FHerdState& S, double Now, double Dt)
+		{
+			FHerdDrive Dr;
+			if (!S.bStarted) { return Dr; }
+			if (Toward.IsZero()) { Crew = S.FramePos + Facing(S) * (G.HerdRadiusCm + 1.0e4); Toward = -Facing(S); }
+			Crew += Toward * ((Now - CrewStart < 45.0 ? 140.0 : -140.0) * Dt);
+			SlonkFauna::FFaunaThreat Foot;
+			Foot.bCraft = false;
+			Foot.PosCm = Crew;
+			Out.CrewStartles += SlonkFauna::StartleHerd(CrewPanic, S, G, D, R, Foot, Now) ? 1 : 0;
+			Dr.bMoving = SlonkFauna::KeepFromCrew(S, G, D, TArray<FVector>{ Crew }, Dt);
+			Dr.bShaken = CrewPanic.IsLive(Now);
+			Dr.Offset = SlonkFauna::HerdFrightOffset(G, D, CrewPanic, R, Now) + S.Avoid;
+			Dr.Ahead = SlonkFauna::HerdFrightOffset(G, D, CrewPanic, R, Now + 1.0) + S.Avoid + (Dr.bMoving ? S.AvoidWay : FVector::ZeroVector);
+			return Dr;
+		}, 2);
+		// A craft passing 30 m up 50 m off it, coming at it, from a way relative to the way it faces.
+		auto CraftBy = [&](const SlonkFauna::FHerdState& S, double Bearing)
+		{
+			const FVector Up = S.FramePos.GetSafeNormal();
+			const FVector F = Facing(S);
+			const FVector Way = F * FMath::Cos(Bearing) + FVector::CrossProduct(Up, F) * FMath::Sin(Bearing);
+			SlonkFauna::FFaunaThreat Craft;
+			Craft.PosCm = S.FramePos + Way * 5000.0 + Up * 3000.0;
+			Craft.VelCmS = -Way * 8000.0;
+			Craft.AltitudeCm = 3000.0;
+			return Craft;
+		};
+		auto Frightened = [&](double Start, double Seconds, const TArray<TPair<double, double>>& Frights, int32& Startled)
+		{
+			SlonkFauna::FPanic P;
+			int32 Next = 0;
+			return RunHerdWith(G, R, Start, Seconds, 30.0, 1, FineAt, [&](SlonkFauna::FHerdState& S, double Now, double Dt)
+			{
+				FHerdDrive Dr;
+				if (S.bStarted && Next < Frights.Num() && Now - Start >= Frights[Next].Key)
+				{
+					Startled += SlonkFauna::StartleHerd(P, S, G, D, R, CraftBy(S, Frights[Next].Value), Now) ? 1 : 0;
+					++Next;
+				}
+				Dr.bShaken = P.IsLive(Now);
+				Dr.Offset = SlonkFauna::HerdFrightOffset(G, D, P, R, Now);
+				Dr.Ahead = SlonkFauna::HerdFrightOffset(G, D, P, R, Now + 1.0);
+				return Dr;
+			}, 2);
+		};
+		Out.Fright = Frightened(GrazeStart + 10.0, D.FrightSec + 5.0, { { 0.0, 0.0 } }, Out.Startles);
+		const double OnTheMove = C0 + G.WalkA + 12.0;
+		Out.WalkSide = Frightened(OnTheMove, 40.0, { { 3.0, 0.5 * UE_DOUBLE_PI } }, Out.SideStartles);
+		Out.WalkAhead = Frightened(OnTheMove, 40.0, { { 3.0, 0.0 } }, Out.AheadStartles);
+		Out.GallopAhead = Frightened(GrazeStart + 10.0, 40.0, { { 0.0, UE_DOUBLE_PI }, { 10.0, 0.0 } }, Out.TwiceStartles);
+		return Out;
+	}
+	FString SlideLine(const TCHAR* What, const FHerdRun& Run)
+	{
+		return FString::Printf(TEXT("%s %.2f cm/s on average, %.1f at worst (%.0f s in, its share on the move %.2f, turning %.3f rad/m; by foot %.1f/%.1f/%.1f/%.1f/%.1f/%.1f; %.1f while its walkers turned; %d of %d over 10 cm/s)"),
+			What, Run.MeanSlip(), Run.WorstSlip, Run.WorstSlipAt, Run.TravelAtWorst, Run.KapAtWorst, Run.WorstByFoot[0], Run.WorstByFoot[1], Run.WorstByFoot[2], Run.WorstByFoot[3], Run.WorstByFoot[4], Run.WorstByFoot[5],
+			Run.WorstTurnSlip, Run.Slides, Run.Slips);
+	}
+	FString SlideReport(const FString& Name, const FSlideSet& S)
+	{
+		return FString::Printf(TEXT("%s: on the move (%d foot-steps planted, at up to %.1f m/s) planted feet slide %.2f cm/s on average, %.2f at worst; grazing %.2f and %.2f; with its walk not run on %.1f cm/s; %s; %s; %s (startled %d); %s (startled %d times); %s; %s; %s; a walker's yaw %.3f rad a frame at most; planted feet off the drawn ground by %.1f cm at most (%.1f on average) walking, read each frame; %.1f (%.1f) every sixth; grazing %.1f (%.1f); on chunks 610 m across %.1f (%.1f)"),
+			*Name, S.Walk.TravelSlips, S.Walk.MaxSpeedMS, S.Walk.MeanTravelSlip(), S.Walk.WorstTravelSlip, S.Graze.MeanGrazeSlip(), S.Graze.WorstGrazeSlip, S.Frozen.MeanTravelSlip(), *SlideLine(TEXT("setting off"), S.SetOff),
+			*SlideLine(TEXT("stopping"), S.Stop), *SlideLine(TEXT("someone at it from ahead and away"), S.CrewRun), S.CrewStartles, *SlideLine(TEXT("a craft low ahead of it (its whole fright)"), S.Fright), S.Startles,
+			*SlideLine(TEXT("walking, a craft from its side"), S.WalkSide), *SlideLine(TEXT("walking, from ahead"), S.WalkAhead), *SlideLine(TEXT("galloping, a second from ahead"), S.GallopAhead),
+			FMath::Max3(S.Walk.WorstYawStep, S.Graze.WorstYawStep, FMath::Max3(S.SetOff.WorstYawStep, S.Stop.WorstYawStep, S.Fright.WorstYawStep)),
+			S.Walk.WorstPlantedCm, S.Walk.MeanPlantedCm(), S.WalkFar.WorstPlantedCm, S.WalkFar.MeanPlantedCm(), S.Graze.WorstPlantedCm, S.Graze.MeanPlantedCm(), S.WalkCoarse.WorstPlantedCm, S.WalkCoarse.MeanPlantedCm());
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaAlienHerdNoSlideTest, "Slonk.Fauna.AlienHerdNoSlide", SLONK_TEST_FLAGS)
+bool FSlonkFaunaAlienHerdNoSlideTest::RunTest(const FString& Parameters)
+{
+	// The alien herds' feet stay where they are put down and on the ground that is drawn, as an Earth herd's do: of each
+	// form, a middling herd and one of its largest walkers, every planted foot of six followed (its colour its mesh's own at
+	// the foot, so a foot built off the contract slides) walking into its trot, grazing round its circles, setting off and
+	// stopping (each a whole turn where it stands), someone walking at it from ahead and away, a craft low ahead of it as it
+	// grazes (its whole fright: it turns, gallops off, loops round and walks back), a craft from its side and from ahead as
+	// it walks (it stops and turns before it gallops) and a second from ahead as it gallops (it flees on). Each against the
+	// Earth grazers' herd of the same cell, on the same ground and the same path, run the same way: a planted foot slides
+	// less than a centimetre a second on average and none more than 25 cm/s through its turns and flights (6 cm/s walking and
+	// grazing), hardly one in a thousand more than 10 cm/s, or no more than the Earth grazers' feet do there (a tenth more
+	// and half a centimetre a second); with its walk not run on, they would slide as fast as it walks. No walker's yaw jumps
+	// between two frames. On chunks 150 m across and 610 m across, every planted foot within half a metre of the ground
+	// drawn under it, a few centimetres on the whole.
+	const TArray<FAlienHerdCase> Cases = AlienHerdCases();
+	TestTrue(TEXT("a herd of each form, middling and largest, and the Earth grazers of their cells"), Cases.Num() == 4 && !Cases.ContainsByPredicate([](const FAlienHerdCase& C) { return !C.bEarth; }));
+	// Within a bound, or no worse than the Earth grazers' feet on the same ground.
+	auto AsLittle = [](double Got, double Bound, double Earth) { return Got < Bound || Got <= 1.1 * Earth + 0.5; };
+	for (const FAlienHerdCase& Case : Cases)
+	{
+		const FSlideSet A = SlideRuns(Case.G, Case.W);
+		const FSlideSet E = SlideRuns(Case.Earth, Case.W);
+		AddInfo(SlideReport(Case.Name, A));
+		AddInfo(SlideReport(FString::Printf(TEXT("the Earth grazers of its cell (%d of %.2f m)"), Case.Earth.Members, Case.Earth.SpanM), E));
+		TestTrue(TEXT("feet followed on the move and grazing"), A.Walk.TravelSlips > 1000 && A.Graze.GrazeSlips > 100 && A.Walk.MaxSpeedMS > 2.0);
+		TestTrue(TEXT("on the move, a planted foot slides less than a centimetre a second"), AsLittle(A.Walk.MeanTravelSlip(), 1.0, E.Walk.MeanTravelSlip()) && AsLittle(A.Walk.WorstTravelSlip, 6.0, E.Walk.WorstTravelSlip));
+		TestTrue(TEXT("grazing, as little"), AsLittle(A.Graze.MeanGrazeSlip(), 1.0, E.Graze.MeanGrazeSlip()) && AsLittle(A.Graze.WorstGrazeSlip, 6.0, E.Graze.WorstGrazeSlip));
+		TestTrue(TEXT("with the herd's walk not run on, they would slide as fast as it walks"), A.Frozen.MeanTravelSlip() > 50.0);
+		TestTrue(TEXT("it set off, stopped and fled, each a whole turn"), A.SetOff.MinTravel < 0.01 && A.SetOff.MaxTravel > 0.99 && A.Stop.MinTravel < 0.01 && A.Stop.MaxTravel > 0.99
+			&& A.Fright.MinTravel < 0.01 && A.Fright.MaxTravel > 0.99 && A.Startles == 1 && A.CrewStartles == 0);
+		TestTrue(TEXT("startled on the move and again galloping"), A.SideStartles == 1 && A.AheadStartles == 1 && A.TwiceStartles == 2 && A.WalkSide.MinTravel < 0.01 && A.GallopAhead.MaxSpeedMS > 4.0);
+		const TArray<const FHerdRun*> At = A.Turns(), Et = E.Turns();
+		for (int32 i = 0; i < At.Num(); ++i)
+		{
+			TestTrue(TEXT("through its turns and flights, a planted foot slides less than a centimetre a second on average"), AsLittle(At[i]->MeanSlip(), 1.0, Et[i]->MeanSlip()) && At[i]->Slips > 500);
+			TestTrue(TEXT("none more than 25 cm/s"), AsLittle(At[i]->WorstSlip, 25.0, Et[i]->WorstSlip));
+			TestTrue(TEXT("hardly one in a thousand more than 10 cm/s"), AsLittle((double)At[i]->Slides / FMath::Max(At[i]->Slips, 1), 1e-3, (double)Et[i]->Slides / FMath::Max(Et[i]->Slips, 1)));
+		}
+		for (const FHerdRun* Run : { &A.Walk, &A.Graze, &A.SetOff, &A.Stop, &A.CrewRun, &A.Fright, &A.WalkSide, &A.WalkAhead, &A.GallopAhead })
+		{
+			TestTrue(TEXT("no walker's yaw jumps between two frames"), Run->WorstYawStep < 0.3);
+		}
+		TestTrue(TEXT("every planted foot within half a metre of the drawn ground"), A.Walk.WorstPlantedCm <= 50.0 && A.Graze.WorstPlantedCm <= 50.0 && A.WalkFar.WorstPlantedCm <= 50.0 && A.WalkCoarse.WorstPlantedCm <= 50.0);
+		TestTrue(TEXT("on it, on the whole, within a few centimetres"), A.Walk.MeanPlantedCm() < 10.0 && A.Graze.MeanPlantedCm() < 10.0);
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaAlienHerdFrightTest, "Slonk.Fauna.AlienHerdFright", SLONK_TEST_FLAGS)
+bool FSlonkFaunaAlienHerdFrightTest::RunTest(const FString& Parameters)
+{
+	// The alien herds take fright, flee and come back as an Earth herd does, of each form, a middling herd and the largest:
+	// a craft passing 30 m over it startles it (one 300 m up does not), it gallops off (no faster than nine of its shortest
+	// walkers' strides a second, from a stand) and comes back onto its path by the end of its fright, at a steady pace no
+	// faster than its trot, exactly where it would have been. Its flight never takes it into the water: a lake where a craft
+	// from each of eight ways would have driven it turns it from it. Someone walking at it sees it keep 40 to 60 m from them.
+	// It raises dust at its trot by day near the camera and none as it grazes, its puffs its walkers' size.
+	const TArray<FAlienHerdCase> Cases = AlienHerdCases();
+	TestTrue(TEXT("a herd of each form, middling and largest"), Cases.Num() == 4);
+	for (const FAlienHerdCase& Case : Cases)
+	{
+		const SlonkFauna::FFaunaGroup& G = Case.G;
+		const SlonkFauna::FFaunaWorld& W = Case.W;
+		const double R = W.P.RadiusCm;
+		const SlonkFauna::FFaunaKindDesc& D = SlonkFauna::KindDesc(EFaunaKind::Herd);
+		auto Height = [&W](const FVector& Dir) { return FMath::Max(SlonkTerrain::Sample(W.P, Dir, 2000.0).HeightCm, 0.0); };
+		const double T0 = G.CycleSec * 2.0 + G.WalkB + 2.0;
+		auto Step = [&](SlonkFauna::FHerdState& S, const SlonkFauna::FPanic& P, double Now, double Dt, int32 k)
+		{
+			const FVector Ahead = SlonkFauna::HerdFrightOffset(G, D, P, R, Now + 1.0) + S.Avoid;
+			SlonkFauna::StepHerd(S, G, R, Now, Dt, SlonkFauna::HerdFrightOffset(G, D, P, R, Now) + S.Avoid, P.IsLive(Now), false, k % 4 == 0, Height, 0.0, nullptr, &Ahead);
+		};
+		// A pass straight across it at 80 m/s, low and high.
+		auto Pass = [&](double AltitudeCm, SlonkFauna::FPanic& Panic, SlonkFauna::FHerdState& S)
+		{
+			SlonkFauna::StartHerd(S, G, T0);
+			Step(S, Panic, T0, 0.0, 0);
+			const FVector Up = S.FramePos.GetSafeNormal();
+			const FVector Across = S.FrameRot.GetAxisY();
+			const FVector Mid = S.FramePos + Up * AltitudeCm;
+			int32 Startled = 0;
+			for (int32 k = 1; k <= 300; ++k)
+			{
+				const double Now = T0 + k / 20.0;
+				SlonkFauna::FFaunaThreat Craft;
+				Craft.PosCm = Mid + Across * (8000.0 * (k / 20.0 - 7.5));
+				Craft.VelCmS = Across * 8000.0;
+				Craft.AltitudeCm = AltitudeCm;
+				Startled += SlonkFauna::StartleHerd(Panic, S, G, D, R, Craft, Now) ? 1 : 0;
+				Step(S, Panic, Now, 1.0 / 20.0, k);
+			}
+			return Startled;
+		};
+		SlonkFauna::FPanic Low, High;
+		SlonkFauna::FHerdState SLow, SHigh;
+		const int32 LowStartles = Pass(3000.0, Low, SLow), HighStartles = Pass(30000.0, High, SHigh);
+		double Fastest = 0.0, BackFastest = 0.0;
+		const int32 Last = FMath::CeilToInt32(20.0 * (Low.T0 - T0 + D.FrightSec + 10.0));
+		for (int32 k = 301; k <= Last; ++k)
+		{
+			const double Now = T0 + k / 20.0;
+			Step(SLow, Low, Now, 1.0 / 20.0, k);
+			Fastest = FMath::Max(Fastest, SLow.SpeedMS);
+			if (Now - Low.T0 > D.FleeBackSec) { BackFastest = FMath::Max(BackFastest, (SlonkFauna::HerdFrightOffset(G, D, Low, R, Now) - SlonkFauna::HerdFrightOffset(G, D, Low, R, Now - 0.05)).Size() / 5.0); }
+		}
+		const double Fled = SlonkFauna::HerdFrightOffset(G, D, Low, R, Low.T0 + 30.0).Size();
+		const double Back = SlonkFauna::HerdFrightOffset(G, D, Low, R, Low.T0 + D.FrightSec + 0.01).Size();
+		SlonkFauna::FHerdState Calm, Again = SLow;
+		SlonkFauna::FPanic NoPanic;
+		SlonkFauna::StartHerd(Calm, G, Low.T0 + D.FrightSec + 5.0);
+		Step(Calm, NoPanic, Low.T0 + D.FrightSec + 5.0, 0.0, 0);
+		Step(Again, Low, Low.T0 + D.FrightSec + 5.0, 0.0, 0);
+		const double OffPath = FVector::Dist(Again.FramePos, Calm.FramePos);
+		// Its gallop's cap: nine of its shortest walkers' strides a second.
+		const Wk::FShape Shape = Wk::ShapeOf(G.Plan);
+		const double ShortStrideM = Shape.StrideShare * FMath::Clamp(0.9 * (double)G.SpanM, Shape.MinSizeM, Shape.MaxSizeM);
+		const double CapMS = SlonkFauna::HerdGallopStridesHz * ShortStrideM;
+		// A lake of 100 m 220 m along each of eight ways it flees without one: it turns from it, dry.
+		int32 Runs = 0, Wet = 0, WetBlind = 0;
+		double Worst = 1.0e12;
+		{
+			struct FLake { FVector At = FVector::ZeroVector; double RadiusCm = 0.0; };
+			auto Facing = [](const SlonkFauna::FHerdState& S) { return S.FrameRot.GetAxisX() * FMath::Cos(S.Heading) + S.FrameRot.GetAxisY() * FMath::Sin(S.Heading); };
+			auto CraftAt = [&](const SlonkFauna::FHerdState& S, double Bearing)
+			{
+				const FVector Up = S.FramePos.GetSafeNormal();
+				const FVector F = Facing(S);
+				const FVector Way = F * FMath::Cos(Bearing) + FVector::CrossProduct(Up, F) * FMath::Sin(Bearing);
+				SlonkFauna::FFaunaThreat Craft;
+				Craft.PosCm = S.FramePos + Way * 5000.0 + Up * 3000.0;
+				Craft.VelCmS = -Way * 8000.0;
+				Craft.AltitudeCm = 3000.0;
+				return Craft;
+			};
+			const double GrazeAt = 3.0 * G.CycleSec + G.WalkB + 5.0;
+			auto Flee = [&](double Bearing, const TArray<FLake>& Lakes, SlonkFauna::FHerdWater* Water, SlonkFauna::FPanic& OutP, FVector& OutAt)
+			{
+				SlonkFauna::FHerdState S;
+				SlonkFauna::FPanic P;
+				SlonkFauna::StartHerd(S, G, GrazeAt);
+				double Gap = 1.0e12;
+				for (int32 k = 0; ; ++k)
+				{
+					const double Now = GrazeAt + k / 10.0;
+					if (k == 1) { SlonkFauna::StartleHerd(P, S, G, D, R, CraftAt(S, Bearing), Now, true, Water); OutP = P; OutAt = S.FramePos; }
+					const FVector Ahead = SlonkFauna::HerdFrightOffset(G, D, P, R, Now + 1.0);
+					SlonkFauna::StepHerd(S, G, R, Now, k == 0 ? 0.0 : 0.1, SlonkFauna::HerdFrightOffset(G, D, P, R, Now), P.IsLive(Now), false, k % 4 == 0, Height, 0.0, nullptr, &Ahead);
+					if (k > 0)
+					{
+						for (const FLake& L : Lakes) { Gap = FMath::Min(Gap, FVector::Dist(S.FramePos.GetSafeNormal() * R, L.At) - L.RadiusCm - G.HerdRadiusCm); }
+					}
+					if (k > 2 && Now > P.T0 + P.LiveSec + 1.0) { break; }
+				}
+				return Gap;
+			};
+			for (int32 b = 0; b < 8; ++b)
+			{
+				const double Bearing = UE_DOUBLE_TWO_PI * b / 8.0;
+				SlonkFauna::FPanic Blind;
+				FVector From;
+				Flee(Bearing, TArray<FLake>(), nullptr, Blind, From);
+				const FVector Up = From.GetSafeNormal();
+				const FVector Way = (Blind.Dir - Up * FVector::DotProduct(Blind.Dir, Up)).GetSafeNormal();
+				TArray<FLake> Lakes;
+				Lakes.Add({ (From + Way * 2.2e4).GetSafeNormal() * R, 1.0e4 });
+				SlonkFauna::FHerdWater Water([&](const FVector& Dir) { for (const FLake& L : Lakes) { if (FVector::Dist(Dir * R, L.At) < L.RadiusCm) { return true; } } return false; }, R);
+				SlonkFauna::FPanic Chose, Into;
+				FVector Ignore;
+				const double Dry = Flee(Bearing, Lakes, &Water, Chose, Ignore);
+				const double Blinded = Flee(Bearing, Lakes, nullptr, Into, Ignore);
+				++Runs;
+				Wet += Dry < 0.0 ? 1 : 0;
+				WetBlind += Blinded < 0.0 ? 1 : 0;
+				Worst = FMath::Min(Worst, Dry);
+			}
+		}
+		// Someone walking straight at it from 120 m off its edge at 1.4 m/s for a minute and a half.
+		double MinGap = TNumericLimits<double>::Max();
+		int32 CrewStartles = 0;
+		{
+			SlonkFauna::FHerdState Kept;
+			SlonkFauna::FPanic KeptPanic;
+			SlonkFauna::StartHerd(Kept, G, T0);
+			Step(Kept, KeptPanic, T0, 0.0, 0);
+			const FVector Side = Kept.FrameRot.GetAxisY();
+			FVector Crew = Kept.FramePos + Side * (G.HerdRadiusCm + 12000.0);
+			for (int32 k = 1; k <= 20 * 90; ++k)
+			{
+				const double Now = T0 + k / 20.0;
+				Crew -= Side * (140.0 / 20.0);
+				SlonkFauna::FFaunaThreat Foot;
+				Foot.bCraft = false;
+				Foot.PosCm = Crew;
+				CrewStartles += SlonkFauna::StartleHerd(KeptPanic, Kept, G, D, R, Foot, Now) ? 1 : 0;
+				const bool bMoving = SlonkFauna::KeepFromCrew(Kept, G, D, TArray<FVector>{ Crew }, 1.0 / 20.0);
+				const FVector Ahead = SlonkFauna::HerdFrightOffset(G, D, KeptPanic, R, Now + 1.0) + Kept.Avoid + (bMoving ? Kept.AvoidWay : FVector::ZeroVector);
+				SlonkFauna::StepHerd(Kept, G, R, Now, 1.0 / 20.0, SlonkFauna::HerdFrightOffset(G, D, KeptPanic, R, Now) + Kept.Avoid, KeptPanic.IsLive(Now), bMoving, k % 4 == 0, Height, 0.0, nullptr, &Ahead);
+				if (k > 20 * 30) { MinGap = FMath::Min(MinGap, SlonkFauna::CrewGapCm(G, Kept.FramePos, Crew)); }
+			}
+		}
+		// Its dust: stepped from grazing through its walk into its trot, by day, 300 m off.
+		float GrazeDust = 0.f, TrotDust = 0.f, PuffSize = 0.f;
+		{
+			SlonkFauna::FHerdState S;
+			SlonkFauna::FDustGate Gate;
+			const double Start = 3.0 * G.CycleSec + G.WalkA - 30.0;
+			SlonkFauna::StartHerd(S, G, Start);
+			for (int32 f = 0; f <= 60 * FMath::CeilToInt32(G.TrotB - G.WalkA + 30.0); f += 2)
+			{
+				const double Now = Start + f / 60.0;
+				SlonkFauna::StepHerd(S, G, R, Now, f == 0 ? 0.0 : 2.0 / 60.0, FVector::ZeroVector, false, false, f % 12 == 0, Height, 0.0, nullptr);
+				SlonkFauna::StepDustGate(Gate, S.SpeedMS, f == 0 ? 0.0 : 2.0 / 60.0, Now);
+				SlonkFauna::FHerdDustInput In;
+				In.SpeedMS = Gate.SpeedMS;
+				In.Wet = 0.4;
+				In.Life = 1.0;
+				In.Night = 0.0;
+				In.DistCm = 3.0e4;
+				In.Members = G.Members;
+				In.SpanM = G.SpanM;
+				In.RadiusCm = G.HerdRadiusCm;
+				const SlonkFauna::FHerdDust Dust = SlonkFauna::HerdDustFor(In);
+				if (Now - Start < 25.0) { GrazeDust = FMath::Max(GrazeDust, Dust.Rate); }
+				if (Now > 3.0 * G.CycleSec + G.TrotA + G.RampSec + 1.0 && Now < 3.0 * G.CycleSec + G.TrotB - G.RampSec) { TrotDust = FMath::Max(TrotDust, Dust.Rate); PuffSize = FMath::Max(PuffSize, Dust.Size); }
+			}
+		}
+		SlonkFauna::FHerdDustInput EarthIn;
+		EarthIn.SpeedMS = 3.0;
+		EarthIn.Members = G.Members;
+		EarthIn.SpanM = 1.95;
+		EarthIn.DistCm = 3.0e4;
+		const float EarthPuff = SlonkFauna::HerdDustFor(EarthIn).Size;
+		AddInfo(FString::Printf(TEXT("%s: a pass 30 m up startles it %d times, 300 m up %d; it gallops off at up to %.1f m/s (nine of its shortest walkers' strides a second %.1f m/s), %.0f m off its path 30 s on, comes back at up to %.2f m/s (its trot %.1f), %.2f m off it at its fright's end (%.2f cm from a herd never startled); with a lake each of 8 ways it fled, %d into it (its walkers %.0f m from the shore at the nearest), %d without the water read; someone walking at it kept %.0f m off (startled %d times); dust grazing %.1f, at its trot %.1f puffs a second, %.0f cm across (an Earth herd's %.0f)"),
+			*Case.Name, LowStartles, HighStartles, Fastest, CapMS, Fled / 100.0, BackFastest, G.TrotCmS / 100.0, Back / 100.0, OffPath, Wet, Worst / 100.0, WetBlind, MinGap / 100.0, CrewStartles, GrazeDust, TrotDust,
+			PuffSize, EarthPuff));
+		TestTrue(TEXT("a craft passing low startles the herd, one high does not"), LowStartles >= 1 && HighStartles == 0 && Fled > 1.5e4);
+		TestTrue(TEXT("back on its path by the end of its fright, exactly where it would have been"), Back == 0.0 && OffPath < 0.01);
+		TestTrue(TEXT("at its gallop, no faster than nine of its shortest strides a second"), Fastest > 4.0 && Fastest <= CapMS * 1.15 + 0.5 && Fastest < 16.0);
+		TestTrue(TEXT("coming back no faster than its own trot"), BackFastest > 0.3 && BackFastest * 100.0 < G.TrotCmS);
+		TestTrue(TEXT("no flight into a lake, as each would have gone in without the water read"), Runs == 8 && Wet == 0 && WetBlind == Runs);
+		TestTrue(TEXT("it keeps 40 to 60 m from someone walking at it, unstartled"), MinGap > 3500.0 && MinGap < 6500.0 && CrewStartles == 0);
+		TestTrue(TEXT("dust at its trot, none grazing, its puffs its walkers' size"), GrazeDust == 0.f && TrotDust > 0.f && (G.SpanM > 1.95f ? PuffSize >= EarthPuff : PuffSize > 0.f));
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaAlienHerdSpacingTest, "Slonk.Fauna.AlienHerdSpacing", SLONK_TEST_FLAGS)
+bool FSlonkFaunaAlienHerdSpacingTest::RunTest(const FString& Parameters)
+{
+	// No two alien walkers of a herd ever meet: grazing round their circles a stride a step through a whole hour (and so
+	// walking with the herd, their circles held), the middles of any two stay at least the longer one's footprint apart
+	// (its length times its form's reach: an insectoid's feet splay out past its length). Of each form, its tightest herds.
+	// And the herds of every species keep to their budget: about the densest places of a strange world of three species, at
+	// most 16 herds and 960 walkers, at most 180 triangles a walker at LOD 0 (172,800 in all, inside the quarter of a
+	// million the fauna's worst case allows); a frame's work on 16 alien herds well inside 0.15 ms of the game thread; and
+	// the world builds a mesh for each species, never one for each herd.
+	int32 Close = 0, Walkers = 0, Tried = 0;
+	double Closest = TNumericLimits<double>::Max();
+	FString Forms;
+	const FLinearColor Rigid(SlonkFauna::Vc::SurfaceBody, 0.f, SlonkFauna::Vc::SideMiddle, SlonkFauna::Vc::JointRigid);
+	for (int32 Form = 0; Form < SlonkFauna::AlienForms(EFaunaKind::Herd); ++Form)
+	{
+		for (const float At : { 0.f, 1.f })
+		{
+			float Scale = 1.f;
+			const FFaunaBodyPlan Plan = AlienHerdPlan(Form, At, 0.5f, &Scale);
+			const Wk::FShape Shape = Wk::ShapeOf(Plan);
+			const SlonkFauna::FFaunaWorld W = AlienHerdWorld(Plan, Scale);
+			TArray<SlonkFauna::FFaunaGroup> Herds;
+			HerdsOverGlobe(W, 8000, Herds);
+			Herds.Sort([](const SlonkFauna::FFaunaGroup& A, const SlonkFauna::FFaunaGroup& B) { return A.Members / FMath::Square(A.SpacingM) > B.Members / FMath::Square(B.SpacingM); });
+			double FormClosest = TNumericLimits<double>::Max();
+			for (int32 h = 0; h < FMath::Min(Herds.Num(), 3); ++h)
+			{
+				const SlonkFauna::FFaunaGroup& G = Herds[h];
+				++Tried;
+				TArray<FTransform> Xf;
+				TArray<float> Cu;
+				SlonkFauna::MembersOf(G, Xf, Cu);
+				const int32 N = Xf.Num();
+				Walkers += N;
+				TArray<FVector3f> At3;
+				At3.SetNum(N);
+				for (int32 s = 0; s < 3600; s += 2)
+				{
+					float Gd[SlonkFauna::HerdData::Num] = {};
+					Gd[SlonkFauna::HerdData::GrazeSec] = (float)s;
+					Gd[SlonkFauna::HerdData::GrazeRef] = (float)s - 900.f;
+					Gd[SlonkFauna::HerdData::PivotRef] = -1000.f;
+					for (int32 m = 0; m < N; ++m)
+					{
+						const float* C = Cu.GetData() + m * SlonkFauna::Custom::Num;
+						const FVector3f Home = (FVector3f)Xf[m].GetTranslation();
+						At3[m] = Home + SlonkFauna::WalkerMotion(FVector3f::ZeroVector, Home, Rigid, 0.f, C, Gd, 2000.f, 960.f, Shape.Rig) * C[SlonkFauna::Custom::SizeM];
+					}
+					for (int32 i = 0; i < N; ++i)
+					{
+						for (int32 j = i + 1; j < N; ++j)
+						{
+							const double Longer = 100.0 * Shape.Reach * FMath::Max(Cu[i * SlonkFauna::Custom::Num + SlonkFauna::Custom::SizeM], Cu[j * SlonkFauna::Custom::Num + SlonkFauna::Custom::SizeM]);
+							const double Ratio = FVector3f::Dist2D(At3[i], At3[j]) / Longer;
+							FormClosest = FMath::Min(FormClosest, Ratio);
+							Close += Ratio < 1.0 ? 1 : 0;
+						}
+					}
+				}
+			}
+			Closest = FMath::Min(Closest, FormClosest);
+			Forms += FString::Printf(TEXT("%s%s (reach %.2f, %d herds, the tightest %d walkers of %.2f m): %.2f"), Forms.IsEmpty() ? TEXT("") : TEXT("; "), FormName(Shape.Form), Shape.Reach, Herds.Num(),
+				Herds.Num() > 0 ? Herds[0].Members : 0, Herds.Num() > 0 ? Herds[0].SpanM : 0.f, FormClosest);
+		}
+	}
+	AddInfo(FString::Printf(TEXT("the tightest alien herds (%d, %d walkers) grazing through an hour, two walkers' middles at least so many of the longer one's footprints apart: %s; %d times a pair closer"), Tried, Walkers, *Forms, Close));
+	TestTrue(TEXT("herds to try"), Tried >= 8);
+	TestEqual(TEXT("no two walkers ever closer than the longer one's footprint"), Close, 0);
+
+	// The budget, about the densest places of a strange world of three herd species of both forms.
+	SlonkFauna::FFaunaWorld W;
+	if (!StrangeHerds(0.9f, 3, true, W)) { AddError(TEXT("no world of three herd species of both forms")); return false; }
+	const SlonkFauna::FFaunaKindDesc& D = SlonkFauna::KindDesc(EFaunaKind::Herd);
+	TArray<SlonkFauna::FFaunaGroup> Herds;
+	HerdsOverGlobe(W, 12000, Herds);
+	if (Herds.Num() == 0) { AddError(TEXT("no herds on the strange world")); return false; }
+	SlonkFauna::FFaunaWorld Dense = W;
+	Dense.Density = 2.f;
+	int32 MaxGroups = 0, MaxMembers = 0, Over = 0, Places = 0, MaxTris = 0;
+	TSet<UStaticMesh*> Meshes;
+	for (int32 i = 0; i < Herds.Num() && Places < 10; i += FMath::Max(Herds.Num() / 10, 1), ++Places)
+	{
+		SlonkFauna::FFaunaField F;
+		F.SetWorld(Dense);
+		TArray<uint64> Active;
+		ScanAndSelect(F, CameraOver(Dense, Herds[i].Centre), Active);
+		MaxGroups = FMath::Max(MaxGroups, F.ActiveGroups(EFaunaKind::Herd));
+		MaxMembers = FMath::Max(MaxMembers, F.ActiveMembers(EFaunaKind::Herd));
+		Over += F.ActiveGroups(EFaunaKind::Herd) <= D.MaxGroups && F.ActiveMembers(EFaunaKind::Herd) <= D.MaxMembers ? 0 : 1;
+		int32 Tris = 0;
+		for (const TPair<uint64, SlonkFauna::FFaunaField::FGroupRef>& A : F.GetActive())
+		{
+			UE::Geometry::FDynamicMesh3 M;
+			SlonkFaunaMeshes::BuildLod(A.Value->Plan, 0, M);
+			Tris += A.Value->Members * M.TriangleCount();
+			Meshes.Add(SlonkFaunaMeshes::GetMesh(A.Value->Plan, EFaunaKind::Herd));
+		}
+		MaxTris = FMath::Max(MaxTris, Tris);
+	}
+	// A frame's work on 16 alien herds (of the world's insectoids' or six-legged grazers', the first found).
+	const SlonkFauna::FFaunaGroup* Alien = Herds.FindByPredicate([](const SlonkFauna::FFaunaGroup& G) { return !SlonkFauna::IsEarthPlan(EFaunaKind::Herd, G.Plan); });
+	double FrameMs = 1.0e9;
+	if (Alien)
+	{
+		const SlonkFauna::FFaunaGroup& G = *Alien;
+		const double R = W.P.RadiusCm;
+		FDrawnGround Ground;
+		Ground.P = W.P;
+		Ground.Depth = 14;
+		auto At = [&Ground](const FVector& Dir) { return Ground.At(Dir); };
+		TArray<SlonkFauna::FHerdState> States;
+		TArray<SlonkFauna::FPanic> Panics;
+		States.SetNum(16);
+		Panics.SetNum(16);
+		for (int32 h = 0; h < 16; ++h) { SlonkFauna::StartHerd(States[h], G, 500.0 + 60.0 * h); }
+		auto Frame = [&](int32 f, double& Sink)
+		{
+			for (int32 h = 0; h < 16; ++h)
+			{
+				const double Now = 500.0 + 60.0 * h + f / 60.0;
+				SlonkFauna::FHerdState& S = States[h];
+				SlonkFauna::FFaunaThreat Craft, Walker;
+				Craft.PosCm = S.FramePos + S.FramePos.GetSafeNormal() * 1.0e5;
+				Craft.AltitudeCm = 1.0e5;
+				Walker.bCraft = false;
+				Walker.PosCm = S.FramePos + S.FrameRot.GetAxisX() * 3.0e4;
+				SlonkFauna::StartleHerd(Panics[h], S, G, D, R, Craft, Now);
+				SlonkFauna::StartleHerd(Panics[h], S, G, D, R, Walker, Now);
+				const bool bMoving = SlonkFauna::KeepFromCrew(S, G, D, TArray<FVector>{ Walker.PosCm }, 1.0 / 60.0);
+				const FVector Ahead = SlonkFauna::HerdFrightOffset(G, D, Panics[h], R, Now + 1.0) + S.Avoid + (bMoving ? S.AvoidWay : FVector::ZeroVector);
+				float Gd[SlonkFauna::HerdData::Num] = {};
+				SlonkFauna::StepHerd(S, G, R, Now, f == 0 ? 0.0 : 1.0 / 60.0, SlonkFauna::HerdFrightOffset(G, D, Panics[h], R, Now) + S.Avoid, Panics[h].IsLive(Now), bMoving,
+					h < 2 || (f + h) % 6 == 0, At, 0.0, Gd, &Ahead);
+				SlonkFauna::HerdFrightData(Panics[h], Now, 0.0, Gd);
+				Sink += Gd[SlonkFauna::HerdData::DistM] + S.FramePos.X;
+			}
+		};
+		double Sink = 0.0;
+		for (int32 f = 0; f < 120; ++f) { Frame(f, Sink); }
+		const double Start = FPlatformTime::Seconds();
+		for (int32 f = 120; f < 720; ++f) { Frame(f, Sink); }
+		FrameMs = (FPlatformTime::Seconds() - Start) * 1000.0 / 600.0;
+		TestTrue(TEXT("the frames' places all found"), FMath::IsFinite(Sink));
+	}
+	// The worst the caps allow: every walker about of the plan of the most triangles at LOD 0.
+	int32 MostPlanTris = 0;
+	for (const FAlienPlan& A : AlienHerdPlans())
+	{
+		UE::Geometry::FDynamicMesh3 M;
+		SlonkFaunaMeshes::BuildLod(A.Plan, 0, M);
+		MostPlanTris = FMath::Max(MostPlanTris, M.TriangleCount());
+	}
+	const int32 WorstCase = D.MaxMembers * MostPlanTris;
+	AddInfo(FString::Printf(TEXT("about %d of the densest places of a strange world of %d herd species: at most %d herds and %d walkers (%d triangles at LOD 0), %d over the caps, %d meshes among them; at the caps (%d walkers) of the plan of the most triangles (%d) %d triangles; a frame's work on 16 alien herds %.4f ms"),
+		Places, W.Profile.Species[(int32)EFaunaKind::Herd].Num, MaxGroups, MaxMembers, MaxTris, Over, Meshes.Num(), D.MaxMembers, MostPlanTris, WorstCase, FrameMs));
+	TestTrue(TEXT("places with herds to try"), Places >= 6 && MaxGroups > 0);
+	TestEqual(TEXT("never over the herds' caps"), Over, 0);
+	TestTrue(TEXT("at most 172,800 triangles of walkers at LOD 0, at the caps"), MaxTris <= WorstCase && MaxTris > 0 && WorstCase <= 172800);
+	TestTrue(TEXT("a mesh for each species at the most"), Meshes.Num() <= W.Profile.Species[(int32)EFaunaKind::Herd].Num && !Meshes.Contains(nullptr));
+	TestTrue(TEXT("a frame's work on 16 alien herds well inside 0.15 ms"), FrameMs < 0.1);
+	return true;
+}
+
+namespace
+{
+	/** The world "spawnplanet terrestrial strange s seed n" makes from the game's start, every kind (its genome settled as
+	 *  the spawn settles it: no star's bearing, so it spins), full of life. */
+	SlonkFauna::FFaunaWorld SpawnedStrange(int32 SeedPick, float S)
+	{
+		const uint32 Hash = PlaceHash(SpawnedPlace(SeedPick));
+		FWorldGenome G = SlonkGenome::Roll(EPlanetArchetype::Terrestrial, S, Hash);
+		SlonkGenome::SettleLock(G, EPlanetArchetype::Terrestrial, FVector::ZeroVector, false);
+		SlonkFauna::FFaunaWorld W;
+		W.P = SpawnedParams(SeedPick);
+		W.Profile = SlonkFauna::Roll(G, EPlanetArchetype::Terrestrial, Hash);
+		W.Life = 1.f;
+		W.KindMask = SlonkFauna::KindBit(EFaunaKind::Herd);
+		return W;
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaAlienHerdSeedsTest, "Slonk.Fauna.AlienHerdSeeds", SLONK_TEST_FLAGS)
+bool FSlonkFaunaAlienHerdSeedsTest::RunTest(const FString& Parameters)
+{
+	// The captures' worlds: of the seeds "spawnplanet terrestrial strange s seed n" rolls from the game's start, those whose
+	// herds have a six-legged grazer species and an insectoid one at a strangeness from 0.6 to 0.9, and how far from the
+	// start's place (the middle of its day side as the spawn faces it, (0.3, 0.8, 0.5) of the world) the nearest herd of each
+	// is ("fauna goto herd 120 species n" finds it).
+	TArray<FString> Picks;
+	for (int32 Seed = 0; Seed <= 80 && Picks.Num() < 4; ++Seed)
+	{
+		for (const float S : { 0.7f, 0.8f, 0.9f, 0.6f })
+		{
+			const SlonkFauna::FFaunaWorld W = SpawnedStrange(Seed, S);
+			const SlonkFauna::FFaunaKindSpecies& Sp = W.Profile.Species[(int32)EFaunaKind::Herd];
+			int32 Hexa = -1, Insect = -1;
+			for (int32 i = 0; i < Sp.Num; ++i)
+			{
+				const Wk::EForm F = Wk::ShapeOf(Sp.List[i].Plan).Form;
+				if (F == Wk::EForm::Hexapod && Hexa < 0) { Hexa = i; }
+				if (F == Wk::EForm::Insectoid && Insect < 0) { Insect = i; }
+			}
+			if (Hexa < 0 || Insect < 0) { continue; }
+			const FVector Start = FVector(0.3, 0.8, 0.5).GetSafeNormal();
+			SlonkFauna::FFaunaGroup Gh, Gi;
+			SlonkFauna::FGroupSearch Sh, Si;
+			const bool bH = SlonkFauna::FindGroupNear(W, EFaunaKind::Herd, Start, 4.0e7, 60000, Gh, &Sh, Hexa);
+			const bool bI = SlonkFauna::FindGroupNear(W, EFaunaKind::Herd, Start, 4.0e7, 60000, Gi, &Si, Insect);
+			if (!bH || !bI) { continue; }
+			const double Rkm = W.P.RadiusCm / 1e5;
+			const double Dh = FVector::Dist(Gh.Centre, Start) * Rkm, Di = FVector::Dist(Gi.Centre, Start) * Rkm;
+			if (FMath::Max(Dh, Di) > 600.0) { continue; }
+			Picks.Add(FString::Printf(TEXT("seed %d at strangeness %.1f: %d herd species, six-legged grazers #%d (%.0f%% of the cells; the nearest herd %.0f km off, %d of %.1f m) and insectoids #%d (%.0f%%; %.0f km off, %d of %.1f m)"),
+				Seed, S, Sp.Num, Hexa, 100.f * Sp.List[Hexa].Share, Dh, Gh.Members, Gh.SpanM, Insect, 100.f * Sp.List[Insect].Share, Di, Gi.Members, Gi.SpanM));
+			break;
+		}
+	}
+	AddInfo(FString::Printf(TEXT("spawnplanet terrestrial worlds with both alien grazers near the start: %s"), *FString::Join(Picks, TEXT("; "))));
+	TestTrue(TEXT("seeds for the captures"), Picks.Num() >= 2);
+	return true;
+}
+
+namespace
+{
+	namespace Wn = SlonkFauna::Wings;
+	namespace Ff = SlonkFauna::FishForm;
+
+	/** An alien plan of a kind's form, every proportion's draw At (0, the low end of its range, to 1, the high), its
+	 *  ornaments' (and a membrane's struts') OrnDraw, its glow organs' GlowDraw (under 0.4 it carries them); and its size
+	 *  against the kind's own. */
+	FFaunaBodyPlan AlienKindPlan(EFaunaKind K, int32 Form, float At, float OrnDraw, float GlowDraw, float* OutScale = nullptr)
+	{
+		float Shape[SlonkFauna::SpeciesShapeDraws];
+		for (int32 j = 0; j < SlonkFauna::SpeciesShapeDraws; ++j) { Shape[j] = At; }
+		Shape[5] = OrnDraw;
+		Shape[6] = GlowDraw;
+		float Scale = 1.f;
+		const FFaunaBodyPlan P = SlonkFauna::AlienPlan(K, Form, Shape, Scale);
+		if (OutScale) { *OutScale = Scale; }
+		return P;
+	}
+	/** Every alien plan of a kind the tests run over: each form at the ends and the middle of its ranges, wearing each
+	 *  ornament (and a membrane each count of struts), with glow organs and without. */
+	TArray<FAlienPlan> AlienKindPlans(EFaunaKind K)
+	{
+		TArray<FAlienPlan> Out;
+		for (int32 Form = 0; Form < SlonkFauna::AlienForms(K); ++Form)
+		{
+			for (const float At : { 0.f, 0.5f, 1.f })
+			{
+				for (const float Orn : { 0.1f, 0.2f, 0.3f, 0.45f, 0.6f, 0.7f, 0.9f })
+				{
+					for (const float Glow : { 0.9f, 0.2f })
+					{
+						FAlienPlan A;
+						A.Plan = AlienKindPlan(K, Form, At, Orn, Glow, &A.Scale);
+						if (!Out.ContainsByPredicate([&A](const FAlienPlan& O) { return O.Plan == A.Plan; })) { Out.Add(A); }
+					}
+				}
+			}
+		}
+		return Out;
+	}
+	/** A world, its species of a kind one plan alone at a size against the kind's own. */
+	SlonkFauna::FFaunaWorld OnePlanWorld(SlonkFauna::FFaunaWorld W, EFaunaKind K, const FFaunaBodyPlan& Plan, float Scale)
+	{
+		SlonkFauna::FFaunaKindSpecies& S = W.Profile.Species[(int32)K];
+		S = SlonkFauna::FFaunaKindSpecies();
+		S.List[0].Plan = Plan;
+		S.List[0].SizeScale = Scale;
+		return W;
+	}
+	const TCHAR* WingName(int32 Form) { return Form == Wn::Four ? TEXT("four-winged") : (Form == Wn::Membrane ? TEXT("membrane-winged") : TEXT("bird")); }
+	const TCHAR* FishName(int32 Form) { return Form == Ff::Eel ? TEXT("eel") : (Form == Ff::Spinefin ? TEXT("spinefin") : TEXT("Earth fish")); }
+
+	/** How many triangles an alien flier's plan has at a LOD (FaunaMeshes.h's counts). */
+	int32 AlienFlierTris(const FFaunaBodyPlan& P, int32 Lod)
+	{
+		if (Lod >= 2) { return 6; }
+		if (Wn::FormOf(P) == Wn::Four) { return Lod == 0 ? 92 + ((P.Ornament & 1) ? 2 : 0) + ((P.Ornament & 2) ? 2 : 0) : 40; }
+		const int32 N = FMath::Clamp((int32)P.LimbPairs, 3, 4);
+		return Lod == 0 ? 32 + 16 * N + 2 + ((P.Ornament & 2) ? 2 : 0) + ((P.Ornament & 1) ? 1 : 0) : 16 + 8 * N + 2;
+	}
+	/** How many an alien fish's has. */
+	int32 AlienFishTris(const FFaunaBodyPlan& P, int32 Lod)
+	{
+		if (Ff::FormOf(P) == Ff::Eel) { return Lod == 0 ? 82 + (P.Ornament ? 2 : 0) : (Lod == 1 ? 38 : 3); }
+		return Lod == 0 ? 63 + (P.Ornament ? 3 : 0) : (Lod == 1 ? 21 : 5);
+	}
+
+	/** Every vertex of a static mesh's LODs with a tangent basis at right angles to its normal, of how many. */
+	void TangentBasis(UStaticMesh* Mesh, int32& OutVertices, int32& OutWithout)
+	{
+		if (!Mesh) { return; }
+		if (const FStaticMeshRenderData* RD = Mesh->GetRenderData())
+		{
+			for (const FStaticMeshLODResources& LR : RD->LODResources)
+			{
+				const FStaticMeshVertexBuffer& VB = LR.VertexBuffers.StaticMeshVertexBuffer;
+				for (uint32 i = 0; i < VB.GetNumVertices(); ++i)
+				{
+					const FVector3f Tx(VB.VertexTangentX(i)), Tz(VB.VertexTangentZ(i)), Ty(VB.VertexTangentY(i));
+					++OutVertices;
+					OutWithout += Tx.Size() > 0.5f && Ty.Size() > 0.5f && FMath::Abs(FVector3f::DotProduct(Tx.GetSafeNormal(), Tz.GetSafeNormal())) < 0.1f ? 0 : 1;
+				}
+			}
+		}
+	}
+	/** How many faces of a mesh are wound to show the side away from where their normals point. */
+	int32 InwardFaces(const UE::Geometry::FDynamicMesh3& M)
+	{
+		const UE::Geometry::FDynamicMeshNormalOverlay* N = M.Attributes()->PrimaryNormals();
+		int32 Bad = 0;
+		for (const int32 T : M.TriangleIndicesItr())
+		{
+			FVector3d Fn, Centroid; double Area;
+			M.GetTriInfo(T, Fn, Area, Centroid);
+			const UE::Geometry::FIndex3i E = N->GetTriangle(T);
+			Bad += Fn.Dot(FVector3d(N->GetElement(E.A) + N->GetElement(E.B) + N->GetElement(E.C))) > 0.0 ? 0 : 1;
+		}
+		return Bad;
+	}
+	/** Where a mesh's LOD 1 and LOD 2 come in, in pixels across for a span or length of SizeM through a 90-degree view at
+	 *  16:9, 960 pixels a radian (the GPU's radius, its padded box's). */
+	FVector2D LodPixels(UStaticMesh* Mesh, const SlonkFauna::FFaunaKindDesc& D, double SizeM)
+	{
+		UPlanetInstancesComponent* Set = NewObject<UPlanetInstancesComponent>();
+		Set->SetStaticMesh(Mesh);
+		Set->SetCullPadding(D.CullPaddingUnits);
+		Set->SetPieces(TArray<FTransform>{ FTransform(FQuat::Identity, FVector::ZeroVector, FVector(SizeM)) }, TConstArrayView<float>());
+		const double Proj = (16.0 / 9.0) / FMath::Tan(FMath::DegreesToRadians(45.0));
+		const double GpuR = Set->GetMaxInstanceRadius();
+		return FVector2D(SizeM * 960.0 / (Proj * GpuR / D.LodScreenSize[1] / 100.0), SizeM * 960.0 / (Proj * GpuR / D.LodScreenSize[2] / 100.0));
+	}
+
+	/** How much of a mesh's glow organs are seen from far off straight along a view: on a grid of samples Cell unit-mesh cm
+	 *  apart over the plane square to the view, at the nearest drawn point of each, the share of a spot covering it
+	 *  (SlonkFauna::GlowSpotAt); unit-mesh cm squared. And how much of the sky it covers. */
+	FVector2D SeeGlow(const UE::Geometry::FDynamicMesh3& M, const FVector& View, const SlonkFauna::GlowOrgan::FRow& Row, double Cell = 0.4)
+	{
+		const FVector Fwd = View.GetSafeNormal();
+		const FVector Right = FVector::CrossProduct(FMath::Abs(Fwd.Z) < 0.9 ? FVector::ZAxisVector : FVector::XAxisVector, Fwd).GetSafeNormal();
+		const FVector Up = FVector::CrossProduct(Fwd, Right);
+		constexpr double Half = 90.0;
+		const int32 N = FMath::CeilToInt32(2.0 * Half / Cell);
+		TArray<float> Depth, Light;
+		Depth.Init(TNumericLimits<float>::Max(), N * N);
+		Light.Init(0.f, N * N);
+		const TArray<FLinearColor> Vcs = VertexColours(M);
+		const TArray<FVector2f> Uvs = VertexUVs(M);
+		for (const int32 T : M.TriangleIndicesItr())
+		{
+			const UE::Geometry::FIndex3i Tri = M.GetTriangle(T);
+			FVector2D S[3];
+			double Z[3];
+			for (int32 k = 0; k < 3; ++k)
+			{
+				const FVector P = (FVector)M.GetVertex(Tri[k]);
+				S[k] = FVector2D(FVector::DotProduct(P, Right), FVector::DotProduct(P, Up));
+				Z[k] = FVector::DotProduct(P, Fwd);
+			}
+			const double Area2 = (S[1].X - S[0].X) * (S[2].Y - S[0].Y) - (S[2].X - S[0].X) * (S[1].Y - S[0].Y);
+			if (FMath::Abs(Area2) < 1e-9) { continue; }
+			const int32 X0 = FMath::Clamp(FMath::FloorToInt32((FMath::Min3(S[0].X, S[1].X, S[2].X) + Half) / Cell), 0, N - 1);
+			const int32 X1 = FMath::Clamp(FMath::FloorToInt32((FMath::Max3(S[0].X, S[1].X, S[2].X) + Half) / Cell), 0, N - 1);
+			const int32 Y0 = FMath::Clamp(FMath::FloorToInt32((FMath::Min3(S[0].Y, S[1].Y, S[2].Y) + Half) / Cell), 0, N - 1);
+			const int32 Y1 = FMath::Clamp(FMath::FloorToInt32((FMath::Max3(S[0].Y, S[1].Y, S[2].Y) + Half) / Cell), 0, N - 1);
+			for (int32 y = Y0; y <= Y1; ++y)
+			{
+				for (int32 x = X0; x <= X1; ++x)
+				{
+					const FVector2D Q(-Half + (x + 0.5) * Cell, -Half + (y + 0.5) * Cell);
+					const double W0 = ((S[1].X - Q.X) * (S[2].Y - Q.Y) - (S[2].X - Q.X) * (S[1].Y - Q.Y)) / Area2;
+					const double W1 = ((S[2].X - Q.X) * (S[0].Y - Q.Y) - (S[0].X - Q.X) * (S[2].Y - Q.Y)) / Area2;
+					const double W2 = 1.0 - W0 - W1;
+					if (W0 < 0.0 || W1 < 0.0 || W2 < 0.0) { continue; }
+					const int32 I = y * N + x;
+					const float D = (float)(W0 * Z[0] + W1 * Z[1] + W2 * Z[2]);
+					if (D >= Depth[I]) { continue; }
+					const FVector2f Uv = Uvs[Tri.A] * (float)W0 + Uvs[Tri.B] * (float)W1 + Uvs[Tri.C] * (float)W2;
+					const FLinearColor Vc = Vcs[Tri.A] * (float)W0 + Vcs[Tri.B] * (float)W1 + Vcs[Tri.C] * (float)W2;
+					Depth[I] = D;
+					Light[I] = SlonkFauna::GlowSpotAt(Uv, Vc, Row);
+				}
+			}
+		}
+		FVector2D Out(0.0, 0.0);
+		for (int32 I = 0; I < N * N; ++I)
+		{
+			if (Depth[I] == TNumericLimits<float>::Max()) { continue; }
+			Out.X += Cell * Cell * Light[I];
+			Out.Y += Cell * Cell;
+		}
+		return Out;
+	}
+	/** The view from the air a ship's camera at 30 to 300 m has of an animal: 35 degrees down, off its quarter. */
+	FVector AirView() { return FVector(FMath::Cos(FMath::DegreesToRadians(35.0)) * FVector(0.7071, 0.7071, 0.0) - FVector(0.0, 0.0, FMath::Sin(FMath::DegreesToRadians(35.0)))).GetSafeNormal(); }
+
+	/** A flier's moved vertex as the material moves it, for a plan's form, in a random case of Slonk.Fauna.Meshes' kind. */
+	struct FFlierCase
+	{
+		float Cu[SlonkFauna::Custom::Num] = {};
+		float Gd[SlonkFauna::GroupData::Num] = {};
+		float T = 0.f, Dist = 1000.f;
+	};
+	FFlierCase RandomFlierCase(FRandomStream& Rng, int32 Case, float SizeLo, float SizeHi)
+	{
+		FFlierCase M;
+		const float Size = Rng.FRandRange(SizeLo, SizeHi);
+		M.Cu[SlonkFauna::Custom::SizeM] = Size;
+		M.Cu[SlonkFauna::Custom::Seed] = Rng.FRand();
+		M.Cu[SlonkFauna::Custom::Phase] = Rng.FRand();
+		M.Cu[SlonkFauna::Custom::RateHz] = FMath::RoundToFloat(Rng.FRandRange(1.5f, 14.f) * 60.f) / 60.f;
+		M.Cu[SlonkFauna::Custom::PerKind] = Rng.FRandRange(-3.2f, 3.2f);
+		const FVector Fled = Rng.GetUnitVector();
+		M.Gd[SlonkFauna::GroupData::ScatterDirX] = (float)Fled.X;
+		M.Gd[SlonkFauna::GroupData::ScatterDirY] = (float)Fled.Y;
+		M.Gd[SlonkFauna::GroupData::ScatterDirZ] = (float)Fled.Z;
+		M.Gd[SlonkFauna::GroupData::Bank] = Rng.FRandRange(-0.8f, 0.8f);
+		M.Gd[SlonkFauna::GroupData::Startled] = Case % 2 == 0 ? 1.f : 0.f;
+		M.Gd[SlonkFauna::GroupData::SpreadM] = Rng.FRandRange(0.f, 12.f);
+		M.T = Rng.FRandRange(0.f, 3600.f);
+		M.Gd[SlonkFauna::GroupData::ScatterT0] = FMath::Fmod(M.T - Rng.FRandRange(0.f, 60.f) + 3600.f, 3600.f);
+		const float PanicAge = Rng.FRandRange(0.f, 120.f);
+		M.Gd[SlonkFauna::GroupData::PanicT0] = FMath::Fmod(M.T - PanicAge + 3600.f, 3600.f);
+		M.Gd[SlonkFauna::GroupData::OnsetT0] = FMath::Fmod(M.T - PanicAge - Rng.FRandRange(0.f, 1.f) + 3600.f, 3600.f);
+		// Its flock's number for its darts, and its span: a twelfth over its own, as its smallest member of a flock's is.
+		M.Gd[SlonkFauna::GroupData::DartSeed] = M.Cu[SlonkFauna::Custom::Seed];
+		M.Gd[SlonkFauna::GroupData::DartSpanM] = Size / 0.92f;
+		// Near (no speck floor), at a few hundred metres, and far (four times its size), and between.
+		M.Dist = Case % 4 == 0 ? 1000.f : (Case % 4 == 1 ? Size * 100.f * 960.f / 1.f : (Case % 4 == 2 ? 5.0e5f : Size * 100.f * 960.f / Rng.FRandRange(0.5f, 2.f)));
+		return M;
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaAlienFliersTest, "Slonk.Fauna.AlienFliers", SLONK_TEST_FLAGS)
+bool FSlonkFaunaAlienFliersTest::RunTest(const FString& Parameters)
+{
+	// The strange worlds' fliers, every plan at the ends and the middle of its ranges, wearing every ornament (a membrane
+	// each count of struts), with glow organs and without: a four-winged flier of 92 to 96, 40 and 6 triangles, a
+	// membrane-winged one of 82 to 101, 42 to 50 and 6; a metre across its wings; its vertex colours as the material reads
+	// them (each wing's flex from 0 on its hinge 4 cm out to 1 at its tip, its side by its sign, a four-winged one's hind
+	// wings' U from 2, a membrane's V out along its struts; the body rigid; a membrane's tail flexing from its root); every
+	// face wound to show the side its normals point to; a tangent basis at every vertex; the material's motion (its plan's
+	// wings, darts and waves) keeping every vertex in the instance's padded box at every size, beat, bank, startle and speck
+	// floor, a wing's root on its hinge, its two sides mirrored; its LODs coming in about 40 and 4 pixels across, as a
+	// bird's. A four-winged one's hind wings beat 0.3 of a beat behind its fore; it holds its place in its flock and darts
+	// over the last fifth of each of its own cycles, a whole number an hour; a membrane's wave runs out along it, none at
+	// its hinge, while it beats and as it glides. From below, from the side and from the air they read as other animals
+	// than the Earth's bird and each other: two pairs of wings over a long body, broad wings scalloped between their struts.
+	using namespace UE::Geometry;
+	namespace Vc = SlonkFauna::Vc;
+	const SlonkFauna::FFaunaKindDesc& D = SlonkFauna::KindDesc(EFaunaKind::Flier);
+	const TArray<FAlienPlan> Plans = AlienKindPlans(EFaunaKind::Flier);
+	int32 BadTris = 0, BadColour = 0, BadWinding = 0, Hinges = 0, Tips = 0, HindWings = 0, Escaped = 0, Tried = 0, Detached = 0, Unmirrored = 0, NoTangent = 0, Vertices = 0, BadLod = 0;
+	int32 Forms[3] = {}, Struts[5] = {};
+	double Margin = TNumericLimits<double>::Max(), WorstMirror = 0.0, MostTris = 0.0, Px1Lo = 1e9, Px1Hi = 0.0, Px2Lo = 1e9, Px2Hi = 0.0;
+	FString Seen;
+	for (int32 p = 0; p < Plans.Num(); ++p)
+	{
+		const FFaunaBodyPlan& Plan = Plans[p].Plan;
+		const int32 Form = Wn::FormOf(Plan);
+		++Forms[Form];
+		if (Form == Wn::Membrane) { ++Struts[FMath::Clamp((int32)Plan.LimbPairs, 0, 4)]; }
+		FBox Box0(ForceInit);
+		FDynamicMesh3 Lod0;
+		for (int32 L = 0; L < SlonkFaunaMeshes::NumLods; ++L)
+		{
+			FDynamicMesh3 M;
+			if (!SlonkFaunaMeshes::BuildLod(Plan, L, M)) { AddError(TEXT("no alien flier built")); return false; }
+			BadTris += M.TriangleCount() == AlienFlierTris(Plan, L) ? 0 : 1;
+			MostTris = L == 0 ? FMath::Max(MostTris, (double)M.TriangleCount()) : MostTris;
+			BadWinding += InwardFaces(M);
+			const FDynamicMeshColorOverlay* C = M.Attributes()->PrimaryColors();
+			const FDynamicMeshUVOverlay* U = M.Attributes()->PrimaryUV();
+			for (const int32 T : M.TriangleIndicesItr())
+			{
+				const FIndex3i Ce = C->GetTriangle(T), Ue = U->GetTriangle(T), Tv = M.GetTriangle(T);
+				for (int32 k = 0; k < 3; ++k)
+				{
+					const FVector4f Col = C->GetElement(Ce[k]);
+					const FVector2f Uv = U->GetElement(Ue[k]);
+					const FVector3d P = M.GetVertex(Tv[k]);
+					if (L == 0) { Box0 += (FVector)P; }
+					bool bOk = true;
+					if (FMath::IsNearlyEqual(Col.W, Vc::JointWing))
+					{
+						const double Want = FMath::Clamp((FMath::Abs(P.Y) - Vc::WingRootCm) / (50.0 - Vc::WingRootCm), 0.0, 1.0);
+						const bool bHind = Uv.X > 1.5f;
+						bOk = Col.X == Vc::SurfaceWing && FMath::IsNearlyEqual((double)Col.Y, Want, 1e-3) && Col.Z == (P.Y > 0.0 ? Vc::SideRight : Vc::SideLeft)
+							&& FMath::Abs(P.Y) >= Vc::WingRootCm - 1e-3 && Uv.Y >= -1e-4f
+							&& (Form == Wn::Four ? (Uv.X >= (bHind ? 2.f : 0.f) - 1e-4f && Uv.X <= (bHind ? 3.f : 1.f) + 1e-4f && Uv.Y <= 1.f + 1e-4f)
+								: (Uv.X >= -1e-4f && Uv.X <= 1.f + 1e-4f && Uv.Y <= (float)Plan.LimbPairs + 1e-4f));
+						Hinges += FMath::IsNearlyEqual(FMath::Abs(P.Y), Vc::WingRootCm, 1e-3) && Col.Y == 0.f ? 1 : 0;
+						Tips += Col.Y == 1.f ? 1 : 0;
+						HindWings += bHind && L == 0 ? 1 : 0;
+					}
+					else if (FMath::IsNearlyEqual(Col.W, Vc::JointTail)) { bOk = Form == Wn::Membrane && Col.X == Vc::SurfaceTail && Col.Y >= 0.f && Col.Y <= 1.f && Col.Z == Vc::SideMiddle; }
+					else if (Col.W == Vc::JointRigid) { bOk = (Col.X == Vc::SurfaceBody || Col.X == Vc::SurfaceBeak) && Col.Y == 0.f && Col.Z == Vc::SideMiddle; }
+					else { bOk = false; }
+					BadColour += bOk ? 0 : 1;
+				}
+			}
+			if (L == 0) { Lod0 = MoveTemp(M); }
+		}
+		// The material's motion over LOD 0's vertices with its plan's wings, inside the box each instance is culled by; a
+		// wing's root on its hinge; and, unbanked and unstartled, its left and right mirrored about its body's middle.
+		const FBox Padded = Box0.ExpandBy(Box0.GetExtent() * 0.15 + FVector(20.0 + D.CullPaddingUnits));
+		const TArray<FLinearColor> Vcs = VertexColours(Lod0);
+		const TArray<FVector2f> Uvs = VertexUVs(Lod0);
+		FRandomStream Rng(71 + p);
+		const float SizeLo = Form == Wn::Four ? 0.25f : 0.38f, SizeHi = Form == Wn::Four ? 1.3f : 2.6f;
+		for (int32 Case = 0; Case < 120; ++Case)
+		{
+			FFlierCase M = RandomFlierCase(Rng, Case, SizeLo, SizeHi);
+			for (const int32 V : Lod0.VertexIndicesItr())
+			{
+				const FVector3f LP = (FVector3f)Lod0.GetVertex(V);
+				const FVector3f Moved = LP + SlonkFauna::FlierMotion(LP, Vcs[V], M.T, M.Cu, M.Gd, M.Dist, 960.f, Uvs[V], Form);
+				++Tried;
+				const FVector Mv((double)Moved.X, (double)Moved.Y, (double)Moved.Z);
+				Escaped += Padded.IsInside(Mv) ? 0 : 1;
+				Margin = FMath::Min(Margin, FMath::Min3(FMath::Min(Mv.X - Padded.Min.X, Padded.Max.X - Mv.X), FMath::Min(Mv.Y - Padded.Min.Y, Padded.Max.Y - Mv.Y), FMath::Min(Mv.Z - Padded.Min.Z, Padded.Max.Z - Mv.Z)));
+			}
+			FFlierCase Level = M;
+			Level.Gd[SlonkFauna::GroupData::Bank] = 0.f;
+			Level.Gd[SlonkFauna::GroupData::Startled] = 0.f;
+			const FVector3f Root(0.f, 4.f, 1.f);
+			const FVector3f Wing = SlonkFauna::FlierMotion(Root, FLinearColor(1.f, 0.f, 1.f, 0.5f), Level.T, Level.Cu, Level.Gd, 1000.f, 960.f, FVector2f(0.f, 0.f), Form);
+			const FVector3f Rigid = SlonkFauna::FlierMotion(Root, FLinearColor(0.f, 0.f, 0.5f, 0.f), Level.T, Level.Cu, Level.Gd, 1000.f, 960.f, FVector2f(0.f, 0.f), Form);
+			Detached += (Wing - Rigid).Size() < 1e-3f ? 0 : 1;
+			// Its middle as the material carries it (every vertex goes with it: the ripple, the dart and the scatter).
+			const FVector3f Middle = SlonkFauna::FlierMotion(FVector3f::ZeroVector, FLinearColor(0.f, 0.f, 0.5f, 0.f), Level.T, Level.Cu, Level.Gd, Level.Dist, 960.f, FVector2f(0.f, 0.f), Form);
+			for (const int32 V : Lod0.VertexIndicesItr())
+			{
+				const FVector3f LP = (FVector3f)Lod0.GetVertex(V);
+				if (LP.Y <= 4.f || !FMath::IsNearlyEqual(Vcs[V].A, Vc::JointWing)) { continue; }
+				const FVector3f LM(LP.X, -LP.Y, LP.Z);
+				FLinearColor Cm = Vcs[V];
+				Cm.B = Vc::SideLeft;
+				const FVector3f A = LP + SlonkFauna::FlierMotion(LP, Vcs[V], Level.T, Level.Cu, Level.Gd, Level.Dist, 960.f, Uvs[V], Form) - Middle;
+				const FVector3f B = LM + SlonkFauna::FlierMotion(LM, Cm, Level.T, Level.Cu, Level.Gd, Level.Dist, 960.f, Uvs[V], Form) - Middle;
+				const float Off = FVector3f(A.X - B.X, A.Y + B.Y, A.Z - B.Z).Size();
+				WorstMirror = FMath::Max(WorstMirror, (double)Off);
+				Unmirrored += Off < 0.01f ? 0 : 1;
+			}
+		}
+		UStaticMesh* Mesh = SlonkFaunaMeshes::GetMesh(Plan, EFaunaKind::Flier);
+		if (!Mesh || Mesh != SlonkFaunaMeshes::GetMesh(Plan, EFaunaKind::Flier) || Mesh->GetNumLODs() != SlonkFaunaMeshes::NumLods) { ++BadLod; continue; }
+		TangentBasis(Mesh, Vertices, NoTangent);
+		const FVector2D Px = LodPixels(Mesh, D, Form == Wn::Four ? 0.6 : 1.2);
+		Px1Lo = FMath::Min(Px1Lo, Px.X); Px1Hi = FMath::Max(Px1Hi, Px.X);
+		Px2Lo = FMath::Min(Px2Lo, Px.Y); Px2Hi = FMath::Max(Px2Hi, Px.Y);
+		if (p == 0 || p == Plans.Num() - 1) { Seen += FString::Printf(TEXT("%s%s: LOD 0 %.0f x %.0f x %.0f cm"), Seen.IsEmpty() ? TEXT("") : TEXT("; "), *SlonkFauna::DescribePlan(EFaunaKind::Flier, Plan), Box0.GetSize().X, Box0.GetSize().Y, Box0.GetSize().Z); }
+	}
+	AddInfo(FString::Printf(TEXT("%d alien flier plans (%d four-winged, %d membrane-winged: %d of 3 struts, %d of 4): %d LODs off their triangles (%.0f at LOD 0 at the most), %d vertices off the colour contract (%d on a hinge, %d at a tip, %d of hind wings at LOD 0), %d faces wound inward; %d vertices moved by the material, %d outside the box padded %.0f units (the closest %.0f inside), %d wing roots off their hinge, %d wing vertices not mirrored (%.4f at worst); %d vertices over their meshes, %d without a tangent basis, %d meshes not made; LOD 1 from %.1f to %.1f pixels across, LOD 2 from %.1f to %.1f"),
+		Plans.Num(), Forms[Wn::Four], Forms[Wn::Membrane], Struts[3], Struts[4], BadTris, MostTris, BadColour, Hinges, Tips, HindWings, BadWinding, Tried, Escaped, D.CullPaddingUnits, Margin, Detached, Unmirrored, WorstMirror,
+		Vertices, NoTangent, BadLod, Px1Lo, Px1Hi, Px2Lo, Px2Hi));
+	AddInfo(Seen);
+	TestTrue(TEXT("plans of both forms, membranes of three and four struts"), Forms[Wn::Four] >= 6 && Forms[Wn::Membrane] >= 6 && Struts[3] > 0 && Struts[4] > 0);
+	TestEqual(TEXT("every LOD its triangles"), BadTris, 0);
+	TestTrue(TEXT("no more than 110 triangles at LOD 0"), MostTris <= 110.0);
+	TestEqual(TEXT("every vertex as the material reads it"), BadColour, 0);
+	TestTrue(TEXT("wings hinged at the root, flexing to the tip, a four-winged one's hind pair told apart"), Hinges > 0 && Tips > 0 && HindWings > 0);
+	TestEqual(TEXT("every face shows the side its normals point to"), BadWinding, 0);
+	TestEqual(TEXT("the material keeps every vertex in its instance's box, its darts, waves and speck floor and all"), Escaped, 0);
+	TestEqual(TEXT("a wing's root stays on its hinge"), Detached, 0);
+	TestEqual(TEXT("its two sides mirrored"), Unmirrored, 0);
+	TestTrue(TEXT("every mesh made and kept, a tangent basis at every vertex"), BadLod == 0 && Vertices > 0 && NoTangent == 0);
+	TestTrue(TEXT("its LOD 1 from about 40 pixels across, its LOD 2 from about 4"), Px1Lo > 28.0 && Px1Hi < 60.0 && Px2Lo > 2.8 && Px2Hi < 6.0);
+
+	// The four-winged flier's hind wings 0.3 of a beat behind its fore (its wings' angle about their hinge, over its flex's
+	// share); its darts; and a membrane's wave.
+	const FFaunaBodyPlan Four = AlienKindPlan(EFaunaKind::Flier, 0, 0.5f, 0.5f, 0.9f), Memb = AlienKindPlan(EFaunaKind::Flier, 1, 0.5f, 0.5f, 0.9f);
+	double WorstLag = 0.0;
+	{
+		float Cu[SlonkFauna::Custom::Num] = {};
+		float Gd[SlonkFauna::GroupData::Num] = {};
+		Cu[SlonkFauna::Custom::SizeM] = 0.6f;
+		Cu[SlonkFauna::Custom::Seed] = 0.37f;
+		Cu[SlonkFauna::Custom::RateHz] = 9.f;
+		auto Angle = [&](float T, float U) -> float
+		{
+			const FVector3f Tip(0.f, 30.f, 1.f);
+			const FLinearColor Vcw(1.f, 26.f / 46.f, 1.f, 0.5f);
+			const FVector3f Mid = SlonkFauna::FlierMotion(FVector3f::ZeroVector, FLinearColor(0.f, 0.f, 0.5f, 0.f), T, Cu, Gd, 1000.f, 960.f, FVector2f(U, 0.5f), Wn::Four);
+			const FVector3f P = Tip + SlonkFauna::FlierMotion(Tip, Vcw, T, Cu, Gd, 1000.f, 960.f, FVector2f(U, 0.5f), Wn::Four) - Mid;
+			return FMath::Atan2(P.Z - Tip.Z, P.Y - 4.f) / (0.8f + 0.4f * Vcw.G);
+		};
+		for (int32 k = 0; k < 200; ++k)
+		{
+			const float T = 100.f + 0.0071f * k;
+			WorstLag = FMath::Max(WorstLag, (double)FMath::Abs(Angle(T, 2.5f) - Angle(T - 0.3f / Cu[SlonkFauna::Custom::RateHz], 0.5f)));
+		}
+	}
+	// Its darts: still over the first four fifths of each cycle, moving over the last, never past its reach either way, the
+	// same across the hour's wrap.
+	int32 DartMoved = 0, DartStill = 0, DartFar = 0, DartSeam = 0;
+	double MostDart = 0.0;
+	{
+		FRandomStream Rng(808);
+		for (int32 c = 0; c < 60; ++c)
+		{
+			float Gd[SlonkFauna::GroupData::Num] = {};
+			Gd[SlonkFauna::GroupData::DartSeed] = Rng.FRand();
+			const float Seed = Gd[SlonkFauna::GroupData::DartSeed];
+			const float Dn = Wn::DartLo + FMath::FloorToFloat(FMath::Frac(Seed * 5.93f) * Wn::DartSpan);
+			const float Len = 3600.f / Dn, Off = FMath::Frac(Seed * 2.37f);
+			const int32 Cycle = Rng.RandRange(1, (int32)Dn - 3);
+			const float Start = ((float)Cycle - Off) * Len;
+			const FVector3f A = SlonkFauna::FlierDart(Start + 0.05f * Len, Gd), B = SlonkFauna::FlierDart(Start + 0.75f * Len, Gd), C = SlonkFauna::FlierDart(Start + 0.99f * Len, Gd);
+			DartStill += (A - B).Size() < 1e-3f ? 0 : 1;
+			DartMoved += (C - B).Size() > 5.f ? 1 : 0;
+			for (int32 j = 0; j < 3; ++j) { DartFar += FMath::Abs(C[j]) <= Wn::DashCm[j] + 1e-3f ? 0 : 1; MostDart = FMath::Max(MostDart, (double)FMath::Abs(C[j]) / Wn::DashCm[j]); }
+			// The hour's wrap: a frame's thousandth of a second across it moves it no more than one between any two moments (a
+			// dash is at most about 2,000 cm of the unit mesh a second), and where it is just before is where it is a moment
+			// before the hour's turn (its cycles wrapped to the hour).
+			const FVector3f Before = SlonkFauna::FlierDart(3600.f - 0.001f, Gd);
+			DartSeam += (Before - SlonkFauna::FlierDart(0.f, Gd)).Size() < 5.f && (Before - SlonkFauna::FlierDart(-0.001f, Gd)).Size() < 1.f ? 0 : 1;
+		}
+	}
+	// A membrane's wave: how far its tip's trailing edge stands off where an unwaved wing's would, over its beat and over a
+	// glide; none at its hinge.
+	double WaveFlap = 0.0, WaveGlide = 0.0, WaveHinge = 0.0;
+	{
+		float Cu[SlonkFauna::Custom::Num] = {};
+		float Gd[SlonkFauna::GroupData::Num] = {};
+		Cu[SlonkFauna::Custom::SizeM] = 1.2f;
+		Cu[SlonkFauna::Custom::Seed] = 0.21f;
+		Cu[SlonkFauna::Custom::RateHz] = 2.f;
+		// Startled (beating all the time) and calm (its glide between bursts: its cycle's last share).
+		const float Seed = Cu[SlonkFauna::Custom::Seed];
+		const float Nb = Wn::GlideLo + FMath::FloorToFloat(FMath::Frac(Seed * 7.31f) * Wn::GlideSpan);
+		for (int32 k = 0; k < 400; ++k)
+		{
+			const float T = 200.f + 0.013f * k;
+			for (const bool bFlap : { true, false })
+			{
+				float G2[SlonkFauna::GroupData::Num] = {};
+				if (bFlap) { G2[SlonkFauna::GroupData::Startled] = 1.f; G2[SlonkFauna::GroupData::PanicT0] = T - 5.f; G2[SlonkFauna::GroupData::OnsetT0] = T - 5.f; G2[SlonkFauna::GroupData::ScatterT0] = T - 100.f; }
+				// The glide: three quarters of the way round the cycle.
+				const float Tg = bFlap ? T : (FMath::FloorToFloat(T * Nb / 3600.f) + 0.9f - Seed) * 3600.f / Nb + 0.002f * k;
+				for (const float Y : { 50.f, 4.f })
+				{
+					// The same place of its wing, turned the same about its hinge, its trailing edge (U 1) against its leading (U 0):
+					// how far the wave across it lifts the one off the other.
+					const FVector3f P(-10.f, Y, 1.f);
+					const FLinearColor Vcw(1.f, (Y - 4.f) / 46.f, 1.f, 0.5f);
+					const FVector3f Trail = SlonkFauna::FlierMotion(P, Vcw, Tg, Cu, G2, 1000.f, 960.f, FVector2f(1.f, 3.f), Wn::Membrane);
+					const FVector3f Lead = SlonkFauna::FlierMotion(P, Vcw, Tg, Cu, G2, 1000.f, 960.f, FVector2f(0.f, 3.f), Wn::Membrane);
+					const double Off = (Trail - Lead).Size();
+					if (Y < 5.f) { WaveHinge = FMath::Max(WaveHinge, Off); }
+					else if (bFlap) { WaveFlap = FMath::Max(WaveFlap, Off); }
+					else { WaveGlide = FMath::Max(WaveGlide, Off); }
+				}
+			}
+		}
+	}
+	AddInfo(FString::Printf(TEXT("a four-winged flier's hind wings %.4f rad off its fore's 0.3 of a beat before; its darts: %d of 60 moved over a cycle's last fifth, %d not still before it, %d past their reach (%.2f of it at the most), %d seams at the hour's wrap; a membrane's wave lifting its tip's trailing edge off its leading up to %.2f cm of the unit mesh beating, %.2f gliding, at its hinge %.4f"),
+		WorstLag, DartMoved, DartStill, DartFar, MostDart, DartSeam, WaveFlap, WaveGlide, WaveHinge));
+	TestTrue(TEXT("its hind wings 0.3 of a beat behind its fore"), WorstLag < 2e-3);
+	TestTrue(TEXT("it holds its place and darts over the last fifth of its cycle"), DartMoved >= 50 && DartStill == 0 && DartFar == 0);
+	TestEqual(TEXT("no seam in its darts at the hour's wrap"), DartSeam, 0);
+	TestTrue(TEXT("a membrane's wave running across it as it beats and as it glides, none at its hinge"), WaveFlap > 3.0 && WaveGlide > 0.6 && WaveGlide < WaveFlap && WaveHinge < 1e-3);
+
+	// A membrane's struts as its pixel shader shades them (MembraneLinesAt), seen nearer and further off, from a strut ten
+	// pixels wide to a twentieth of one: under the temporal upscaler's jitter (half a pixel either way, frame to frame) no
+	// pixel flickers between skin and strut more than a little once a strut is narrower than a pixel (such a line is drawn
+	// a pixel and a half wide and the fainter for it), and a row of pixels across the wing is as dark in all as its struts
+	// are; its skin solid (little light let through it, so the sky behind does not wash it out), and nothing in the alien
+	// fliers' branch dithered from frame to frame (its fade a flier at a time).
+	double WorstFlicker = 0.0, LineShareLo = 1e9, LineShareHi = 0.0;
+	int32 Flickers = 0;
+	FString LineRows;
+	for (const float VPerPx : { 0.01f, 0.03f, 0.1f, 0.3f, 1.f, 2.f })
+	{
+		const int32 Pixels = FMath::Max(64, FMath::CeilToInt32(6.f / VPerPx));
+		double Sum = 0.0, RowFlicker = 0.0;
+		for (int32 x = 0; x < Pixels; ++x)
+		{
+			const float V0 = 0.37f + (float)x * VPerPx;
+			double M = 0.0, M2 = 0.0;
+			for (int32 j = 0; j < 32; ++j)
+			{
+				const float Jit = ((float)j + 0.5f) / 32.f - 0.5f;
+				const double Dk = SlonkFauna::MembraneLinesAt(FVector2f(0.5f, V0 + Jit * VPerPx), FVector2f(0.002f, VPerPx));
+				M += Dk / 32.0;
+				M2 += Dk * Dk / 32.0;
+			}
+			const double Sd = FMath::Sqrt(FMath::Max(M2 - M * M, 0.0));
+			if (0.1f / VPerPx < 1.f) { RowFlicker = FMath::Max(RowFlicker, Sd); Flickers += Sd > 0.12 ? 1 : 0; }
+			Sum += M;
+		}
+		const double Share = Sum / Pixels;
+		WorstFlicker = FMath::Max(WorstFlicker, RowFlicker);
+		LineShareLo = FMath::Min(LineShareLo, Share);
+		LineShareHi = FMath::Max(LineShareHi, Share);
+		LineRows += FString::Printf(TEXT("%s%.2f px wide: %.3f of the row dark, its pixels flickering %.3f at the most"), LineRows.IsEmpty() ? TEXT("") : TEXT("; "), 0.1f / VPerPx, Share, RowFlicker);
+	}
+	const FString FlierPixel = MaterialMotionBlock(EMotionBlock::Fliers, true);
+	const int32 BranchAt = FlierPixel.Find(TEXT("[branch] if (WingForm > 0.5)")), BranchEnd = FlierPixel.Find(TEXT("float surf = VC.r;"));
+	const FString Branch = BranchAt >= 0 && BranchEnd > BranchAt ? FlierPixel.Mid(BranchAt, BranchEnd - BranchAt) : FString();
+	const bool bLinesCopied = Branch.Contains(TEXT("float astrut = max((1.0 - smoothstep(asw - 0.5 * avw, asw + 0.5 * avw, abs(frac(UV.y + 0.5) - 0.5))) * min(0.05 / min(asw, 0.5), 1.0),"))
+		&& Branch.Contains(TEXT("(1.0 - smoothstep(alw - 0.5 * auw, alw + 0.5 * auw, au)) * min(0.07 / min(alw, 1.0), 1.0));")) && Branch.Contains(TEXT("float asw = max(0.05, 0.75 * avw);"))
+		&& Branch.Contains(TEXT("float alw = max(0.07, 0.75 * auw);"));
+	const bool bSolid = Branch.Contains(TEXT("Sub = askin * 0.2 * awing;"));
+	const bool bNoDither = !Branch.IsEmpty() && !Branch.Contains(TEXT("SvPosition")) && !Branch.Contains(TEXT("StateFrameIndex")) && Branch.Contains(TEXT("Mask = afade > frac(Seed * 91.37 + 0.13) ? 1.0 : 0.0;"));
+	AddInfo(FString::Printf(TEXT("a membrane's struts: %s; the material's lines as MembraneLinesAt has them: %s, its skin solid: %s, nothing dithered from frame to frame: %s"), *LineRows,
+		bLinesCopied ? TEXT("yes") : TEXT("no"), bSolid ? TEXT("yes") : TEXT("no"), bNoDither ? TEXT("yes") : TEXT("no")));
+	TestEqual(TEXT("no pixel of a membrane flickering between skin and strut under the jitter, its struts under a pixel wide"), Flickers, 0);
+	TestTrue(TEXT("a row across the wing as dark in all as its struts are, near and far"), LineShareLo > 0.07 && LineShareHi < 0.14);
+	TestTrue(TEXT("the alien fliers' branch draws a membrane's lines, its skin and its fade so"), bLinesCopied && bSolid && bNoDither);
+
+	// Their silhouettes against the Earth bird's and each other's, from below, from the side and from the air, at LOD 1 (the
+	// LOD a flock is seen by from about 12 m to 120 m off) and LOD 0; and how many wings a line across them meets 30 cm out.
+	auto Look = [&](const FFaunaBodyPlan& P, int32 Lod, TArray<uint8>& Below, TArray<uint8>& Side, TArray<uint8>& Air, int32& N)
+	{
+		FDynamicMesh3 M;
+		SlonkFaunaMeshes::BuildLod(P, Lod, M);
+		const FVector Av = AirView();
+		const FVector AirRight = FVector::CrossProduct(Av, FVector::ZAxisVector).GetSafeNormal(), AirUp = FVector::CrossProduct(AirRight, Av).GetSafeNormal();
+		Below = Silhouette(M, FVector::XAxisVector, FVector::YAxisVector, -80.0, 80.0, 0.25, N);
+		Side = Silhouette(M, FVector::XAxisVector, FVector::ZAxisVector, -80.0, 80.0, 0.25, N);
+		Air = Silhouette(M, AirRight, AirUp, -80.0, 80.0, 0.25, N);
+	};
+	// The runs of cover along x in the row y cm out of a silhouette from below (x along it, y across).
+	auto WingRuns = [](const TArray<uint8>& Below, int32 N, double Y) { return LegRuns(Below, N, -80.0, 0.25, Y); };
+	const FFaunaBodyPlan Bird = SlonkFauna::EarthPlan(EFaunaKind::Flier);
+	FString Looks;
+	double MostAlike = 0.0, MostAlikeAlien = 0.0;
+	int32 RunsOff = 0;
+	for (const int32 Lod : { 0, 1 })
+	{
+		TArray<uint8> Bb, Bs, Ba, Fb, Fs, Fa, Mb, Ms, Ma;
+		int32 N = 0;
+		Look(Bird, Lod, Bb, Bs, Ba, N);
+		Look(Four, Lod, Fb, Fs, Fa, N);
+		Look(Memb, Lod, Mb, Ms, Ma, N);
+		const double BF = SilhouetteOverlap(Bb, Fb), BM = SilhouetteOverlap(Bb, Mb), FM = SilhouetteOverlap(Fb, Mb);
+		const double BFs = SilhouetteOverlap(Bs, Fs), BMs = SilhouetteOverlap(Bs, Ms), FMs = SilhouetteOverlap(Fs, Ms);
+		const double BFa = SilhouetteOverlap(Ba, Fa), BMa = SilhouetteOverlap(Ba, Ma), FMa = SilhouetteOverlap(Fa, Ma);
+		const int32 Rb = WingRuns(Bb, N, 30.0), Rf = WingRuns(Fb, N, 30.0), Rm = WingRuns(Mb, N, 30.0);
+		RunsOff += Rb == 1 && Rf == 2 && Rm == 1 ? 0 : 1;
+		MostAlike = FMath::Max(MostAlike, FMath::Max(FMath::Max(BF, BFa), FMath::Max(BM, BMa)));
+		MostAlikeAlien = FMath::Max(MostAlikeAlien, FMath::Max(FM, FMa));
+		Looks += FString::Printf(TEXT("%sLOD %d: the bird and the four-winged flier share %.2f of their view from below, %.2f from the side, %.2f from the air; the bird and the membrane-winged %.2f, %.2f and %.2f; the two alien forms %.2f, %.2f and %.2f; wings met 30 cm out %d, %d and %d"),
+			Looks.IsEmpty() ? TEXT("") : TEXT("; "), Lod, BF, BFs, BFa, BM, BMs, BMa, FM, FMs, FMa, Rb, Rf, Rm);
+	}
+	AddInfo(Looks);
+	TestEqual(TEXT("one wing a side met across the bird and the membrane, two across the four-winged flier"), RunsOff, 0);
+	TestTrue(TEXT("each a silhouette of its own from below and from the air, apart from the bird's"), MostAlike < 0.6);
+	// The four-winged flier's narrow wings lie mostly within the membrane's broad ones: they share less, its wings counted.
+	TestTrue(TEXT("and from each other's"), MostAlikeAlien < 0.7);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaAlienFlocksTest, "Slonk.Fauna.AlienFlocks", SLONK_TEST_FLAGS)
+bool FSlonkFaunaAlienFlocksTest::RunTest(const FString& Parameters)
+{
+	// The strange worlds' flocks: on the Earth-like world, its fliers all of one alien plan, each flock in the cell an Earth
+	// one is in, of the same habitat, members and loop, but of its species' plan and size (its span its habitat bird's
+	// times its species' scale), a four-winged flock's wings beating twice as fast (at most 14 a second) and flying its
+	// loop three quarters as fast, a membrane-winged one's beating 0.6 as fast and flying 0.9 as fast; every beat a whole
+	// number a minute. A craft low by one startles it as it does a bird's flock; one high over it does not. Those of a plan
+	// with glow organs glow at night (1.5 to 3), the others not at all. A frame's math for them is a bird's, and at the caps
+	// (1,000 fliers of the plan of the most triangles) they keep within 110,000 triangles at LOD 0.
+	const SlonkFauna::FFaunaWorld Earth = EarthFauna();
+	const SlonkFauna::FFaunaKindDesc& D = SlonkFauna::KindDesc(EFaunaKind::Flier);
+	TArray<SlonkFauna::FFaunaGroup> EarthFlocks;
+	GroupsOverGlobe(Earth, 1200, EarthFlocks);
+	TMap<uint64, SlonkFauna::FFaunaGroup> ById;
+	for (const SlonkFauna::FFaunaGroup& G : EarthFlocks) { ById.Add(G.Id, G); }
+	FString Lines;
+	int32 Off = 0, NotWhole = 0, BadGlow = 0, Startled = 0, StartledHigh = 0, Tried = 0, Flocks = 0;
+	for (int32 Form = 0; Form < 2; ++Form)
+	{
+		for (const float GlowDraw : { 0.9f, 0.2f })
+		{
+			float Scale = 1.f;
+			const FFaunaBodyPlan Plan = AlienKindPlan(EFaunaKind::Flier, Form, 0.5f, 0.5f, GlowDraw, &Scale);
+			const SlonkFauna::FFaunaWorld W = OnePlanWorld(Earth, EFaunaKind::Flier, Plan, Scale);
+			TArray<SlonkFauna::FFaunaGroup> Groups;
+			GroupsOverGlobe(W, 1200, Groups);
+			double SpeedRatio = 0.0, FlapRatio = 0.0, SpanRatio = 0.0;
+			int32 N = 0;
+			for (const SlonkFauna::FFaunaGroup& G : Groups)
+			{
+				++Flocks;
+				const SlonkFauna::FFaunaGroup* E = ById.Find(G.Id);
+				if (!E) { ++Off; continue; }
+				const int32 F = Wn::FormOf(G.Plan);
+				// The same cell's flock in all but its plan's own.
+				Off += G.Plan == Plan && F == (Form == 0 ? Wn::Four : Wn::Membrane) && G.Habitat == E->Habitat && G.Members == E->Members && G.Centre == E->Centre && G.RadiusCm == E->RadiusCm
+					&& G.CruiseCm == E->CruiseCm && G.Pigment == E->Pigment ? 0 : 1;
+				const float WantSpan = FMath::Clamp(E->SpanM * Scale, 0.25f, 2.6f);
+				const float WantFlap = F == Wn::Four ? FMath::Min(E->FlapHz * Wn::FourFlapK, Wn::FourFlapMax) : E->FlapHz * Wn::MembraneFlapK;
+				Off += FMath::IsNearlyEqual(G.SpanM, WantSpan, 1e-5f) && FMath::IsNearlyEqual(G.FlapHz, WantFlap, 1e-5f) && FMath::IsNearlyEqual(G.SpacingM, E->SpacingM * Scale, 1e-4f) ? 0 : 1;
+				SpeedRatio += G.SpeedCmS / FMath::Max(E->SpeedCmS, 1.0);
+				FlapRatio += G.FlapHz / FMath::Max(E->FlapHz, 0.01f);
+				SpanRatio += G.SpanM / FMath::Max(E->SpanM, 0.01f);
+				++N;
+				BadGlow += Plan.GlowOrgans > 0 ? (G.Glow >= SlonkFauna::GlowOrgan::GlowLo && G.Glow <= SlonkFauna::GlowOrgan::GlowHi ? 0 : 1) : (G.Glow == 0.f ? 0 : 1);
+				TArray<FTransform> Xf;
+				TArray<float> Cu;
+				SlonkFauna::MembersOf(G, Xf, Cu);
+				for (int32 i = 0; i < Xf.Num(); ++i)
+				{
+					const float Bpm = Cu[i * SlonkFauna::Custom::Num + SlonkFauna::Custom::RateHz] * 60.f;
+					NotWhole += FMath::IsNearlyEqual(Bpm, FMath::RoundToFloat(Bpm), 1e-3f) ? 0 : 1;
+					BadGlow += Cu[i * SlonkFauna::Custom::Num + SlonkFauna::Custom::Glow] == G.Glow ? 0 : 1;
+				}
+				// A craft 30 m up passing 50 m off it startles it; one 300 m up over it does not (the first 30 of each).
+				if (N <= 30)
+				{
+					++Tried;
+					const SlonkFauna::FFaunaPose P = SlonkFauna::PathAt(G, W.P.RadiusCm, 500.0);
+					SlonkFauna::FPanic Pa, Pb;
+					SlonkFauna::FFaunaThreat Low, High;
+					Low.PosCm = P.PosCm + P.Rot.GetAxisY() * 5000.0;
+					Low.AltitudeCm = 3000.0;
+					High.PosCm = P.PosCm + P.PosCm.GetSafeNormal() * 3.0e4;
+					High.AltitudeCm = 3.0e4 + G.CruiseCm;
+					Startled += SlonkFauna::StartleGroup(Pa, D, P.PosCm, Low, 500.0) ? 1 : 0;
+					StartledHigh += SlonkFauna::StartleGroup(Pb, D, P.PosCm, High, 500.0) ? 1 : 0;
+				}
+			}
+			Lines += FString::Printf(TEXT("%s%s%s: %d flocks, their span %.2f, beat %.2f and speed %.2f of the same cells' birds' on average"), Lines.IsEmpty() ? TEXT("") : TEXT("; "), WingName(Form == 0 ? Wn::Four : Wn::Membrane),
+				Plan.GlowOrgans > 0 ? *FString::Printf(TEXT(" (%d glow organs a flank)"), Plan.GlowOrgans) : TEXT(""), N, SpanRatio / FMath::Max(N, 1), FlapRatio / FMath::Max(N, 1), SpeedRatio / FMath::Max(N, 1));
+			if (Form == 0) { TestTrue(TEXT("a four-winged flock beats faster and flies its loop slower than a bird's"), N > 50 && FlapRatio / N > 1.5 && SpeedRatio / N < 0.85); }
+			else { TestTrue(TEXT("a membrane-winged flock beats slower and flies its loop a little slower than a bird's"), N > 50 && FlapRatio / N < 0.7 && SpeedRatio / N < 0.97 && SpeedRatio / N > 0.8); }
+		}
+	}
+	// At the caps: 1,000 of the plan of the most triangles at LOD 0.
+	int32 MostTris = 0;
+	for (const FAlienPlan& A : AlienKindPlans(EFaunaKind::Flier))
+	{
+		UE::Geometry::FDynamicMesh3 M;
+		SlonkFaunaMeshes::BuildLod(A.Plan, 0, M);
+		MostTris = FMath::Max(MostTris, M.TriangleCount());
+	}
+	const int32 WorstCase = D.MaxMembers * MostTris;
+	AddInfo(FString::Printf(TEXT("%s; %d flocks, %d off the same cell's bird's flock but in their plan's own, %d beats not a whole number a minute, %d glows off; startled by a craft low by %d of %d, by one high over %d; at the caps (%d fliers) of the plan of the most triangles (%d) %d triangles at LOD 0"),
+		*Lines, Flocks, Off, NotWhole, BadGlow, Startled, Tried, StartledHigh, D.MaxMembers, MostTris, WorstCase));
+	TestTrue(TEXT("alien flocks to try"), Flocks > 200);
+	TestEqual(TEXT("each the same cell's flock but in its plan's own"), Off, 0);
+	TestEqual(TEXT("every beat a whole number a minute"), NotWhole, 0);
+	TestEqual(TEXT("those of a plan with glow organs glow, the others not"), BadGlow, 0);
+	TestTrue(TEXT("a craft low by one startles it, one high over it does not"), Startled == Tried && StartledHigh == 0 && Tried > 0);
+	TestTrue(TEXT("at most 110,000 triangles of fliers at LOD 0, at the caps"), WorstCase <= 110000);
+
+	// The densest four-winged flocks (the most members at the least spacing for their span), every member's middle as the
+	// material moves it (its ripple through the flock and its darts) every tenth of a second through a whole hour: no two of
+	// them nearer than they come without the darts (the flock darts together, every member at once, so the gaps the
+	// formation gave them hold).
+	{
+		float Scale = 1.f;
+		const FFaunaBodyPlan Plan = AlienKindPlan(EFaunaKind::Flier, 0, 0.5f, 0.5f, 0.2f, &Scale);
+		const SlonkFauna::FFaunaWorld W = OnePlanWorld(Earth, EFaunaKind::Flier, Plan, Scale);
+		TArray<SlonkFauna::FFaunaGroup> Groups;
+		GroupsOverGlobe(W, 1200, Groups);
+		Groups.Sort([](const SlonkFauna::FFaunaGroup& A, const SlonkFauna::FFaunaGroup& B) { return A.Members / FMath::Max(A.SpacingM / A.SpanM, 0.1f) > B.Members / FMath::Max(B.SpacingM / B.SpanM, 0.1f); });
+		double ClosestDarting = 1e9, ClosestStill = 1e9;
+		int32 DashedInto = 0, PairsSeen = 0, Moments = 0, DartSeeds = 0;
+		FString Dense;
+		for (int32 g = 0; g < FMath::Min(2, Groups.Num()); ++g)
+		{
+			const SlonkFauna::FFaunaGroup& G = Groups[g];
+			TArray<FTransform> Xf;
+			TArray<float> Cu;
+			SlonkFauna::MembersOf(G, Xf, Cu);
+			const int32 N = Xf.Num();
+			float Gd[SlonkFauna::GroupData::Num] = {};
+			Gd[SlonkFauna::GroupData::SpreadM] = G.SpacingM;
+			Gd[SlonkFauna::GroupData::DartSeed] = SlonkFauna::DartSeedOf(G);
+			Gd[SlonkFauna::GroupData::DartSpanM] = G.SpanM;
+			DartSeeds += Gd[SlonkFauna::GroupData::DartSeed] > 0.f ? 1 : 0;
+			// The pairs whose homes lie within six spans (a pair further apart never meets: the ripple and a dart are each
+			// under two spans either way).
+			TArray<FIntPoint> Pairs;
+			for (int32 i = 0; i < N; ++i)
+			{
+				for (int32 j = i + 1; j < N; ++j) { if (FVector::Dist(Xf[i].GetLocation(), Xf[j].GetLocation()) < 600.0 * G.SpanM) { Pairs.Add(FIntPoint(i, j)); } }
+			}
+			PairsSeen += Pairs.Num();
+			TArray<FVector> At, AtStill;
+			At.SetNum(N);
+			AtStill.SetNum(N);
+			double FlockDarting = 1e9, FlockStill = 1e9;
+			for (int32 Step = 0; Step < 36000; ++Step)
+			{
+				const float T = 0.1f * (float)Step;
+				++Moments;
+				for (int32 i = 0; i < N; ++i)
+				{
+					const float* C = &Cu[i * SlonkFauna::Custom::Num];
+					const FVector3f Mo = SlonkFauna::FlierMotion(FVector3f::ZeroVector, FLinearColor(0.f, 0.f, 0.5f, 0.f), T, C, Gd, 1000.f, 960.f, FVector2f(0.f, 0.f), Wn::Four);
+					// Without its darts: its middle as a bird's moves (the ripple alone: no wing moves a body's middle).
+					const FVector3f Still = SlonkFauna::FlierMotion(FVector3f::ZeroVector, FLinearColor(0.f, 0.f, 0.5f, 0.f), T, C, Gd, 1000.f, 960.f, FVector2f(0.f, 0.f), Wn::Bird);
+					const double S = C[SlonkFauna::Custom::SizeM];
+					At[i] = Xf[i].GetLocation() + Xf[i].GetRotation().RotateVector(FVector(Mo) * S);
+					AtStill[i] = Xf[i].GetLocation() + Xf[i].GetRotation().RotateVector(FVector(Still) * S);
+				}
+				for (const FIntPoint& Pr : Pairs)
+				{
+					const double Span = 0.5 * (Cu[Pr.X * SlonkFauna::Custom::Num + SlonkFauna::Custom::SizeM] + Cu[Pr.Y * SlonkFauna::Custom::Num + SlonkFauna::Custom::SizeM]) * 100.0;
+					const double Dd = FVector::Dist(At[Pr.X], At[Pr.Y]) / Span, Ds = FVector::Dist(AtStill[Pr.X], AtStill[Pr.Y]) / Span;
+					FlockDarting = FMath::Min(FlockDarting, Dd);
+					FlockStill = FMath::Min(FlockStill, Ds);
+					DashedInto += Dd < Ds - 0.01 && Dd < 1.0 ? 1 : 0;
+				}
+			}
+			ClosestDarting = FMath::Min(ClosestDarting, FlockDarting);
+			ClosestStill = FMath::Min(ClosestStill, FlockStill);
+			Dense += FString::Printf(TEXT("%s%d of %.2f m, %.1f spans apart: closest %.2f spans darting, %.2f without its darts"), Dense.IsEmpty() ? TEXT("") : TEXT("; "), N, G.SpanM, G.SpacingM / G.SpanM, FlockDarting, FlockStill);
+		}
+		AddInfo(FString::Printf(TEXT("the densest four-winged flocks through an hour, every tenth of a second (%d moments, %d pairs within six spans): %s; %d moments a pair under a span apart came nearer for the darts"),
+			Moments, PairsSeen, *Dense, DashedInto));
+		TestTrue(TEXT("dense four-winged flocks to fly"), Groups.Num() >= 2 && PairsSeen > 20 && DartSeeds == FMath::Min(2, Groups.Num()));
+		TestTrue(TEXT("no two members of a four-winged flock nearer for its darts: it darts together"), DashedInto == 0 && ClosestDarting >= ClosestStill - 1e-3);
+	}
+	return true;
+}
+
+namespace
+{
+	/** A fish's vertex colour at its mesh's middle (its origin): an eel's G its bend from its nose there (a half), every
+	 *  other's as Slonk.Fauna.LeaperArcs reads it (0). */
+	FLinearColor FishMiddle(int32 Form) { return FLinearColor(0.f, Form == Ff::Eel ? 0.5f : 0.f, 0.5f, SlonkFauna::Vc::JointUndulate); }
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaAlienFishTest, "Slonk.Fauna.AlienFish", SLONK_TEST_FLAGS)
+bool FSlonkFaunaAlienFishTest::RunTest(const FString& Parameters)
+{
+	// The strange worlds' leaping fish, every plan at the ends and the middle of its ranges, with its ornaments and without,
+	// with glow organs and without: an eel of 82 or 84, 38 and 3 triangles, a spinefin of 63 or 66, 21 and 5; a metre long,
+	// its middle at the origin; its vertex colours as the material reads them (an eel's bend from its nose, a spinefin's
+	// fins the wing's surface flexing from their hinge 4 cm out); every face wound to show the side its normals point to; a
+	// tangent basis everywhere; the material's motion of its form keeping every vertex in the instance's padded box; its
+	// LODs coming in about 30 and 6 pixels long. On the Earth-like world's seas, its fish all of the plan, each leaps the
+	// Earth fish's arcs: drawn when the closed form has it drawn and only then, its middle where the closed form has it
+	// (an eel's wave held off it), at the sea's surface where and when it leaves and dives back in, and its splash there;
+	// under the water whole as it comes and goes, held under the lowest surface between leaps, never below the shallowest
+	// floor it lives over. An eel's wave runs back along it, more in the air; a spinefin's fins are folded down under the
+	// water and spread at its leap's top. A group's fish no longer than its plan's longest, the habitat read out as far as
+	// they leap; their splashes scaled to them.
+	using namespace UE::Geometry;
+	namespace Vc = SlonkFauna::Vc;
+	const SlonkFauna::FFaunaKindDesc& D = SlonkFauna::KindDesc(EFaunaKind::Leaper);
+	const TArray<FAlienPlan> Plans = AlienKindPlans(EFaunaKind::Leaper);
+	int32 BadTris = 0, BadColour = 0, BadWinding = 0, Escaped = 0, Tried = 0, NoTangent = 0, Vertices = 0, BadLod = 0, Fins = 0;
+	int32 Forms[3] = {};
+	double Margin = TNumericLimits<double>::Max(), Px1Lo = 1e9, Px1Hi = 0.0, Px2Lo = 1e9, Px2Hi = 0.0;
+	for (int32 p = 0; p < Plans.Num(); ++p)
+	{
+		const FFaunaBodyPlan& Plan = Plans[p].Plan;
+		const int32 Form = Ff::FormOf(Plan);
+		++Forms[Form];
+		FBox Box0(ForceInit);
+		FDynamicMesh3 Lod0;
+		const double FinTip = Ff::FinRootCm + 100.0 * FMath::Clamp((double)Plan.Chord, 0.2, 0.45);
+		for (int32 L = 0; L < SlonkFaunaMeshes::NumLods; ++L)
+		{
+			FDynamicMesh3 M;
+			if (!SlonkFaunaMeshes::BuildLod(Plan, L, M)) { AddError(TEXT("no alien fish built")); return false; }
+			BadTris += M.TriangleCount() == AlienFishTris(Plan, L) ? 0 : 1;
+			BadWinding += InwardFaces(M);
+			const FDynamicMeshColorOverlay* C = M.Attributes()->PrimaryColors();
+			for (const int32 T : M.TriangleIndicesItr())
+			{
+				const FIndex3i Ce = C->GetTriangle(T), Tv = M.GetTriangle(T);
+				for (int32 k = 0; k < 3; ++k)
+				{
+					const FVector4f Col = C->GetElement(Ce[k]);
+					const FVector3d P = M.GetVertex(Tv[k]);
+					if (L == 0) { Box0 += (FVector)P; }
+					const float WantSide = P.Y > 0.5 ? Vc::SideRight : (P.Y < -0.5 ? Vc::SideLeft : Vc::SideMiddle);
+					bool bOk = Col.W == Vc::JointUndulate;
+					if (Col.X == Vc::SurfaceWing)
+					{
+						// A spinefin's fin: flexing from its hinge.
+						const float Pt = P.X < -2.0 ? (float)(Ff::FinRootCm + 0.55 * (FinTip - Ff::FinRootCm)) : (float)FinTip;
+						bOk &= Form == Ff::Spinefin && FMath::Abs(P.Y) >= Ff::FinRootCm - 1e-3 && FMath::IsNearlyEqual(Col.Y, FMath::Clamp((float)(FMath::Abs(P.Y) - Ff::FinRootCm) / FMath::Max(Pt - Ff::FinRootCm, 1.f), 0.f, 1.f), 1e-3f)
+							&& Col.Z == (P.Y > 0.0 ? Vc::SideRight : Vc::SideLeft);
+						Fins += L == 0 ? 1 : 0;
+					}
+					else
+					{
+						const float WantBend = Form == Ff::Eel ? (float)FMath::Clamp((50.0 - P.X) / 100.0, 0.0, 1.0) : (float)FMath::Clamp((Vc::FishBendFromCm - P.X) / (Vc::FishBendFromCm + 50.0), 0.0, 1.0);
+						bOk &= (Col.X == Vc::SurfaceBody || Col.X == Vc::SurfaceTail) && FMath::IsNearlyEqual(Col.Y, WantBend, 1e-3f) && Col.Z == WantSide;
+					}
+					BadColour += bOk ? 0 : 1;
+				}
+			}
+			if (L == 0) { Lod0 = MoveTemp(M); }
+		}
+		const FBox Padded = Box0.ExpandBy(Box0.GetExtent() * 0.15 + FVector(20.0 + D.CullPaddingUnits));
+		const TArray<FLinearColor> Vcs = VertexColours(Lod0);
+		FRandomStream Rng(91 + p);
+		const float Longest = (float)SlonkFauna::LeaperMaxSizeM(Plan);
+		for (int32 Case = 0; Case < 160; ++Case)
+		{
+			float Cu[SlonkFauna::Custom::Num] = {};
+			float Gd[SlonkFauna::LeaperData::Num] = {};
+			const float Size = Case % 5 == 0 ? (float)SlonkFauna::Leaper::MinSizeM : (Case % 5 == 1 ? Longest : Rng.FRandRange((float)SlonkFauna::Leaper::MinSizeM, Longest));
+			const int32 Count = Rng.RandRange(1, SlonkFauna::Leaper::MaxPerGroup), Idx = Rng.RandRange(0, Count - 1);
+			Cu[SlonkFauna::Custom::SizeM] = Size;
+			Cu[SlonkFauna::Custom::Seed] = Rng.FRand();
+			Cu[SlonkFauna::Custom::Phase] = Rng.FRand();
+			Cu[SlonkFauna::Custom::RateHz] = (float)SlonkFauna::Leaper::Cycles[Rng.RandRange(0, (int32)UE_ARRAY_COUNT(SlonkFauna::Leaper::Cycles) - 1)];
+			Cu[SlonkFauna::Custom::PerKind] = (float)(8 * Idx + Count);
+			for (int32 k = 0; k < 2 * SlonkFauna::Leaper::MaxPerGroup; ++k)
+			{
+				Gd[SlonkFauna::LeaperData::Surface0 + k] = Case % 3 == 0 ? (Rng.FRand() < 0.5f ? -1.f : 1.f) * SlonkFauna::Leaper::MaxSurfaceCm : Rng.FRandRange(-1.f, 1.f) * SlonkFauna::Leaper::MaxSurfaceCm;
+			}
+			Gd[SlonkFauna::LeaperData::Diving] = Case % 4 == 0 ? 1.f : 0.f;
+			Gd[SlonkFauna::LeaperData::DiveT0] = Rng.FRandRange(0.f, 3600.f);
+			Gd[SlonkFauna::LeaperData::DiveLen] = Rng.FRandRange(0.f, 70.f);
+			float T = Rng.FRandRange(0.f, 3600.f);
+			if (Case % 4 != 3)
+			{
+				const SlonkFauna::FLeap L = SlonkFauna::LeapOf(Cu, Rng.RandRange(0, 200));
+				T = MaterialTime(L.T0 - L.LeadSec + (L.FlightSec + 2.0 * L.LeadSec) * Rng.FRand());
+			}
+			const float Dist = Case % 3 == 0 ? 2000.f : (Case % 3 == 1 ? Size * 100.f * 960.f / 1.5f : 4.0e5f);
+			for (const int32 V : Lod0.VertexIndicesItr())
+			{
+				const FVector3f LP = (FVector3f)Lod0.GetVertex(V);
+				const FVector3f Moved = LP + SlonkFauna::LeaperMotion(LP, Vcs[V], T, Cu, Gd, Dist, 960.f, Form);
+				++Tried;
+				const FVector Mv((double)Moved.X, (double)Moved.Y, (double)Moved.Z);
+				Escaped += Padded.IsInside(Mv) ? 0 : 1;
+				Margin = FMath::Min(Margin, FMath::Min3(FMath::Min(Mv.X - Padded.Min.X, Padded.Max.X - Mv.X), FMath::Min(Mv.Y - Padded.Min.Y, Padded.Max.Y - Mv.Y), FMath::Min(Mv.Z - Padded.Min.Z, Padded.Max.Z - Mv.Z)));
+			}
+		}
+		UStaticMesh* Mesh = SlonkFaunaMeshes::GetMesh(Plan, EFaunaKind::Leaper);
+		if (!Mesh || Mesh != SlonkFaunaMeshes::GetMesh(Plan, EFaunaKind::Leaper) || Mesh->GetNumLODs() != SlonkFaunaMeshes::NumLods) { ++BadLod; continue; }
+		TangentBasis(Mesh, Vertices, NoTangent);
+		const FVector2D Px = LodPixels(Mesh, D, Form == Ff::Eel ? 0.9 : 0.6);
+		Px1Lo = FMath::Min(Px1Lo, Px.X); Px1Hi = FMath::Max(Px1Hi, Px.X);
+		Px2Lo = FMath::Min(Px2Lo, Px.Y); Px2Hi = FMath::Max(Px2Hi, Px.Y);
+	}
+	AddInfo(FString::Printf(TEXT("%d alien fish plans (%d eels, %d spinefins): %d LODs off their triangles, %d vertices off the colour contract (%d of a spinefin's fins at LOD 0), %d faces wound inward; %d vertices moved by the material, %d outside the box padded %.0f units (the closest %.0f inside); %d vertices over their meshes, %d without a tangent basis, %d meshes not made; LOD 1 from %.1f to %.1f pixels long, LOD 2 from %.1f to %.1f"),
+		Plans.Num(), Forms[Ff::Eel], Forms[Ff::Spinefin], BadTris, BadColour, Fins, BadWinding, Tried, Escaped, D.CullPaddingUnits, Margin, Vertices, NoTangent, BadLod, Px1Lo, Px1Hi, Px2Lo, Px2Hi));
+	TestTrue(TEXT("plans of both forms"), Forms[Ff::Eel] >= 4 && Forms[Ff::Spinefin] >= 4);
+	TestEqual(TEXT("every LOD its triangles"), BadTris, 0);
+	TestEqual(TEXT("every vertex as the material reads it"), BadColour, 0);
+	TestTrue(TEXT("a spinefin's fins"), Fins > 0);
+	TestEqual(TEXT("every face shows the side its normals point to"), BadWinding, 0);
+	TestEqual(TEXT("the material keeps every vertex in its instance's box"), Escaped, 0);
+	TestTrue(TEXT("every mesh made and kept, a tangent basis at every vertex"), BadLod == 0 && Vertices > 0 && NoTangent == 0);
+	TestTrue(TEXT("its LOD 1 from about 30 pixels long, its LOD 2 from about 6"), Px1Lo > 20.0 && Px1Hi < 42.0 && Px2Lo > 3.5 && Px2Hi < 9.0);
+
+	// Their leaps on the Earth-like world's seas, as Slonk.Fauna.LeaperArcs follows an Earth fish's.
+	const SlonkFauna::FFaunaWorld Seas = EarthSeas();
+	const double R = Seas.P.RadiusCm;
+	const double Swell = Seas.Sea.SwellCm;
+	FString Lines;
+	for (int32 Form = 0; Form < 2; ++Form)
+	{
+		float Scale = 1.f;
+		const FFaunaBodyPlan Plan = AlienKindPlan(EFaunaKind::Leaper, Form, 0.5f, 0.7f, 0.9f, &Scale);
+		const int32 F = Ff::FormOf(Plan);
+		const SlonkFauna::FFaunaWorld W = OnePlanWorld(Seas, EFaunaKind::Leaper, Plan, Scale);
+		TArray<SlonkFauna::FFaunaGroup> Groups;
+		LeaperGroupsOverSeas(W, 16, Groups);
+		FDynamicMesh3 Lod0;
+		SlonkFaunaMeshes::BuildLod(Plan, 0, Lod0);
+		const TArray<FLinearColor> Vcs = VertexColours(Lod0);
+		const double Longest = SlonkFauna::LeaperMaxSizeM(Plan);
+		int32 Moments = 0, ShownDisagree = 0, OffArc = 0, NotAtSurface = 0, CrossingOff = 0, AboveOutside = 0, PokesOut = 0, BelowFloor = 0, Leaps = 0, TooLong = 0, ReachOff = 0, Folded = 0, NotFolded = 0, Spread = 0, NotSpread = 0;
+		double WorstOff = 0.0, WorstSurface = 0.0, Lowest = 0.0, MostWave = 0.0, MostWaveMid = 0.0;
+		double ShortestFish = 1e9, LongestFish = 0.0, AllLength = 0.0;
+		int32 FishCount = 0;
+		FRandomStream Rng(303 + Form);
+		SlonkFauna::FPanic NoDive;
+		for (const SlonkFauna::FFaunaGroup& G : Groups)
+		{
+			const FFish Fi = FishOf(G);
+			SlonkFauna::FLeaperSurfaceCache Cache;
+			SlonkFauna::FShoal S;
+			if (SlonkFauna::ShoalAt(G.Centre * R, R, G.ShoalDensity, 0.0, S)) { ReachOff += FMath::IsNearlyEqual(G.MeanderCm, SlonkFauna::LeaperReachCm(S, Longest), 1e-6) ? 0 : 1; }
+			for (int32 i = 0; i < Fi.Num(); ++i)
+			{
+				const float* C = Fi.At(i);
+				const float Sz = C[SlonkFauna::Custom::SizeM];
+				TooLong += Sz <= Longest + 1e-4 && Sz >= SlonkFauna::Leaper::MinSizeM - 1e-4 ? 0 : 1;
+				ShortestFish = FMath::Min(ShortestFish, (double)Sz);
+				LongestFish = FMath::Max(LongestFish, (double)Sz);
+				AllLength += Sz;
+				++FishCount;
+				for (int32 Pick = 0; Pick < 8; ++Pick)
+				{
+					const SlonkFauna::FLeap L = SlonkFauna::LeapOf(C, Rng.RandRange(0, 300));
+					if (!L.bLeaps) { continue; }
+					++Leaps;
+					TArray<double> Ts = { L.T0 - L.LeadSec - 0.02, L.T0 - L.LeadSec + 0.002, L.T0, L.T0 + 0.5 * L.FlightSec, L.T1(), L.T1() + L.LeadSec - 0.002, L.T1() + L.LeadSec + 0.02 };
+					for (int32 k = 0; k < 5; ++k) { Ts.Add(L.T0 - L.LeadSec + (L.FlightSec + 2.0 * L.LeadSec) * Rng.FRand()); }
+					for (const double T : Ts)
+					{
+						++Moments;
+						float Gd[SlonkFauna::LeaperData::Num] = {};
+						SlonkFauna::LeaperGroupData(G, Fi.Custom, Fi.Home, R, Swell, 1.0, T, NoDive, Cache, Gd);
+						const float Tm = MaterialTime(T);
+						const bool bShown = SlonkFauna::LeaperShown(Tm, C, Gd);
+						const bool bNearEdge = FMath::Abs(T - (L.T0 - L.LeadSec)) < 0.005 || FMath::Abs(T - (L.T1() + L.LeadSec)) < 0.005;
+						ShownDisagree += bShown == L.DrawnAt(T) || bNearEdge ? 0 : 1;
+						const double H0 = Gd[SlonkFauna::LeaperData::Surface0 + 2 * i], H1 = Gd[SlonkFauna::LeaperData::Surface0 + 2 * i + 1];
+						const SlonkFauna::FLeapPose P = SlonkFauna::LeapPoseAt(L, H0, H1, T);
+						const FVector Mid = (FVector)SlonkFauna::LeaperMotion(FVector3f::ZeroVector, FishMiddle(F), Tm, C, Gd, 2000.f, 960.f, F) * Sz;
+						double Top = -1.0e9, Bottom = 1.0e9, TailY = 0.0;
+						const FVector2f Turn = SlonkFauna::LeaperTurn(Tm, C, Gd);
+						// A point moved by the material, in the fish's own frame about its middle (unturned, unpitched), unit-mesh cm.
+						auto Own = [&](const FVector3f& LP, const FLinearColor& Col)
+						{
+							FVector3f Dv = LP + SlonkFauna::LeaperMotion(LP, Col, Tm, C, Gd, 2000.f, 960.f, F) - SlonkFauna::LeaperMotion(FVector3f::ZeroVector, FishMiddle(F), Tm, C, Gd, 2000.f, 960.f, F);
+							const float Cy = FMath::Cos(-Turn.Y), Sy = FMath::Sin(-Turn.Y);
+							Dv = FVector3f(Dv.X * Cy - Dv.Y * Sy, Dv.X * Sy + Dv.Y * Cy, Dv.Z);
+							const float Cp = FMath::Cos(-Turn.X), Sp = FMath::Sin(-Turn.X);
+							return FVector3f(Dv.X * Cp - Dv.Z * Sp, Dv.Y, Dv.X * Sp + Dv.Z * Cp);
+						};
+						for (const int32 V : Lod0.VertexIndicesItr())
+						{
+							const FVector3f LP = (FVector3f)Lod0.GetVertex(V);
+							const FVector3f Moved = LP + SlonkFauna::LeaperMotion(LP, Vcs[V], Tm, C, Gd, 2000.f, 960.f, F);
+							Top = FMath::Max(Top, (double)Moved.Z * Sz);
+							Bottom = FMath::Min(Bottom, (double)Moved.Z * Sz);
+							if (LP.X < -49.f && bShown) { TailY = FMath::Max(TailY, (double)FMath::Abs(Own(LP, Vcs[V]).Y)); }
+						}
+						Lowest = FMath::Min(Lowest, Bottom);
+						BelowFloor += Bottom >= -SlonkFauna::Leaper::MinWaterCm ? 0 : 1;
+						if (!bShown) { AboveOutside += Top < -SlonkFauna::Leaper::MaxSurfaceCm ? 0 : 1; continue; }
+						const double OffCm = (Mid - P.PosCm).Size();
+						WorstOff = FMath::Max(WorstOff, OffCm);
+						OffArc += OffCm < 0.5 ? 0 : 1;
+						if (FMath::Abs(T - (L.T0 - L.LeadSec)) < 0.01 || FMath::Abs(T - (L.T1() + L.LeadSec)) < 0.01) { PokesOut += Top <= FMath::Lerp(H0, H1, P.Share) + 0.5 ? 0 : 1; }
+						for (const bool bEntry : { false, true })
+						{
+							if (T != (bEntry ? L.T1() : L.T0)) { continue; }
+							const double Want = bEntry ? H1 : H0;
+							WorstSurface = FMath::Max(WorstSurface, FMath::Abs(Mid.Z - Want));
+							NotAtSurface += FMath::Abs(Mid.Z - Want) < 0.5 && FVector2D(Mid.X, Mid.Y).Equals(bEntry ? L.ToCm() : L.FromCm, 0.5) ? 0 : 1;
+							double Surf = 0.0;
+							const FVector Splash = SlonkFauna::LeapCrossing(G, R, Swell, 1.0, Fi.Home[i], L, bEntry, &Surf);
+							const FVector Drawn = SlonkFauna::LeaperFramePoint(G, R, T, Fi.Home[i] + FVector(Mid.X, Mid.Y, 0.0));
+							CrossingOff += (Splash - Drawn.GetSafeNormal() * (R + Mid.Z)).Size() < 1.0 && FMath::Abs(Surf - Want) < 0.01 ? 0 : 1;
+						}
+						// In its own frame, unpitched: an eel's tail swinging, its middle still; a spinefin's fins folded down under the water
+						// and spread at its top.
+						const float Sh = (float)((T - L.T0) / L.FlightSec);
+						if (F == Ff::Eel && Sh > 0.3f && Sh < 0.7f) { MostWave = FMath::Max(MostWave, TailY); }
+						if (F == Ff::Eel && Sh < 0.f) { MostWaveMid = FMath::Max(MostWaveMid, TailY); }
+						if (F == Ff::Spinefin)
+						{
+							float Lo = 1.0e9f, Wide = 0.f;
+							for (const int32 V : Lod0.VertexIndicesItr())
+							{
+								if (Vcs[V].R < 0.75f || Vcs[V].G < 0.99f) { continue; }
+								// The fin's own swing about its hinge: its tip's height and reach off its hinge's, in the fish's own frame.
+								const FVector3f LP = (FVector3f)Lod0.GetVertex(V);
+								const FLinearColor Tip = Vcs[V];
+								const FVector3f Hinge(LP.X, LP.Y > 0.f ? Ff::FinRootCm : -Ff::FinRootCm, LP.Z);
+								const FVector3f Dv = Own(LP, Tip) - Own(Hinge, FLinearColor(1.f, 0.f, Tip.B, Tip.A));
+								Lo = FMath::Min(Lo, Dv.Z / FMath::Max(FMath::Abs(LP.Y) - Ff::FinRootCm, 1.f));
+								Wide = FMath::Max(Wide, FMath::Abs(Dv.Y) / FMath::Max(FMath::Abs(LP.Y) - Ff::FinRootCm, 1.f));
+							}
+							if (Sh < 0.f) { (Lo < -0.9f ? Folded : NotFolded) += 1; }
+							if (FMath::Abs(Sh - 0.5f) < 0.02f) { (Wide > 0.97f ? Spread : NotSpread) += 1; }
+						}
+					}
+				}
+			}
+		}
+		Lines += FString::Printf(TEXT("%s%s (%s): %d groups, %d leaps, %d moments: %d disagree on whether it is drawn, %d off the closed form (%.3f cm at worst), %d off the surface where it crosses (%.3f cm), %d off the splash's place; %d poking out as it comes and goes, %d not held under between leaps, the lowest %.0f cm (%d under 3 m); %d fish past their plan's sizes, %d reaches off its longest's"),
+			Lines.IsEmpty() ? TEXT("") : TEXT("; "), FishName(F), *SlonkFauna::DescribePlan(EFaunaKind::Leaper, Plan), Groups.Num(), Leaps, Moments, ShownDisagree, OffArc, WorstOff, NotAtSurface, WorstSurface, CrossingOff, PokesOut, AboveOutside, -Lowest, BelowFloor, TooLong, ReachOff);
+		Lines += FString::Printf(TEXT("; %d fish %.2f to %.2f m long (%.2f on average), %.0f to %.0f cm thick"), FishCount, ShortestFish, LongestFish, AllLength / FMath::Max(FishCount, 1),
+			100.0 * Plan.Girth * ShortestFish, 100.0 * Plan.Girth * LongestFish);
+		// fauna plans reads its fish's lengths out as they are drawn: the range it prints (to a centimetre) holds every one.
+		double ReadLo = 0.0, ReadHi = 0.0;
+		{
+			UPlanetFaunaComponent* Reader = NewObject<UPlanetFaunaComponent>();
+			Reader->SetProfile(W.Profile);
+			TArray<FString> Read;
+			Reader->DescribePlans(Read);
+			for (const FString& Line : Read)
+			{
+				FString Head, Range, Lo, Hi;
+				if (!Line.StartsWith(TEXT("leaper #0:")) || !Line.Split(TEXT(" m long"), &Head, nullptr, ESearchCase::CaseSensitive, ESearchDir::FromEnd)) { continue; }
+				Head.Split(TEXT("; "), nullptr, &Range, ESearchCase::CaseSensitive, ESearchDir::FromEnd);
+				if (Range.Split(TEXT(" to "), &Lo, &Hi)) { ReadLo = FCString::Atod(*Lo); ReadHi = FCString::Atod(*Hi); }
+			}
+			Reader->DestroyComponent();
+		}
+		Lines += FString::Printf(TEXT("; fauna plans reads them out %.2f to %.2f m long"), ReadLo, ReadHi);
+		TestTrue(TEXT("fauna plans reads out the lengths its fish are drawn at"), ReadHi > 0.0 && ReadLo <= ShortestFish + 0.005 && ReadHi >= LongestFish - 0.005);
+		if (F == Ff::Eel) { Lines += FString::Printf(TEXT("; its tail's tip swinging up to %.1f cm of the unit mesh either way of its middle in the air, %.1f as it comes up under the water"), MostWave, MostWaveMid); }
+		else { Lines += FString::Printf(TEXT("; its fins folded under the water %d times (%d not), spread at its top %d (%d not)"), Folded, NotFolded, Spread, NotSpread); }
+		TestTrue(TEXT("groups of it, leaping"), Groups.Num() >= 6 && Leaps > 100);
+		TestEqual(TEXT("drawn when the closed form has it drawn, and only then"), ShownDisagree, 0);
+		TestEqual(TEXT("its middle where the closed form has it"), OffArc, 0);
+		TestEqual(TEXT("leaving and diving back in at the sea's surface there and then"), NotAtSurface, 0);
+		TestEqual(TEXT("its splash where its arc crosses the surface"), CrossingOff, 0);
+		TestEqual(TEXT("under the water whole as it comes and goes, held under between leaps"), PokesOut + AboveOutside, 0);
+		TestEqual(TEXT("never below the shallowest sea floor it lives over"), BelowFloor, 0);
+		TestEqual(TEXT("its fish of its plan's sizes, its reach its longest's"), TooLong + ReachOff, 0);
+		if (F == Ff::Eel)
+		{
+			TestTrue(TEXT("an eel's wave running back along it, more in the air than under the water"), MostWave > 8.0 && MostWaveMid > 1.0 && MostWaveMid < MostWave);
+			// Long and thick enough to read from the shore and from a ship hovering over the sea: a metre to 1.8 m, a tenth of
+			// its length thick or about.
+			TestTrue(TEXT("its eels a metre to 1.8 m long, most of them well over a metre, a hand's breadth thick"), FishCount > 20 && ShortestFish >= 0.9 - 1e-4 && LongestFish <= 1.8 + 1e-4
+				&& AllLength / FishCount > 1.1 && Plan.Girth >= 0.09f && 100.0 * Plan.Girth * ShortestFish >= 8.0);
+		}
+		else { TestTrue(TEXT("a spinefin's fins folded under the water, spread at its top"), Folded > 20 && NotFolded == 0 && Spread > 5 && NotSpread == 0); }
+	}
+	AddInfo(Lines);
+	// Every eel plan a tenth of its length thick or about, every eel group's fish a metre long or more on its plan's sizes.
+	int32 ThinEels = 0;
+	for (const FAlienPlan& A : AlienKindPlans(EFaunaKind::Leaper)) { ThinEels += Ff::FormOf(A.Plan) != Ff::Eel || (A.Plan.Girth >= 0.09f - 1e-4f && A.Plan.Girth <= 0.12f + 1e-4f) ? 0 : 1; }
+	TestEqual(TEXT("every eel plan's girth 0.09 to 0.12 of its length"), ThinEels, 0);
+	// The splashes: an eel's three fifths of its length's (slim, it throws less than a fish of its length; its longest's
+	// no bigger than a spinefin's longest), a spinefin's a third again; an Earth fish's its own.
+	const FFaunaBodyPlan EelPlan = AlienKindPlan(EFaunaKind::Leaper, 0, 0.5f, 0.5f, 0.9f), FinPlan = AlienKindPlan(EFaunaKind::Leaper, 1, 0.5f, 0.5f, 0.9f);
+	TestTrue(TEXT("splashes scaled to the fish"), SlonkFauna::SplashScaleOf(SlonkFauna::EarthPlan(EFaunaKind::Leaper)) == 1.0 && SlonkFauna::SplashScaleOf(EelPlan) < 0.9
+		&& SlonkFauna::SplashScaleOf(FinPlan) > 1.2
+		&& SlonkFauna::LeaperMaxSizeM(EelPlan) * SlonkFauna::SplashScaleOf(EelPlan) <= SlonkFauna::LeaperMaxSizeM(FinPlan) * SlonkFauna::SplashScaleOf(FinPlan));
+	TestTrue(TEXT("an Earth fish's reach as it was"), SlonkFauna::LeaperMaxSizeM(SlonkFauna::EarthPlan(EFaunaKind::Leaper)) == SlonkFauna::Leaper::MaxSizeM);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaGlowOrgansTest, "Slonk.Fauna.GlowOrgans", SLONK_TEST_FLAGS)
+bool FSlonkFaunaGlowOrgansTest::RunTest(const FString& Parameters)
+{
+	// Glow organs: none at strangeness 0 to 0.15 on any world's species of any kind, nor on any group of the Earth-like
+	// world; at strangeness 1 about two in five alien species carry them, of every kind with alien forms. Every glowing
+	// plan of every alien form (fliers, walkers, fish) has its row along its flanks on its body (its finest LOD glowing from
+	// the side), and each of its coarser LODs glows about as much as its finest, within half as much again either way, from
+	// either side and from where a player sees it from (a flier from under it, a herd and a fish from the air), its flanks
+	// upright at every LOD and its speck's side standing over the row; its breath a whole number of cycles an hour, 0.7 to
+	// 1; its row's material copy the material's as it stands.
+	int32 Earthly = 0, Worlds = 0;
+	for (const EPlanetArchetype Kind : FaunaKinds)
+	{
+		for (uint32 Hash = 1; Hash <= 120; ++Hash)
+		{
+			for (const float S : { 0.f, 0.1f, 0.15f })
+			{
+				const SlonkFauna::FFaunaProfile F = SlonkFauna::Roll(SlonkGenome::Roll(Kind, S, Hash * 7919u), Kind, Hash * 7919u);
+				++Worlds;
+				for (int32 K = 0; K < SlonkFauna::NumKinds; ++K)
+				{
+					for (int32 i = 0; i < F.Species[K].Num; ++i) { Earthly += F.Species[K].List[i].Plan.GlowOrgans == 0 ? 0 : 1; }
+				}
+			}
+		}
+	}
+	int32 Glowing = 0, GroupsGlow = 0;
+	{
+		TArray<SlonkFauna::FFaunaGroup> Flocks, Herds, Leapers;
+		GroupsOverGlobe(EarthFauna(), 1000, Flocks);
+		HerdsOverGlobe(EarthHerds(), 4000, Herds);
+		LeaperGroupsOverSeas(EarthSeas(), 20, Leapers);
+		for (const TArray<SlonkFauna::FFaunaGroup>* Set : { &Flocks, &Herds, &Leapers }) { for (const SlonkFauna::FFaunaGroup& G : *Set) { GroupsGlow += G.Glow == 0.f && G.Plan.GlowOrgans == 0 ? 0 : 1; } }
+	}
+	// At strangeness 1.
+	int32 Alien = 0, AlienGlowing = 0;
+	int32 ByKind[SlonkFauna::NumKinds] = {};
+	for (uint32 Hash = 1; Hash <= 600; ++Hash)
+	{
+		const SlonkFauna::FFaunaProfile F = SlonkFauna::Roll(SlonkGenome::Roll(EPlanetArchetype::Terrestrial, 1.f, Hash * 7919u), EPlanetArchetype::Terrestrial, Hash * 7919u);
+		for (int32 K = 0; K < SlonkFauna::NumKinds; ++K)
+		{
+			for (int32 i = 0; i < F.Species[K].Num; ++i)
+			{
+				const FFaunaBodyPlan& P = F.Species[K].List[i].Plan;
+				if (SlonkFauna::IsEarthPlan((EFaunaKind)K, P) || (EFaunaKind)K == EFaunaKind::Floater) { continue; }
+				++Alien;
+				AlienGlowing += P.GlowOrgans > 0 ? 1 : 0;
+				ByKind[K] += P.GlowOrgans > 0 ? 1 : 0;
+			}
+		}
+	}
+	Glowing = AlienGlowing;
+	// Every glowing plan of every alien form, at the ends and the middle of its ranges.
+	struct FGlowPlan { FFaunaBodyPlan Plan; EFaunaKind Kind; };
+	TArray<FGlowPlan> Plans;
+	for (const EFaunaKind K : { EFaunaKind::Flier, EFaunaKind::Herd, EFaunaKind::Leaper })
+	{
+		for (int32 Form = 0; Form < SlonkFauna::AlienForms(K); ++Form)
+		{
+			for (const float At : { 0.f, 0.5f, 1.f })
+			{
+				for (const float GlowDraw : { 0.05f, 0.35f })
+				{
+					const FFaunaBodyPlan P = AlienKindPlan(K, Form, At, 0.6f, GlowDraw);
+					if (P.GlowOrgans > 0) { Plans.Add({ P, K }); }
+				}
+			}
+		}
+	}
+	// The views a player has of each: a flier from either side and from under it (35 degrees up, off its quarter, as crew
+	// on the ground see a flock: from over it its wings hide its flanks), a herd and a fish from either side and from the
+	// air.
+	const FVector Under = FVector(AirView().X, AirView().Y, -AirView().Z);
+	int32 RowOff = 0, Unlit = 0, GlowOff = 0, CoverOff = 0;
+	double RatioLo[3] = { 1e9, 1e9, 1e9 }, RatioHi[3] = {}, CoverLo = 1e9, CoverHi = 0.0;
+	FString Firsts, OffAt;
+	for (const FGlowPlan& G : Plans)
+	{
+		const SlonkFauna::GlowOrgan::FRow Row = SlonkFaunaMeshes::GlowRowOf(G.Plan);
+		RowOff += Row.Spots == G.Plan.GlowOrgans && Row.U1 > Row.U0 && Row.RU > 0.f && Row.RV > 0.f ? 0 : 1;
+		UE::Geometry::FDynamicMesh3 Lods[SlonkFaunaMeshes::NumLods];
+		for (int32 L = 0; L < SlonkFaunaMeshes::NumLods; ++L) { SlonkFaunaMeshes::BuildLod(G.Plan, L, Lods[L]); }
+		const TArray<FVector> Views = { FVector::YAxisVector, -FVector::YAxisVector, G.Kind == EFaunaKind::Flier ? Under : AirView() };
+		for (int32 v = 0; v < Views.Num(); ++v)
+		{
+			const FVector2D G0 = SeeGlow(Lods[0], Views[v], Row);
+			Unlit += v < 2 && G0.X <= 1.0 ? 1 : 0;
+			for (int32 L = 1; L < SlonkFaunaMeshes::NumLods; ++L)
+			{
+				const FVector2D Gl = SeeGlow(Lods[L], Views[v], Row);
+				const double Rg = Gl.X / FMath::Max(G0.X, 1e-3);
+				RatioLo[L] = FMath::Min(RatioLo[L], Rg);
+				RatioHi[L] = FMath::Max(RatioHi[L], Rg);
+				const bool bOff = !(Rg >= 1.0 / 1.5 && Rg <= 1.5);
+				GlowOff += bOff ? 1 : 0;
+				if (bOff && OffAt.Len() < 2400)
+				{
+					OffAt += FString::Printf(TEXT("%s%s form %d view %d LOD %d: %.1f against %.1f cm2"), OffAt.IsEmpty() ? TEXT("") : TEXT("; "), SlonkFauna::KindName(G.Kind),
+						G.Kind == EFaunaKind::Flier ? SlonkFauna::Wings::FormOf(G.Plan) : (G.Kind == EFaunaKind::Leaper ? SlonkFauna::FishForm::FormOf(G.Plan) : (int32)SlonkFauna::Walker::ShapeOf(G.Plan).Form), v, L, Gl.X, G0.X);
+				}
+				if (v < 2)
+				{
+					const double Rc = Gl.Y / FMath::Max(G0.Y, 1e-3);
+					CoverLo = FMath::Min(CoverLo, Rc);
+					CoverHi = FMath::Max(CoverHi, Rc);
+				}
+			}
+			if (v == 0 && Firsts.Len() < 900)
+			{
+				Firsts += FString::Printf(TEXT("%s%s (%d a flank): %.0f cm2 of its LOD 0 lit from the side"), Firsts.IsEmpty() ? TEXT("") : TEXT("; "), SlonkFauna::KindName(G.Kind), G.Plan.GlowOrgans, G0.X);
+			}
+		}
+	}
+	// Its breath.
+	int32 BreathOff = 0;
+	{
+		FRandomStream Rng(11);
+		for (int32 c = 0; c < 200; ++c)
+		{
+			float Cu[SlonkFauna::Custom::Num] = {};
+			Cu[SlonkFauna::Custom::Seed] = Rng.FRand();
+			const float A = SlonkFauna::GlowBreath(0.f, Cu), B = SlonkFauna::GlowBreath(3600.f, Cu), M = SlonkFauna::GlowBreath(Rng.FRandRange(0.f, 3600.f), Cu);
+			BreathOff += FMath::Abs(A - B) < 2e-3f && M >= SlonkFauna::GlowOrgan::Breath - 1e-4f && M <= 1.f + 1e-4f ? 0 : 1;
+		}
+	}
+	// None on any Earth plan's row.
+	int32 EarthRows = 0;
+	for (int32 K = 0; K < SlonkFauna::NumKinds; ++K) { EarthRows += SlonkFaunaMeshes::GlowRowOf(SlonkFauna::EarthPlan((EFaunaKind)K)).Spots; }
+	const FString Block = MaterialMotionBlock(EMotionBlock::Glow, true);
+	const uint32 BlockCrc = FCrc::StrCrc32(*Block);
+	AddInfo(FString::Printf(TEXT("%d worlds at strangeness 0, 0.1 and 0.15: %d species with glow organs; the Earth-like world's groups: %d glowing; at 1, %d of %d alien species carry them (%.0f%%: %d fliers', %d herds', %d fish's); the Earth plans' rows %d spots"),
+		Worlds, Earthly, GroupsGlow, Glowing, Alien, 100.0 * Glowing / FMath::Max(Alien, 1), ByKind[(int32)EFaunaKind::Flier], ByKind[(int32)EFaunaKind::Herd], ByKind[(int32)EFaunaKind::Leaper], EarthRows));
+	AddInfo(FString::Printf(TEXT("%d glowing plans: %d rows off their plan, %d dark from the side at LOD 0; LOD 1 glowing %.2f to %.2f as much as LOD 0 from either side and the air, LOD 2 %.2f to %.2f; %d views off; their side covering %.2f to %.2f; %s"),
+		Plans.Num(), RowOff, Unlit, RatioLo[1], RatioHi[1], RatioLo[2], RatioHi[2], GlowOff, CoverLo, CoverHi, *Firsts));
+	AddInfo(FString::Printf(TEXT("%d breaths off; fauna_material.py's glow organs' block %d characters, CRC 0x%08x (0x%08x when the copy was made)"), BreathOff, Block.Len(), BlockCrc, MaterialGlowBlockCrc));
+	if (!OffAt.IsEmpty()) { AddInfo(FString::Printf(TEXT("off: %s"), *OffAt)); }
+	TestEqual(TEXT("no glow organs to strangeness 0.15, none on the Earth-like world's groups or the Earth's plans"), Earthly + GroupsGlow + EarthRows, 0);
+	TestTrue(TEXT("about two in five alien species carry them, of every kind with alien forms"), Alien > 1000 && (double)Glowing / Alien > 0.3 && (double)Glowing / Alien < 0.5
+		&& ByKind[(int32)EFaunaKind::Flier] > 0 && ByKind[(int32)EFaunaKind::Herd] > 0 && ByKind[(int32)EFaunaKind::Leaper] > 0);
+	TestTrue(TEXT("glowing plans of every alien form"), Plans.Num() >= 12);
+	TestEqual(TEXT("each plan's row its own, lit on its body from the side"), RowOff + Unlit, 0);
+	TestEqual(TEXT("the speck LODs glowing as much as the finest, within half as much again either way"), GlowOff, 0);
+	TestEqual(TEXT("its breath 0.7 to 1, a whole number of cycles an hour"), BreathOff, 0);
+	TestTrue(TEXT("fauna_material.py's glow organs' block found"), Block.Contains(TEXT("float gbody = ")));
+	TestEqual(TEXT("GlowSpotAt and GlowBreath copy the material's glow organs as they are now"), BlockCrc, MaterialGlowBlockCrc);
+
+	// Far off, the speck floor draws a glowing animal bigger than it is (its spots with it): their light is the fainter by
+	// the square of that growth (GlowSpeckDim), so all the light an animal gives (its spots' drawn area, the square of its
+	// drawn size over its distance, times their light) keeps falling as the square of its distance past the floor's onset,
+	// as it does before it. The growth read off the vertex shader's copies (a point 10 cm of the unit mesh along its body,
+	// against its middle): a four-winged and a membrane-winged flier, a walker; a fish's from its line, its full growth at
+	// the top of its leap and its own size where it crosses the surface.
+	int32 DimOff = 0, NotFalling = 0, PastOnset = 0;
+	double MostDimOff = 0.0, FarthestDim = 1.0;
+	{
+		const FVector3f Along(10.f, 0.f, 0.f);
+		const FLinearColor Rigid(0.f, 0.f, 0.5f, 0.f);
+		for (const float SizeM : { 0.4f, 1.f, 2.5f })
+		{
+			for (int32 What = 0; What < 5; ++What)
+			{
+				double Before = TNumericLimits<double>::Max();
+				for (int32 Step = 0; Step < 120; ++Step)
+				{
+					const float DistCm = 2.0e3f * FMath::Pow(1.06f, (float)Step);
+					float Growth = 1.f, Dim = 1.f;
+					if (What < 2)
+					{
+						float Cu[SlonkFauna::Custom::Num] = {};
+						float Gd[SlonkFauna::GroupData::Num] = {};
+						Cu[SlonkFauna::Custom::SizeM] = SizeM;
+						const int32 Form = What == 0 ? SlonkFauna::Wings::Four : SlonkFauna::Wings::Membrane;
+						Growth = (SlonkFauna::FlierMotion(Along, Rigid, 50.f, Cu, Gd, DistCm, 960.f, FVector2f(0.f, 0.f), Form) + Along - SlonkFauna::FlierMotion(FVector3f::ZeroVector, Rigid, 50.f, Cu, Gd, DistCm, 960.f, FVector2f(0.f, 0.f), Form)).Size() / 10.f;
+						Dim = SlonkFauna::GlowSpeckDim(EFaunaKind::Flier, SizeM, DistCm, 960.f, Form);
+					}
+					else if (What == 2)
+					{
+						float Cu[SlonkFauna::Custom::Num] = {};
+						float Gd[SlonkFauna::HerdData::Num] = {};
+						Cu[SlonkFauna::Custom::SizeM] = SizeM;
+						Cu[SlonkFauna::Custom::RateHz] = 0.6f * SizeM;
+						Cu[SlonkFauna::Custom::PerKind] = 1.5f;
+						Gd[SlonkFauna::HerdData::GroundHalfCm] = 3000.f;
+						Growth = (SlonkFauna::WalkerMotion(Along, Along * SizeM, Rigid, 50.f, Cu, Gd, DistCm, 960.f) + Along - SlonkFauna::WalkerMotion(FVector3f::ZeroVector, FVector3f::ZeroVector, Rigid, 50.f, Cu, Gd, DistCm, 960.f)).Size() / 10.f;
+						Dim = SlonkFauna::GlowSpeckDim(EFaunaKind::Herd, SizeM, DistCm, 960.f);
+					}
+					else
+					{
+						const float Share = What == 3 ? 0.5f : 0.f;
+						const float Full = FMath::Clamp(2.f / FMath::Max(FMath::Max(SizeM, 0.1f) * 100.f * 960.f / DistCm, 0.001f), 1.f, SlonkFauna::Leaper::SpeckMax);
+						Growth = 1.f + (Full - 1.f) * FMath::Sin(3.14159265f * Share);
+						Dim = SlonkFauna::GlowSpeckDim(EFaunaKind::Leaper, SizeM, DistCm, 960.f, 0, Share);
+					}
+					const double Off = FMath::Abs((double)Dim * Growth * Growth - 1.0);
+					MostDimOff = FMath::Max(MostDimOff, Off);
+					DimOff += Off < 2e-3 ? 0 : 1;
+					PastOnset += Growth > 1.01f ? 1 : 0;
+					FarthestDim = FMath::Min(FarthestDim, (double)Dim);
+					// All of its light: its drawn size's square over its distance's, times its spots' light.
+					const double All = FMath::Square(Growth * SizeM * 100.0 / DistCm) * Dim;
+					// Each step out is 6% further: a tenth fainter or more, not held where it was.
+					NotFalling += All < Before * 0.99 ? 0 : 1;
+					Before = All;
+				}
+			}
+		}
+	}
+	const FString Pixel = MaterialMotionBlock(EMotionBlock::Fliers, true) + MaterialMotionBlock(EMotionBlock::Walkers, true) + MaterialMotionBlock(EMotionBlock::Leapers, true);
+	const bool bDimmed = Pixel.Contains(TEXT("Emis = GlowColor * (Glow * Night * glit / (agk * agk));")) && Pixel.Contains(TEXT("Emis = GlowColor * (Glow * Night * glit / (wgk * wgk));"))
+		&& Pixel.Contains(TEXT("Emis = GlowColor * (Glow * Night * glit / (lgk * lgk));")) && Pixel.Contains(TEXT("float wgk = clamp(3.0 / max(max(Size, 0.1) * 100.0 * PxPerRad / max(length(WP - ViewPos), 1.0), 0.001), 1.0, 4.0);"))
+		&& Pixel.Contains(TEXT("float agk = clamp(2.0 / max(max(Size, 0.01) * 100.0 * PxPerRad / max(length(WP - ViewPos), 1.0), 0.001), 1.0, 3.0);"))
+		&& Pixel.Contains(TEXT("float lgk = 1.0 + (lgr - 1.0) * sin(3.14159265 * saturate(lsh));"));
+	AddInfo(FString::Printf(TEXT("glow organs past the speck floor's onset: %d moments grown past their size (their light down to %.3f of its own at the farthest); its dimming off the square of the vertex shader's growth by %.5f at the most (%d off); %d steps out where all the light an animal gives did not fall; the pixel shader's branches dim it so: %s"),
+		PastOnset, FarthestDim, MostDimOff, DimOff, NotFalling, bDimmed ? TEXT("yes") : TEXT("no")));
+	TestTrue(TEXT("animals far enough off that the speck floor grows them"), PastOnset > 100);
+	TestEqual(TEXT("its spots' light over the square of the speck floor's growth of it"), DimOff, 0);
+	TestEqual(TEXT("all the light an animal gives falls with distance past the speck floor's onset"), NotFalling, 0);
+	TestTrue(TEXT("the material's branches light the glow organs so (fliers, walkers, fish)"), bDimmed);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaPlanktonSolventTest, "Slonk.Fauna.PlanktonSolvent", SLONK_TEST_FLAGS)
+bool FSlonkFaunaPlanktonSolventTest::RunTest(const FString& Parameters)
+{
+	// The plankton's glow starts from its sea's solvent: water's exactly the Earth-like look's blue-green (every world at
+	// strangeness 0 has it, its look as it was), an ammonia sea's, a methane sea's and an acid sea's each its own, at least 60
+	// degrees round the wheel from water's and from one another, at the water's saturation and as bright to the eye; where
+	// there is no plankton (molten rock, no seas) the water's base and no glow. A strange world's then turns with its sky
+	// (Slonk.Fauna.PlanktonParams), and its sky-jellies' light and its glow organs' are that glow: the look's, the sea's.
+	auto Luma = [](const FLinearColor& C) { return 0.2126f * C.R + 0.7152f * C.G + 0.0722f * C.B; };
+	const FLinearColor Water = SlonkFauna::PlanktonBase(ESolvent::Water);
+	const ESolvent Alien[3] = { ESolvent::Ammonia, ESolvent::Methane, ESolvent::Acid };
+	FString Bases;
+	int32 TooNear = 0, Dimmer = 0, Paler = 0;
+	for (int32 a = 0; a < 3; ++a)
+	{
+		const FLinearColor C = SlonkFauna::PlanktonBase(Alien[a]);
+		Bases += FString::Printf(TEXT("%s %.2f %.2f %.2f (hue %.0f deg, luma %.3f); "), SlonkGenome::SolventName(Alien[a]), C.R, C.G, C.B, HueOf(C), Luma(C));
+		TooNear += HueGap(HueOf(C), HueOf(Water)) >= 60.f ? 0 : 1;
+		for (int32 b = a + 1; b < 3; ++b) { TooNear += HueGap(HueOf(C), HueOf(SlonkFauna::PlanktonBase(Alien[b]))) >= 60.f ? 0 : 1; }
+		Dimmer += FMath::IsNearlyEqual(Luma(C), Luma(Water), 0.01f * Luma(Water)) ? 0 : 1;
+		Paler += FMath::IsNearlyEqual(C.LinearRGBToHSV().G, Water.LinearRGBToHSV().G, 1e-3f) ? 0 : 1;
+	}
+	// The worlds: every archetype at strangeness 0 has water's look; at 1, each solvent's world its own, the jellies' and
+	// the glow organs' light the sea's glow; none in molten or no seas.
+	int32 ZeroOff = 0, Worlds = 0, LookOff = 0, DeadGlow = 0, DeadBase = 0;
+	int32 BySolvent[6] = {};
+	for (const EPlanetArchetype Kind : FaunaKinds)
+	{
+		for (uint32 Hash = 1; Hash <= 40; ++Hash)
+		{
+			const FWorldGenome G0 = SlonkGenome::Roll(Kind, 0.f, Hash * 7919u);
+			ZeroOff += SlonkFauna::LookOf(G0).Glow == SlonkFauna::FFaunaLook().Glow ? 0 : 1;
+			for (const float S : { 0.6f, 1.f })
+			{
+				const FWorldGenome G = SlonkGenome::Roll(Kind, S, Hash * 7919u);
+				++Worlds;
+				++BySolvent[FMath::Clamp((int32)G.Solvent, 0, 5)];
+				const SlonkFauna::FFaunaProfile F = SlonkFauna::Roll(G, Kind, Hash * 7919u);
+				const SlonkFauna::FSeaLife Sea = SlonkFauna::SeaLifeOf(1.f, G);
+				LookOff += F.Look.Glow == Sea.PlanktonColor ? 0 : 1;
+				if (G.Solvent == ESolvent::Magma || G.Solvent == ESolvent::None)
+				{
+					DeadGlow += Sea.PlanktonGlow == 0.f ? 0 : 1;
+					DeadBase += SlonkFauna::PlanktonBase(G.Solvent) == Water ? 0 : 1;
+				}
+			}
+		}
+	}
+	AddInfo(FString::Printf(TEXT("water's base %.2f %.2f %.2f (hue %.0f deg, luma %.3f); %s%d pairs under 60 degrees apart, %d off water's brightness, %d off its saturation"),
+		Water.R, Water.G, Water.B, HueOf(Water), Luma(Water), *Bases, TooNear, Dimmer, Paler));
+	AddInfo(FString::Printf(TEXT("%d worlds at 0.6 and 1 (%d water, %d ammonia, %d methane, %d acid, %d molten, %d dry): %d looks off their sea's glow, %d molten or dry seas glowing, %d of them off water's base; %d worlds at 0 off the Earth's look"),
+		Worlds, BySolvent[0], BySolvent[1], BySolvent[2], BySolvent[3], BySolvent[4], BySolvent[5], LookOff, DeadGlow, DeadBase, ZeroOff));
+	TestTrue(TEXT("water's base exactly the Earth-like look's blue-green"), Water == SlonkFauna::FFaunaLook().Glow && SlonkFauna::FSeaLife().PlanktonColor == Water);
+	TestEqual(TEXT("every world at strangeness 0 the Earth's look"), ZeroOff, 0);
+	TestEqual(TEXT("each alien sea's its own hue, far round the wheel from the others"), TooNear, 0);
+	TestEqual(TEXT("as bright to the eye and as saturated as water's"), Dimmer + Paler, 0);
+	TestTrue(TEXT("seas of every solvent rolled"), BySolvent[1] > 0 && BySolvent[2] > 0 && BySolvent[3] > 0 && BySolvent[4] > 0);
+	TestEqual(TEXT("the jellies' and the glow organs' light the sea's glow"), LookOff, 0);
+	TestEqual(TEXT("none where there is no plankton, and no solvent's hue there"), DeadGlow + DeadBase, 0);
+
+	// Turned round the wheel by every sky's turn (a degree at a time), an alien sea's glow is no brighter to the eye than its
+	// own base, which is water's (so no brighter than water's own glow before it turns, under the locked exposure the night
+	// seas, the jellies and the glow organs are lit by), nor its brightest channel past the base's; its hue the base's turned.
+	// A water sea's turns as it always has: its brightest channel kept (so the Earth-like look and every water world are as
+	// they were).
+	int32 Brighter = 0, HueOff = 0, WaterOff = 0, Turns = 0;
+	float MostOverBase = 0.f, WaterMost = 0.f;
+	FString Brightest;
+	for (const ESolvent Sv : { ESolvent::Water, ESolvent::Ammonia, ESolvent::Methane, ESolvent::Acid })
+	{
+		const FLinearColor Base = SlonkFauna::PlanktonBase(Sv);
+		float Most = 0.f;
+		for (int32 Deg = -180; Deg <= 180; ++Deg)
+		{
+			if (Deg == 0) { continue; }
+			FWorldGenome G;
+			G.Solvent = Sv;
+			G.Strangeness = 1.f;
+			G.SkyHueShiftDeg = (float)Deg;
+			const FLinearColor Glow = SlonkFauna::LookOf(G).Glow;
+			++Turns;
+			HueOff += HueGap(HueOf(Glow), FMath::Fmod(HueOf(Base) + (float)Deg + 720.f, 360.f)) > 0.5f ? 1 : 0;
+			const float Over = SlonkFauna::PlanktonLuma(Glow) / SlonkFauna::PlanktonLuma(Base);
+			if (Sv == ESolvent::Water)
+			{
+				WaterOff += FMath::IsNearlyEqual(Glow.GetMax(), Base.GetMax(), 1e-4f) ? 0 : 1;
+				WaterMost = FMath::Max(WaterMost, Over);
+				continue;
+			}
+			Most = FMath::Max(Most, Over);
+			Brighter += Over > 1.0001f || Glow.GetMax() > Base.GetMax() + 1e-4f ? 1 : 0;
+		}
+		if (Sv != ESolvent::Water)
+		{
+			MostOverBase = FMath::Max(MostOverBase, Most);
+			Brightest += FString::Printf(TEXT("%s%s %.2f"), Brightest.IsEmpty() ? TEXT("") : TEXT(", "), SlonkGenome::SolventName(Sv), Most);
+		}
+	}
+	AddInfo(FString::Printf(TEXT("%d turns of each solvent's glow: the brightest to the eye over its base %s (water's own up to %.2f of its base, its brightest channel kept, %d off it); %d alien glows brighter than their base, %d off their hue"),
+		Turns / 4, *Brightest, WaterMost, WaterOff, Brighter, HueOff));
+	TestEqual(TEXT("an alien sea's glow turned no brighter to the eye than its base, nor any channel past the base's"), Brighter, 0);
+	TestEqual(TEXT("every glow its base's hue turned by the sky"), HueOff, 0);
+	TestEqual(TEXT("a water sea's glow turned as it always was, its brightest channel kept"), WaterOff, 0);
+	return true;
+}
+
+namespace
+{
+	/** The world "spawnplanet terrestrial strange s seed n" makes from the game's start, its fliers and its fish (its seas'
+	 *  shoals as the terrain material paints them), full of life. */
+	SlonkFauna::FFaunaWorld SpawnedSkiesAndSeas(int32 SeedPick, float S)
+	{
+		const uint32 Hash = PlaceHash(SpawnedPlace(SeedPick));
+		FWorldGenome G = SlonkGenome::Roll(EPlanetArchetype::Terrestrial, S, Hash);
+		SlonkGenome::SettleLock(G, EPlanetArchetype::Terrestrial, FVector::ZeroVector, false);
+		SlonkFauna::FFaunaWorld W;
+		W.P = SpawnedParams(SeedPick);
+		W.Profile = SlonkFauna::Roll(G, EPlanetArchetype::Terrestrial, Hash);
+		W.Life = 1.f;
+		W.KindMask = SlonkFauna::KindBit(EFaunaKind::Flier) | SlonkFauna::KindBit(EFaunaKind::Leaper);
+		W.Sea.ShoalDensity = SlonkFauna::SeaLifeOf(1.f, G).ShoalDensity;
+		W.Sea.SwellCm = 120.f;
+		return W;
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaAlienSkiesSeedsTest, "Slonk.Fauna.AlienSkiesSeeds", SLONK_TEST_FLAGS)
+bool FSlonkFaunaAlienSkiesSeedsTest::RunTest(const FString& Parameters)
+{
+	// The captures' worlds: of the seeds "spawnplanet terrestrial strange s seed n" rolls from the game's start, those with
+	// a four-winged species, a membrane-winged one, an eel and a spinefin at a strangeness from 0.6 to 0.9, and how far from
+	// the start's place ((0.3, 0.8, 0.5) of the world) the nearest flock or group of each is ("fauna goto flier 60 species
+	// n", "fauna goto leaper 30 species n").
+	TArray<FString> Picks[4];
+	const FVector Start = FVector(0.3, 0.8, 0.5).GetSafeNormal();
+	for (int32 Seed = 0; Seed <= 40; ++Seed)
+	{
+		if (Picks[0].Num() >= 2 && Picks[1].Num() >= 2 && Picks[2].Num() >= 2 && Picks[3].Num() >= 2) { break; }
+		for (const float S : { 0.7f, 0.8f, 0.9f, 0.6f })
+		{
+			const SlonkFauna::FFaunaWorld W = SpawnedSkiesAndSeas(Seed, S);
+			bool bAny = false;
+			for (int32 Want = 0; Want < 4; ++Want)
+			{
+				if (Picks[Want].Num() >= 2) { continue; }
+				const EFaunaKind K = Want < 2 ? EFaunaKind::Flier : EFaunaKind::Leaper;
+				const SlonkFauna::FFaunaKindSpecies& Sp = W.Profile.Species[(int32)K];
+				int32 Species = -1;
+				for (int32 i = 0; i < Sp.Num && Species < 0; ++i)
+				{
+					const int32 F = K == EFaunaKind::Flier ? Wn::FormOf(Sp.List[i].Plan) : Ff::FormOf(Sp.List[i].Plan);
+					if (F == (Want == 0 ? Wn::Four : (Want == 1 ? Wn::Membrane : (Want == 2 ? Ff::Eel : Ff::Spinefin)))) { Species = i; }
+				}
+				if (Species < 0) { continue; }
+				SlonkFauna::FFaunaGroup G;
+				SlonkFauna::FGroupSearch Search;
+				if (!SlonkFauna::FindGroupNear(W, K, Start, 4.0e7, K == EFaunaKind::Flier ? 6000 : 60000, G, &Search, Species)) { continue; }
+				const double Km = FVector::Dist(G.Centre, Start) * W.P.RadiusCm / 1e5;
+				Picks[Want].Add(FString::Printf(TEXT("seed %d at %.1f: species #%d of %d (%.0f%% of the cells), the nearest %s %.0f km off (%d of %.2f m%s)"), Seed, S, Species, Sp.Num, 100.f * Sp.List[Species].Share,
+					K == EFaunaKind::Flier ? SlonkFauna::HabitatName(G.Habitat) : TEXT("group"), Km, G.Members, G.SpanM, G.Plan.GlowOrgans > 0 ? TEXT(", glowing") : TEXT("")));
+				bAny = true;
+			}
+			if (bAny) { break; }
+		}
+	}
+	const TCHAR* Names[4] = { TEXT("four-winged fliers"), TEXT("membrane-winged fliers"), TEXT("eels"), TEXT("spinefins") };
+	for (int32 Want = 0; Want < 4; ++Want) { AddInfo(FString::Printf(TEXT("spawnplanet terrestrial worlds with %s near the start: %s"), Names[Want], *FString::Join(Picks[Want], TEXT("; ")))); }
+	TestTrue(TEXT("seeds for the captures of every alien flier and fish"), Picks[0].Num() > 0 && Picks[1].Num() > 0 && Picks[2].Num() > 0 && Picks[3].Num() > 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaStrangeWorldsLetGoTest, "Slonk.Fauna.StrangeWorldsLetGo", SLONK_TEST_FLAGS)
+bool FSlonkFaunaStrangeWorldsLetGoTest::RunTest(const FString& Parameters)
+{
+	// A trip through a dozen strange worlds' profiles, one after another, by one world's fauna (as fauna strange gives it
+	// a new one; a world left behind is suspended instead: Slonk.Fauna.SuspendedLetGo), each drawing a group of every
+	// species it has (a mesh and a material instance for each of its alien plans), while a second world's fauna holds its
+	// own the whole time: the meshes kept are only the Earth's and the two worlds' species' now (every profile left behind
+	// lets go of its own, and comes back to them made anew), and the fauna's material instances only its world's alien
+	// plans' (none of a profile left behind, so none is written to each frame); a world's fauna gone lets go of its meshes
+	// too.
+	UPlanetFaunaComponent* Trip = NewObject<UPlanetFaunaComponent>();
+	UPlanetFaunaComponent* Stays = NewObject<UPlanetFaunaComponent>();
+	auto ProfileAt = [](uint32 Hash) { return SlonkFauna::Roll(SlonkGenome::Roll(EPlanetArchetype::Terrestrial, 1.f, Hash), EPlanetArchetype::Terrestrial, Hash); };
+	auto Alien = [](const TPair<FFaunaBodyPlan, EFaunaKind>& P) { return !SlonkFauna::IsEarthPlan(P.Value, P.Key); };
+	const SlonkFauna::FFaunaProfile Home = ProfileAt(7u * 7919u);
+	Stays->SetProfile(Home);
+	for (const TPair<FFaunaBodyPlan, EFaunaKind>& P : SlonkFauna::PlansOf(Home)) { SlonkFaunaMeshes::GetMesh(P.Key, P.Value); }
+	const SlonkFauna::FFaunaProfile Earth = SlonkFauna::Roll(SlonkGenome::Roll(EPlanetArchetype::Terrestrial, 0.f, 1u), EPlanetArchetype::Terrestrial, 1u);
+	for (const TPair<FFaunaBodyPlan, EFaunaKind>& P : SlonkFauna::PlansOf(Earth)) { SlonkFaunaMeshes::GetMesh(P.Key, P.Value); }
+	int32 MostMeshes = 0, MostMaterials = 0, Worlds = 0, AlienPlans = 0, NotKept = 0, LeftKept = 0, HomeLost = 0, EarthLost = 0, MaterialsOff = 0, MadeAgain = 0;
+	TArray<TPair<FFaunaBodyPlan, EFaunaKind>> Before;
+	TSet<uint32> HomeKeys;
+	for (const TPair<FFaunaBodyPlan, EFaunaKind>& P : SlonkFauna::PlansOf(Home)) { HomeKeys.Add(P.Key.Hash()); }
+	UStaticMesh* FirstMesh = nullptr;
+	FFaunaBodyPlan FirstPlan;
+	EFaunaKind FirstKind = EFaunaKind::Flier;
+	for (uint32 w = 1; w <= 12; ++w)
+	{
+		const SlonkFauna::FFaunaProfile P = ProfileAt(w * 104729u);
+		Trip->SetProfile(P);
+		const TArray<TPair<FFaunaBodyPlan, EFaunaKind>> Plans = SlonkFauna::PlansOf(P);
+		int32 Wanted = 0;
+		for (const TPair<FFaunaBodyPlan, EFaunaKind>& Pl : Plans)
+		{
+			UStaticMesh* M = SlonkFaunaMeshes::GetMesh(Pl.Key, Pl.Value);
+			if (Alien(Pl) && !FirstMesh && M) { FirstMesh = M; FirstPlan = Pl.Key; FirstKind = Pl.Value; }
+			Trip->MaterialForPlan(Pl.Value, Pl.Key);
+			const bool bOwn = Alien(Pl) && Pl.Value != EFaunaKind::Floater;
+			AlienPlans += Alien(Pl) ? 1 : 0;
+			Wanted += bOwn ? 1 : 0;
+		}
+		++Worlds;
+		MostMeshes = FMath::Max(MostMeshes, SlonkFaunaMeshes::NumCachedMeshes());
+		MostMaterials = FMath::Max(MostMaterials, Trip->NumPlanMaterials());
+		// Its own instances: one for each alien plan (the herds' only for a plan whose rig is not the Earth grazer's, which
+		// every alien walker's is not), none of the world before.
+		MaterialsOff += Trip->NumPlanMaterials() == Wanted ? 0 : 1;
+		for (const TPair<FFaunaBodyPlan, EFaunaKind>& Pl : Plans) { NotKept += SlonkFaunaMeshes::IsMeshCached(Pl.Key, Pl.Value) ? 0 : 1; }
+		for (const TPair<FFaunaBodyPlan, EFaunaKind>& Pl : Before)
+		{
+			const bool bStill = Plans.ContainsByPredicate([&Pl](const TPair<FFaunaBodyPlan, EFaunaKind>& Q) { return Q.Key == Pl.Key && Q.Value == Pl.Value; }) || HomeKeys.Contains(Pl.Key.Hash());
+			LeftKept += Alien(Pl) && !bStill && SlonkFaunaMeshes::IsMeshCached(Pl.Key, Pl.Value) ? 1 : 0;
+		}
+		for (const TPair<FFaunaBodyPlan, EFaunaKind>& Pl : SlonkFauna::PlansOf(Home)) { HomeLost += SlonkFaunaMeshes::IsMeshCached(Pl.Key, Pl.Value) ? 0 : 1; }
+		for (const TPair<FFaunaBodyPlan, EFaunaKind>& Pl : SlonkFauna::PlansOf(Earth)) { EarthLost += SlonkFaunaMeshes::IsMeshCached(Pl.Key, Pl.Value) ? 0 : 1; }
+		Before = Plans;
+	}
+	// Back to the first world: its plan's mesh made anew (the one let go is another object, freed once nothing draws it).
+	Trip->SetProfile(ProfileAt(1u * 104729u));
+	UStaticMesh* Again = FirstMesh ? SlonkFaunaMeshes::GetMesh(FirstPlan, FirstKind) : nullptr;
+	MadeAgain = Again && Again != FirstMesh && IsValid(Again) ? 1 : 0;
+	// An Earth-like world for it, then the second world's fauna gone: nothing alien kept.
+	Trip->SetProfile(Earth);
+	const int32 AfterEarth = Trip->NumPlanMaterials();
+	Stays->DestroyComponent();
+	int32 AlienLeft = 0;
+	for (uint32 w = 1; w <= 12; ++w) { for (const TPair<FFaunaBodyPlan, EFaunaKind>& Pl : SlonkFauna::PlansOf(ProfileAt(w * 104729u))) { AlienLeft += Alien(Pl) && SlonkFaunaMeshes::IsMeshCached(Pl.Key, Pl.Value) ? 1 : 0; } }
+	for (const TPair<FFaunaBodyPlan, EFaunaKind>& Pl : SlonkFauna::PlansOf(Home)) { AlienLeft += Alien(Pl) && SlonkFaunaMeshes::IsMeshCached(Pl.Key, Pl.Value) ? 1 : 0; }
+	AddInfo(FString::Printf(TEXT("%d strange worlds of %d alien plans in all, one after another, while a second world's %d plans were held: at most %d meshes cached and %d material instances of plans; %d of a world's plans not kept while it was drawn, %d of the world before kept after it, %d of the second world's lost, %d of the Earth's; %d worlds with their instances off their alien plans; its first plan's mesh made anew on coming back: %s; an Earth-like world after: %d instances; the second world gone, %d alien meshes still cached"),
+		Worlds, AlienPlans, SlonkFauna::PlansOf(Home).Num(), MostMeshes, MostMaterials, NotKept, LeftKept, HomeLost, EarthLost, MaterialsOff, MadeAgain ? TEXT("yes") : TEXT("no"), AfterEarth, AlienLeft));
+	TestTrue(TEXT("strange worlds of many alien plans"), Worlds == 12 && AlienPlans > 40);
+	TestEqual(TEXT("every plan of the world drawn now kept, its second world's and the Earth's too"), NotKept + HomeLost + EarthLost, 0);
+	TestEqual(TEXT("a world left behind lets go of its meshes"), LeftKept, 0);
+	TestTrue(TEXT("the meshes kept no more than the Earth's and two worlds' species'"), MostMeshes <= SlonkFauna::NumKinds + 2 * 3 * 4);
+	TestTrue(TEXT("its material instances its world's alien plans' alone"), MaterialsOff == 0 && MostMaterials > 0 && MostMaterials <= 3 * 3 && AfterEarth == 0);
+	TestTrue(TEXT("a world come back to makes its meshes anew"), MadeAgain == 1);
+	TestEqual(TEXT("a world's fauna gone, nothing alien kept"), AlienLeft, 0);
+	Trip->DestroyComponent();
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaSuspendedLetGoTest, "Slonk.Fauna.SuspendedLetGo", SLONK_TEST_FLAGS)
+bool FSlonkFaunaSuspendedLetGoTest::RunTest(const FString& Parameters)
+{
+	// Two strange worlds' fauna, each drawing a group of every species it has (a mesh and a material instance for each of
+	// its alien plans). The one suspended (its terrain put away, beyond the horizon, or seen from too high for any of its
+	// animals: a strange world left behind, or each one a spawnplanet run leaves about) lets go of the meshes of its alien
+	// plans the other does not share, and of its material instances, while the other's and the Earth's are kept; suspended
+	// again every frame, nothing more goes and nothing of the other's is made again. Drawn again, it holds its plans once
+	// more, each mesh made anew once and kept so however often its groups are drawn, while the other, suspended in turn,
+	// lets its own go. A suspension for the debug setting keeps them; both suspended, nothing alien of theirs is kept.
+	using FPlan = TPair<FFaunaBodyPlan, EFaunaKind>;
+	auto ProfileAt = [](uint32 Hash) { return SlonkFauna::Roll(SlonkGenome::Roll(EPlanetArchetype::Terrestrial, 1.f, Hash), EPlanetArchetype::Terrestrial, Hash); };
+	auto Alien = [](const FPlan& P) { return !SlonkFauna::IsEarthPlan(P.Value, P.Key); };
+	auto Has = [](const TArray<FPlan>& Plans, const FPlan& P) { return Plans.ContainsByPredicate([&P](const FPlan& Q) { return Q.Key == P.Key && Q.Value == P.Value; }); };
+	// How many of a world's alien plans that the other does not share have their meshes cached; how many of some plans do not.
+	auto CachedOwn = [&](const TArray<FPlan>& Mine, const TArray<FPlan>& Other)
+	{
+		int32 N = 0;
+		for (const FPlan& P : Mine) { N += Alien(P) && !Has(Other, P) && SlonkFaunaMeshes::IsMeshCached(P.Key, P.Value) ? 1 : 0; }
+		return N;
+	};
+	auto NotCached = [](const TArray<FPlan>& Plans) { int32 N = 0; for (const FPlan& P : Plans) { N += SlonkFaunaMeshes::IsMeshCached(P.Key, P.Value) ? 0 : 1; } return N; };
+	// A group of every species drawn: its material asked for (as SpawnSet does, its world's plans held first), its mesh got.
+	auto Draw = [](UPlanetFaunaComponent* C, const TArray<FPlan>& Plans) { for (const FPlan& P : Plans) { C->MaterialForPlan(P.Value, P.Key); SlonkFaunaMeshes::GetMesh(P.Key, P.Value); } };
+	auto Meshes = [](const TArray<FPlan>& Plans) { TArray<UStaticMesh*> Out; for (const FPlan& P : Plans) { Out.Add(SlonkFaunaMeshes::GetMesh(P.Key, P.Value)); } return Out; };
+	const SlonkFauna::FFaunaProfile ProfA = ProfileAt(23u * 104729u), ProfB = ProfileAt(29u * 104729u);
+	const TArray<FPlan> PlansA = SlonkFauna::PlansOf(ProfA), PlansB = SlonkFauna::PlansOf(ProfB);
+	const TArray<FPlan> EarthPlans = SlonkFauna::PlansOf(SlonkFauna::Roll(SlonkGenome::Roll(EPlanetArchetype::Terrestrial, 0.f, 1u), EPlanetArchetype::Terrestrial, 1u));
+	for (const FPlan& P : EarthPlans) { SlonkFaunaMeshes::GetMesh(P.Key, P.Value); }
+	UPlanetFaunaComponent* A = NewObject<UPlanetFaunaComponent>();
+	UPlanetFaunaComponent* B = NewObject<UPlanetFaunaComponent>();
+	A->SetProfile(ProfA);
+	B->SetProfile(ProfB);
+	Draw(A, PlansA);
+	Draw(B, PlansB);
+	int32 OwnA = 0, OwnB = 0;
+	for (const FPlan& P : PlansA) { OwnA += Alien(P) && !Has(PlansB, P) ? 1 : 0; }
+	for (const FPlan& P : PlansB) { OwnB += Alien(P) && !Has(PlansA, P) ? 1 : 0; }
+	const int32 DrawnA = CachedOwn(PlansA, PlansB), MatsA0 = A->NumPlanMaterials(), MatsB = B->NumPlanMaterials();
+	const TArray<UStaticMesh*> MeshesB = Meshes(PlansB);
+	// The first world suspended, then again every frame of a hundred.
+	A->Suspend();
+	const int32 LeftA = CachedOwn(PlansA, PlansB), MatsA = A->NumPlanMaterials();
+	for (int32 i = 0; i < 100; ++i) { A->Suspend(); }
+	const int32 LostB = NotCached(PlansB) + NotCached(EarthPlans);
+	const bool bSameB = Meshes(PlansB) == MeshesB && B->NumPlanMaterials() == MatsB;
+	// Drawn again, and the other suspended.
+	Draw(A, PlansA);
+	const TArray<UStaticMesh*> MeshesA = Meshes(PlansA);
+	const int32 BackA = CachedOwn(PlansA, PlansB), MatsBackA = A->NumPlanMaterials();
+	B->Suspend();
+	const int32 LeftB = CachedOwn(PlansB, PlansA), MatsLeftB = B->NumPlanMaterials();
+	const int32 LostA = NotCached(PlansA) + NotCached(EarthPlans);
+	for (int32 i = 0; i < 100; ++i) { Draw(A, PlansA); B->Suspend(); }
+	const bool bSameA = Meshes(PlansA) == MeshesA;
+	// A suspension for the debug setting, then both suspended.
+	A->Suspend(true);
+	const int32 KeptDebug = CachedOwn(PlansA, PlansB);
+	A->Suspend();
+	const int32 AlienLeft = CachedOwn(PlansA, {}) + CachedOwn(PlansB, {});
+	const int32 EarthLost = NotCached(EarthPlans);
+	AddInfo(FString::Printf(TEXT("two strange worlds of %d and %d alien plans their own: drawn, %d of the first's meshes cached and %d material instances; suspended, %d of them and %d instances kept, %d of the second world's and the Earth's lost, the second's made again: %s; drawn again, %d cached and %d instances, kept over a hundred more draws: %s; the second suspended, %d of its own and %d instances kept, %d of the first's and the Earth's lost; the debug's suspension kept %d; both suspended, %d alien meshes of theirs cached, %d of the Earth's lost"),
+		OwnA, OwnB, DrawnA, MatsA0, LeftA, MatsA, LostB, bSameB ? TEXT("no") : TEXT("yes"), BackA, MatsBackA, bSameA ? TEXT("yes") : TEXT("no"), LeftB, MatsLeftB, LostA, KeptDebug, AlienLeft, EarthLost));
+	TestTrue(TEXT("two strange worlds, each drawing alien plans of its own"), OwnA > 0 && OwnB > 0 && DrawnA == OwnA && MatsA0 > 0 && MatsB > 0);
+	TestTrue(TEXT("a world suspended lets go of its own alien meshes and its material instances"), LeftA == 0 && MatsA == 0 && LeftB == 0 && MatsLeftB == 0);
+	TestTrue(TEXT("the other world's and the Earth's kept, none made again"), LostB == 0 && LostA == 0 && bSameB);
+	TestTrue(TEXT("drawn again, its meshes held once more and made once"), BackA == OwnA && MatsBackA == MatsA0 && bSameA);
+	TestEqual(TEXT("the debug setting's suspension keeps them"), KeptDebug, OwnA);
+	TestTrue(TEXT("both suspended, nothing alien of theirs kept, the Earth's kept"), AlienLeft == 0 && EarthLost == 0);
+	A->DestroyComponent();
+	B->DestroyComponent();
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkFaunaWatchGotoTest, "Slonk.Fauna.WatchGoto", SLONK_TEST_FLAGS)
+bool FSlonkFaunaWatchGotoTest::RunTest(const FString& Parameters)
+{
+	// What fauna watch follows: the group the last fauna goto found while it is drawn and of the kind asked for (or any),
+	// though another be nearer the view (the flock watched before the goto, or one the ship parked over); another kind asked
+	// for, the nearest of it; the goto's group not drawn, or none found, the nearest as before. (The goto itself drops any
+	// watch and gives the view back to the craft it moves: StarshipPawn's fauna goto.)
+	using SlonkFauna::FDrawnGroupAt;
+	const TArray<FDrawnGroupAt> Drawn = { { 1, EFaunaKind::Flier, FVector(100.0, 0.0, 0.0) }, { 2, EFaunaKind::Flier, FVector(5.0e4, 0.0, 0.0) }, { 3, EFaunaKind::Herd, FVector(50.0, 0.0, 0.0) },
+		{ 4, EFaunaKind::Leaper, FVector(9.0e4, 0.0, 0.0) }, { 5, EFaunaKind::Floater, FVector(0.0, 3.0e5, 0.0) } };
+	const FVector View = FVector::ZeroVector;
+	int32 Off = 0;
+	auto Expect = [&](int32 Kind, uint64 Goto, uint64 Want, const TCHAR* What)
+	{
+		const uint64 Got = SlonkFauna::PickWatched(Drawn, View, Kind, Goto);
+		if (Got != Want) { ++Off; AddInfo(FString::Printf(TEXT("%s: followed %llu, not %llu"), What, Got, Want)); }
+	};
+	Expect(-1, 2, 2, TEXT("any kind after a goto: the goto's flock, though another is nearer"));
+	Expect((int32)EFaunaKind::Flier, 2, 2, TEXT("fliers after a goto flier: the goto's flock"));
+	Expect((int32)EFaunaKind::Leaper, 4, 4, TEXT("leapers after a goto leaper: the goto's shoal"));
+	Expect((int32)EFaunaKind::Floater, 5, 5, TEXT("a sky-jelly after a goto floater, far off: that jelly"));
+	Expect((int32)EFaunaKind::Herd, 2, 3, TEXT("herds asked for after a goto flier: the nearest herd"));
+	Expect(-1, 99, 3, TEXT("the goto's group not drawn: the nearest of any kind"));
+	Expect(-1, 0, 3, TEXT("no goto: the nearest of any kind"));
+	Expect((int32)EFaunaKind::Flier, 0, 1, TEXT("no goto, fliers: the nearest flock"));
+	TestEqual(TEXT("PickWatched of nothing drawn"), (int64)SlonkFauna::PickWatched({}, View, -1, 2), (int64)0);
+	TestEqual(TEXT("a watch after a goto follows the group it found, while it is drawn and of the kind asked for"), Off, 0);
+
+	// One watch after another (SlonkFauna::TakeWatched, as fauna watch picks): the watch after a goto takes its group and
+	// forgets it, so every later watch, of any kind or of the goto's, follows the nearest again, not the goto's group
+	// however far off it is; a watch that has not taken it (another kind asked for, or the group not drawn yet) leaves it
+	// for the next. Fauna watch off forgets it too (StarshipPawn's own, read from its source).
+	int32 TakeOff = 0;
+	auto Take = [&](int32 Kind, uint64& Goto, uint64 Want, uint64 WantLeft, const TCHAR* What)
+	{
+		const uint64 Got = SlonkFauna::TakeWatched(Drawn, View, Kind, Goto);
+		if (Got != Want || Goto != WantLeft) { ++TakeOff; AddInfo(FString::Printf(TEXT("%s: followed %llu, not %llu, and kept the goto's %llu, not %llu"), What, Got, Want, Goto, WantLeft)); }
+	};
+	uint64 Goto = 2;
+	Take(-1, Goto, 2, 0, TEXT("the watch after a goto flier: its flock, forgotten then"));
+	Take(-1, Goto, 3, 0, TEXT("a later watch of any kind: the nearest, not the goto's flock"));
+	Take((int32)EFaunaKind::Flier, Goto, 1, 0, TEXT("a later watch of fliers: the nearest flock, not the goto's"));
+	Goto = 4;
+	Take((int32)EFaunaKind::Herd, Goto, 3, 4, TEXT("herds asked for after a goto leaper: the nearest herd, the goto's shoal kept for the next"));
+	Take(-1, Goto, 4, 0, TEXT("then any: the goto's shoal, forgotten then"));
+	Take(-1, Goto, 3, 0, TEXT("and after it the nearest"));
+	Goto = 99;
+	Take(-1, Goto, 3, 99, TEXT("the goto's group not drawn yet: the nearest, the goto's kept"));
+	Goto = 0;
+	Take(-1, Goto, 3, 0, TEXT("no goto: the nearest"));
+	FString Pawn;
+	FFileHelper::LoadFileToString(Pawn, *FPaths::Combine(FPaths::ProjectDir(), TEXT("Source/Slonk/StarshipPawn.cpp")));
+	const int32 OffAt = Pawn.Find(TEXT("if (ArgStr(2) == TEXT(\"off\"))"), ESearchCase::CaseSensitive);
+	const int32 OffEnd = OffAt >= 0 ? Pawn.Find(TEXT("}"), ESearchCase::CaseSensitive, ESearchDir::FromStart, OffAt) : INDEX_NONE;
+	const bool bOffForgets = OffEnd > OffAt && Pawn.Mid(OffAt, OffEnd - OffAt).Contains(TEXT("FaunaGotoId = 0;"), ESearchCase::CaseSensitive);
+	const bool bWatchTakes = Pawn.Contains(TEXT("FaunaWatchId = F->NearestDrawnGroup(View, FaunaWatchKind, &FaunaGotoId);"), ESearchCase::CaseSensitive);
+	AddInfo(FString::Printf(TEXT("%d watches one after another off what they should follow; fauna watch takes the goto's group so: %s; fauna watch off forgets it: %s"), TakeOff,
+		bWatchTakes ? TEXT("yes") : TEXT("no"), bOffForgets ? TEXT("yes") : TEXT("no")));
+	TestEqual(TEXT("only the watch after a goto follows its group first: once taken it is forgotten"), TakeOff, 0);
+	TestTrue(TEXT("fauna watch takes it so, and fauna watch off forgets it"), bWatchTakes && bOffForgets);
 	return true;
 }
 

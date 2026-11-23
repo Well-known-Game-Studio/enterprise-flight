@@ -733,7 +733,17 @@ if (water > 0.001)
         // kilometres, fading out by sixty, gone before the night side is seen from orbit.
         float stirred = lerp(0.35, smoothstep(0.35, 0.8, bloomV), bloomFade) * stir;
         float milky = 0.35 * lerp(0.1, smoothstep(0.65, 0.95, bloomV), bloomFade) * (1.0 - smoothstep(2000000.0, 6000000.0, dist));
-        plankton = PlanktonGlow * (stirred + milky) * water * (1.0 - river) * (1.0 - SeaIce * smoothstep(0.4, 0.7, ice));
+        // The milky glow comes up from within the water, through its surface, which lets less of it out the flatter the sea
+        // is seen (it mirrors the black night sky instead: Schlick's Fresnel for water, 1 seen from straight over it). Only
+        // where the bloom's cells are squashed under a pixel or so along the view, though: their 400 m foreshortened by the
+        // slant, against the footprint bloomFade weighs them by, the Fresnel weight in full under 0.35 of it and gone by 0.85.
+        // So the far sea seen edge-on, kilometres of its blooms evened into a few rows at the horizon, no longer glows as a
+        // bright line over a dark near sea, and a sea whose blooms still show shows them exactly as before. The stirred glow
+        // is the foam's, at the surface, and shows as before (SlonkFauna::MilkySeenThrough copies this).
+        float cosV = saturate(dot(Nn, normalize(Cam - WP)));
+        float bloomSeen = saturate(2.0 * ((NoisePeriodCm / 26.0) * cosV / (dist * 0.0045) - 0.35));
+        float milkyOut = 1.0 - (1.0 - bloomSeen) * pow(1.0 - cosV, 5.0);
+        plankton = PlanktonGlow * (stirred + milky * milkyOut) * water * (1.0 - river) * (1.0 - SeaIce * smoothstep(0.4, 0.7, ice));
     }
 }
 // Texture sets (see FUNCS): cliff on the steep ground, talus on rocky slopes, scrub where it is wet and flat,

@@ -28,9 +28,12 @@ Per-group custom primitive data, set by UPlanetFaunaComponent each frame (SlonkF
     8   when it was last startled, on the same clock: its panic eases from then
     9   when its wingbeat's urge began to come in, on the same clock: the fast beat comes in over 0.3 s from then (a
         startle while it is shaken sets it where the coming-in stands, SlonkFauna::FPanic::OnsetT0)
+    10  a four-winged flock's own number for its darts, 0 to 1 (SlonkFauna::GroupData::DartSeed), and 11 its span, m:
+        every member darts together on them, the same way and as far in the flock's frame, so none dashes into its
+        neighbour
 Parameters set by UPlanetFaunaComponent: ViewPos (the camera, world) and PxPerRad (its pixels a radian), so the fade
-and the speck floor are the same in the shadow passes as in the view. GlowColor is left at its default: no flier glows
-yet (MembersOf gives every one a glow of 0).
+and the speck floor are the same in the shadow passes as in the view. GlowColor is the world's glow on the instances
+of the alien plans, whose glow organs it lights; an Earth bird's glow is 0, and it glows not at all.
 
 The mote branch (Motes 1, which only the terrain's instance of this material sets, UPlanetTerrainComponent: a material
 built before the branch has no Motes parameter, and the game then draws no motes). The terrain's chunks carry clouds of
@@ -72,7 +75,18 @@ of the small circle it ambles round as it grazes. Their vertex colours: R the su
 muzzle, 0.5 tail), G the flex (a leg's 0 at the hip to 1 at the hoof, the neck's and head's 0 at the root to 1 at the
 muzzle, the tail's from its root), B a leg's place in the gait (0 hind left, 0.25 fore left, 0.5 hind right, 0.75 fore
 right), A the joint (0 rigid, 0.25 tail, 0.375 neck, 0.75 leg); UV its place along the body (U from the rump) and up it
-(V, z over 60 cm). Per-instance custom data in the same slots:
+(V, z over 60 cm). The strange worlds' walkers (SlonkFauna::Walker::ShapeOf) keep the same contract on six legs: a
+six-legged grazer (a longer, lower barrel, its neck and head heavy and carried low, horns or a crest) and an insectoid
+(head, thorax and a big abdomen slung low, its legs splayed out to its sides, each bent at a knee high over its body, whose
+G is 0.45, its antennae, mandibles and horn dark and turning with its head, whose back ring is at G 0.3); each leg's B its
+place in a tripod gait (the fore and hind of one side with the middle of the other, half a stride from the other three,
+each 0.04 of a stride after the one behind it: the hind, middle and fore left at 0, 0.54 and 0.08, the right at 0.5, 0.04
+and 0.58). The branch reads no count of legs: each leg is its own place in the gait. Each alien plan's herds have their
+own instance of this material, which gives the branch the plan's rig (SlonkFauna::Walker::FRig): WalkerNeckX and
+WalkerNeckZ the pivot its neck and head turn about (the Earth grazer's 14 and 40), WalkerLift how high a foot lifts (6),
+WalkerPitch its head's swing over the Earth grazer's (1), WalkerCarapace whether it wears a banded, glossy carapace (1) or
+a coat (0); the defaults are the Earth grazer's, so its herds' instance sets none of them and draws as it always has.
+Per-instance custom data in the same slots:
     0-2 the coat
     3   glow at night (0 on an Earth)
     4   seed
@@ -112,7 +126,11 @@ then be going puts it down, and lifted; its tail swishing;
 grown by a speck floor (no shorter than 3 pixels, at most 4 times its size, from its feet); and every vertex stood on the
 ground under it, read from the grid. Every vertex stays within 400 unit-mesh cm of the mesh's box (its circle, up to
 2.8 m for a walker at least 1.45 m long, 193; the speck floor's growth of a vertex at most 53 cm out to four times that;
-the ground, up to 150 cm, 104), which the instances' boxes are padded by (FFaunaKindDesc::CullPaddingUnits), and
+the ground, up to 150 cm, 104; a larger alien walker's circle and ground the fewer units the longer it is, and an alien
+walker's circle no wider than leaves its farthest reach, its horns' tips or its antennae and splayed feet grown four times
+by the speck floor and lined up with its circle, inside its own box and that: SlonkFauna::Walker::FShape::CircleShare, a
+bound by arithmetic, 4 units to spare at the worst, Slonk.Fauna.AlienWalkers), which the instances' boxes are padded by
+(FFaunaKindDesc::CullPaddingUnits), and
 Slonk.Fauna.Walker checks a float copy of this branch against it (SlonkFauna::WalkerMotion, which must change with it:
 the test holds the CRC of the branch's lines, its comments aside, as the copy was made, and fails when they change).
 Its normals are turned the way it faces (the Normal output, in tangent space; every other branch gives the vertex's own).
@@ -205,6 +223,21 @@ a pulse of light runs down its ribs, its ring canal and its tentacles in the wor
 jellies' instance: the world's look's glow) at each contraction, 0.3 of a pulse from its crown to its rim, brighter as a
 startle squeezes it; a little light always.
 
+A strange world's alien plans are drawn by the same branches, each plan's groups in a material instance of their own
+(UPlanetFaunaComponent) that sets what the Earth's leave at their defaults, so every Earth plan draws as it always has:
+WingForm for its fliers (SlonkFauna::Wings: 1 four-winged, a long slim body and two pairs of narrow wings, the hind pair
+(U from 2) beating 0.3 of a beat behind the fore, all the time, and darting with its flock, every member together; 2
+membrane-winged, wings of skin over finger struts with a scalloped trailing edge, beating slower and deeper in short
+bursts over long glides, a wave running out along them and back across them); FishForm for its fish (SlonkFauna::FishForm:
+1 an eel, a wave running back along all of it, its middle held on its arc; 2 a spinefin, its four broad fins folded down
+against its flanks in the water and spread as it leaves it), each leaping the Earth fish's arcs; and its glow organs
+(SlonkFauna::GlowOrgan: GlowSpots round spots a flank along a row of its mesh's UV, GlowRow and GlowSize, on its body's
+own surface, lit at night three times its group's glow in GlowColor, the world's glow, and breathing, the fainter by the
+square of the speck floor's growth of the animal so all the light it gives falls with distance; a pale spot by day). The
+alien fliers have a pixel branch of their own (glassy, veined wings; a solid skin, little light let through it, over dark
+struts and a dark leading edge, each line at least a pixel and a half wide and the fainter for it far off, so nothing of
+it breaks into specks; each faded out a flier at a time by a number of its own, as the walkers are).
+
 The motion (WPO_CODE): bursts of wingbeats on a cycle of 3 to 7 s of each bird's own, gliding with the wings a little
 raised between, beating all the time and faster while startled; the body banked into the turn; a ripple through the
 flock; a startle's scatter, out from the flock's middle and mostly away from what startled it, opening in a second and
@@ -228,6 +261,24 @@ NAME = "M_Fauna"
 CODE = r"""
 // The vertex's own normal, but for a walker's, turned the way it faces.
 Nrm = float3(0.0, 0.0, 1.0);
+// A strange plan's glow organs, none on any other (GlowSpots 0, as every Earth plan's instance leaves it).
+float gspot = 0.0;
+float glit = 0.0;
+[branch] if (GlowSpots > 0.5)
+{
+    // A row of GlowSpots round spots along its flanks (SlonkFauna::GlowSpotAt and GlowBreath copy this: change both), in
+    // its mesh's UV: along U from GlowRow.x to GlowRow.y at V GlowRow.z, each GlowSize.x across either way in U and
+    // GlowSize.y in V, on its body's own surface alone (rigid, or a fish's undulating body); fixed on it, so nothing in it
+    // moves from frame to frame but with the animal. Lit at night three times its group's glow, breathing from 0.7 to 1 a
+    // whole number of times an hour.
+    float gw = max(GlowRow.y - GlowRow.x, 1e-3);
+    float gi = clamp(floor((UV.x - GlowRow.x) / gw * GlowSpots), 0.0, GlowSpots - 1.0);
+    float2 gd = float2((UV.x - (GlowRow.x + (gi + 0.5) * gw / GlowSpots)) / max(GlowSize.x, 1e-4), (UV.y - GlowRow.z) / max(GlowSize.y, 1e-4));
+    float gbody = (VC.r < 0.2 && (VCA < 0.1 || VCA > 0.9)) ? 1.0 : 0.0;
+    gspot = gbody * (1.0 - smoothstep(0.75, 1.0, length(gd)));
+    float gbr = 0.7 + 0.3 * (0.5 + 0.5 * sin(6.2831853 * frac(T * ((600.0 + floor(frac(Seed * 3.3) * 600.0)) / 3600.0) + Seed * 2.1)));
+    glit = gspot * 3.0 * gbr;
+}
 [branch] if (Walkers > 0.5)
 {
     // A herd's walker (SlonkFauna::Walker): its coat from its pigment, countershaded, its legs darkening to the hooves, a
@@ -248,8 +299,26 @@ Nrm = float3(0.0, 0.0, 1.0);
     float wfade = FadeFar > 0.0 ? saturate((FadeFar - length(WP - ViewPos)) / (0.2 * FadeFar)) : 1.0;
     Mask = wfade > frac(Seed * 91.37 + 0.13) ? 1.0 : 0.0;
     Rough = 0.85;
+    [branch] if (Carapace > 0.5)
+    {
+        // An insectoid's carapace (its plan's, WalkerCarapace): banded across its plates, dark seams between them, darker
+        // underneath and catching the light on its back, its legs darkening to its feet; no pied coat; glossier than a coat.
+        // Fixed on its body, so nothing in it moves from frame to frame.
+        float wband = frac(UV.x * 11.0 + 0.5);
+        float wseam = 1.0 - smoothstep(0.0, 0.12, wband) * (1.0 - smoothstep(0.82, 1.0, wband));
+        float3 wcar = coat * lerp(0.7, 1.1, saturate(UV.y * 2.0));
+        wcar *= lerp(1.0, 0.45, wseam * (1.0 - wleg));
+        wcar *= lerp(1.0, 0.55, wleg * VC.g);
+        wcol = lerp(wcar, float3(0.03, 0.028, 0.025), wdark);
+        Rough = lerp(0.32, 0.6, wleg);
+    }
     Sub = float3(0.0, 0.0, 0.0);
-    Emis = GlowColor * (Glow * Night * 0.3);
+    // Its glow organs, pale by day and lit at night (none on an Earth grazer, whose glow is 0), the fainter by the square
+    // of the speck floor's growth of it (as the vertex shader grows it: SlonkFauna::GlowSpeckDim), so all the light it
+    // gives falls with distance as it would without the floor.
+    wcol = lerp(wcol, GlowColor * 0.35 + 0.4, gspot * 0.5 * (1.0 - Night));
+    float wgk = clamp(3.0 / max(max(Size, 0.1) * 100.0 * PxPerRad / max(length(WP - ViewPos), 1.0), 0.001), 1.0, 4.0);
+    Emis = GlowColor * (Glow * Night * glit / (wgk * wgk));
     // The way it faces in its herd's frame, as the vertex shader turns it (Heading: the herd's way, slot 5, run on as it
     // walks by WalkKap, slot 3; HerdGait: how fast its legs walk, slot 7; PivotRef: its latest turn, slot 1; TurnPack: the
     // ways through its turns, slot 4; PerKind: its grazing circle; Rate: its stride): its normal turned by it about its
@@ -345,7 +414,23 @@ Nrm = float3(0.0, 0.0, 1.0);
     lcol = lerp(lcol, lbase * 0.45, lfin);
     Rough = lerp(0.3, 0.5, lfin);
     Sub = float3(0.0, 0.0, 0.0);
-    Emis = GlowColor * (Glow * Night * 0.3);
+    if (FishForm > 0.5)
+    {
+        // A strange world's fish (SlonkFauna::FishForm): an eel's back barred dark across, its ribbons the fins' shade; a
+        // spinefin's broad fins (the wing's surface) thin and barred, the light let through them. Fixed on it.
+        float lwing = VC.r > 0.75 ? 1.0 : 0.0;
+        float lbar = FishForm < 1.5 ? smoothstep(0.55, 0.95, UV.y) * step(0.0, sin(UV.x * 37.0 + Seed * 9.0)) : 0.0;
+        lcol *= 1.0 - 0.45 * lbar * (1.0 - lfin);
+        lcol = lerp(lcol, lerp(lbase * 1.3 + 0.08, lbase * 0.5, step(0.5, frac(UV.x * 9.0 + Seed))), lwing);
+        Rough = lerp(Rough, 0.4, lwing);
+        Sub = lbase * 0.8 * lwing;
+    }
+    // Its glow organs, pale by day and lit at night (none on an Earth fish, whose glow is 0), the fainter by the square of
+    // the speck floor's growth of it, from its own size at the surface to its full at the top of its leap.
+    lcol = lerp(lcol, GlowColor * 0.35 + 0.4, gspot * 0.5 * (1.0 - Night));
+    float lgr = clamp(2.0 / max(ls * 100.0 * PxPerRad / max(length(WP - ViewPos), 1.0), 0.001), 1.0, 2.0);
+    float lgk = 1.0 + (lgr - 1.0) * sin(3.14159265 * saturate(lsh));
+    Emis = GlowColor * (Glow * Night * glit / (lgk * lgk));
     // Its normal pitched along its arc about its group's left (its instance's y) and turned the way it leaps about its up,
     // as the vertex shader turns its body, then into the tangent space the engine takes the normal in.
     float3 lay = normalize(AxY);
@@ -476,6 +561,60 @@ Nrm = float3(0.0, 0.0, 1.0);
     Sub = jbase * 0.9;
     Emis = GlowColor * (Glow * Night * jlit);
     return jcol;
+}
+[branch] if (WingForm > 0.5)
+{
+    // A strange world's flier (SlonkFauna::Wings; WingForm on its plan's instance). A four-winged one: its body glossy,
+    // banded along its abdomen, its head and its antennae dark; its wings glassy and pale, the light let through them,
+    // veined out along them and across, a dark spot near each tip. A membrane-winged one: its body as a bird's, its belly
+    // paler; its wings' skin a deeper shade of it, the light let through it, its finger struts (where V is whole) and its
+    // leading edge dark, each line at least a pixel and a half wide; its tail a darker shade. Both fixed on it, nothing
+    // moving from frame to frame but with the flier.
+    float awing = VC.r > 0.75 ? 1.0 : 0.0;
+    float atail = saturate(1.0 - abs(VC.r - 0.5) * 8.0);
+    float adark = saturate(1.0 - abs(VC.r - 0.25) * 8.0);
+    float3 abase = Pigment * (0.85 + 0.3 * frac(Seed * 11.3));
+    float au = frac(UV.x);
+    float3 acol;
+    if (WingForm < 1.5)
+    {
+        float3 abody = abase * lerp(0.75, 1.25, step(0.5, frac(UV.x * 28.0))) * lerp(0.8, 1.15, saturate(UV.y));
+        float avein = max(1.0 - smoothstep(0.0, 0.05, abs(frac(UV.y * 6.0 + 0.5) - 0.5)), 1.0 - smoothstep(0.0, 0.08, au));
+        float aspot = step(0.8, UV.y) * step(UV.y, 0.9) * step(au, 0.4);
+        float3 apane = lerp(float3(0.62, 0.66, 0.7) + abase * 0.2, abase * 0.25, max(avein * 0.7, aspot));
+        acol = lerp(abody, apane, awing);
+        Rough = lerp(0.3, 0.22, awing);
+        Sub = apane * 0.9 * awing;
+    }
+    else
+    {
+        // A membrane: its skin solid, only a little light let through it, so the bright sky behind it never washes it out
+        // to a ghost of itself; its finger struts (where V is whole) and its leading edge darker, each line drawn at least a
+        // pixel and a half wide (by how fast V and U change across the screen, not a fraction of a pixel that the temporal
+        // upscaler's jitter breaks into specks) and the fainter the wider it is drawn than it is (no fainter than its own
+        // share of the wing once the lines run together), so far off a strut fades into the skin.
+        float abelly = saturate(-dot(normalize(N), normalize(BodyUp)) * 1.5) * (1.0 - awing);
+        float3 abody = lerp(abase, abase * 1.6 + 0.04, abelly * 0.6);
+        float avw = max(abs(ddx(UV.y)) + abs(ddy(UV.y)), 1e-4);
+        float auw = max(abs(ddx(UV.x)) + abs(ddy(UV.x)), 1e-4);
+        float asw = max(0.05, 0.75 * avw);
+        float alw = max(0.07, 0.75 * auw);
+        float astrut = max((1.0 - smoothstep(asw - 0.5 * avw, asw + 0.5 * avw, abs(frac(UV.y + 0.5) - 0.5))) * min(0.05 / min(asw, 0.5), 1.0),
+            (1.0 - smoothstep(alw - 0.5 * auw, alw + 0.5 * auw, au)) * min(0.07 / min(alw, 1.0), 1.0));
+        float3 askin = lerp(abase * 0.6, abase * 0.25, astrut);
+        acol = lerp(lerp(abody, abase * 0.6, atail), askin, awing);
+        Rough = lerp(0.75, 0.6, awing);
+        Sub = askin * 0.2 * awing;
+    }
+    acol = lerp(acol, float3(0.05, 0.045, 0.04), adark);
+    // Its glow organs, pale by day and lit at night, the fainter by the square of the speck floor's growth of it.
+    acol = lerp(acol, GlowColor * 0.35 + 0.4, gspot * 0.5 * (1.0 - Night));
+    float agk = clamp(2.0 / max(max(Size, 0.01) * 100.0 * PxPerRad / max(length(WP - ViewPos), 1.0), 0.001), 1.0, 3.0);
+    Emis = GlowColor * (Glow * Night * glit / (agk * agk));
+    // Fading out over the last fifth of its fade, a flier at a time by a number of its own that holds from frame to frame.
+    float afade = FadeFar > 0.0 ? saturate((FadeFar - length(WP - ViewPos)) / (0.2 * FadeFar)) : 1.0;
+    Mask = afade > frac(Seed * 91.37 + 0.13) ? 1.0 : 0.0;
+    return acol;
 }
 float surf = VC.r; float flex = VC.g;
 float3 base = Pigment * (0.85 + 0.3 * frac(Seed * 11.3));
@@ -722,7 +861,7 @@ WPO_CODE = r"""
             float wqb = saturate((wph.y - 0.6) / 0.4);
             float wh = wlf ? saturate((wqs - wqb) / max(1.0 - wqb, 1e-3)) : 1.0;
             wfoot = lerp(wfoot, lerp(waim[0], waim[1], wh * wh * (3.0 - 2.0 * wh)), wsq);
-            wzf = 6.0 * sin(3.14159265 * wqs) * smoothstep(0.03, 0.25, wv);
+            wzf = Lift * sin(3.14159265 * wqs) * smoothstep(0.03, 0.25, wv);
         }
         p.x += wfoot.x * VC.g;
         p.y += wfoot.y * VC.g;
@@ -730,14 +869,15 @@ WPO_CODE = r"""
     }
     else if (VCA > 0.3 && VCA < 0.45)
     {
-        // The neck and head, turned about the neck's root (14, 40), the root itself held to the body.
-        float wa = wpitch * smoothstep(0.0, 0.3, VC.g);
-        float wrx = p.x - 14.0;
-        float wrz = p.z - 40.0;
+        // The neck and head, turned about the neck's root (its plan's, NeckX and NeckZ: the Earth grazer's 14 and 40), the
+        // root itself held to the body, by its plan's share of the Earth grazer's swing (PitchK).
+        float wa = wpitch * PitchK * smoothstep(0.0, 0.3, VC.g);
+        float wrx = p.x - NeckX;
+        float wrz = p.z - NeckZ;
         float wca = cos(wa);
         float wsa = sin(wa);
-        p.x = 14.0 + wrx * wca - wrz * wsa;
-        p.z = 40.0 + wrx * wsa + wrz * wca;
+        p.x = NeckX + wrx * wca - wrz * wsa;
+        p.z = NeckZ + wrx * wsa + wrz * wca;
     }
     else if (VCA > 0.15 && VCA < 0.35)
     {
@@ -841,7 +981,37 @@ WPO_CODE = r"""
     float lbeat = round((6.0 + 4.0 * frac(Seed * 3.7)) * 60.0) / 60.0;
     float lair = saturate(4.0 * lsh * (1.0 - lsh));
     float3 lp = LP;
-    lp.y += 12.0 * VC.g * VC.g * lair * sin(6.2831853 * frac(T * lbeat + Seed * 5.0));
+    if (FishForm < 0.5)
+    {
+        lp.y += 12.0 * VC.g * VC.g * lair * sin(6.2831853 * frac(T * lbeat + Seed * 5.0));
+    }
+    else if (FishForm < 1.5)
+    {
+        // An eel (FishForm 1; SlonkFauna::FishForm): a wave running back along all of it at 1.4 times its tail's beat, 60
+        // cm of the unit mesh long, 16 cm either way at its tail's tip and a quarter of that at its nose, 0.35 of it as it
+        // comes up and goes back under and all of it in the air; less the wave at its middle, which stays on its arc.
+        float lsw = lerp(0.35, 1.0, lair) * 16.0;
+        float lph = frac(T * lbeat * 1.4 + Seed * 5.0);
+        lp.y += lsw * ((0.25 + 0.75 * VC.g) * sin(6.2831853 * (lph - (50.0 - LP.x) / 60.0)) - 0.625 * sin(6.2831853 * (lph - 50.0 / 60.0)));
+    }
+    else
+    {
+        // A spinefin (FishForm 2): its four fins (the wing's surface) hinged 4 cm out, folded 1.25 radians down against its
+        // flanks in the water and spread as it leaves it (over the first 0.35 of the way to its top), fluttering 0.12
+        // either way in the air at twice its tail's beat; the rest of it flicking its tail as an Earth fish does.
+        if (VC.r > 0.75)
+        {
+            float lfs = VC.b > 0.5 ? 1.0 : -1.0;
+            float lfd = max(abs(LP.y) - 4.0, 0.0);
+            float lfa = -1.25 * (1.0 - smoothstep(0.0, 0.35, lair)) + 0.12 * lair * (0.5 + 0.5 * VC.g) * sin(6.2831853 * frac(T * lbeat * 2.0 + Seed * 3.0));
+            lp.y = lfs * (4.0 + lfd * cos(lfa));
+            lp.z = LP.z + lfd * sin(lfa);
+        }
+        else
+        {
+            lp.y += 12.0 * VC.g * VC.g * lair * sin(6.2831853 * frac(T * lbeat + Seed * 5.0));
+        }
+    }
     float lcp = cos(lpitch);
     float lsp = sin(lpitch);
     lp = float3(lp.x * lcp - lp.z * lsp, lp.y, lp.x * lsp + lp.z * lcp);
@@ -938,20 +1108,31 @@ float panicAge = fmod(T - PanicT0 + 7201.0, 3600.0) - 1.0;
 float onsetAge = fmod(T - OnsetT0 + 7201.0, 3600.0) - 1.0;
 float live = Startled > 0.5 ? 1.0 : 0.0;
 float panic = live * (1.0 - smoothstep(20.0, 120.0, panicAge));
-// The speck floor: no smaller than about two pixels across, at most four times its size.
+// The speck floor: no smaller than about two pixels across, at most four times its size (a strange world's flier, its
+// body longer than a bird's, three: WingForm, below).
 float dist = max(length(WP - ViewPos), 1.0);
 float px = max(Size, 0.01) * 100.0 * PxPerRad / dist;
-float k = clamp(2.0 / max(px, 0.001), 1.0, 4.0);
+float k = clamp(2.0 / max(px, 0.001), 1.0, WingForm > 0.5 ? 3.0 : 4.0);
+// Its plan's wings (WingForm, which the instance of each alien plan's flocks sets: 0 a bird's two, 1 four, 2 of membrane;
+// SlonkFauna::Wings). A bird's motion is what it always was.
+float four = (WingForm > 0.5 && WingForm < 1.5) ? 1.0 : 0.0;
+float memb = WingForm > 1.5 ? 1.0 : 0.0;
 // Flap and glide: bursts of beating on a cycle of 3 to 7 s of its own, gliding between with the wings a little raised;
-// startled, it beats all the time, and half as fast again, the fast beat coming in over 0.3 s from its onset.
-float n = 514.0 + floor(frac(Seed * 7.31) * 686.0);
+// startled, it beats all the time, and half as fast again, the fast beat coming in over 0.3 s from its onset. A
+// membrane-winged flier's bursts are shorter, over long glides (a cycle of 7.5 to 15 s); a four-winged one beats all the
+// time.
+float n = memb > 0.5 ? 240.0 + floor(frac(Seed * 7.31) * 240.0) : 514.0 + floor(frac(Seed * 7.31) * 686.0);
 float cyc = frac(T * (n / 3600.0) + Seed);
-float share = 0.45 + 0.35 * frac(Seed * 3.77);
-float burst = smoothstep(0.0, 0.08, cyc) * (1.0 - smoothstep(share, share + 0.08, cyc));
+float share = memb > 0.5 ? 0.2 + 0.15 * frac(Seed * 3.77) : 0.45 + 0.35 * frac(Seed * 3.77);
+float burst = four > 0.5 ? 1.0 : smoothstep(0.0, 0.08, cyc) * (1.0 - smoothstep(share, share + 0.08, cyc));
 float urge = saturate(panic * 3.0) * smoothstep(0.0, 0.3, onsetAge);
 float flapOn = max(burst, urge);
-float beat = lerp(sin(6.2831853 * frac(T * Rate + Seed * 5.0)), sin(6.2831853 * frac(T * Rate * 1.5 + Seed * 5.0)), urge);
-float ang = lerp(0.12, 0.9 * beat, flapOn) / k;
+// A four-winged flier's hind wings (their U from 2) beat 0.3 of a beat behind its fore.
+float lag = (four > 0.5 && UV.x > 1.5) ? 0.3 : 0.0;
+float beat = lerp(sin(6.2831853 * frac(T * Rate + Seed * 5.0 - lag)), sin(6.2831853 * frac(T * Rate * 1.5 + Seed * 5.0 - lag)), urge);
+float swing = four > 0.5 ? 0.6 : (memb > 0.5 ? 1.15 : 0.9);
+float raise = memb > 0.5 ? 0.06 : 0.12;
+float ang = lerp(raise, swing * beat, flapOn) / k;
 float3 p = LP;
 if (VCA > 0.4 && VCA < 0.6)
 {
@@ -959,8 +1140,20 @@ if (VCA > 0.4 && VCA < 0.6)
     float s = VC.b > 0.5 ? 1.0 : -1.0;
     float d = max(abs(LP.y) - 4.0, 0.0);
     float a = ang * (0.8 + 0.4 * VC.g);
-    p.y = s * (4.0 + d * cos(a));
-    p.z = LP.z + d * sin(a);
+    if (memb > 0.5)
+    {
+        // A membrane: a wave running out along it and back across it at 0.6 of its beat, deepest at its tip's trailing
+        // edge, 7 cm of the unit mesh at the full flap and 0.3 of that as it glides; across the wing, as it is turned.
+        float wu = saturate(UV.x);
+        float wz = 7.0 * (d / 46.0) * (0.35 + 0.65 * wu) * lerp(0.3, 1.0, flapOn) * sin(6.2831853 * (frac(T * Rate * 0.6 + Seed * 3.0) - 0.9 * d / 46.0 - 0.6 * wu));
+        p.y = s * (4.0 + d * cos(a) - wz * sin(a));
+        p.z = LP.z + d * sin(a) + wz * cos(a);
+    }
+    else
+    {
+        p.y = s * (4.0 + d * cos(a));
+        p.z = LP.z + d * sin(a);
+    }
 }
 else if (VCA > 0.15 && VCA < 0.35)
 {
@@ -975,6 +1168,41 @@ p = float3(p.x, p.y * cb - p.z * sb, p.y * sb + p.z * cb) * k;
 // The ripple through the flock: each bird rises and falls and surges a little, the phase rolling across the formation.
 p.z += 100.0 * sin(6.2831853 * frac(T * (600.0 / 3600.0) + Phase));
 p.x += 50.0 * sin(6.2831853 * frac(T * (420.0 / 3600.0) + Phase * 1.3 + Seed));
+if (four > 0.5)
+{
+    // A four-winged flier's darts: it holds its place in its flock, then once a cycle of the flock's own (1000 to 1800 an
+    // hour, from its DartSeed, custom primitive data 10) dashes over the last fifth of it to a new one, up to 150, 110 and 50
+    // cm of a unit mesh of the flock's span (DartSpan, custom primitive data 11, over its own) either way of its own along,
+    // across and up (each cycle's by its hash, the hour's cycles wrapped so its turn shows no seam): every member of the
+    // flock darts together, as far and the same way in its frame (they stand unturned in it), so none dashes into its
+    // neighbour; the dash fading as the speck floor grows it.
+    float dn = 1000.0 + floor(frac(DartSeed * 5.93) * 800.0);
+    float du = T * (dn / 3600.0) + frac(DartSeed * 2.37);
+    float di = floor(du);
+    float dt = smoothstep(0.8, 1.0, du - di);
+    uint dsd = (uint)(DartSeed * 65536.0);
+    float3 dp0 = float3(0.0, 0.0, 0.0);
+    float3 dp1 = float3(0.0, 0.0, 0.0);
+    [unroll] for (int dk = 0; dk < 2; dk++)
+    {
+        float dc = di + (float)dk;
+        uint dcu = (uint)(dc - dn * floor(dc / dn));
+        float3 dh;
+        [unroll] for (int dj = 0; dj < 3; dj++)
+        {
+            uint dx = dcu * 0x9E3779B1u + dsd * 0x85EBCA77u + (uint)dj * 0xC2B2AE3Du + 0x165667B1u;
+            dx ^= dx >> 16;
+            dx *= 0x7FEB352Du;
+            dx ^= dx >> 15;
+            dx *= 0x846CA68Bu;
+            dx ^= dx >> 16;
+            dh[dj] = (float)(dx >> 8) * (1.0 / 16777216.0);
+        }
+        float3 dpos = (dh * 2.0 - 1.0) * float3(150.0, 110.0, 50.0);
+        if (dk == 0) { dp0 = dpos; } else { dp1 = dpos; }
+    }
+    p += lerp(dp0, dp1, dt) * (DartSpan > 0.0 ? DartSpan / max(Size, 0.01) : 1.0) / (k * k);
+}
 // A startle's scatter: out from the flock's middle and mostly away from what startled it, the near side first.
 float3 outv = normalize(float3(cos(Bearing), sin(Bearing), 0.25));
 float3 sdir = float3(SDX, SDY, SDZ);
@@ -992,10 +1220,12 @@ LEAPER_SURFACE = HERD_GROUND[:10]
 INPUTS = ["VC", "N", "BodyUp", "Pigment", "Glow", "Seed", "FadeFar", "WP", "ViewPos", "Night", "GlowColor",
           "Motes", "UV", "SunDir", "T", "Phase", "PerKind", "PxPerRad",
           "Walkers", "Rate", "Heading", "Graze", "ClockT0", "Travel", "VCA", "HerdGait", "PivotRef", "WalkKap", "TurnPack",
-          "Leapers", "Size", "ScatterT0", "Startled", "Spread", "AxY"] + LEAPER_SURFACE + ["Floaters", "PanicT0", "OnsetT0"]
+          "Leapers", "Size", "ScatterT0", "Startled", "Spread", "AxY"] + LEAPER_SURFACE + ["Floaters", "PanicT0", "OnsetT0", "Carapace",
+          "GlowSpots", "GlowRow", "GlowSize", "WingForm", "FishForm"]
 WPO_INPUTS = ["LP", "VC", "VCA", "T", "Size", "Seed", "Phase", "Rate", "Bearing", "ScatterT0", "SDX", "SDY", "SDZ", "Bank", "Startled", "Spread",
               "PanicT0", "OnsetT0", "WP", "ViewPos", "PxPerRad", "Motes", "UV", "SunDir", "BodyUp", "AxX", "AxY",
-              "Walkers", "LPP", "Dist", "Graze", "ClockT0", "Travel", "GroundHalf", "Leapers"] + HERD_GROUND + ["Floaters"]
+              "Walkers", "LPP", "Dist", "Graze", "ClockT0", "Travel", "GroundHalf", "Leapers"] + HERD_GROUND + ["Floaters", "NeckX", "NeckZ", "Lift", "PitchK",
+              "WingForm", "FishForm", "DartSeed", "DartSpan"]
 
 
 def build():
@@ -1041,6 +1271,22 @@ def build():
     # The walker branch: on in the herds' instance alone. A herd's own slots of its custom primitive data
     # (SlonkFauna::HerdData): its clocks, its share on the move, the ground under it.
     walkers = g.scalar("Walkers", 0.0)
+    # A walker's plan's rig (SlonkFauna::Walker::FRig), set on the instance of each alien plan's herds alone: the defaults
+    # are the Earth grazer's (its neck's root at 14 and 40, its feet lifted 6, its head's whole swing, a coat).
+    neck_x = g.scalar("WalkerNeckX", 14.0)
+    neck_z = g.scalar("WalkerNeckZ", 40.0)
+    lift = g.scalar("WalkerLift", 6.0)
+    pitch_k = g.scalar("WalkerPitch", 1.0)
+    carapace = g.scalar("WalkerCarapace", 0.0)
+    # A strange plan's own, set on the instance of each alien plan's groups alone: its fliers' wings (SlonkFauna::Wings: 0 a
+    # bird's), its fish's form (SlonkFauna::FishForm: 0 an Earth fish's), and the row of its glow organs along its flanks
+    # (SlonkFauna::GlowOrgan: how many a side, none by default; along U from x to y at V z, each spot x across in U and y in
+    # V). The defaults are the Earth's, so every Earth plan's instance sets none of them and draws as it always has.
+    wing_form = g.scalar("WingForm", 0.0)
+    fish_form = g.scalar("FishForm", 0.0)
+    glow_spots = g.scalar("GlowSpots", 0.0)
+    glow_row = g.vec("GlowRow", (0.0, 0.0, 0.0))
+    glow_size = g.vec("GlowSize", (0.02, 0.05, 0.0))
     herd_dist = g.scalar("HerdDist", 0.0, cpd=10)
     herd_graze = g.scalar("HerdGraze", 0.0, cpd=11)
     herd_clock = g.scalar("HerdClockT0", 0.0, cpd=12)
@@ -1071,7 +1317,9 @@ def build():
                      ("Walkers", walkers), ("Rate", rate), ("Heading", bank), ("Graze", herd_graze), ("ClockT0", herd_clock), ("Travel", herd_travel),
                      ("HerdGait", spread), ("PivotRef", scatter_t0), ("WalkKap", sdy), ("TurnPack", sdz),
                      ("Leapers", leapers), ("Size", size), ("ScatterT0", scatter_t0), ("Startled", startled), ("Spread", spread), ("AxY", axy)] \
-            + list(zip(LEAPER_SURFACE, herd_ground[:10])) + [("Floaters", floaters), ("PanicT0", panic_t0), ("OnsetT0", onset_t0)]:
+            + list(zip(LEAPER_SURFACE, herd_ground[:10])) + [("Floaters", floaters), ("PanicT0", panic_t0), ("OnsetT0", onset_t0), ("Carapace", carapace),
+                                                             ("GlowSpots", glow_spots), ("GlowRow", glow_row), ("GlowSize", glow_size), ("WingForm", wing_form),
+                                                             ("FishForm", fish_form)]:
         g.c(src, e, pin)
     # A walker's joint kind, the colour node's alpha pin.
     g.c(vc, e, "VCA", "A")
@@ -1082,7 +1330,8 @@ def build():
                      ("PanicT0", panic_t0), ("OnsetT0", onset_t0), ("WP", wp), ("ViewPos", view_pos), ("PxPerRad", px_per_rad),
                      ("Motes", motes), ("UV", uv), ("SunDir", sun_dir), ("BodyUp", up), ("AxX", axx), ("AxY", axy),
                      ("Walkers", walkers), ("LPP", lpp), ("Dist", herd_dist), ("Graze", herd_graze), ("ClockT0", herd_clock), ("Travel", herd_travel),
-                     ("GroundHalf", herd_half), ("Leapers", leapers)] + list(zip(HERD_GROUND, herd_ground)) + [("Floaters", floaters)]:
+                     ("GroundHalf", herd_half), ("Leapers", leapers)] + list(zip(HERD_GROUND, herd_ground)) + [("Floaters", floaters), ("NeckX", neck_x), ("NeckZ", neck_z),
+                     ("Lift", lift), ("PitchK", pitch_k), ("WingForm", wing_form), ("FishForm", fish_form), ("DartSeed", herd_dist), ("DartSpan", herd_graze)]:
         g.c(src, w, pin)
     # The colour node's main output is RGB; the joint kind is its alpha pin.
     g.c(vc, w, "VCA", "A")

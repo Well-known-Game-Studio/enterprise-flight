@@ -155,8 +155,11 @@ public:
 	/** The crew member out of the craft (null while everyone is aboard). */
 	UPROPERTY(BlueprintReadOnly, Category = "Person") TWeakObjectPtr<APersonPawn> ActivePerson;
 	/** Debug (fauna watch): the flock the view follows, how far off, and the camera it is seen through; and the kind it
-	 *  looks for (-1 any: one asked for, or a sky-jelly after fauna goto floater). */
+	 *  looks for (-1 any: one asked for, or a sky-jelly after fauna goto floater); and the group the last fauna goto found,
+	 *  which the watch after it follows first (while it is drawn and of the kind asked for), forgotten once a watch has
+	 *  taken it and by fauna watch off (SlonkFauna::TakeWatched). */
 	uint64 FaunaWatchId = 0;
+	uint64 FaunaGotoId = 0;
 	int32 FaunaWatchKind = -1;
 	double FaunaWatchDistCm = 4000.0;
 	bool bFaunaWatchLow = false;

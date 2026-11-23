@@ -20,13 +20,33 @@ namespace SlonkFaunaMeshes
 {
 	constexpr int32 NumLods = 3;
 	/** The mesh for a kind's body plan, its LOD screen sizes the kind's (SlonkFauna::FFaunaKindDesc::LodScreenSize):
-	 *  nullptr for a plan nothing is built for yet (only the winged fliers', the four-legged walkers', the finned fish's and
-	 *  the radial, tentacled jellies' so far: a bird of 60, 12 and 2 triangles, a walker of 150, 30 and 2, a fish of 55, 19
-	 *  and 2, a jelly of 308 to 312, 56 to 68 and 16: JellyTriangles). Transient and rooted, so it survives PIE sessions;
-	 *  never reference it from anything saved. */
+	 *  nullptr for a plan nothing is built for yet (only the winged fliers', the walkers', the finned fish's and the radial,
+	 *  tentacled jellies' so far: a bird of 60, 12 and 2 triangles, a four-winged flier of 92 to 96, 40 and 6, a
+	 *  membrane-winged one of 82 to 101, 42 to 50 and 6 (SlonkFauna::Wings); an Earth grazer of 150, 30 and 2, a six-legged
+	 *  grazer of 174 to 179, 32 and 5, an insectoid of 168 to 171, 38 and 4 (SlonkFauna::Walker::ShapeOf); a fish of 55, 19
+	 *  and 2, an eel of 82 or 84, 38 and 3, a spinefin of 63 or 66, 21 and 5 (SlonkFauna::FishForm); a jelly of 308 to 312,
+	 *  56 to 68 and 16: JellyTriangles). Cached by the plan, so a world makes one for each of its species. Transient and
+	 *  rooted, so it survives PIE sessions; never reference it from anything saved. A strange world's are let go once no
+	 *  world holds its plan (HoldPlans); the Earth's are kept for good. */
 	SLONK_API UStaticMesh* GetMesh(const FFaunaBodyPlan& Plan, EFaunaKind Kind);
+	/**
+	 * The plans a holder (a world's fauna: UPlanetFaunaComponent, its profile's species) draws now, in place of those it
+	 * held before. Every cached mesh of a plan no holder holds, but an Earth plan's, is let go: out of the cache and the
+	 * root set, under a name of its own (so a world that comes back makes its plan's mesh again under the plan's), and freed
+	 * by the garbage collector once nothing draws it. So the meshes kept are the Earth's and the live worlds' species', not
+	 * every strange world's ever visited. With bLetGoNow false (from a holder's own destruction, in the garbage collector)
+	 * it only forgets the holder's plans, and the meshes are let go at the next call.
+	 */
+	SLONK_API void HoldPlans(const void* Holder, TConstArrayView<TPair<FFaunaBodyPlan, EFaunaKind>> Plans, bool bLetGoNow = true);
+	/** How many meshes of plans are cached now, and whether a plan's is. */
+	SLONK_API int32 NumCachedMeshes();
+	SLONK_API bool IsMeshCached(const FFaunaBodyPlan& Plan, EFaunaKind Kind);
 	/** A plan's LOD as built, for the tests: false if nothing is built for the plan. */
 	SLONK_API bool BuildLod(const FFaunaBodyPlan& Plan, int32 Lod, UE::Geometry::FDynamicMesh3& Out);
+	/** The row of a plan's glow organs along its flanks in its mesh's UV (SlonkFauna::GlowOrgan): along its flier's
+	 *  abdomen or body, its fish's lateral line, its walker's barrel or abdomen, where its speck's side stands too; no
+	 *  spots for a plan without them. */
+	SLONK_API SlonkFauna::GlowOrgan::FRow GlowRowOf(const FFaunaBodyPlan& Plan);
 	/** How many triangles a jelly of the plan has at a LOD: its bell's (24 sides of a fan and three bands at LOD 0, 12 of a
 	 *  fan and one at LOD 1) and its tentacles' (72 quads among them at LOD 0, 12 at LOD 1, at least one each); or at LOD 2
 	 *  16 (two crossed planes of a pentagon's 3, its ring canal's strip's 2 and a quad's 2, and a level diamond's 2). */

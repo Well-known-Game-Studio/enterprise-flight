@@ -17,7 +17,10 @@
 // strange world whose air is thick, one in a 3 km cell in the share of the cells its world rolls, each drifting a few
 // metres a second round a closed, lobed loop whose period divides the hour, 300 m to 3 km over the highest ground near
 // its loop (read along it), rising and sinking gently; a craft passing close makes one squeeze itself away and down for a
-// couple of minutes. FFaunaField keeps the groups about a camera, by its distance from them alone.
+// couple of minutes. Each cell's group is of one of its world's species of its kind (one, the Earth's, at strangeness 0),
+// picked by a number of the cell's own (SpeciesInCell), so a strange world can have herds of six-legged grazers in one
+// valley and insectoids in the next; the group carries its species' plan, which its mesh and its walkers' gait are made
+// by. FFaunaField keeps the groups about a camera, by its distance from them alone.
 
 #pragma once
 
@@ -178,6 +181,11 @@ namespace SlonkFauna
 		EFaunaKind Kind = EFaunaKind::Flier;
 		EFlierHabitat Habitat = EFlierHabitat::Woodland;
 		uint32 Seed = 0;
+		/** Its species (its index among its world's species of its kind: SlonkFauna::SpeciesInCell) and that species' body
+		 *  plan, which its members' mesh is made by (cached by the plan: a world makes a mesh for each species, not each
+		 *  group). */
+		int32 Species = 0;
+		FFaunaBodyPlan Plan;
 		/** Its loop's middle (unit, planet-local) and the plane's axes there. */
 		FVector Centre = FVector::ZAxisVector;
 		FVector East = FVector::XAxisVector;
@@ -295,7 +303,14 @@ namespace SlonkFauna
 	 *  (Cliff over 0.3), ground steeper than a gentle rise (Flat 0.45 or less, about 15 degrees) nor a dense wood (Forest
 	 *  0.6 or more). */
 	SLONK_API bool HerdCrosses(const SlonkScatter::FHabitat& H);
-	/** The group a cell holds, if it holds one (false if not, or if its kind does not live here). */
+	/**
+	 * The species of its kind a habitat cell's group is: its index among the world's species of the kind
+	 * (FFaunaProfile::Species), picked by the shares from a number of the cell's own (its hash, salted apart from the
+	 * draws its group is made from, so the species changes nothing else the cell rolls): the same cell always the same
+	 * species, whatever order the cells are read in. 0 for a kind of one species (every kind at strangeness 0).
+	 */
+	SLONK_API int32 SpeciesInCell(const FFaunaWorld& W, const FFaunaCell& C);
+	/** The group a cell holds, if it holds one (false if not, or if its kind does not live here); of its cell's species. */
 	SLONK_API bool GroupInCell(const FFaunaWorld& W, const FFaunaCell& C, FFaunaGroup& Out);
 	/** Why a world keeps no sky-jellies, for the debug readout (nothing lives there, no air, the strangeness under
 	 *  Floater::MinStrangeness, thin air, the density 0 or the kind switched off): empty if it keeps some. */
@@ -308,8 +323,10 @@ namespace SlonkFauna
 	};
 	/** The nearest group of a kind to a direction, searched out to MaxCm over at most MaxCells cells: a debug search,
 	 *  synchronous, reading every cell ring by ring outward (each ring a cell wide, its cells nearest first) until no cell
-	 *  further out could hold a nearer group than one found, MaxCm is reached or MaxCells are read. */
-	SLONK_API bool FindGroupNear(const FFaunaWorld& W, EFaunaKind K, const FVector& Dir, double MaxCm, int32 MaxCells, FFaunaGroup& Out, FGroupSearch* OutSearch = nullptr);
+	 *  further out could hold a nearer group than one found, MaxCm is reached or MaxCells are read. Of one species alone
+	 *  (Species 0 or more: the cells of the others are passed over before their groups are made), or of any (-1). */
+	SLONK_API bool FindGroupNear(const FFaunaWorld& W, EFaunaKind K, const FVector& Dir, double MaxCm, int32 MaxCells, FFaunaGroup& Out, FGroupSearch* OutSearch = nullptr,
+		int32 Species = -1);
 	/** What a herd's loop offers (its cell's group, or one being made), read along it. */
 	SLONK_API FHerdHabitatRead HerdHabitatAt(const FFaunaWorld& W, const FFaunaGroup& G);
 
@@ -320,7 +337,8 @@ namespace SlonkFauna
 	 * cell is among the share of the shoals holding leapers; and the water under its leaps, read at its loop's middle and
 	 * eight points round it out to its loop and reach: the open sea everywhere (no land, no river or lake, no ice; on a
 	 * locked world the air neither baked nor frozen), at least NeedDepthCm deep (Leaper::MinWaterCm, and the shoal's own
-	 * depth and Leaper::ShoalClearCm, so the material paints it whole where its fish leap).
+	 * depth and Leaper::ShoalClearCm, so the material paints it whole where its fish leap). Read out as far as its longest
+	 * fish leap (LongestM: an Earth fish's, or its cell's species': LeaperInCell asks it so).
 	 */
 	struct FLeaperHabitatRead
 	{
@@ -330,10 +348,21 @@ namespace SlonkFauna
 		double MinDepthCm = 0.0, NeedDepthCm = 0.0;
 		FShoal Shoal;
 	};
-	SLONK_API FLeaperHabitatRead LeaperHabitatAt(const FFaunaWorld& W, const FFaunaCell& C);
+	SLONK_API FLeaperHabitatRead LeaperHabitatAt(const FFaunaWorld& W, const FFaunaCell& C, double LongestM = Leaper::MaxSizeM);
 	/** How far a group of leapers' fish may come from its shoal's loop's path, cm along the sea: their homes within its
-	 *  painted shape, and their leaps out from them. */
-	SLONK_API double LeaperReachCm(const FShoal& S);
+	 *  painted shape, and their leaps out from them (its longest fish's, LongestM: an Earth fish's Leaper::MaxSizeM, a
+	 *  strange world's of its species, LeaperMaxSizeM). */
+	SLONK_API double LeaperReachCm(const FShoal& S, double LongestM = Leaper::MaxSizeM);
+	/** The longest fish of a plan, m: an Earth fish's Leaper::MaxSizeM, an eel's FishForm::EelMaxSizeM, a spinefin's a
+	 *  ninth again an Earth fish's. */
+	SLONK_API double LeaperMaxSizeM(const FFaunaBodyPlan& Plan);
+	/** A group of leapers' span, m, from its cell's draw of 0.35 to 0.8 m (LeaperInCell) for a species of a plan and a
+	 *  size: an eel's a metre to 1.5 m for the draw, times its size (a tenth either way); any other strange species' the
+	 *  draw times its size; never past a tenth short of the plan's longest. Its fish are a tenth either way of it. */
+	SLONK_API float LeaperSpanM(const FFaunaBodyPlan& Plan, float SizeScale, float Drawn);
+	/** How big a splash a fish of a plan throws against an Earth fish of its length: a slim eel's three quarters, a
+	 *  spinefin's spread fins' a third again. */
+	SLONK_API double SplashScaleOf(const FFaunaBodyPlan& Plan);
 
 	/**
 	 * A fish's leap (SlonkFauna::Leaper), in closed form from its custom floats (Custom::Num) as the material has it: its
@@ -519,6 +548,15 @@ namespace SlonkFauna
 	 *  strides a second (about two turns a second for the smallest) and no hoof is lifted and put down a stride on
 	 *  between two frames. */
 	SLONK_API double HerdTurnRateOf(const FFaunaGroup& G, bool bShaken);
+	/**
+	 * How fast a herd's way may change how sharply it turns as it walks, radians a metre each second: Walker::MaxKapRate for
+	 * the Earth's grazers. A planted foot is carried round by how sharply its body turns now (the material knows no other),
+	 * so a change in it moves every foot down by its reach from its body's middle times how far it has walked since it was
+	 * put down: for walkers whose feet stand further out than an Earth grazer's or who walk further on each foot (an
+	 * insectoid's splayed legs, the larger alien grazers: their longest walker's farthest foot's reach times its stance), it
+	 * changes the slower by as much as that is more than an Earth grazer's of 2 m, so their feet slide no more than its do.
+	 */
+	SLONK_API double HerdKapRate(const FFaunaGroup& G);
 	/** A herd come about at a time: its clocks from its schedule (as far along its loop as the hour has walked it, as
 	 *  long grazed as the hour has left it standing), turned as its schedule has it. */
 	SLONK_API void StartHerd(FHerdState& S, const FFaunaGroup& G, double Seconds);
@@ -584,7 +622,7 @@ namespace SlonkFauna
 	 * go: its path and OffsetAheadCm (its offset a second on, the way its fright or the crew will take it; OffsetCm if
 	 * null). The heading is set at once while it grazes, turned as it walks (by WalkKap a metre walked, which steers
 	 * toward the way it goes as sharply as it can still straighten out by the time it faces it, at most MaxWalkKap a
-	 * metre and a few radians a second, changing by no more than Walker::MaxKapRate a second) and held while its walkers
+	 * metre and a few radians a second, changing by no more than HerdKapRate a second) and held while its walkers
 	 * turn; a herd on the move asked to go more than TurnAroundRad off its way stops, turns and sets off again. Its legs
 	 * walk by its frame's way along its plane from where it stood, laid level first, so the drawn ground rising or falling
 	 * under it (its chunks splitting) walks no legs on. The step spans Dt, or the time since its last step where the
@@ -791,9 +829,42 @@ namespace SlonkFauna
 	 * material's time T, for a member's custom floats (Custom::Num) in a group's custom primitive data (GroupData::Num),
 	 * DistCm from the camera, which sees PxPerRad pixels a radian. In the instance's frame, unit-mesh cm. A hand copy:
 	 * Slonk.Fauna.Meshes ties it to the script by the CRC of WPO_CODE's lines, so an edit to the material's motion alone
-	 * fails it.
+	 * fails it. WingForm is what its flock's material instance gives the material of its plan (Wings: a bird's 0, which
+	 * moves it as the material always has), UV its vertex's (a four-winged flier's hind wings' and a membrane's place
+	 * across it).
 	 */
-	SLONK_API FVector3f FlierMotion(const FVector3f& LP, const FLinearColor& VC, float T, const float* Custom, const float* Group, float DistCm, float PxPerRad);
+	SLONK_API FVector3f FlierMotion(const FVector3f& LP, const FLinearColor& VC, float T, const float* Custom, const float* Group, float DistCm, float PxPerRad,
+		const FVector2f& UV = FVector2f::ZeroVector, int32 WingForm = 0);
+	/** A four-winged flier's dart at the material's time: its offset from its place in its flock, in cm of a unit mesh of the
+	 *  flock's span, before the speck floor fades it (the material's own; FlierMotion scales it to the member's own unit
+	 *  mesh by the flock's span over its own), the same for every member of the flock (its group's custom primitive data:
+	 *  GroupData::DartSeed), so they dart together and keep their gaps. */
+	SLONK_API FVector3f FlierDart(float T, const float* Group);
+	/** The number a four-winged flock darts together on (GroupData::DartSeed, 0 to 1, from its seed); 0 for any other
+	 *  group. */
+	SLONK_API float DartSeedOf(const FFaunaGroup& G);
+	/** A membrane-winged flier's wing as its pixel shader shades it (fauna_material.py's alien fliers' branch, line for
+	 *  line): how dark its finger struts and its leading edge make a point of it, 0 (its skin) to 1 (a line), from its UV
+	 *  (V along its struts, whole at each, U across it from its leading edge) and how much each changes across a pixel there
+	 *  (UV per pixel): each line drawn at least a pixel and a half wide and the fainter the wider it is drawn than it is, so
+	 *  a strut far off fades into the skin rather than breaking into specks under the temporal upscaler's jitter. */
+	SLONK_API float MembraneLinesAt(const FVector2f& UV, const FVector2f& UVPerPixel);
+
+	/**
+	 * A strange plan's glow organs as its pixel shader lights them (fauna_material.py's CODE, before its branches),
+	 * transliterated in floats: how much of a spot covers a point of its mesh (its UV and vertex colour), 0 to 1, of its
+	 * plan's row (SlonkFaunaMeshes::GlowRowOf; none for a row of no spots); and how brightly it breathes at the
+	 * material's time T for an animal's custom floats, 0.7 to 1. Its light at night is GlowColor times its glow, the night,
+	 * GlowOrgan::SpotBright and those two.
+	 */
+	SLONK_API float GlowSpotAt(const FVector2f& UV, const FLinearColor& VC, const GlowOrgan::FRow& Row);
+	SLONK_API float GlowBreath(float T, const float* Custom);
+	/** How much fainter a glow organ is lit than its light (1 near), as each branch of the pixel shader dims it: by the
+	 *  square of how many times its size the speck floor draws the animal of a kind (a flier of WingForm, a walker, or a fish
+	 *  ShareOfLeap of the way from where it leaves the water to where it dives back in) of SizeM metres DistCm from a camera
+	 *  of PxPerRad pixels a radian, so the light it gives in all (its spots' drawn area times their light) falls with
+	 *  distance past the floor's onset as it did before it. */
+	SLONK_API float GlowSpeckDim(EFaunaKind Kind, float SizeM, float DistCm, float PxPerRad, int32 WingForm = 0, float ShareOfLeap = 0.5f);
 
 	/**
 	 * The material's motion of a walker's vertex (fauna_material.py's walker branch), transliterated in floats as the GPU
@@ -804,9 +875,12 @@ namespace SlonkFauna
 	 * its normals by it; it never jumps, its herd's way being held while its walkers turn); WalkerStrides how many strides
 	 * it has walked (its gait's phase: walking, grazing and the steps of its turns), and WalkerSpeedMS how fast it walks,
 	 * m/s. A planted foot is carried back by every way its body has gone since it was put down, across its herd's latest
-	 * turn to walk or back to graze, so it stays where it was put down.
+	 * turn to walk or back to graze, so it stays where it was put down. Rig is what its herd's material instance gives the
+	 * branch of its plan (Walker::FRig: the Earth grazer's by default): its neck's pivot, its feet's lift, its head's swing.
+	 * Its legs, four or six, are each its gait's place (VC.B): the material reads no count of them.
 	 */
-	SLONK_API FVector3f WalkerMotion(const FVector3f& LP, const FVector3f& LPP, const FLinearColor& VC, float T, const float* Custom, const float* Group, float DistCm, float PxPerRad);
+	SLONK_API FVector3f WalkerMotion(const FVector3f& LP, const FVector3f& LPP, const FLinearColor& VC, float T, const float* Custom, const float* Group, float DistCm, float PxPerRad,
+		const Walker::FRig& Rig = Walker::FRig());
 	SLONK_API float WalkerYaw(float T, const float* Custom, const float* Group);
 	SLONK_API float WalkerStrides(float T, const float* Custom, const float* Group);
 	SLONK_API float WalkerSpeedMS(float T, const float* Custom, const float* Group);
@@ -818,9 +892,11 @@ namespace SlonkFauna
 	 * in its group's custom primitive data (LeaperData::Num), DistCm from the camera, which sees PxPerRad pixels a radian.
 	 * In the instance's frame, unit-mesh cm. LeaperShown is the pixel shader's own reading of the same leap: whether the
 	 * fish is drawn at all then (its fade's dither aside); and LeaperTurn the pitch and the way it turns the fish then
-	 * (radians), by which the pixel shader turns its normals.
+	 * (radians), by which the pixel shader turns its normals. Form is what its group's material instance gives the
+	 * material of its plan (FishForm: an Earth fish's 0, which moves it as the material always has); every form leaps the
+	 * same arcs, and neither reading depends on it.
 	 */
-	SLONK_API FVector3f LeaperMotion(const FVector3f& LP, const FLinearColor& VC, float T, const float* Custom, const float* Group, float DistCm, float PxPerRad);
+	SLONK_API FVector3f LeaperMotion(const FVector3f& LP, const FLinearColor& VC, float T, const float* Custom, const float* Group, float DistCm, float PxPerRad, int32 Form = 0);
 	SLONK_API bool LeaperShown(float T, const float* Custom, const float* Group);
 	SLONK_API FVector2f LeaperTurn(float T, const float* Custom, const float* Group);
 
