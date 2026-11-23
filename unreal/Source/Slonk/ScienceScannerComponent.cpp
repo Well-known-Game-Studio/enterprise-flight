@@ -484,12 +484,14 @@ void UScienceScannerComponent::FactsForWorld(const APlanetBody* P, FScanRecord& 
 		// and what a vanished people left, on lines of their own.
 		const FLandmarkProfile& Marks = P->LandmarkProfile;
 		if (Marks.Has(ELandmark::Arch)) { Surface.Add(TEXT("natural arches")); }
+		if (Marks.Has(ELandmark::FloatingRock)) { Surface.Add(TEXT("rock hanging in the air")); }
 		if (Surface.Num() > 0) { R.Facts.Add(TEXT("Surface: ") + FString::Join(Surface, TEXT(", "))); }
 		if (Marks.Has(ELandmark::ReefTower) || Marks.Has(ELandmark::Mound))
 		{
 			R.Facts.Add(FString::Printf(TEXT("Biostructures: %s%s%s"), Marks.Has(ELandmark::ReefTower) ? TEXT("reef towers in the shallows") : TEXT(""),
 				Marks.Has(ELandmark::ReefTower) && Marks.Has(ELandmark::Mound) ? TEXT(", ") : TEXT(""), Marks.Has(ELandmark::Mound) ? TEXT("mound cities on the plains") : TEXT("")));
 		}
+		if (Marks.Has(ELandmark::Shell)) { R.Facts.Add(TEXT("Remains: the shells of sea animals a hundred metres across, long dead")); }
 		if (Marks.Has(ELandmark::Monolith) || Marks.Has(ELandmark::Ring))
 		{
 			R.Facts.Add(FString::Printf(TEXT("Worked stone on the surface, of no living people: %s%s%s"), Marks.Has(ELandmark::Monolith) ? TEXT("standing monoliths") : TEXT(""),
@@ -528,6 +530,8 @@ void UScienceScannerComponent::FactsForWorld(const APlanetBody* P, FScanRecord& 
 		R.Bonus += 300;
 	}
 	else if (S.Lineae > 0.05f) { R.Discovery = TEXT("Subsurface ocean under the ice"); R.Bonus += 200; }
+	// What the seas' giants left, there to be landed beside: certain too, where the world has them.
+	else if (!bGiant && P->LandmarkProfile.Has(ELandmark::Shell)) { R.Discovery = TEXT("The shells of sea animals a hundred metres across, long dead"); R.Bonus += 250; }
 	else if (Roll(R.Key, 1) < 0.4f)
 	{
 		static const FFind Rocky[] = {

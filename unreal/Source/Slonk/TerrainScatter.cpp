@@ -444,10 +444,17 @@ namespace
 		case ELandmark::Ring:
 			// The same, and flatter: its foot is a hundred metres and more.
 			return Sp.Flat * (1.0 - SmoothStep(0.05, 0.2, Sp.Slope)) * (1.0 - SmoothStep(0.04, 0.18, Woods)) * (1.0 - 0.5 * SnowLying);
-		default:
+		case ELandmark::Mound:
 			// A mound city: open grassland, neither parched nor sodden, under the treeline.
 			return Sp.Flat * SmoothStep(0.15, 0.35, Sp.Wet) * (1.0 - SmoothStep(0.6, 0.85, Sp.Wet)) * (1.0 - SmoothStep(0.04, 0.2, Woods)) * (1.0 - SnowLying)
 				* (1.0 - SmoothStep(0.5, 0.8, Clim.Alpine));
+		case ELandmark::Shell:
+			// Where the sea is, or was: open, level ground within a couple of hundred metres of its level.
+			return Sp.Flat * (1.0 - SmoothStep(6000.0, 20000.0, T.HeightCm)) * (1.0 - SmoothStep(0.05, 0.25, Woods)) * (1.0 - 0.5 * SnowLying);
+		default:
+			// Rock hangs over the rock it was torn from: tableland and rocky ground the most, any ground a little, none
+			// over a slope that would stand into it.
+			return (1.0 - SmoothStep(0.45, 0.65, Sp.Slope)) * (0.35 + 0.65 * FMath::Max(Sp.Rocky, Sp.Table));
 		}
 	}
 
@@ -544,7 +551,7 @@ namespace
 		for (int32 m = 0; m < Count; ++m)
 		{
 			FDraw Dm(CellHash(Face, L, GX, GY, LandmarkSaltOf(S.Landmarks, Kind, m)));
-			const double Small = Dm.Next(), Off = Dm.Next(), TurnM = Dm.Next();
+			const double Small = Dm.Next(), Off = Dm.Next(), TurnM = Dm.Next(), Rise = Dm.Next();
 			FLandmarkStand St;
 			St.Kind = Kind; St.Face = Face; St.GX = GX; St.GY = GY; St.Member = m;
 			St.SizeCm = SizeCm; St.Yaw = Yaw; St.U = U; St.V = V; St.Up = Up;
@@ -578,6 +585,8 @@ namespace
 				St.BaseCm = Spec.bInSea ? 0.0 : Tm.HeightCm;
 			}
 			St.FootCm = Spec.Foot * St.SizeCm;
+			// One that hangs in the air, by the first's width over the ground at its own place: each at a height of its own.
+			St.LiftCm = SizeCm * FMath::Lerp(Spec.LiftLo, Spec.LiftHi, Rise);
 			if (S.bCities && (Towns.Contains(St.Up, P.RadiusCm, false) || Towns.WayWithin(St.Up, 200.0 + St.FootCm))) { continue; }
 			Out.Add(St);
 		}
@@ -701,7 +710,8 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 			for (int64 GX = GX0; GX <= GX1; ++GX) { LandmarkSite(P, S, (ELandmark)K, G.Face, L, GX, GY, Marks); }
 		}
 		// At every level that carries them: a far level's trees stand out of a landmark's foot as the near one's do.
-		for (const FLandmarkStand& St : Marks) { Feet.Add({ St.Up * R, FMath::Square(St.FootCm + 150.0) }); }
+		// (One that hangs in the air has none.)
+		for (const FLandmarkStand& St : Marks) { if (St.FootCm > 0.0) { Feet.Add({ St.Up * R, FMath::Square(St.FootCm + 150.0) }); } }
 	}
 	auto InGiantFoot = [&Feet, R](const FVector& Up)
 	{
@@ -915,7 +925,7 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 			if (!GiantInCell(P, S, G.Face, L, GX, GY, St, D) || !F.Inside(St.U, St.V)) { continue; }
 			// No giant in a landmark's foot, nor one's stalk through it.
 			bool bInMark = false;
-			for (const FLandmarkStand& Mark : Marks) { bInMark |= FVector::DistSquared(St.Up * R, Mark.Up * R) < FMath::Square(Mark.FootCm + St.FootCm); }
+			for (const FLandmarkStand& Mark : Marks) { bInMark |= Mark.FootCm > 0.0 && FVector::DistSquared(St.Up * R, Mark.Up * R) < FMath::Square(Mark.FootCm + St.FootCm); }
 			if (bInMark) { continue; }
 			FSpot Sp;
 			if (!F.SpotAt(St.U, St.V, Sp)) { continue; }
@@ -963,6 +973,13 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 			}
 			else { SlopeTan = 0.2; }
 		}
+		// One that hangs in the air: its lift over the field's ground at its place, not the chunk's drawn ground, so it
+		// hangs at one height whatever level draws it.
+		if (Spec.LiftHi > 0.0)
+		{
+			Pt = St.Up * (R + St.BaseCm + St.LiftCm) - G.Origin;
+			SlopeTan = 0.0;
+		}
 		// Its own draws, apart from the ones that put it there: how it leans, its proportions, its shade.
 		FDraw D(CellHash(St.Face, LandmarkLevel(FaceArcCm), St.GX, St.GY, LandmarkSaltOf(S.Landmarks, St.Kind, 100 + St.Member)));
 		FVector Ta, Tb;
@@ -994,11 +1011,21 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 		case ELandmark::ReefTower:
 			Wx = Wy = FMath::Lerp(0.85, 1.2, A);
 			break;
-		default:
+		case ELandmark::Mound:
 			Wx = Wy = FMath::Lerp(0.9, 1.3, A); Wz = FMath::Lerp(0.85, 1.1, B);
 			Sink = (0.02 + FMath::Min(SlopeTan * 0.5, 0.05)) * St.SizeCm;
 			// The earth it was raised from: the dry ground's colour, a little of the rock's.
 			Tint = FMath::Lerp(S.Palette.Land2, S.Palette.Mountain, 0.35f);
+			break;
+		case ELandmark::Shell:
+			// Thicker or thinner through; three tenths of it buried as its mesh is made, and up to a sixth more.
+			Wy = FMath::Lerp(0.85, 1.3, A);
+			Sink = (0.02 + 0.08 * B + FMath::Min(SlopeTan * 0.3, 0.06)) * St.SizeCm;
+			break;
+		default:
+			// A floating rock: broader one way than the other, deeper or shallower, of the world's own rock.
+			Wx = FMath::Lerp(0.85, 1.2, A); Wy = FMath::Lerp(0.85, 1.2, B); Wz = FMath::Lerp(0.8, 1.2, D.Next());
+			Tint = S.Palette.Mountain;
 			break;
 		}
 		const FTransform Xf(Rot, Pt - Rot.GetAxisZ() * Sink, FVector(Size * Wx, Size * Wy, Size * Wz));

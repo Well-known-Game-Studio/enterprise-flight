@@ -26,7 +26,11 @@
 
 namespace SlonkLandmarkTestHelpers
 {
-	const ELandmark MarkKinds[] = { ELandmark::Arch, ELandmark::Monolith, ELandmark::Ring, ELandmark::ReefTower, ELandmark::Mound };
+	const ELandmark MarkKinds[] = { ELandmark::Arch, ELandmark::Monolith, ELandmark::Ring, ELandmark::ReefTower, ELandmark::Mound, ELandmark::Shell, ELandmark::FloatingRock };
+	/** Every kind's bit, for a roll asked for all of them. */
+	constexpr uint8 EveryKindAsked = (uint8)((1 << SlonkLandmarks::NumKinds) - 1);
+	/** The kinds whose measure is their width across (the others' is their height). */
+	bool MeasuredAcross(ELandmark Kind) { return Kind == ELandmark::Arch || Kind == ELandmark::Ring || Kind == ELandmark::Shell || Kind == ELandmark::FloatingRock; }
 
 	/** An Earth-like world, as APlanetBody::MakeTerrainParams gives one (SlonkTerrainTests.cpp's). */
 	FPlanetTerrainParams MarkWorld()
@@ -144,7 +148,8 @@ bool FSlonkLandmarkRollsTest::RunTest(const FString& Parameters)
 	// The same world rolls the same; grown stranger it keeps every landmark it had, as it was. At full strangeness,
 	// arches on about three worlds in five, a vanished people's stones on two in five (monoliths or rings, never both),
 	// reef towers and mound cities on about half of those with life, and neither on a dead one; no reef where the sea
-	// is not liquid. A kind asked for by name stands whatever the roll, and moves nothing the roll gave.
+	// is not liquid; giant shells on two in five, and rock hanging in the air over as many, but over none under
+	// strangeness 0.4. A kind asked for by name stands whatever the roll, and moves nothing the roll gave.
 	using namespace SlonkLandmarkTestHelpers;
 	const EPlanetArchetype Types[] = { EPlanetArchetype::Terrestrial, EPlanetArchetype::Ocean, EPlanetArchetype::Desert, EPlanetArchetype::Ice, EPlanetArchetype::Lava,
 		EPlanetArchetype::GasGiant, EPlanetArchetype::Moon, EPlanetArchetype::Venus, EPlanetArchetype::Mars, EPlanetArchetype::IceGiant };
@@ -187,7 +192,10 @@ bool FSlonkLandmarkRollsTest::RunTest(const FString& Parameters)
 	FWorldGenome Full;
 	Full.Strangeness = 1.f;
 	const int32 N = 4000;
-	int32 Count[SlonkLandmarks::NumKinds] = {}, Ruins = 0, DeadLife = 0, DrySeaReefs = 0, ForcedMissing = 0, ForcedMoved = 0, ForcedNearHome = 0;
+	int32 Count[SlonkLandmarks::NumKinds] = {}, Ruins = 0, DeadLife = 0, DrySeaReefs = 0, ForcedMissing = 0, ForcedMoved = 0, ForcedNearHome = 0, FloatsEarly = 0, FloatsMid = 0;
+	FWorldGenome Mild, Middling;
+	Mild.Strangeness = 0.4f;
+	Middling.Strangeness = 0.7f;
 	for (int32 i = 0; i < N; ++i)
 	{
 		const uint32 Hash = (uint32)(i + 1) * 2246822519u;
@@ -197,10 +205,15 @@ bool FSlonkLandmarkRollsTest::RunTest(const FString& Parameters)
 		const FLandmarkProfile Dead = SlonkLandmarks::Roll(Full, EPlanetArchetype::Mars, Hash, 0.f, true);
 		DeadLife += Dead.Has(ELandmark::ReefTower) || Dead.Has(ELandmark::Mound) ? 1 : 0;
 		// What needs no life is the same on a dead world as on a living one.
-		for (const ELandmark K : { ELandmark::Arch, ELandmark::Monolith, ELandmark::Ring }) { ForcedMoved += !(Dead.Kinds[(int32)K] == L.Kinds[(int32)K]) ? 1 : 0; }
+		for (const ELandmark K : { ELandmark::Arch, ELandmark::Monolith, ELandmark::Ring, ELandmark::Shell, ELandmark::FloatingRock }) { ForcedMoved += !(Dead.Kinds[(int32)K] == L.Kinds[(int32)K]) ? 1 : 0; }
+		// Rock hangs in the air over no world to strangeness 0.4, and over fewer at 0.7 than at 1 (the same worlds, and more).
+		FloatsEarly += SlonkLandmarks::Roll(Mild, EPlanetArchetype::Terrestrial, Hash, 1.f, true).Has(ELandmark::FloatingRock) ? 1 : 0;
+		const bool bMid = SlonkLandmarks::Roll(Middling, EPlanetArchetype::Terrestrial, Hash, 1.f, true).Has(ELandmark::FloatingRock);
+		FloatsMid += bMid ? 1 : 0;
+		ForcedMoved += bMid && !L.Has(ELandmark::FloatingRock) ? 1 : 0;
 		DrySeaReefs += SlonkLandmarks::Roll(Full, EPlanetArchetype::Terrestrial, Hash, 1.f, false).Has(ELandmark::ReefTower) ? 1 : 0;
 		// Every kind asked for: all stand, and those the roll gave are as it gave them.
-		const FLandmarkProfile All = SlonkLandmarks::Roll(Full, EPlanetArchetype::Terrestrial, Hash, 1.f, true, 0x1f);
+		const FLandmarkProfile All = SlonkLandmarks::Roll(Full, EPlanetArchetype::Terrestrial, Hash, 1.f, true, EveryKindAsked);
 		for (int32 K = 0; K < SlonkLandmarks::NumKinds; ++K)
 		{
 			ForcedMissing += All.Kinds[K].bLive ? 0 : 1;
@@ -209,30 +222,36 @@ bool FSlonkLandmarkRollsTest::RunTest(const FString& Parameters)
 		// One kind asked for on a world near home: that kind and no other; on a giant, still none.
 		const FLandmarkProfile Home = SlonkLandmarks::Roll(FWorldGenome(), EPlanetArchetype::Terrestrial, Hash, 1.f, true, 1 << (int32)ELandmark::Ring);
 		for (int32 K = 0; K < SlonkLandmarks::NumKinds; ++K) { ForcedNearHome += Home.Kinds[K].bLive != (K == (int32)ELandmark::Ring) ? 1 : 0; }
-		ForcedNearHome += SlonkLandmarks::Roll(Full, EPlanetArchetype::GasGiant, Hash, 1.f, true, 0x1f).Any() ? 1 : 0;
+		ForcedNearHome += SlonkLandmarks::Roll(Full, EPlanetArchetype::GasGiant, Hash, 1.f, true, EveryKindAsked).Any() ? 1 : 0;
 	}
 	const float Chance = SlonkFlora::DepartChance(1.f);
-	AddInfo(FString::Printf(TEXT("of %d living worlds at full strangeness (the chance things depart by %.2f): arches on %d, monoliths %d, rings %d, reef towers %d, mound cities %d"), N, Chance,
-		Count[0], Count[1], Count[2], Count[3], Count[4]));
+	AddInfo(FString::Printf(TEXT("of %d living worlds at full strangeness (the chance things depart by %.2f): arches on %d, monoliths %d, rings %d, reef towers %d, mound cities %d, giant shells %d, floating rocks %d (%d at 0.7, %d at 0.4)"),
+		N, Chance, Count[0], Count[1], Count[2], Count[3], Count[4], Count[5], Count[6], FloatsMid, FloatsEarly));
 	auto Near = [N](int32 Got, float Share) { return FMath::Abs((float)Got / N - Share) < 0.035f; };
 	TestTrue(TEXT("arches on 0.65 of the chance"), Near(Count[(int32)ELandmark::Arch], 0.65f * Chance));
 	TestTrue(TEXT("a vanished people's stones on 0.4 of it, a little more often monoliths than rings"), Near(Ruins, 0.4f * Chance) && Count[(int32)ELandmark::Monolith] > Count[(int32)ELandmark::Ring]
 		&& Count[(int32)ELandmark::Ring] > N / 10);
 	TestTrue(TEXT("reef towers on 0.6 of it, mound cities on 0.5"), Near(Count[(int32)ELandmark::ReefTower], 0.6f * Chance) && Near(Count[(int32)ELandmark::Mound], 0.5f * Chance));
+	TestTrue(TEXT("giant shells on 0.45 of it"), Near(Count[(int32)ELandmark::Shell], 0.45f * Chance));
+	TestTrue(TEXT("rock hangs in the air over 0.45 of the worlds at 1, over fewer at 0.7, over none at 0.4"), Near(Count[(int32)ELandmark::FloatingRock], 0.45f) && FloatsEarly == 0 && FloatsMid > N / 20
+		&& FloatsMid < Count[(int32)ELandmark::FloatingRock]);
 	TestEqual(TEXT("a dead world has nothing its life would have built"), DeadLife, 0);
 	TestEqual(TEXT("no reef where the sea is not liquid"), DrySeaReefs, 0);
 	TestEqual(TEXT("every kind asked for by name stands"), ForcedMissing, 0);
 	TestEqual(TEXT("asking for one moves nothing the roll gave, and what needs no life is the same on a dead world"), ForcedMoved, 0);
 	TestEqual(TEXT("a kind asked for near home stands alone there, and none on a giant"), ForcedNearHome, 0);
 	// As the world's ground can carry them: none on a world all sea, no reef on one with no sea, and what is kept as rolled.
-	const FLandmarkProfile Every = SlonkLandmarks::Roll(Full, EPlanetArchetype::Terrestrial, 12345u, 1.f, true, 0x1f);
-	FLandmarkProfile AllSea = Every, NoSea = Every, Shores = Every;
+	const FLandmarkProfile Every = SlonkLandmarks::Roll(Full, EPlanetArchetype::Terrestrial, 12345u, 1.f, true, EveryKindAsked);
+	FLandmarkProfile AllSea = Every, NoSea = Every, Shores = Every, Uplands = Every;
 	SlonkLandmarks::FitToGround(AllSea, 0.01f);
 	SlonkLandmarks::FitToGround(NoSea, 1.f);
-	SlonkLandmarks::FitToGround(Shores, 0.3f);
-	bool bDryKept = !NoSea.Has(ELandmark::ReefTower);
-	for (const ELandmark K : { ELandmark::Arch, ELandmark::Monolith, ELandmark::Ring, ELandmark::Mound }) { bDryKept &= NoSea.Kinds[(int32)K] == Every.Kinds[(int32)K]; }
+	SlonkLandmarks::FitToGround(Shores, 0.3f, 0.1f);
+	SlonkLandmarks::FitToGround(Uplands, 0.3f, 0.f);
+	bool bDryKept = !NoSea.Has(ELandmark::ReefTower), bHighKept = !Uplands.Has(ELandmark::Shell);
+	for (const ELandmark K : { ELandmark::Arch, ELandmark::Monolith, ELandmark::Ring, ELandmark::Mound, ELandmark::Shell, ELandmark::FloatingRock }) { bDryKept &= NoSea.Kinds[(int32)K] == Every.Kinds[(int32)K]; }
+	for (const ELandmark K : MarkKinds) { bHighKept &= K == ELandmark::Shell || Uplands.Kinds[(int32)K] == Every.Kinds[(int32)K]; }
 	TestTrue(TEXT("a world all sea has no landmark, one with no sea no reef and the rest as rolled, one with shores all it rolled"), Every.Any() && !AllSea.Any() && bDryKept && Shores == Every);
+	TestTrue(TEXT("a world with no ground near the sea's level has no giant shell, and the rest as rolled"), bHighKept);
 	// The names the debug commands know them by.
 	bool bNames = true;
 	for (const ELandmark K : MarkKinds) { bNames &= SlonkLandmarks::KindNamed(SlonkLandmarks::KindKey(K)) == K; }
@@ -245,8 +264,9 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkLandmarkMeshesTest, "Slonk.Landmarks.Mesh
 bool FSlonkLandmarkMeshesTest::RunTest(const FString& Parameters)
 {
 	// Each kind's mesh at each level of detail: closed solids wound outward, within the level's triangles, a hundred
-	// of its own centimetres in its kind's measure (an arch's span, a stone's height, a ring's width across, a tower's
-	// or a mound's height over its origin), reaching as far under its origin as BelowCm says; each coarser level is
+	// of its own centimetres in its kind's measure (an arch's span, a stone's height, a ring's, a shell's or a floating
+	// rock's width across, a tower's or a mound's height over its origin), reaching as far under its origin as BelowCm
+	// says; each coarser level is
 	// lighter and fills the same space. Its collision is convex parts within it that leave the way under an arch and
 	// through a ring open. The game's mesh for a kind has the three levels and those parts, and is made once.
 	using namespace SlonkLandmarkTestHelpers;
@@ -262,8 +282,7 @@ bool FSlonkLandmarkMeshesTest::RunTest(const FString& Parameters)
 			SlonkLandmarks::BuildLod(Kind, Lod, M);
 			const FAxisAlignedBox3d B = M.GetBounds();
 			const FVector2d VolumeArea = TMeshQueries<FDynamicMesh3>::GetVolumeArea(M);
-			const bool bSpan = Kind == ELandmark::Arch || Kind == ELandmark::Ring;
-			const double Measure = bSpan ? B.Max.X - B.Min.X : B.Max.Z;
+			const double Measure = MeasuredAcross(Kind) ? B.Max.X - B.Min.X : B.Max.Z;
 			AddInfo(FString::Printf(TEXT("%s, level %d: %d triangles, %.0f x %.0f x %.0f from %.0f under its origin, volume %.0f"), Name, Lod, M.TriangleCount(), B.Max.X - B.Min.X, B.Max.Y - B.Min.Y,
 				B.Max.Z - B.Min.Z, -B.Min.Z, VolumeArea.X));
 			// (A standing stone is forty triangles from its second level on: there is nothing left to take.)
@@ -320,7 +339,7 @@ bool FSlonkLandmarkStandsTest::RunTest(const FString& Parameters)
 	// kind, the field's stands (LandmarksNear) are the pieces the chunks carry: each found on the chunk the trees ride,
 	// of its kind's size, no further from upright than its kind leans; one on land with its origin in the drawn ground
 	// and its mesh's foot under it, on dry ground; one in the sea at the sea's level over shallows its mesh reaches the
-	// floor of. The coarsest chunks that carry landmarks (twenty kilometres across) have the same pieces in the same
+	// floor of; one that hangs in the air as far over the field's ground as its stand says, its root clear of it. The coarsest chunks that carry landmarks (twenty kilometres across) have the same pieces in the same
 	// places, at the same size; a chunk coarser still has none.
 	using namespace SlonkLandmarkTestHelpers;
 	const FPlanetTerrainParams P = MarkWorld();
@@ -339,8 +358,10 @@ bool FSlonkLandmarkStandsTest::RunTest(const FString& Parameters)
 	FMarkChunks Near(P, With), Coarse(P, With), Without(P, Plain);
 	int32 Of[SlonkLandmarks::NumKinds] = {}, Found[SlonkLandmarks::NumKinds] = {}, OnFar[SlonkLandmarks::NumKinds] = {};
 	int32 BadSize = 0, Leaning = 0, Floating = 0, Buried = 0, Wet = 0, OffSea = 0, NoFloor = 0, FarMoved = 0, OnPlain = 0, Beyond = 0, BeyondChunks = 0, LegsOut = 0, Legs = 0, Steep = 0;
+	int32 Hanging = 0, OffLift = 0, Grounded = 0, FarShifted = 0;
+	double LowestHang = 1.0e12, HighestHang = 0.0;
 	// The most each kind is sunk, as a share of its size (ScatterChunk's own), and a hundredth for the lean of one sunk.
-	const double MostSunk[SlonkLandmarks::NumKinds] = { 0.11, 0.07, 0.05, 0.0, 0.07 };
+	const double MostSunk[SlonkLandmarks::NumKinds] = { 0.11, 0.07, 0.05, 0.0, 0.07, 0.16, 0.0 };
 	double Least[SlonkLandmarks::NumKinds], Most[SlonkLandmarks::NumKinds];
 	for (int32 K = 0; K < SlonkLandmarks::NumKinds; ++K) { Least[K] = 1.0e12; Most[K] = 0.0; }
 	for (const SlonkScatter::FLandmarkStand& St : Stands)
@@ -356,11 +377,12 @@ bool FSlonkLandmarkStandsTest::RunTest(const FString& Parameters)
 		const FTransform& T = C->Xf[Mesh][i];
 		const FVector Up = T.GetLocation().GetSafeNormal(), Scale = T.GetScale3D();
 		// Its kind's measure: the span along its x for an arch or a ring, its height for the rest.
-		const double Size = (St.Kind == ELandmark::Arch || St.Kind == ELandmark::Ring ? Scale.X : Scale.Z) * SlonkLandmarks::UnitCm;
+		const double Size = (MeasuredAcross(St.Kind) ? Scale.X : Scale.Z) * SlonkLandmarks::UnitCm;
 		Least[K] = FMath::Min(Least[K], Size);
 		Most[K] = FMath::Max(Most[K], Size);
-		// (A site's others are down to 0.45 of its first; a mound may be drawn 0.85 as tall as its measure.)
-		if (Size < Spec.MinCm * 0.45 * 0.84 || Size > Spec.MaxCm * 1.16 || FMath::Abs(Size / St.SizeCm - 1.0) > 0.26) { ++BadSize; }
+		// (A site's others are down to 0.45 of its first; a mound may be drawn 0.85 as tall as its measure, a floating
+		// rock 0.85 to 1.2 as wide.)
+		if (Size < Spec.MinCm * 0.45 * 0.84 || Size > Spec.MaxCm * 1.21 || FMath::Abs(Size / St.SizeCm - 1.0) > 0.26) { ++BadSize; }
 		if (FVector::DotProduct(T.GetRotation().GetAxisZ(), Up) < FMath::Cos(FMath::DegreesToRadians(Spec.TiltDeg + 0.2))) { ++Leaning; }
 		const double Over = T.GetLocation().Size() - R;
 		const FPlanetTerrainSample Ground = SlonkTerrain::Sample(P, Up, 200.0);
@@ -369,6 +391,16 @@ bool FSlonkLandmarkStandsTest::RunTest(const FString& Parameters)
 			OffSea += FMath::Abs(Over) > 2.0 ? 1 : 0;
 			// Shallows, and its mesh stands on their floor.
 			NoFloor += !Ground.bWater || -Ground.HeightCm > SlonkLandmarks::BelowCm(St.Kind) * Scale.Z ? 1 : 0;
+		}
+		else if (Spec.LiftHi > 0.0)
+		{
+			// One that hangs in the air: as far over the field's ground as its stand says, its root clear of the ground.
+			++Hanging;
+			OffLift += FMath::Abs(Over - (St.BaseCm + St.LiftCm)) > 2.0 || St.LiftCm <= 0.0 ? 1 : 0;
+			const double Clear = Over - SlonkLandmarks::BelowCm(St.Kind) * Scale.Z - FMath::Max((double)Ground.HeightCm, 0.0);
+			Grounded += Clear < 300.0 ? 1 : 0;
+			LowestHang = FMath::Min(LowestHang, Clear);
+			HighestHang = FMath::Max(HighestHang, Over - St.BaseCm);
 		}
 		else
 		{
@@ -396,6 +428,8 @@ bool FSlonkLandmarkStandsTest::RunTest(const FString& Parameters)
 			{
 				++OnFar[K];
 				FarMoved += !F->Xf[Mesh][j].GetScale3D().Equals(Scale, 1.0e-6) || !F->Xf[Mesh][j].GetRotation().Equals(T.GetRotation(), 1.0e-6) ? 1 : 0;
+				// One that hangs in the air hangs in the one place, whichever level draws it.
+				FarShifted += Spec.LiftHi > 0.0 && FVector::Dist(F->Xf[Mesh][j].GetLocation(), T.GetLocation()) > 1.0 ? 1 : 0;
 			}
 		}
 	}
@@ -417,7 +451,8 @@ bool FSlonkLandmarkStandsTest::RunTest(const FString& Parameters)
 		AddInfo(FString::Printf(TEXT("%s: %d stands, %d found on the chunks to 310 m and %d on those to 20 km, %.0f to %.0f m"), SlonkLandmarks::KindName(Kind), Of[K], Found[K], OnFar[K], Least[K] / 100.0, Most[K] / 100.0));
 		TestTrue(FString::Printf(TEXT("%s: the world has them standing"), SlonkLandmarks::KindName(Kind)), Of[K] >= 6);
 	}
-	AddInfo(FString::Printf(TEXT("%d arch legs, %d with their foot clear of the ground"), Legs, LegsOut));
+	AddInfo(FString::Printf(TEXT("%d arch legs, %d with their foot clear of the ground; %d floating rocks, their roots %.0f m and more over the ground, the highest hanging %.0f m up"), Legs, LegsOut, Hanging,
+		LowestHang / 100.0, HighestHang / 100.0));
 	if (!TestTrue(TEXT("found the landmarks"), All >= 40)) { return true; }
 	TestEqual(TEXT("every stand the field gives is a piece on its chunk"), AllFound, All);
 	TestEqual(TEXT("and on the chunk twenty kilometres across, every one"), AllFar, All);
@@ -427,6 +462,7 @@ bool FSlonkLandmarkStandsTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("none on land stands clear of the drawn ground"), Floating, 0);
 	TestEqual(TEXT("none sunk past what its mesh has under its origin"), Buried, 0);
 	TestEqual(TEXT("none of the land's stands in water"), Wet, 0);
+	TestTrue(TEXT("a floating rock hangs as far over the ground as the field says, its root clear of it, in the same place at every level"), Hanging >= 6 && OffLift == 0 && Grounded == 0 && FarShifted == 0);
 	TestEqual(TEXT("a reef's towers stand at the sea's level"), OffSea, 0);
 	TestEqual(TEXT("in shallows their mesh reaches the floor of"), NoFloor, 0);
 	TestTrue(TEXT("an arch's legs come down into the ground, and none stands on a slope past one in two"), Legs >= 12 && LegsOut == 0 && Steep == 0);
@@ -469,8 +505,8 @@ bool FSlonkLandmarkClearingTest::RunTest(const FString& Parameters)
 	int32 Feet = 0, InFoot = 0, WouldBe = 0, WouldBeFar = 0;
 	for (const SlonkScatter::FLandmarkStand& St : Stands)
 	{
-		// (A reef's towers stand in the sea, where nothing else does.)
-		if (SlonkLandmarks::SpecOf(St.Kind).bInSea) { continue; }
+		// (A reef's towers stand in the sea, where nothing else does, and a floating rock has no foot on the ground.)
+		if (SlonkLandmarks::SpecOf(St.Kind).bInSea || St.FootCm <= 0.0) { continue; }
 		++Feet;
 		for (const int32 Depth : { MarkDepth(P, 31000.0), MarkDepth(P, 8000.0), MarkDepth(P, 124000.0), MarkDepth(P, 500000.0) })
 		{

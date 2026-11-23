@@ -342,6 +342,116 @@ namespace
 		});
 	}
 
+	// ---- the giant shell: a coiled shell stood on its edge, its mouth at the ground, three tenths of it buried ----
+
+	/** Where its last whorl ends, the way round, radians; how many whorls there are, each how many times the width of
+	 *  the one inside it; and what lays the coil (drawn about its own middle, its mouth's whorl one from it) in the
+	 *  mesh's measure: a hundred across, its lowest point ShellBelow under the origin. */
+	constexpr double ShellMouth = -0.9, ShellTurns = 2.25, ShellGrowth = 3.0;
+	constexpr double ShellScale = 48.772, ShellMidX = -0.0555, ShellLowZ = -1.4420, ShellBelow = 30.0;
+	FVector ShellPlace(const FVector& P) { return FVector((P.X - ShellMidX) * ShellScale, P.Y * ShellScale, (P.Z - ShellLowZ) * ShellScale - ShellBelow); }
+
+	/** The shell's section where its whorl has come round to Theta: half as thick as it is far from the middle (so each
+	 *  whorl lies against the one inside it), flatter through than across, a keel along its outer edge. */
+	void ShellRing(double Theta, int32 Sides, double Swell, TArray<FVector>& Out, FVector* OutCentre = nullptr, FVector* OutAlong = nullptr, double* OutRadius = nullptr)
+	{
+		const double K = FMath::Loge(ShellGrowth) / UE_DOUBLE_TWO_PI;
+		const double Rho = FMath::Exp(K * (Theta - ShellMouth)), A = 0.5 * Rho * Swell;
+		const FVector Radial(FMath::Cos(Theta), 0.0, FMath::Sin(Theta));
+		Out.Reset();
+		for (int32 s = 0; s < Sides; ++s)
+		{
+			const double Ang = UE_DOUBLE_TWO_PI * s / Sides, Ca = FMath::Cos(Ang), Sa = FMath::Sin(Ang);
+			const double Keel = 1.0 + 0.12 * FMath::Pow(FMath::Max(Ca, 0.0), 6.0);
+			Out.Add(ShellPlace(Radial * (Rho + A * Ca * Keel) + FVector::YAxisVector * (A * 0.62 * Sa)));
+		}
+		if (OutCentre) { *OutCentre = ShellPlace(Radial * Rho); }
+		if (OutAlong) { *OutAlong = FVector(-FMath::Sin(Theta) + K * FMath::Cos(Theta), 0.0, FMath::Cos(Theta) + K * FMath::Sin(Theta)).GetSafeNormal(); }
+		if (OutRadius) { *OutRadius = A * ShellScale; }
+	}
+
+	/** The ways round a level's sections stand at, tip to mouth, and how much each swells: at whole steps of a turn, so
+	 *  every level has one at the coil's lowest, highest and widest and they agree in outline; the finest ribbed, every
+	 *  other section the thicker; the coarsest only the last whorl and a half. */
+	void ShellAngles(int32 Lod, TArray<TPair<double, double>>& Out)
+	{
+		const double Step = UE_DOUBLE_PI / (Lod <= 0 ? 14.0 : (Lod == 1 ? 6.0 : 4.0));
+		const double Tip = ShellMouth - UE_DOUBLE_TWO_PI * (Lod >= 2 ? 1.4 : ShellTurns);
+		Out.Reset();
+		Out.Add({ Tip, 1.0 });
+		for (int32 n = FMath::CeilToInt32(Tip / Step + 1.0e-9); n * Step < ShellMouth - 1.0e-9; ++n)
+		{
+			if (n * Step <= Tip + 1.0e-9) { continue; }
+			Out.Add({ n * Step, Lod <= 0 ? ((n & 1) ? 0.93 : 1.07) : 1.035 });
+		}
+		Out.Add({ ShellMouth, 1.0 });
+	}
+
+	void LandmarkShell(int32 Lod, FDynamicMesh3& Out)
+	{
+		const int32 Sides = LandmarkPick(Lod, 12, 8, 6);
+		TArray<TPair<double, double>> Angles;
+		ShellAngles(Lod, Angles);
+		FLandmarkSolid S;
+		TArray<FVector> Pts;
+		int32 Prev = -1;
+		for (int32 r = 0; r < Angles.Num(); ++r)
+		{
+			FVector Centre, Along;
+			double Radius = 0.0;
+			ShellRing(Angles[r].Key, Sides, Angles[r].Value, Pts, &Centre, &Along, &Radius);
+			const int32 Here = S.Ring(Pts);
+			if (r == 0) { S.Cap(Here, Sides, Centre, true); }
+			else { S.Join(Prev, Here, Sides); }
+			Prev = Here;
+			// Its mouth a hollow: the middle of its lid set back into it.
+			if (r == Angles.Num() - 1) { S.Cap(Here, Sides, Centre - Along * (0.6 * Radius), false); }
+		}
+		LandmarkAppend(Out, S);
+	}
+
+	// ---- the floating rock: flat on top and lumpy, a root hanging under it, two pieces broken off beside it ----
+
+	/** One rock: where its middle is and the level it is widest at, half its width there, how far its root hangs under
+	 *  that level and its crown stands over it. */
+	struct FSkyRock { double X, Y, Level, Half, Root, Crown; };
+	constexpr FSkyRock SkyRocks[] = { { 0.0, 0.0, 0.0, 50.0, 70.0, 14.0 }, { 34.0, 20.0, -30.0, 8.0, 15.0, 3.5 }, { -28.0, -30.0, -48.0, 6.0, 12.0, 3.0 } };
+	/** What brings the lumpy, lopsided outline to a hundred across. */
+	constexpr double SkyRockFit = 0.9208;
+
+	double SkyRockRadius(const FSkyRock& K, double Z, double Angle)
+	{
+		const double Over = Z - K.Level;
+		const double R = Over <= 0.0 ? K.Half * FMath::Pow(FMath::Clamp((Over + K.Root) / K.Root, 0.0, 1.0), 0.8) + 0.03 * K.Half
+			: K.Half * FMath::Sqrt(FMath::Max(1.0 - 0.85 * FMath::Square(FMath::Clamp(Over / K.Crown, 0.0, 1.0)), 0.0));
+		const FVector P(K.X + R * FMath::Cos(Angle), K.Y + R * FMath::Sin(Angle), Z);
+		return R * (1.0 + 0.10 * FMath::Cos(2.0 * Angle + 0.7) + 0.06 * FMath::Cos(3.0 * Angle + 2.1))
+			* (1.0 + 0.14 * LandmarkLumps(P, 0.05) + 0.06 * LandmarkLumps(P + FVector(31.0, 17.0, 5.0), 0.16)) * SkyRockFit;
+	}
+
+	/** A level's rings: by their place from the root's tip (-1) through the widest level (0) to the crown (1). */
+	void SkyRockHeights(const FSkyRock& K, int32 Lod, TArray<double>& Out)
+	{
+		static const double Fine[] = { -1.0, -0.83, -0.63, -0.43, -0.26, -0.13, -0.04, 0.0, 0.29, 0.57, 0.82, 0.96 };
+		static const double Mid[] = { -1.0, -0.69, -0.37, -0.14, 0.0, 0.5, 0.93 };
+		static const double Coarse[] = { -1.0, -0.5, -0.11, 0.0, 0.64, 0.96 };
+		const TArrayView<const double> Shares = Lod <= 0 ? TArrayView<const double>(Fine) : (Lod == 1 ? TArrayView<const double>(Mid) : TArrayView<const double>(Coarse));
+		Out.Reset();
+		for (const double Share : Shares) { Out.Add(K.Level + (Share <= 0.0 ? Share * K.Root : Share * K.Crown)); }
+	}
+
+	void LandmarkSkyRock(int32 Lod, FDynamicMesh3& Out)
+	{
+		for (int32 i = 0; i < UE_ARRAY_COUNT(SkyRocks); ++i)
+		{
+			const FSkyRock& K = SkyRocks[i];
+			TArray<double> Heights;
+			SkyRockHeights(K, Lod, Heights);
+			const int32 Sides = i == 0 ? LandmarkPick(Lod, 18, 10, 8) : LandmarkPick(Lod, 9, 7, 6);
+			LandmarkTurned(Out, K.X, K.Y, Heights, Sides, K.Level + K.Crown, [&K](double Z, double A) { return SkyRockRadius(K, Z, A); });
+		}
+	}
+
 	/** How sharp an edge has to be for a kind's faces to be lit apart across it: worked stone keeps its edges. */
 	float LandmarkCreaseDeg(ELandmark Kind) { return Kind == ELandmark::Monolith || Kind == ELandmark::Ring ? 25.f : 42.f; }
 }
@@ -359,7 +469,9 @@ double SlonkLandmarks::BelowCm(ELandmark Kind)
 	case ELandmark::Monolith: return 8.0;
 	case ELandmark::Ring: return LandmarkRingRadius + 4.5 - LandmarkRingCentreZ;
 	case ELandmark::ReefTower: return -ReefFootZ;
-	default: return -MoundFootZ;
+	case ELandmark::Mound: return -MoundFootZ;
+	case ELandmark::Shell: return ShellBelow;
+	default: return SkyRocks[0].Root;
 	}
 }
 
@@ -373,7 +485,9 @@ void SlonkLandmarks::BuildLod(ELandmark Kind, int32 Lod, FDynamicMesh3& Out)
 	case ELandmark::Monolith: LandmarkMonolith(L, Out); break;
 	case ELandmark::Ring: LandmarkRing(L, Out); break;
 	case ELandmark::ReefTower: LandmarkReef(L, Out); break;
-	default: LandmarkMound(L, Out); break;
+	case ELandmark::Mound: LandmarkMound(L, Out); break;
+	case ELandmark::Shell: LandmarkShell(L, Out); break;
+	default: LandmarkSkyRock(L, Out); break;
 	}
 	// The material lays its rock in the mesh's own frame; the UVs only satisfy the mesh build.
 	Out.EnableAttributes();
@@ -432,6 +546,40 @@ void SlonkLandmarks::CollisionParts(ELandmark Kind, TArray<TArray<FVector>>& Out
 				const double Z = FMath::Lerp(ReefFootZ, T.Top, r / 3.0);
 				for (int32 s = 0; s < 6; ++s) { const double Ang = UE_DOUBLE_TWO_PI * s / 6; const double R = ReefRadius(T, Z, Ang, false); Hull.Add(FVector(T.X + R * FMath::Cos(Ang), T.Y + R * FMath::Sin(Ang), Z)); }
 			}
+			OutHulls.Add(MoveTemp(Hull));
+		}
+		break;
+	case ELandmark::Shell:
+	{
+		// Eight lengths of its last whorl, and the whorls inside it as one drum.
+		const int32 Lengths = 8, Sides = 6;
+		for (int32 r = 0; r < Lengths; ++r)
+		{
+			ShellRing(ShellMouth - UE_DOUBLE_TWO_PI * (1.0 - (double)r / Lengths), Sides, 1.0, A);
+			ShellRing(ShellMouth - UE_DOUBLE_TWO_PI * (1.0 - (double)(r + 1) / Lengths), Sides, 1.0, B);
+			A.Append(B);
+			OutHulls.Add(A);
+		}
+		TArray<FVector> Drum;
+		for (int32 s = 0; s < 8; ++s)
+		{
+			const double Ang = UE_DOUBLE_TWO_PI * s / 8;
+			for (const double Side : { -1.0, 1.0 }) { Drum.Add(ShellPlace(FVector(0.52 * FMath::Cos(Ang), Side * 0.1033, 0.52 * FMath::Sin(Ang)))); }
+		}
+		OutHulls.Add(MoveTemp(Drum));
+		break;
+	}
+	case ELandmark::FloatingRock:
+		// Each rock one part, root to crown: to stand on, if ever someone comes to.
+		for (const FSkyRock& K : SkyRocks)
+		{
+			TArray<FVector> Hull;
+			for (const double Share : { -1.0, -0.43, 0.0, 0.57 })
+			{
+				const double Z = K.Level + (Share <= 0.0 ? Share * K.Root : Share * K.Crown);
+				for (int32 s = 0; s < 8; ++s) { const double Ang = UE_DOUBLE_TWO_PI * s / 8; const double R = SkyRockRadius(K, Z, Ang); Hull.Add(FVector(K.X + R * FMath::Cos(Ang), K.Y + R * FMath::Sin(Ang), Z)); }
+			}
+			Hull.Add(FVector(K.X, K.Y, K.Level + K.Crown));
 			OutHulls.Add(MoveTemp(Hull));
 		}
 		break;

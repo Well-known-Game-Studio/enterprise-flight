@@ -1,8 +1,9 @@
 // Slonk - the meshes of a strange world's landmarks (Landmarks.h), grown in code once a process like the rocks on the
 // ground (GroundRocks.h) and drawn in the same material, the world's rock laid in the mesh's own frame. Each is made in
 // its kind's own measure of 100 cm (an arch's span, a standing stone's height, a ring's width across, a reef tower's
-// height over the sea, a mound's height), so the scatter sizes one by its instance scale alone, in metres; each reaches
-// some way under its origin, so it can be sunk into sloping ground, or stand on a sea's floor.
+// height over the sea, a mound's height, a shell's width across, a floating rock's), so the scatter sizes one by its
+// instance scale alone, in metres; each reaches some way under its origin, so it can be sunk into sloping ground, or
+// stand on a sea's floor (a floating rock's origin is its widest level, and what hangs under it is its root).
 
 #pragma once
 

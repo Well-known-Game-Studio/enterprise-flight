@@ -106,15 +106,16 @@ spray, which light themselves, dimmed by the sun's share of their light under a 
 clear sky.
 `Slonk.Landmarks.*` (Tests/SlonkLandmarkTests.cpp) covers a strange world's landmarks (Landmarks.h): none rolled to
 strangeness 0.15 or on a world with no ground, the same on every roll and kept as the world grows stranger, arches, a
-vanished people's stones (monoliths or great rings, never both), reef towers and mound cities at their shares of the
-strange worlds, nothing its life would have built on a dead world and no reef where the sea is not liquid, and a kind
+vanished people's stones (monoliths or great rings, never both), reef towers, mound cities and giant shells at their
+shares of the strange worlds, rock hanging in the air over none under strangeness 0.4, nothing its life would have built on a dead world and no reef where the sea is not liquid, and a kind
 asked for by name (`ship spawnplanet ... landmarks <kind|all>`) standing whatever the roll, though none on a world that
 is all sea and no reef on one with no sea; each kind's mesh at each
 level of detail a closed solid wound outward, a hundred of its own centimetres in its kind's measure, its collision
 convex parts that leave the way under an arch and through a ring open; the stands the field gives
 (SlonkScatter::LandmarksNear, what `ship terrain goto <arch|monolith|greatring|reef|mound|landmark>` flies to) being the
 pieces the chunks carry, of their kind's size, upright, their feet in the drawn ground or on the floor of a sea's
-shallows, the same on the chunks twenty kilometres across as on the nearest, and none on a world without them; nothing
+shallows (a floating rock as far over the field's ground as its stand says, its root clear of it), the same on the
+chunks twenty kilometres across as on the nearest, and none on a world without them; nothing
 else the scatter places standing in one's foot; and the nearest found first, the same every time.
 
 Writing one: make an `FSystems` (a roster seed gives the same people every time), drive the subsystems through
