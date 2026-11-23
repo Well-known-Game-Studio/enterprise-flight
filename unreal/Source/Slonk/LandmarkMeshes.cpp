@@ -305,6 +305,14 @@ namespace
 	constexpr FMoundSpire MoundSpires[] = { { 0.0, 0.0, 100.0, 17.0 }, { 20.0, 8.0, 62.0, 11.0 }, { -16.0, 14.0, 48.0, 10.0 }, { 6.0, -21.0, 40.0, 9.0 }, { -12.0, -13.0, 30.0, 8.0 } };
 	constexpr double MoundFootZ = -8.0;
 
+	/** The low swell of earth a mound city stands on, 34 across its half and 9 high: its radius at a height. */
+	constexpr double MoundSwellTop = 9.0;
+	double MoundSwellRadius(double Z)
+	{
+		const double F = FMath::Clamp((Z - MoundFootZ) / (MoundSwellTop - MoundFootZ), 0.0, 1.0);
+		return 34.0 * FMath::Sqrt(FMath::Max(1.0 - F * F, 0.0)) + 1.0;
+	}
+
 	/** A spire's radius at a height and a way round: broad at its foot, drawn up in tiers to a blunt tip, lumpy. */
 	double MoundRadius(const FMoundSpire& M, double Z, double Angle)
 	{
@@ -326,11 +334,10 @@ namespace
 		// The swell they stand on: a low dome 34 across its half, 9 high.
 		TArray<double> Heights;
 		const int32 DomeRings = LandmarkPick(Lod, 5, 4, 3);
-		for (int32 r = 0; r < DomeRings; ++r) { Heights.Add(FMath::Lerp(MoundFootZ, 8.0, (double)r / (DomeRings - 1))); }
-		LandmarkTurned(Out, 0.0, 0.0, Heights, LandmarkPick(Lod, 18, 12, 8), 9.0, [](double Z, double A)
+		for (int32 r = 0; r < DomeRings; ++r) { Heights.Add(FMath::Lerp(MoundFootZ, MoundSwellTop - 1.0, (double)r / (DomeRings - 1))); }
+		LandmarkTurned(Out, 0.0, 0.0, Heights, LandmarkPick(Lod, 18, 12, 8), MoundSwellTop, [](double Z, double A)
 		{
-			const double F = FMath::Clamp((Z - MoundFootZ) / (9.0 - MoundFootZ), 0.0, 1.0);
-			const double R = 34.0 * FMath::Sqrt(FMath::Max(1.0 - F * F, 0.0)) + 1.0;
+			const double R = MoundSwellRadius(Z);
 			return R * (1.0 + 0.08 * LandmarkLumps(FVector(R * FMath::Cos(A), R * FMath::Sin(A), Z), 0.09));
 		});
 	}
@@ -438,6 +445,16 @@ void SlonkLandmarks::CollisionParts(ELandmark Kind, TArray<TArray<FVector>>& Out
 				for (int32 s = 0; s < 6; ++s) { const double Ang = UE_DOUBLE_TWO_PI * s / 6; const double R = MoundRadius(M, Z, Ang); Hull.Add(FVector(M.X + R * FMath::Cos(Ang), M.Y + R * FMath::Sin(Ang), Z)); }
 			}
 			Hull.Add(FVector(M.X, M.Y, M.Top));
+			OutHulls.Add(MoveTemp(Hull));
+		}
+		// And the swell they stand on, to walk up onto rather than through.
+		{
+			TArray<FVector> Hull;
+			for (const double Z : { MoundFootZ, 0.0, 5.0, 8.0 })
+			{
+				for (int32 s = 0; s < 8; ++s) { const double Ang = UE_DOUBLE_TWO_PI * s / 8; Hull.Add(FVector(MoundSwellRadius(Z) * FMath::Cos(Ang), MoundSwellRadius(Z) * FMath::Sin(Ang), Z)); }
+			}
+			Hull.Add(FVector(0.0, 0.0, MoundSwellTop));
 			OutHulls.Add(MoveTemp(Hull));
 		}
 		break;

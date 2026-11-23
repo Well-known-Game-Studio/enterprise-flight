@@ -2144,7 +2144,7 @@ void AStarshipPawn::ProcessDebugCommand()
 		// without it the nearest star's, by its colour.
 		EStarLight Light = EStarLight::Yellow;
 		bool bLightGiven = false;
-		for (int32 i = 2; i < 14; ++i)
+		for (int32 i = 2; i < Args.Num(); ++i)
 		{
 			if (ArgStr(i) == TEXT("star")) { bLightGiven = SlonkFloraCommands::LightNamed(ArgStr(i + 1), Light); }
 			if (ArgStr(i) == TEXT("strange")) { Strange = FMath::Clamp(Arg(i + 1, 0.f), 0.f, 1.f); }
@@ -2457,7 +2457,12 @@ void AStarshipPawn::ProcessDebugCommand()
 			{
 				// terrain glide: fly there instead, over the seconds given (the first number after the heading).
 				float Seconds = 20.f;
-				for (int32 i = 5; i < Args.Num(); ++i) { if (ArgStr(i).IsNumeric()) { Seconds = Arg(i, 20.f); break; } }
+				for (int32 i = 4; i < Args.Num(); ++i)
+				{
+					// (The number after "off" is a landmark's standoff, not the seconds.)
+					if (ArgStr(i) == TEXT("off")) { ++i; continue; }
+					if (i >= 5 && ArgStr(i).IsNumeric()) { Seconds = Arg(i, 20.f); break; }
+				}
 				if (Movement) { Movement->SetCanyonFollow(false); Movement->StartGlide(Planet, FTransform(FRotationMatrix::MakeFromXZ(Fwd, Up).ToQuat(), Pos), Arg(3, 1000.f) * 100.0, Seconds); }
 			}
 			else

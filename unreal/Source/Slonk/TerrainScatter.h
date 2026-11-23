@@ -103,12 +103,13 @@ namespace SlonkScatter
 	 * A strange world's landmarks: each kind on a lattice of its own of about LandmarkSpacingCm, a share of whose cells
 	 * are sites for it (SlonkLandmarks::FKindSpec::Sites) where the ground suits the kind (an arch on rocky or dry
 	 * ground, a vanished people's stones on open level ground, a reef's towers in the shallows off a coast, a mound city
-	 * on open grassland; none on a cliff, in a river, or on the world's own geology). At a site one stands, or a row or a
-	 * cluster of them. Which cells are sites, what stands there, where and how big are read from the planet's field and
-	 * the cell's own draws (SlonkScatter::LandmarksNear reads them the same way), never from a chunk's drawn mesh: every
-	 * level of the quadtree carries the same landmarks, on chunks up to LandmarkMaxEdgeCm across (seen from thirty
-	 * kilometres and more, a few pixels tall), and nothing else the scatter places stands in one's foot. A world without
-	 * any carries none, and its chunks are no coarser for them (MaxChunkEdgeCm).
+	 * on open grassland; none on a cliff, in a river, on the world's own geology, in a town or across a way). At a site
+	 * one stands, or a row or a cluster of them. Which cells are sites (a world's own: its hash is in their draws), what
+	 * stands there, where and how big are read from the planet's field and the cell's own draws
+	 * (SlonkScatter::LandmarksNear reads them the same way), never from a chunk's drawn mesh: every level of the
+	 * quadtree carries the same landmarks, on chunks up to LandmarkMaxEdgeCm across (seen from thirty kilometres and
+	 * more, a few pixels tall), and at every one of those levels nothing else the scatter places stands in one's foot.
+	 * A world without any carries none, and its chunks are no coarser for them (MaxChunkEdgeCm).
 	 */
 	constexpr double LandmarkSpacingCm = 250000.0;
 	constexpr double LandmarkMaxEdgeCm = 2.0e6;
@@ -240,8 +241,8 @@ namespace SlonkScatter
 	 *  read from the field as the sites are; Life is how much grows on the world (its woods keep the stones out). */
 	SLONK_API double LandmarkGroundAt(const FPlanetTerrainParams& P, ELandmark Kind, const FVector& Dir, double SizeCm, float Life);
 	/** The landmarks of a kind (all kinds for ELandmark::Count) standing within MaxCm over the ground of a direction, on
-	 *  that direction's face of the planet, the nearest first: exactly those ScatterChunk places there (but any it finds
-	 *  in a town's ground or across a way). A pure function of the planet and the settings. */
+	 *  that direction's face of the planet, the nearest first: exactly those ScatterChunk places there. A pure function
+	 *  of the planet and the settings. */
 	SLONK_API void LandmarksNear(const FPlanetTerrainParams& P, const FScatterSettings& S, ELandmark Kind, const FVector& FromDir, double MaxCm, TArray<FLandmarkStand>& Out);
 	/** The two level directions a landmark's place is laid out by, at right angles to its up and each other. */
 	SLONK_API void LandmarkTangents(const FVector& Up, FVector& OutA, FVector& OutB);

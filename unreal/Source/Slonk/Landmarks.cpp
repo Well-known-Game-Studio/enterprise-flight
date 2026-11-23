@@ -30,8 +30,10 @@ FLandmarkProfile SlonkLandmarks::Roll(const FWorldGenome& G, EPlanetArchetype Ty
 	// Nothing to 0.15, before any stream is made; and nothing on a world with no ground to stand anything on.
 	if ((Chance <= 0.f && ForcedKinds == 0) || Type == EPlanetArchetype::GasGiant || Type == EPlanetArchetype::IceGiant || Type == EPlanetArchetype::Moon) { return L; }
 
-	// Every draw up front, in a fixed order, whatever comes of it.
-	FRandomStream R((int32)(Hash * 0x9E3779B1u + 0x632BE5ABu));
+	// Every draw up front, in a fixed order, whatever comes of it. The seed is the hash mixed, not stepped: a stream
+	// seeded a fixed step from another's (the genome's is the hash times the same odd number, plus its own constant)
+	// draws a fixed step from that one's every time, and a world's arches would follow its seas.
+	FRandomStream R((int32)HashCombine(Hash, 0x632BE5ABu));
 	const float UArch = R.FRand(), UArchShare = R.FRand(), UArchSize = R.FRand();
 	const float URuin = R.FRand(), URuinKind = R.FRand(), URuinShare = R.FRand(), URuinSize = R.FRand();
 	const float URuinHue = R.FRand(), URuinSat = R.FRand(), URuinValue = R.FRand();

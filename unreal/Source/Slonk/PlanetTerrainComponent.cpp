@@ -1055,14 +1055,16 @@ void UPlanetTerrainComponent::UpdateSolidRocks()
 	const FVector Centre = bPinned ? SolidPinLocal : PawnLocal;
 	const FVector PawnDir = Centre.GetSafeNormal();
 	double Ground = 0.0;
-	if (!bPinned && (Moved.Size() > 2000.0 || !DrawnHeightAtLocalDir(PawnDir, Ground) || PawnLocal.Size() - Params.RadiusCm - Ground > 3000.0))
+	// A landmark is solid from as far off as it reaches (its origin is the middle of an arch's span, of a ring's
+	// round), and as far up as the tallest stands: someone beamed down onto an arch's crown, or a stone's top, is
+	// more than "near the ground" over the drawn ground and must not fall through when the transport's hold ends.
+	const double MarkReach = Scatter.Landmarks.Any() ? 22000.0 : 0.0, MarkTop = Scatter.Landmarks.Any() ? 30000.0 : 0.0;
+	if (!bPinned && (Moved.Size() > 2000.0 || !DrawnHeightAtLocalDir(PawnDir, Ground) || PawnLocal.Size() - Params.RadiusCm - Ground > 3000.0 + MarkTop))
 	{
 		if (SolidRocks > 0) { ClearSolidRocks(); }
 		return;
 	}
 	const double Reach = ScatterSolidReachCm;
-	// A landmark is solid from as far off as it reaches: its origin is the middle of an arch's span, of a ring's round.
-	const double MarkReach = Scatter.Landmarks.Any() ? 22000.0 : 0.0;
 	// The chunks showing round the pawn; rebuilt when they change or the pawn has gone a quarter of the reach.
 	TArray<const FNode*> Near;
 	TFunction<void(const FNode&)> Walk = [&](const FNode& N)

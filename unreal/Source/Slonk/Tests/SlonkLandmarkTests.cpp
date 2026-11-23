@@ -7,6 +7,7 @@
 #include "../LandmarkMeshes.h"
 #include "../Landmarks.h"
 #include "../PlanetBody.h"
+#include "../PlanetCities.h"
 #include "../PlanetTerrain.h"
 #include "../PlanetTerrainComponent.h"
 #include "../TerrainScatter.h"
@@ -337,7 +338,9 @@ bool FSlonkLandmarkStandsTest::RunTest(const FString& Parameters)
 	const TArray<SlonkScatter::FLandmarkStand> Stands = StandsOver(P, With, 12, 240, 2.5e6);
 	FMarkChunks Near(P, With), Coarse(P, With), Without(P, Plain);
 	int32 Of[SlonkLandmarks::NumKinds] = {}, Found[SlonkLandmarks::NumKinds] = {}, OnFar[SlonkLandmarks::NumKinds] = {};
-	int32 BadSize = 0, Leaning = 0, Floating = 0, Buried = 0, Wet = 0, OffSea = 0, NoFloor = 0, FarMoved = 0, OnPlain = 0, Beyond = 0, LegsOut = 0, Legs = 0;
+	int32 BadSize = 0, Leaning = 0, Floating = 0, Buried = 0, Wet = 0, OffSea = 0, NoFloor = 0, FarMoved = 0, OnPlain = 0, Beyond = 0, BeyondChunks = 0, LegsOut = 0, Legs = 0, Steep = 0;
+	// The most each kind is sunk, as a share of its size (ScatterChunk's own), and a hundredth for the lean of one sunk.
+	const double MostSunk[SlonkLandmarks::NumKinds] = { 0.11, 0.07, 0.05, 0.0, 0.07 };
 	double Least[SlonkLandmarks::NumKinds], Most[SlonkLandmarks::NumKinds];
 	for (int32 K = 0; K < SlonkLandmarks::NumKinds; ++K) { Least[K] = 1.0e12; Most[K] = 0.0; }
 	for (const SlonkScatter::FLandmarkStand& St : Stands)
@@ -371,12 +374,13 @@ bool FSlonkLandmarkStandsTest::RunTest(const FString& Parameters)
 		{
 			const double Foot = Over - C->Drawn[Mesh][i];
 			Floating += Foot > 1.0 ? 1 : 0;
-			Buried += Foot < -0.12 * St.SizeCm - 50.0 ? 1 : 0;
+			Buried += Foot < -(MostSunk[K] + 0.01) * St.SizeCm - 5.0 ? 1 : 0;
 			Wet += Ground.bWater ? 1 : 0;
 		}
 		if (St.Kind == ELandmark::Arch)
 		{
-			// Each leg's foot, under the ground where it comes down.
+			// None on a slope past one in two; each leg's foot, under the ground where it comes down.
+			Steep += SlonkTerrain::Sample(P, St.Up, 1000.0).Slope > 0.5f ? 1 : 0;
 			for (const double Side : { -1.0, 1.0 })
 			{
 				const FVector FootAt = T.TransformPosition(FVector(38.0 * Side, 0.0, -SlonkLandmarks::BelowCm(St.Kind)));
@@ -401,6 +405,7 @@ bool FSlonkLandmarkStandsTest::RunTest(const FString& Parameters)
 		int32 Face; int64 X, Y;
 		if (Stands.Num() == 0 || !UPlanetTerrainComponent::ChunkAt(Stands[i * Stands.Num() / 6].Up, Far - 1, Face, X, Y)) { continue; }
 		FMarkChunk Big;
+		++BeyondChunks;
 		UPlanetTerrainComponent::BuildChunkScatterForTest(P, BareWith, Face, Far - 1, X, Y, 64, Big.Xf, Big.Drawn);
 		for (const ELandmark Kind : MarkKinds) { Beyond += Big.Xf[SlonkScatter::LandmarkMesh(Kind)].Num(); }
 	}
@@ -424,9 +429,27 @@ bool FSlonkLandmarkStandsTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("none of the land's stands in water"), Wet, 0);
 	TestEqual(TEXT("a reef's towers stand at the sea's level"), OffSea, 0);
 	TestEqual(TEXT("in shallows their mesh reaches the floor of"), NoFloor, 0);
-	TestTrue(TEXT("an arch's legs come down into the ground"), Legs >= 12 && LegsOut == 0);
+	TestTrue(TEXT("an arch's legs come down into the ground, and none stands on a slope past one in two"), Legs >= 12 && LegsOut == 0 && Steep == 0);
 	TestEqual(TEXT("a world without landmarks carries none"), OnPlain, 0);
-	TestEqual(TEXT("a chunk coarser than twenty kilometres carries none"), Beyond, 0);
+	TestTrue(TEXT("a chunk coarser than twenty kilometres carries none"), BeyondChunks >= 4 && Beyond == 0);
+
+	// A world's sites are its own: another world of the same ground (another hash) has its landmarks elsewhere.
+	FLandmarkProfile Other = EveryKind();
+	Other.Hash = 78;
+	const FScatterSettings Elsewhere = MarkSettings(Other);
+	int32 Shared = 0, Theirs = 0;
+	for (int32 i = 0; i < 4; ++i)
+	{
+		TArray<SlonkScatter::FLandmarkStand> Here, There;
+		SlonkScatter::LandmarksNear(P, With, ELandmark::Count, Stands[i * Stands.Num() / 4].Up, 2.0e6, Here);
+		SlonkScatter::LandmarksNear(P, Elsewhere, ELandmark::Count, Stands[i * Stands.Num() / 4].Up, 2.0e6, There);
+		Theirs += There.Num();
+		for (const SlonkScatter::FLandmarkStand& A : Here)
+		{
+			Shared += There.ContainsByPredicate([&A](const SlonkScatter::FLandmarkStand& B) { return B.Kind == A.Kind && FVector::DistSquared(A.Up, B.Up) < FMath::Square(1.0e-7); }) ? 1 : 0;
+		}
+	}
+	TestTrue(TEXT("another world of the same ground has its landmarks elsewhere"), Theirs > 20 && Shared == 0);
 	return true;
 }
 
@@ -434,21 +457,22 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkLandmarkClearingTest, "Slonk.Landmarks.Cl
 bool FSlonkLandmarkClearingTest::RunTest(const FString& Parameters)
 {
 	// A landmark's foot is its own: no rock, bush, tree or tuft the scatter places stands in it, where on the same
-	// world without the landmark some would. Looked for on the chunks that carry the grass (eighty metres across) and
-	// those the trees and boulders ride (310 m).
+	// world without the landmark some would. Looked for on the chunks that carry the grass (eighty metres across),
+	// those the trees and boulders ride (310 m), and the far levels that carry the trees thinned (1.2 and 5 km), from
+	// which the clearing must show as it will close to.
 	using namespace SlonkLandmarkTestHelpers;
 	const FPlanetTerrainParams P = MarkWorld();
 	const double R = P.RadiusCm;
 	const FScatterSettings With = MarkSettings(EveryKind()), Plain = MarkSettings(FLandmarkProfile());
 	const TArray<SlonkScatter::FLandmarkStand> Stands = StandsOver(P, With, 8, 240, 2.5e6);
 	FMarkChunks Marked(P, With), Unmarked(P, Plain);
-	int32 Feet = 0, InFoot = 0, WouldBe = 0;
+	int32 Feet = 0, InFoot = 0, WouldBe = 0, WouldBeFar = 0;
 	for (const SlonkScatter::FLandmarkStand& St : Stands)
 	{
 		// (A reef's towers stand in the sea, where nothing else does.)
 		if (SlonkLandmarks::SpecOf(St.Kind).bInSea) { continue; }
 		++Feet;
-		for (const int32 Depth : { MarkDepth(P, 31000.0), MarkDepth(P, 8000.0) })
+		for (const int32 Depth : { MarkDepth(P, 31000.0), MarkDepth(P, 8000.0), MarkDepth(P, 124000.0), MarkDepth(P, 500000.0) })
 		{
 			const FMarkChunk* A = Marked.At(St.Up, Depth);
 			const FMarkChunk* B = Unmarked.At(St.Up, Depth);
@@ -456,13 +480,56 @@ bool FSlonkLandmarkClearingTest::RunTest(const FString& Parameters)
 			for (int32 M = 0; M < SlonkScatter::FirstLandmark; ++M)
 			{
 				for (const FTransform& T : A->Xf[M]) { InFoot += FVector::Dist(T.GetLocation().GetSafeNormal() * R, St.Up * R) < St.FootCm ? 1 : 0; }
-				for (const FTransform& T : B->Xf[M]) { WouldBe += FVector::Dist(T.GetLocation().GetSafeNormal() * R, St.Up * R) < St.FootCm ? 1 : 0; }
+				for (const FTransform& T : B->Xf[M])
+				{
+					const bool bIn = FVector::Dist(T.GetLocation().GetSafeNormal() * R, St.Up * R) < St.FootCm;
+					WouldBe += bIn ? 1 : 0;
+					WouldBeFar += bIn && Depth < MarkDepth(P, 31000.0) ? 1 : 0;
+				}
 			}
 		}
 	}
-	AddInfo(FString::Printf(TEXT("in the feet of %d landmarks on land: %d rocks and plants, where %d would stand without them"), Feet, InFoot, WouldBe));
+	AddInfo(FString::Printf(TEXT("in the feet of %d landmarks on land: %d rocks and plants, where %d would stand without them (%d of those on the far levels)"), Feet, InFoot, WouldBe, WouldBeFar));
 	TestTrue(TEXT("found landmarks on ground where things grow and lie"), Feet >= 20 && WouldBe > 100);
 	TestEqual(TEXT("nothing else stands in a landmark's foot"), InFoot, 0);
+
+	// On a world with towns none stands in a town's ground: the stands the field gives leave out those a town holds,
+	// and keep every other as it was.
+	FScatterSettings Settled = With;
+	Settled.bCities = true;
+	int32 InTowns = 0, WouldBeInTowns = 0, Dropped = 0, Added = 0, TownsSeen = 0;
+	for (int32 i = 0; i < 60 && WouldBeInTowns < 3; ++i)
+	{
+		const FVector From = MarkGlobeDir(i, 60);
+		if (FMath::Max3(FMath::Abs(From.X), FMath::Abs(From.Y), FMath::Abs(From.Z)) < 0.75 || SlonkTerrain::SampleStructure(P, From).bWater) { continue; }
+		TArray<FTownSite> Towns;
+		SlonkCities::EnumerateTowns(P, SlonkCivs::Colonists(), From * R, 6.0e6, Towns, 300);
+		if (Towns.Num() == 0) { continue; }
+		TownsSeen += Towns.Num();
+		auto InATown = [&Towns, R](const SlonkScatter::FLandmarkStand& St)
+		{
+			for (const FTownSite& T : Towns) { if (!T.bCliff && FVector::Dist(St.Up * R, T.LocalCm) < T.RadiusCm) { return true; } }
+			return false;
+		};
+		for (const ELandmark Kind : { ELandmark::Monolith, ELandmark::Mound, ELandmark::Arch })
+		{
+			TArray<SlonkScatter::FLandmarkStand> Wild, Kept;
+			SlonkScatter::LandmarksNear(P, With, Kind, From, 5.0e6, Wild);
+			SlonkScatter::LandmarksNear(P, Settled, Kind, From, 5.0e6, Kept);
+			for (const SlonkScatter::FLandmarkStand& St : Wild) { WouldBeInTowns += InATown(St) ? 1 : 0; }
+			for (const SlonkScatter::FLandmarkStand& St : Kept)
+			{
+				InTowns += InATown(St) ? 1 : 0;
+				Added += Wild.ContainsByPredicate([&St](const SlonkScatter::FLandmarkStand& W) { return W.Up.Equals(St.Up, 0.0) && W.SizeCm == St.SizeCm; }) ? 0 : 1;
+			}
+			Dropped += Wild.Num() - Kept.Num();
+		}
+	}
+	AddInfo(FString::Printf(TEXT("round %d towns: %d landmarks stand in a town's ground without the rule and %d with it; the rule takes %d away in all (a way's among them) and adds %d"), TownsSeen, WouldBeInTowns, InTowns,
+		Dropped, Added));
+	if (WouldBeInTowns == 0) { AddInfo(TEXT("no landmark's site fell in a town on the test world; the towns' rule went unchecked")); return true; }
+	TestEqual(TEXT("none stands in a town's ground"), InTowns, 0);
+	TestTrue(TEXT("the towns only take landmarks away, never move or add one"), Dropped >= WouldBeInTowns && Added == 0);
 	return true;
 }
 

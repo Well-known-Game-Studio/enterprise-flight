@@ -139,11 +139,13 @@ namespace SlonkScatter
 		TArray<FTownSite> Sites;
 		FPlanetTerrainParams Params;
 		FCivilization Civ;
-		void Build(const FPlanetTerrainParams& P, const FCivilization& People, const SlonkScatter::FChunkGrid& G)
+		void Build(const FPlanetTerrainParams& P, const FCivilization& People, const SlonkScatter::FChunkGrid& G) { BuildAround(P, People, G.Origin, G.EdgeCm * 0.75); }
+		/** The settlements within a reach of a place (planet-local cm), the nearest 64. */
+		void BuildAround(const FPlanetTerrainParams& P, const FCivilization& People, const FVector& CentreLocalCm, double ReachCm)
 		{
 			Params = P;
 			Civ = People.bInhabited ? People : SlonkCivs::Colonists();
-			SlonkCities::EnumerateTowns(P, Civ, G.Origin, G.EdgeCm * 0.75 + SlonkCities::CityRadiusCm(1.f) + 5000.0, Sites, 64);
+			SlonkCities::EnumerateTowns(P, Civ, CentreLocalCm, ReachCm + SlonkCities::CityRadiusCm(1.f) + 5000.0, Sites, 64);
 			// A cliff town runs its radius along the wall and its profile 300 m across it, either way.
 			for (const FTownSite& T : Sites) { Towns.Add({ T.LocalCm, FMath::Square((T.bCliff ? FMath::Sqrt(FMath::Square(T.RadiusCm) + FMath::Square(30000.0)) : T.RadiusCm) + 2500.0) }); }
 		}
@@ -402,9 +404,11 @@ namespace
 {
 	/** The landmarks' lattices' salt: each kind's is its own of it, and each of a site's members' draws theirs. */
 	constexpr uint64 LandmarkSalt = 0x6a09e667f3bcc908ULL;
-	uint64 LandmarkSaltOf(ELandmark Kind, int32 Member = -1)
+	/** A world's own: the cells of two worlds of a size are the same cells, and without its hash the same ones would be
+	 *  sites on both, for stones of the same height turned the same way. */
+	uint64 LandmarkSaltOf(const FLandmarkProfile& World, ELandmark Kind, int32 Member = -1)
 	{
-		return SlonkScatter::Mix64(LandmarkSalt + 0x9E3779B97F4A7C15ULL * (uint64)((int32)Kind + 1) + 0xD1B54A32D192ED03ULL * (uint64)(Member + 1));
+		return SlonkScatter::Mix64(LandmarkSalt + 0x9E3779B97F4A7C15ULL * (uint64)((int32)Kind + 1) + 0xD1B54A32D192ED03ULL * (uint64)(Member + 1) + 0xC2B2AE3D27D4EB4FULL * (uint64)World.Hash);
 	}
 	int32 LandmarkLevel(double FaceArcCm) { return FMath::Clamp(FMath::RoundToInt32(FMath::Log2(FaceArcCm / SlonkScatter::LandmarkSpacingCm)), 0, 40); }
 
@@ -429,9 +433,10 @@ namespace
 		{
 		case ELandmark::Arch:
 		{
-			// Rock to stand in: tableland, rocky ground, or ground plainly dry; none through lying snow.
+			// Rock to stand in: tableland, rocky ground, or ground plainly dry; none through lying snow, and none on a
+			// slope past one in two, where the ground falls away from under the downhill leg faster than the leg runs on.
 			const double Dry = 1.0 - SmoothStep(0.25, 0.55, Sp.Wet);
-			return SmoothStep(0.15, 0.5, FMath::Max3(Sp.Table, Sp.Rocky, 0.7 * Dry)) * (0.3 + 0.7 * Sp.Flat) * (1.0 - SnowLying);
+			return SmoothStep(0.15, 0.5, FMath::Max3(Sp.Table, Sp.Rocky, 0.7 * Dry)) * (0.3 + 0.7 * Sp.Flat) * (1.0 - SmoothStep(0.3, 0.5, Sp.Slope)) * (1.0 - SnowLying);
 		}
 		case ELandmark::Monolith:
 			// Open, level ground with hardly a tree on it: a people raised them to be seen.
@@ -510,7 +515,7 @@ namespace
 		using namespace SlonkScatter;
 		const FLandmarkKind& Have = S.Landmarks.Kinds[(int32)Kind];
 		const SlonkLandmarks::FKindSpec& Spec = SlonkLandmarks::SpecOf(Kind);
-		FDraw D(CellHash(Face, L, GX, GY, LandmarkSaltOf(Kind)));
+		FDraw D(CellHash(Face, L, GX, GY, LandmarkSaltOf(S.Landmarks, Kind)));
 		// The cheap draw first: most cells are no site, and nothing of the field is read for them.
 		if (!Have.bLive || D.Next() >= Spec.Sites) { return false; }
 		const double Tall = D.Next(), Accept = D.Next(), Turn = D.Next(), Many = D.Next();
@@ -532,9 +537,13 @@ namespace
 		const FVector Along = Ta * FMath::Cos(Yaw) + Tb * FMath::Sin(Yaw), Across = FVector::CrossProduct(Up, Along);
 		const int32 Count = FMath::Clamp(Spec.MinCount + (int32)(Many * (double)(Spec.MaxCount - Spec.MinCount + 1)), Spec.MinCount, Spec.MaxCount);
 		const int32 First = Out.Num();
+		// None in a town's ground or across a way, on a world with towns: asked of the towns about the site itself, not
+		// of a chunk's list of them (a chunk twenty kilometres across keeps the nearest 64), so every level agrees.
+		FKeepOut Towns;
+		if (S.bCities) { Towns.BuildAround(P, S.People, Up * P.RadiusCm, (Spec.Apart * (double)Spec.MaxCount + Spec.Foot) * SizeCm + 40000.0); }
 		for (int32 m = 0; m < Count; ++m)
 		{
-			FDraw Dm(CellHash(Face, L, GX, GY, LandmarkSaltOf(Kind, m)));
+			FDraw Dm(CellHash(Face, L, GX, GY, LandmarkSaltOf(S.Landmarks, Kind, m)));
 			const double Small = Dm.Next(), Off = Dm.Next(), TurnM = Dm.Next();
 			FLandmarkStand St;
 			St.Kind = Kind; St.Face = Face; St.GX = GX; St.GY = GY; St.Member = m;
@@ -569,6 +578,7 @@ namespace
 				St.BaseCm = Spec.bInSea ? 0.0 : Tm.HeightCm;
 			}
 			St.FootCm = Spec.Foot * St.SizeCm;
+			if (S.bCities && (Towns.Contains(St.Up, P.RadiusCm, false) || Towns.WayWithin(St.Up, 200.0 + St.FootCm))) { continue; }
 			Out.Add(St);
 		}
 		return Out.Num() > First;
@@ -690,7 +700,8 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 			for (int64 GY = GY0; GY <= GY1; ++GY)
 			for (int64 GX = GX0; GX <= GX1; ++GX) { LandmarkSite(P, S, (ELandmark)K, G.Face, L, GX, GY, Marks); }
 		}
-		if (G.EdgeCm <= 62000.0) { for (const FLandmarkStand& St : Marks) { Feet.Add({ St.Up * R, FMath::Square(St.FootCm + 150.0) }); } }
+		// At every level that carries them: a far level's trees stand out of a landmark's foot as the near one's do.
+		for (const FLandmarkStand& St : Marks) { Feet.Add({ St.Up * R, FMath::Square(St.FootCm + 150.0) }); }
 	}
 	auto InGiantFoot = [&Feet, R](const FVector& Up)
 	{
@@ -930,8 +941,8 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 		}
 	}
 
-	// The landmarks: each where the field says one stands (LandmarkSite), on the drawn ground there or, for one that
-	// stands in the sea, at the sea's level; none in a town or across a way.
+	// The landmarks: each where the field says one stands (LandmarkSite, which keeps them out of the towns and off
+	// the ways), on the drawn ground there or, for one that stands in the sea, at the sea's level.
 	for (const FLandmarkStand& St : Marks)
 	{
 		if (!F.Inside(St.U, St.V)) { continue; }
@@ -940,7 +951,6 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 		double Snow = 0.0, SlopeTan = 0.0;
 		if (!Spec.bInSea)
 		{
-			if (KeepOut.Towns.Num() > 0 && (KeepOut.Contains(St.Up, R, false) || KeepOut.WayWithin(St.Up, 200.0 + St.FootCm))) { continue; }
 			// On the chunk's drawn ground; where its grid cannot read the place (a coarse chunk's cells are hundreds of
 			// metres, and one with water at a corner reads as none), on the field's, which put it on dry land: every
 			// level carries it, and it does not come and go as the chunks split.
@@ -954,7 +964,7 @@ void SlonkScatter::ScatterChunk(const FPlanetTerrainParams& P, const FScatterSet
 			else { SlopeTan = 0.2; }
 		}
 		// Its own draws, apart from the ones that put it there: how it leans, its proportions, its shade.
-		FDraw D(CellHash(St.Face, LandmarkLevel(FaceArcCm), St.GX, St.GY, LandmarkSaltOf(St.Kind, 100 + St.Member)));
+		FDraw D(CellHash(St.Face, LandmarkLevel(FaceArcCm), St.GX, St.GY, LandmarkSaltOf(S.Landmarks, St.Kind, 100 + St.Member)));
 		FVector Ta, Tb;
 		LandmarkTangents(St.Up, Ta, Tb);
 		const double TiltAng = FMath::DegreesToRadians(Spec.TiltDeg * D.Next()), TiltDir = UE_DOUBLE_TWO_PI * D.Next();
