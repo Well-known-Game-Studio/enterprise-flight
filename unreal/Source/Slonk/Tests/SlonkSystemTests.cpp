@@ -9,6 +9,7 @@
 #include "../Exploration.h"
 #include "../Frontier.h"
 #include "../Impactor.h"
+#include "../Leviathan.h"
 #include "../GameClock.h"
 #include "../WarpDriveComponent.h"
 #include "../ShipInterior.h"
@@ -524,6 +525,595 @@ bool FSlonkMissionTimeLoopExitsTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("its regard, less three a pass"), Ms->GetStanding() - StandingBefore, FMath::Max(10, 30 - 3 * F.M().Pass));
 		TestTrue(TEXT("remembered"), Ms->Remembers(TEXT("Lock.Ridden")));
 	}
+	return true;
+}
+
+namespace
+{
+	/** Which reading of a leviathan a finding strikes out (0 plate, 1 quiet, 2 lee, 3 hands), by its words. */
+	int32 LevStruckOut(const FString& Clue)
+	{
+		static const TCHAR* Words[4][3] = {
+			{ TEXT("echo of her plating"), TEXT("sixty thousand tons of plate"), TEXT("scrap plate") },
+			{ TEXT("drive's field was run up"), TEXT("not her engines"), TEXT("ran her drive up hard") },
+			{ TEXT("star flared across every band"), TEXT("open glare of this star"), TEXT("lee of her shields") },
+			{ TEXT("Its hide is clean"), TEXT("dust lane"), TEXT("two hands in suits") } };
+		for (int32 w = 0; w < 4; ++w) { for (int32 s = 0; s < 3; ++s) { if (Clue.Contains(Words[w][s])) { return w; } } }
+		return -1;
+	}
+	/** A leviathan alongside under test: the systems it lives in, and the few things every test of it does. */
+	struct FLeviathanUnderTest
+	{
+		enum { Plate = 0, Quiet, Lee, Hands };
+		FSystems S;
+		int32 Id = -1;
+		FCrewShipState Clock;
+		FMissionOutcome Out; FString Reply;
+		/** What the ship's earlier missions left, then one alongside that wants this (-1: whatever comes). The want is
+		 *  the mission system's own draw, whatever the crew's seed. */
+		explicit FLeviathanUnderTest(int32 Want = -1, const TArray<FName>& Remembered = {}, int32 Seed = 7) : S(Seed)
+		{
+			S.ChartedWithWorlds();
+			for (const FName& N : Remembered) { S.Missions->DevRemember(N); }
+			S.Missions->AdvanceSeconds(1.f, S.Ship());   // (the first look at the ship is behind us)
+			Next(Want);
+		}
+		/** Another: as an event, or (for one that wants a given thing) offers turned down until one does. */
+		bool Next(int32 Want = -1)
+		{
+			if (Want < 0) { Id = S.Missions->DevSpawn(EMissionKind::Leviathan, EMissionSource::Event); return S.Missions->Find(Id) != nullptr; }
+			for (int32 n = 0; n < 64; ++n)
+			{
+				Id = S.Missions->DevSpawn(EMissionKind::Leviathan, EMissionSource::Starfleet);
+				if (!S.Missions->Find(Id)) { return false; }
+				if (Wanted() == Want) { return S.Missions->Accept(Id, Reply); }
+				S.Missions->Abandon(Id, Reply);
+			}
+			return false;
+		}
+		const FMission& M() const { return *S.Missions->Find(Id); }
+		const FMissionOption& At(int32 i) const { return M().Stages[0].Options[i]; }
+		int32 Option(const TCHAR* Words) const { const FMissionStage& St = M().Stages[0]; for (int32 i = 0; i < St.Options.Num(); ++i) { if (St.Options[i].Text.Contains(Words)) { return i; } } return -1; }
+		/** The option that is the k-th gift, and which gift it wants. */
+		int32 Gift(int32 k) const
+		{
+			static const TCHAR* Marks[] = { TEXT("Not.Plate"), TEXT("Not.Quiet"), TEXT("Not.Lee"), TEXT("Not.Hands") };
+			const FMissionStage& St = M().Stages[0];
+			for (int32 i = 0; i < St.Options.Num(); ++i) { if (St.Options[i].NotIfMark == FName(Marks[k])) { return i; } }
+			return -1;
+		}
+		int32 Wanted() const { for (int32 k = 0; k < 4; ++k) { const int32 i = Gift(k); if (i >= 0 && !At(i).bWrong) { return k; } } return -1; }
+		/** A gift it does not want, of at most this many hours. */
+		int32 Unwanted(float MaxHours = 2.f) const { for (int32 k = 0; k < 4; ++k) { const int32 i = Gift(k); if (i >= 0 && At(i).bWrong && At(i).Hours <= MaxHours) { return i; } } return -1; }
+		bool Offered(int32 i) const { return M().Stages[0].Options.IsValidIndex(i) && M().Offers(At(i)); }
+		bool Knows(const TCHAR* Mark) const { return M().Marks.Contains(FName(Mark)); }
+		bool HasHours(int32 i) const { return S.Missions->HasHoursFor(M(), At(i)); }
+		double Left() const { return S.Missions->PassHoursLeft(M()); }
+		double Stardate() const { return S.Roster->GetStardate(); }
+		bool Act(int32 i) { return S.Missions->Act(Id, i, Out, Reply); }
+		void AdvanceClock(int32 Hours) { S.Roster->DevAdvanceHours(Hours, Clock); S.Missions->AdvanceSeconds(1.f, S.Ship()); }
+		/** The option tried until it is carried, while it is on the board and the hours last. */
+		bool Carry(int32 i) { while (M().State == EMissionState::Active && Offered(i) && HasHours(i)) { if (Act(i) && Out.bSuccess) { return true; } } return false; }
+	};
+	/** The checks are the crew's: a thing that must be carried inside the hours is tried under one crew after another
+	 *  until one carries it (the body says so by returning true). */
+	bool LevUnderSomeCrew(TFunctionRef<bool(int32)> Body) { for (int32 Seed = 7; Seed < 19; ++Seed) { if (Body(Seed)) { return true; } } return false; }
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkMissionLeviathanTest, "Slonk.Missions.Leviathan", SLONK_TEST_FLAGS)
+bool FSlonkMissionLeviathanTest::RunTest(const FString& Parameters)
+{
+	// A leviathan alongside: so many hours of work before it is against the hull, spent by what is done under it,
+	// carried or not, and by nothing else: not by the clock, and it does not run out. It cannot be abandoned from the
+	// board (warp leaves it). What the hours left will not cover is refused. At no hours nothing is forced: it is
+	// alongside still, and standing fast (an order, no check, no hours) is always there to end it.
+	FLeviathanUnderTest L;
+	UMissionSubsystem* Ms = L.S.Missions;
+	if (!TestNotNull(TEXT("spawned"), Ms->Find(L.Id))) { return false; }
+	const int32 Listen = L.Option(TEXT("Listen")), Plot = L.Option(TEXT("Plot its course")), Boat = L.Option(TEXT("Send a boat")), Beats = L.Option(TEXT("five beats")), Stand = L.Option(TEXT("Stand fast"));
+	const int32 Cold = L.Gift(FLeviathanUnderTest::Quiet);
+	if (!TestTrue(TEXT("its options"), Listen >= 0 && Plot >= 0 && Boat >= 0 && Beats >= 0 && Stand >= 0 && Cold >= 0 && L.Gift(0) >= 0 && L.Gift(2) >= 0 && L.Gift(3) >= 0 && L.Wanted() >= 0)) { return false; }
+	TestTrue(TEXT("alongside at once, with seven hours' work before it is against the hull; the ship not held in time"), L.M().State == EMissionState::Active && FMath::IsNearlyEqual(L.Left(), 7.0, 0.01) && Ms->IsCompanyAlongside() && !Ms->IsHeldInTime());
+	TestTrue(TEXT("as it comes alongside the helm's rote is let go, the once"), Ms->TakeHelmStop() && !Ms->TakeHelmStop());
+	TestTrue(TEXT("the board says, before any of it is chosen, what each other way of parting costs"), L.M().Stages[0].Text.Contains(TEXT("a strake of her skin or the core put out cold")) && L.M().Stages[0].Text.Contains(TEXT("The first shot brings it on and is held against her"))
+		&& L.M().Stages[0].Text.Contains(TEXT("going down into a world's air")) && L.M().Stages[0].Text.Contains(TEXT("It will follow, with less patience, and the leaving is held against her")));
+	TestTrue(TEXT("on the board: three things to find out, four gifts and standing fast; not the road's beats, for a ship the road does not know"),
+		L.Offered(Listen) && L.Offered(Plot) && L.Offered(Boat) && !L.Offered(Beats) && L.Offered(Stand) && L.Offered(L.Gift(0)) && L.Offered(L.Gift(1)) && L.Offered(L.Gift(2)) && L.Offered(L.Gift(3)));
+	{
+		// The findings are surer checks than any gift: finding out must not be the harder thing to carry.
+		float Easiest = 1000.f; for (int32 k = 0; k < 4; ++k) { Easiest = FMath::Min(Easiest, L.At(L.Gift(k)).Difficulty); }
+		TestTrue(TEXT("each of the three findings is a surer check than any gift"), L.At(Listen).Difficulty < Easiest && L.At(Plot).Difficulty < Easiest && L.At(Boat).Difficulty < Easiest);
+	}
+	TestTrue(TEXT("its station: ten kilometres off at seven hours, one at none, nearer with every hour, and inside the torpedoes' fifteen even with the road's hours given back"),
+		FMath::IsNearlyEqual(ALeviathan::StationCm(7.0), 1.01e6, 1.0) && FMath::IsNearlyEqual(ALeviathan::StationCm(0.0), 1.0e5, 1.0) && ALeviathan::StationCm(6.0) < ALeviathan::StationCm(7.0)
+		&& ALeviathan::StationCm(9.0) < 1.4e6 && FMath::IsNearlyEqual(ALeviathan::StationCm(-2.0), ALeviathan::StationCm(0.0), 1.0));
+	TestFalse(TEXT("it cannot be abandoned from the board"), Ms->Abandon(L.Id, L.Reply));
+	TestTrue(TEXT("and the refusal says what would leave it"), L.Reply.Contains(TEXT("warp")) && L.M().IsOpen());
+
+	// The clock takes nothing from it: the board can be read at leisure, and it does not run out.
+	for (int32 k = 0; k < 5; ++k) { L.AdvanceClock(6); }
+	TestTrue(TEXT("thirty hours by the stars with nothing done: alongside still, and its seven hours"), L.M().State == EMissionState::Active && FMath::IsNearlyEqual(L.Left(), 7.0, 0.01));
+	// An act takes its hours, carried or not: of the work left, and of the stars' time.
+	double DateWas = L.Stardate();
+	TestTrue(TEXT("listened to"), L.Act(Listen));
+	TestTrue(TEXT("an hour of the seven gone with it, and an hour by the stars"), FMath::IsNearlyEqual(L.Left(), 6.0, 0.01) && FMath::IsNearlyEqual(L.Stardate() - DateWas, 1.0 / 24.0, 1.0e-4));
+	TestTrue(TEXT("and the board says how near that brings it"), L.M().Stages[0].Text.Contains(TEXT("9 kilometres off the beam")) && L.M().Stages[0].Text.Contains(TEXT("6 hours' work")));
+	if (TestTrue(TEXT("the listening carried (a check well inside this crew's worst)"), L.Out.bSuccess))
+	{
+		const int32 ScienceOnce = L.M().ScienceEarned;
+		TestTrue(TEXT("what was found out is kept, off the board, and on it as a thing known"), L.Knows(TEXT("Call")) && !L.Offered(Listen) && L.M().Stages[0].Text.Contains(TEXT("Its call. ")));
+		TestFalse(TEXT("and not to be had twice"), L.Act(Listen));
+		TestTrue(TEXT("its science earned the once"), ScienceOnce == 60 && L.M().ScienceEarned == ScienceOnce && L.Reply.Contains(TEXT("on the board")));
+	}
+	TestTrue(TEXT("its course plotted, a boat sent: two hours each"), L.Act(Plot) && L.Act(Boat) && FMath::IsNearlyEqual(L.Left(), 2.0, 0.01));
+	// What the hours left will not cover is on the board, and refused with nothing spent.
+	const int32 LogWas = L.M().Log.Num();
+	TestTrue(TEXT("the cold core is on the board, and wants more hours than are left"), L.Offered(Cold) && !L.HasHours(Cold));
+	TestFalse(TEXT("refused"), L.Act(Cold));
+	TestTrue(TEXT("with nothing spent, and the refusal says why"), FMath::IsNearlyEqual(L.Left(), 2.0, 0.01) && L.M().Log.Num() == LogWas && L.Reply.Contains(TEXT("against the hull")) && !Ms->IsDriveCold());
+	// The last of the hours, on a thing it does not want.
+	const int32 Wrong = L.Unwanted();
+	if (!TestTrue(TEXT("a gift it does not want, of two hours or one"), Wrong >= 0)) { return false; }
+	TestTrue(TEXT("given"), L.Act(Wrong));
+	TestTrue(TEXT("done as ordered and not wanted; no hours left, and it is alongside still"), !L.Out.bSuccess && L.Out.CheckSummary.Contains(TEXT("not what it wanted")) && !L.Out.bMissionOver && L.Left() < 0.01 && L.M().State == EMissionState::Active);
+	// At no hours nothing is forced.
+	for (int32 k = 0; k < 4; ++k) { L.AdvanceClock(6); }
+	TestTrue(TEXT("a day on: alongside still, the board saying there is no time left for work"), L.M().State == EMissionState::Active && Ms->IsCompanyAlongside() && L.M().Stages[0].Text.Contains(TEXT("no time left for work")));
+	bool bAnyWork = false;
+	for (int32 i = 0; i < L.M().Stages[0].Options.Num(); ++i) { if (i != Stand && L.Offered(i)) { bAnyWork |= L.HasHours(i) || L.Act(i); } }
+	TestFalse(TEXT("nothing that takes hours is to be had"), bAnyWork);
+	TestTrue(TEXT("standing fast is: no hours, no check"), L.Offered(Stand) && L.HasHours(Stand) && L.At(Stand).bSure && L.At(Stand).Hours <= 0.f);
+	const int32 StandingBefore = Ms->GetStanding(), ScienceWas = L.M().ScienceEarned, DoneBefore = Ms->GetCompleted();
+	DateWas = L.Stardate();
+	TestTrue(TEXT("stood fast"), L.Act(Stand));
+	TestTrue(TEXT("carried as ordered, and over: it took what it came for"), L.Out.bSuccess && L.Out.CheckSummary.Contains(TEXT("ordered")) && L.Out.bMissionOver && L.M().State == EMissionState::Completed && L.M().Exit == FName(TEXT("Taken")) && !Ms->IsCompanyAlongside());
+	TestTrue(TEXT("small regard, the science of seeing what it did, and no time gone"), Ms->GetStanding() - StandingBefore == 10 && L.M().ScienceEarned == ScienceWas + 150 && Ms->GetCompleted() == DoneBefore + 1 && FMath::IsNearlyEqual(L.Stardate(), DateWas, 1.0e-6));
+	TestTrue(TEXT("and nothing for its kind to remember"), !Ms->Remembers(TEXT("Leviathan.Given")) && !Ms->Remembers(TEXT("Leviathan.Blooded")) && !Ms->Remembers(TEXT("Leviathan.Astern")));
+
+	// An hour's work refused for want of the hour says so in the singular, and that it is against the hull now. (No
+	// check decides any of this: a shot, a plot, a gift it does not want and a listening are seven hours however they go.)
+	{
+		FLeviathanUnderTest P(FLeviathanUnderTest::Plate);
+		const int32 Plate = P.Gift(FLeviathanUnderTest::Plate);
+		P.S.Missions->LeviathanOutcome(P.Id, ELeviathanOutcome::Struck);
+		P.Act(P.Option(TEXT("Plot its course"))); P.Act(P.Gift(FLeviathanUnderTest::Lee)); P.Act(P.Option(TEXT("Listen")));
+		TestTrue(TEXT("no hours left, and the wanted plate still on the board"), P.Left() < 0.01 && P.M().State == EMissionState::Active && P.Offered(Plate) && !P.HasHours(Plate));
+		TestFalse(TEXT("the hour's gift refused"), P.Act(Plate));
+		TestTrue(TEXT("in the singular, and against the hull now"), P.Reply.Contains(TEXT("it wants an hour's work")) && P.Reply.Contains(TEXT("against the hull now")));
+		TestFalse(TEXT("nor is it to be abandoned"), P.S.Missions->Abandon(P.Id, P.Reply));
+		TestTrue(TEXT("and the refusal names a world's air as well as warp"), P.Reply.Contains(TEXT("warp")) && P.Reply.Contains(TEXT("world's air")));
+	}
+
+	// One offered (only the console offers one) can be turned down, and is alongside from the accepting.
+	FSystems T;
+	const int32 Refused = T.Missions->DevSpawn(EMissionKind::Leviathan, EMissionSource::Starfleet);
+	TestTrue(TEXT("an offer of one can be turned down"), T.Missions->Abandon(Refused, L.Reply) && !T.Missions->Find(Refused)->IsOpen());
+	const int32 Asked = T.Missions->DevSpawn(EMissionKind::Leviathan, EMissionSource::Starfleet);
+	if (!TestTrue(TEXT("offered"), T.Missions->Find(Asked) && T.Missions->Find(Asked)->State == EMissionState::Offered)) { return false; }
+	TestFalse(TEXT("an offer is not alongside"), T.Missions->IsCompanyAlongside());
+	TestTrue(TEXT("accepted"), T.Missions->Accept(Asked, L.Reply));
+	TestTrue(TEXT("alongside, with its seven hours, from the accepting"), T.Missions->IsCompanyAlongside() && FMath::IsNearlyEqual(T.Missions->PassHoursLeft(*T.Missions->Find(Asked)), 7.0, 0.01));
+	TestTrue(TEXT("and the helm's rote is let go, the once"), T.Missions->TakeHelmStop() && !T.Missions->TakeHelmStop());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkMissionLeviathanWantTest, "Slonk.Missions.LeviathanWant", SLONK_TEST_FLAGS)
+bool FSlonkMissionLeviathanWantTest::RunTest(const FString& Parameters)
+{
+	// What it wants. One gift of four is wanted, another each time; nothing the board shows of a gift tells which. The
+	// three findings each strike out one want it has not, a different one each, so the three together leave the one
+	// it has. A thing given that it does not want is done as ordered, with no check: its hours and one more, off the
+	// board, and held against the ship when the right one is found. The right one is the best way to part from it,
+	// and the next of its kind is the better known for it.
+	{
+		FSystems S; S.ChartedWithWorlds();
+		int32 Right[4] = { 0, 0, 0, 0 }, Sound = 0;
+		TArray<FMissionOption> Shown;
+		FString BoardShown, BriefShown;
+		bool bAlike = true;
+		const int32 Meetings = 96;
+		for (int32 n = 0; n < Meetings; ++n)
+		{
+			const int32 Id = S.Missions->DevSpawn(EMissionKind::Leviathan, EMissionSource::Starfleet);
+			const FMission* M = S.Missions->Find(Id);
+			if (!M || M->Stages.Num() != 1) { continue; }
+			static const TCHAR* Marks[] = { TEXT("Not.Plate"), TEXT("Not.Quiet"), TEXT("Not.Lee"), TEXT("Not.Hands") };
+			static const TCHAR* Sources[] = { TEXT("Listen"), TEXT("Plot its course"), TEXT("Send a boat") };
+			int32 Want = -1, RightOnes = 0, Gifts = 0, Struck[3] = { -1, -1, -1 };
+			// The board's text and the brief, which are read before anything is done, are word for word the first meeting's.
+			if (n == 0) { BoardShown = M->Stages[0].Text; BriefShown = M->Brief; } else { bAlike &= M->Stages[0].Text == BoardShown && M->Brief == BriefShown; }
+			for (const FMissionOption& O : M->Stages[0].Options)
+			{
+				for (int32 k = 0; k < 4; ++k)
+				{
+					if (O.NotIfMark != FName(Marks[k])) { continue; }
+					++Gifts; if (!O.bWrong) { Want = k; ++RightOnes; }
+					// Everything the board or the console shows of the gift is as it was at the first meeting.
+					if (n == 0) { Shown.Add(O); }
+					else if (Shown.IsValidIndex(k))
+					{
+						const FMissionOption& F = Shown[k];
+						bAlike &= O.Text == F.Text && O.Skill == F.Skill && O.Party == F.Party && O.Difficulty == F.Difficulty && O.Hours == F.Hours && O.Risk == F.Risk && O.WrongBlow == F.WrongBlow
+							&& O.Science == F.Science && O.bSure == F.bSure && O.NeedsMark == F.NeedsMark && O.NeedsMark2 == F.NeedsMark2 && O.MinPass == F.MinPass && O.NeedsReady == F.NeedsReady;
+					}
+				}
+				for (int32 s = 0; s < 3; ++s) { if (O.Text.Contains(Sources[s])) { Struck[s] = LevStruckOut(O.SuccessText); } }
+			}
+			const bool bThree = Struck[0] >= 0 && Struck[1] >= 0 && Struck[2] >= 0 && Struck[0] != Struck[1] && Struck[0] != Struck[2] && Struck[1] != Struck[2];
+			if (Gifts == 4 && RightOnes == 1 && bThree && Struck[0] != Want && Struck[1] != Want && Struck[2] != Want) { ++Sound; ++Right[Want]; }
+			FString Ignored; S.Missions->Abandon(Id, Ignored);
+		}
+		TestEqual(TEXT("every meeting has one wanted gift of four, and its three findings strike out the other three"), Sound, Meetings);
+		TestTrue(TEXT("nothing shown of a gift, nor a word of the board or the brief, varies from one meeting to the next"), bAlike && Shown.Num() == 4 && !BoardShown.IsEmpty() && !BriefShown.IsEmpty());
+		TestTrue(TEXT("and each of the four is the wanted one at some meeting"), Right[0] > 0 && Right[1] > 0 && Right[2] > 0 && Right[3] > 0);
+		AddInfo(FString::Printf(TEXT("of %d leviathans %d wanted plate, %d quiet, %d lee, %d hands"), Meetings, Right[0], Right[1], Right[2], Right[3]));
+	}
+
+	// A thing given that it does not want, then the thing it does: plate, the hour's gift, so the hours cover both.
+	const bool bGiven = LevUnderSomeCrew([this](int32 Seed)
+	{
+		FLeviathanUnderTest L(FLeviathanUnderTest::Plate, {}, Seed);
+		UMissionSubsystem* Ms = L.S.Missions;
+		const int32 Right = L.Gift(FLeviathanUnderTest::Plate), Wrong = L.Gift(FLeviathanUnderTest::Lee);
+		if (Right < 0 || Wrong < 0 || L.Wanted() != FLeviathanUnderTest::Plate) { return false; }
+		// (Every assertion below is of things no check decides, until the gift itself.)
+		const double DateWas = L.Stardate();
+		TestTrue(TEXT("the lee given, to one that wants plate"), L.Act(Wrong));
+		TestTrue(TEXT("done as ordered, with no check, and not wanted; alongside still"), !L.Out.bSuccess && L.Out.CheckSummary.Contains(TEXT("not what it wanted")) && L.Out.Text.Contains(TEXT("moves out into the glare")) && !L.Out.bMissionOver && L.M().State == EMissionState::Active);
+		TestTrue(TEXT("its two hours and one more: of the work left, and by the stars"), FMath::IsNearlyEqual(L.Left(), 4.0, 0.01) && FMath::IsNearlyEqual(L.Stardate() - DateWas, 3.0 / 24.0, 1.0e-4));
+		TestTrue(TEXT("known for unwanted: off the board, and on it as a thing given"), L.Knows(TEXT("Not.Lee")) && !L.Offered(Wrong) && L.Offered(Right) && L.M().Stages[0].Text.Contains(TEXT("Given, and not wanted: lee.")) && !L.M().Stages[0].Text.Contains(TEXT("The helmsman: lee.")));
+		TestFalse(TEXT("not to be given twice"), L.Act(Wrong));
+		TestTrue(TEXT("and the refusal says it was given"), L.Reply.Contains(TEXT("not wanted")));
+		const int32 StandingBefore = Ms->GetStanding();
+		if (!L.Carry(Right)) { return false; }   // this crew could not carry it inside the hours: another
+		AddInfo(FString::Printf(TEXT("plate given under crew %d: regard %+d, science %d"), Seed, Ms->GetStanding() - StandingBefore, L.M().ScienceEarned));
+		TestTrue(TEXT("given what it wanted: over, and gone down its road"), L.Out.bMissionOver && L.M().State == EMissionState::Completed && L.M().Exit == FName(TEXT("Given")) && !Ms->IsCompanyAlongside() && L.Out.Text.Contains(TEXT("as a hand takes a coin")));
+		TestEqual(TEXT("its regard, less twelve for the thing misread"), Ms->GetStanding() - StandingBefore, 33);
+		TestEqual(TEXT("and its science"), L.M().ScienceEarned, 200);
+		TestTrue(TEXT("its kind know the ship for it"), Ms->Remembers(TEXT("Leviathan.Given")) && !Ms->Remembers(TEXT("Leviathan.Blooded")) && !Ms->Remembers(TEXT("Leviathan.Astern")));
+		// The next of its kind: its call read as it comes up, with no science for that; all else to find.
+		if (!TestTrue(TEXT("another"), L.Next())) { return true; }
+		const int32 Listen = L.Option(TEXT("Listen")), Plot = L.Option(TEXT("Plot its course"));
+		TestTrue(TEXT("the next one's call is on file: known at sight, not to be listened for, and no science for it"), L.Knows(TEXT("Call")) && !L.Offered(Listen) && L.Offered(Plot) && L.M().ScienceEarned == 0 && FMath::IsNearlyEqual(L.Left(), 7.0, 0.01)
+			&& L.M().Stages[0].Text.Contains(TEXT("on file")) && L.M().Stages[0].Text.Contains(TEXT("Its call. ")));
+		return true;
+	});
+	TestTrue(TEXT("some crew carried the gift inside the hours"), bGiven);
+
+	// Found out in full: the three findings in seven hours leave two for the gift, which is enough for any but quiet.
+	const bool bFound = LevUnderSomeCrew([this](int32 Seed)
+	{
+		FLeviathanUnderTest L(FLeviathanUnderTest::Hands, {}, Seed);
+		UMissionSubsystem* Ms = L.S.Missions;
+		const int32 Listen = L.Option(TEXT("Listen")), Plot = L.Option(TEXT("Plot its course")), Boat = L.Option(TEXT("Send a boat"));
+		if (!(L.Act(Listen) && L.Out.bSuccess && L.Act(Plot) && L.Out.bSuccess && L.Act(Boat) && L.Out.bSuccess)) { return false; }   // one failed: another crew
+		const FString Board = L.M().Stages[0].Text;
+		TestTrue(TEXT("three findings, five hours; two left"), L.Knows(TEXT("Call")) && L.Knows(TEXT("Track")) && L.Knows(TEXT("Boat")) && FMath::IsNearlyEqual(L.Left(), 2.0, 0.01) && L.M().ScienceEarned == 240);
+		TestTrue(TEXT("each on the board, and none of them against hands"), Board.Contains(TEXT("Its call. ")) && Board.Contains(TEXT("Its track. ")) && Board.Contains(TEXT("The boat. "))
+			&& !Board.Contains(TEXT("Its hide is clean")) && !Board.Contains(TEXT("dust lane")) && !Board.Contains(TEXT("two hands in suits")));
+		// What is found out is found the once: off the board, refused in so many words, and its science not earned twice.
+		TestTrue(TEXT("the findings are off the board"), !L.Offered(Listen) && !L.Offered(Plot) && !L.Offered(Boat));
+		TestFalse(TEXT("and not to be had twice"), L.Act(Listen));
+		TestTrue(TEXT("the refusal says it is known, and nothing is earned or spent by it"), L.Reply.Contains(TEXT("on the board")) && L.M().ScienceEarned == 240 && FMath::IsNearlyEqual(L.Left(), 2.0, 0.01));
+		TestTrue(TEXT("the hours left cover the wanted gift, and would not have covered the cold core"), L.HasHours(L.Gift(FLeviathanUnderTest::Hands)) && !L.HasHours(L.Gift(FLeviathanUnderTest::Quiet)));
+		const int32 StandingBefore = Ms->GetStanding(); const double DateWas = L.Stardate();
+		if (!L.Act(L.Gift(FLeviathanUnderTest::Hands)) || !L.Out.bSuccess) { return false; }
+		TestTrue(TEXT("tended: the best regard, all the science, and a watch on its hide besides the two hours"), Ms->GetStanding() - StandingBefore == 45 && L.M().ScienceEarned == 440 && L.M().Exit == FName(TEXT("Given"))
+			&& FMath::IsNearlyEqual(L.Stardate() - DateWas, 8.0 / 24.0, 1.0e-4) && FMath::IsNearlyEqual(L.M().ClosedStardate, L.Stardate(), 1.0e-6));
+		return true;
+	});
+	TestTrue(TEXT("some crew found it out in full and tended it"), bFound);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkMissionLeviathanExitsTest, "Slonk.Missions.LeviathanExits", SLONK_TEST_FLAGS)
+bool FSlonkMissionLeviathanExitsTest::RunTest(const FString& Parameters)
+{
+	// The other ways of parting from it, each gift's own price, and what earlier meetings leave. (Its body, the blows
+	// to the ship, her lockers and her hull are the world's: seen in the game.)
+	{
+		// Her guns: the first shot brings it on, the once; turned, it leaves no regard, its pieces for Science, and
+		// its kind burned (which unsays what one of them was given: this ship's kind had been given it).
+		FLeviathanUnderTest L(-1, { TEXT("Leviathan.Given") });
+		UMissionSubsystem* Ms = L.S.Missions;
+		TestTrue(TEXT("a ship its kind know: seven hours, and the guns' price on the board before a shot"), Ms->Remembers(TEXT("Leviathan.Given")) && FMath::IsNearlyEqual(L.Left(), 7.0, 0.01) && L.M().Stages[0].Text.Contains(TEXT("The first shot brings it on and is held against her")));
+		Ms->LeviathanOutcome(L.Id, ELeviathanOutcome::Struck);
+		TestTrue(TEXT("fired on: an hour nearer, alongside still, and on the board; the first shot no longer promised"), L.Knows(TEXT("Fired")) && FMath::IsNearlyEqual(L.Left(), 6.0, 0.01) && L.M().State == EMissionState::Active && L.M().Stages[0].Text.Contains(TEXT("It has been fired on"))
+			&& !L.M().Stages[0].Text.Contains(TEXT("The first shot brings it on")));
+		Ms->LeviathanOutcome(L.Id, ELeviathanOutcome::Struck);
+		TestTrue(TEXT("the first shot counts the once"), FMath::IsNearlyEqual(L.Left(), 6.0, 0.01));
+		const int32 StandingBefore = Ms->GetStanding();
+		Ms->LeviathanOutcome(L.Id, ELeviathanOutcome::Driven);
+		TestTrue(TEXT("driven off: over, with no regard, and the pieces of its case for Science"), L.M().State == EMissionState::Completed && L.M().Exit == FName(TEXT("Driven")) && Ms->GetStanding() == StandingBefore && L.M().ScienceEarned == 120 && !Ms->IsCompanyAlongside());
+		TestTrue(TEXT("its kind remember, and what one of them was given is unsaid"), Ms->Remembers(TEXT("Leviathan.Blooded")) && !Ms->Remembers(TEXT("Leviathan.Given")));
+		Ms->LeviathanOutcome(L.Id, ELeviathanOutcome::Driven);
+		TestTrue(TEXT("and it is driven off the once"), L.M().ScienceEarned == 120 && Ms->GetStanding() == StandingBefore);
+		// The next of its kind comes with every plate shut, and fast.
+		if (!TestTrue(TEXT("another"), L.Next())) { return false; }
+		TestTrue(TEXT("the next comes on fast: five hours, the board says why, and its call is on no file"), L.Knows(TEXT("Shut")) && FMath::IsNearlyEqual(L.Left(), 5.0, 0.01) && L.M().Stages[0].Text.Contains(TEXT("Every plate on it is shut")) && !L.Knows(TEXT("Call")));
+		// Stood fast for, that is not unsaid; given what it wants, it is (below).
+		TestTrue(TEXT("stood fast for"), L.Act(L.Option(TEXT("Stand fast"))) && Ms->Remembers(TEXT("Leviathan.Blooded")));
+	}
+	{
+		// Left astern at warp: nothing settled, what was learned kept, and the same creature back with less patience.
+		// The third leaving is the last.
+		FLeviathanUnderTest L;
+		UMissionSubsystem* Ms = L.S.Missions;
+		const int32 Listen = L.Option(TEXT("Listen"));
+		L.Act(Listen);
+		const bool bHeard = L.Knows(TEXT("Call"));
+		// (Two things no check decides, to be carried across the leaving: a shot fired, and a gift it did not want.)
+		Ms->LeviathanOutcome(L.Id, ELeviathanOutcome::Struck);
+		const int32 Unwanted = L.Unwanted();
+		const FName NotWanted = Unwanted >= 0 ? L.At(Unwanted).NotIfMark : FName();
+		TestTrue(TEXT("fired on, and given a thing it does not want, before it is left"), Unwanted >= 0 && L.Act(Unwanted) && L.Knows(TEXT("Fired")) && L.M().Marks.Contains(NotWanted));
+		const int32 Secret = L.M().Secret, Want = L.Wanted(), ScienceWas = L.M().ScienceEarned, StandingBefore = Ms->GetStanding(), DoneBefore = Ms->GetCompleted(), FailedBefore = Ms->GetFailed();
+		const FString Site = L.M().Site;
+		FMissionShipState Warp = L.S.Ship(); Warp.bAtWarp = true;
+		Ms->AdvanceSeconds(1.f, Warp);
+		TestTrue(TEXT("left astern: closed as the captain's leaving, not a mission completed or failed, with no regard either way"), L.M().State == EMissionState::Abandoned && L.M().Exit == FName(TEXT("Slipped")) && !Ms->IsCompanyAlongside()
+			&& Ms->GetStanding() == StandingBefore && Ms->GetCompleted() == DoneBefore && Ms->GetFailed() == FailedBefore && L.M().ScienceEarned == ScienceWas);
+		TestTrue(TEXT("and it follows"), Ms->Remembers(TEXT("Leviathan.Astern")));
+		// (An offer of one, which only the console makes, is a stranger: the one that follows is still to come.)
+		{
+			const int32 Offer = Ms->DevSpawn(EMissionKind::Leviathan, EMissionSource::Starfleet);
+			TestTrue(TEXT("an offer made while one follows is a stranger, and does not spend the follower's mark"), Ms->Find(Offer) && Ms->Find(Offer)->State == EMissionState::Offered && Ms->Find(Offer)->Pass == 0 && Ms->Remembers(TEXT("Leviathan.Astern")));
+			Ms->Abandon(Offer, L.Reply);
+		}
+		Ms->AdvanceSeconds(1.f, L.S.Ship());
+		const int32 First = L.Id;
+		if (!TestTrue(TEXT("it comes up again"), L.Next() && L.Id != First)) { return false; }
+		TestTrue(TEXT("the same one: its want, its name, and what was learned of it; the mark of its following spent"), L.M().Secret == Secret && L.Wanted() == Want && L.M().Site == Site && L.M().Pass == 1 && L.Knows(TEXT("Call")) == bHeard && !Ms->Remembers(TEXT("Leviathan.Astern")));
+		TestTrue(TEXT("with two hours fewer, the board saying so, and what was found out not to be found again"), FMath::IsNearlyEqual(L.Left(), 5.0, 0.01) && L.M().Stages[0].Text.Contains(TEXT("It is the same one")) && (!bHeard || !L.Offered(L.Option(TEXT("Listen")))) && L.M().ScienceEarned == 0);
+		TestTrue(TEXT("the shot is held against her still, and the gift it did not want is off the board still"), L.Knows(TEXT("Fired")) && L.M().Stages[0].Text.Contains(TEXT("It has been fired on")) && L.M().Marks.Contains(NotWanted)
+			&& !L.Offered(Unwanted) && L.M().Stages[0].Text.Contains(TEXT("Given, and not wanted")));
+		Ms->LeviathanOutcome(L.Id, ELeviathanOutcome::Struck);
+		TestTrue(TEXT("and a shot at the second meeting is not a first shot again: no hour for it"), FMath::IsNearlyEqual(L.Left(), 5.0, 0.01));
+		Ms->AdvanceSeconds(1.f, Warp); Ms->AdvanceSeconds(1.f, L.S.Ship());
+		if (!TestTrue(TEXT("left again, and back again"), L.Next())) { return false; }
+		TestTrue(TEXT("the third meeting: three hours, and the board says it will not follow again"), L.M().Pass == 2 && FMath::IsNearlyEqual(L.Left(), 3.0, 0.01) && L.M().Secret == Secret && L.M().Stages[0].Text.Contains(TEXT("will not a third time")));
+		Ms->AdvanceSeconds(1.f, Warp); Ms->AdvanceSeconds(1.f, L.S.Ship());
+		TestTrue(TEXT("left a third time, it turns back to its road: nothing follows"), L.M().State == EMissionState::Abandoned && !Ms->Remembers(TEXT("Leviathan.Astern")) && !Ms->IsCompanyAlongside());
+		if (!TestTrue(TEXT("another"), L.Next())) { return false; }
+		TestTrue(TEXT("the next is a stranger, with its seven hours"), L.M().Pass == 0 && FMath::IsNearlyEqual(L.Left(), 7.0, 0.01) && L.M().Site != Site);
+		// Going down into a world's air leaves one as warp does.
+		FMissionShipState Air = L.S.Ship(); Air.bClearSpace = false;
+		Ms->AdvanceSeconds(1.f, Air);
+		TestTrue(TEXT("down into air: left astern"), L.M().State == EMissionState::Abandoned && L.M().Exit == FName(TEXT("Slipped")) && Ms->Remembers(TEXT("Leviathan.Astern")));
+	}
+	{
+		// A game taken up again with the drive engaged: the first look at the ship is not her leaving it.
+		FSystems S; S.ChartedWithWorlds();
+		const int32 Id = S.Missions->DevSpawn(EMissionKind::Leviathan, EMissionSource::Event);
+		FMissionShipState Found = S.Ship(); Found.bAtWarp = true;
+		S.Missions->AdvanceSeconds(1.f, Found);
+		TestTrue(TEXT("the drive found engaged at the first look leaves nothing astern"), S.Missions->Find(Id) && S.Missions->Find(Id)->State == EMissionState::Active);
+	}
+	{
+		// The hours never fall under three (the dearest gift's), and the board promises less patience only where
+		// there is less: one of a burned kind, left astern twice, has five hours, then three, then three.
+		FLeviathanUnderTest L(-1, { TEXT("Leviathan.Blooded") });
+		UMissionSubsystem* Ms = L.S.Missions;
+		FMissionShipState Warp = L.S.Ship(); Warp.bAtWarp = true;
+		TestTrue(TEXT("one of a burned kind: five hours, and the board promising less patience if it is left"), FMath::IsNearlyEqual(L.Left(), 5.0, 0.01) && L.M().Stages[0].Text.Contains(TEXT("It will follow, with less patience")));
+		Ms->AdvanceSeconds(1.f, Warp); Ms->AdvanceSeconds(1.f, L.S.Ship());
+		if (!TestTrue(TEXT("back"), L.Next())) { return false; }
+		TestTrue(TEXT("left once: three hours, and no less patience promised for a second leaving"), L.M().Pass == 1 && FMath::IsNearlyEqual(L.Left(), 3.0, 0.01) && L.M().Stages[0].Text.Contains(TEXT("It will follow, and the leaving"))
+			&& !L.M().Stages[0].Text.Contains(TEXT("with less patience")));
+		Ms->AdvanceSeconds(1.f, Warp); Ms->AdvanceSeconds(1.f, L.S.Ship());
+		if (!TestTrue(TEXT("back again"), L.Next())) { return false; }
+		TestTrue(TEXT("left twice: three hours still"), L.M().Pass == 2 && FMath::IsNearlyEqual(L.Left(), 3.0, 0.01));
+		FLeviathanUnderTest W(-1, { TEXT("Lock.Broken"), TEXT("Leviathan.Blooded") });
+		TestTrue(TEXT("a lock broken and one of its kind burned: four hours"), W.Knows(TEXT("Wary")) && W.Knows(TEXT("Shut")) && FMath::IsNearlyEqual(W.Left(), 4.0, 0.01));
+	}
+	{
+		// A shot fired is held against the ship as a thing misread is: twelve off the regard of the right gift.
+		const bool bShot = LevUnderSomeCrew([this](int32 Seed)
+		{
+			FLeviathanUnderTest L(FLeviathanUnderTest::Plate, {}, Seed);
+			UMissionSubsystem* Ms = L.S.Missions;
+			Ms->LeviathanOutcome(L.Id, ELeviathanOutcome::Struck);
+			const int32 StandingBefore = Ms->GetStanding();
+			if (L.Wanted() != FLeviathanUnderTest::Plate || !L.Carry(L.Gift(FLeviathanUnderTest::Plate))) { return false; }
+			TestEqual(TEXT("fired on, then given what it wants: twelve off its regard"), Ms->GetStanding() - StandingBefore, 33);
+			return true;
+		});
+		// And the regard never falls under five: a shot, two things it did not want, a leaving, a third thing it did
+		// not want (the core, cold for nothing), and then the plate it wanted all along.
+		const bool bFloor = LevUnderSomeCrew([this](int32 Seed)
+		{
+			FLeviathanUnderTest L(FLeviathanUnderTest::Plate, {}, Seed);
+			UMissionSubsystem* Ms = L.S.Missions;
+			if (L.Wanted() != FLeviathanUnderTest::Plate) { return false; }
+			Ms->LeviathanOutcome(L.Id, ELeviathanOutcome::Struck);
+			L.Act(L.Gift(FLeviathanUnderTest::Lee)); L.Act(L.Gift(FLeviathanUnderTest::Hands));
+			TestTrue(TEXT("a shot and two wrong gifts: no hours left, alongside still"), L.Left() < 0.01 && L.M().State == EMissionState::Active);
+			FMissionShipState Warp = L.S.Ship(); Warp.bAtWarp = true;
+			Ms->AdvanceSeconds(1.f, Warp); Ms->AdvanceSeconds(1.f, L.S.Ship());
+			if (!L.Next() || L.M().Pass != 1) { return false; }
+			TestTrue(TEXT("back, with five hours and the two wrong gifts off the board still"), FMath::IsNearlyEqual(L.Left(), 5.0, 0.01) && !L.Offered(L.Gift(FLeviathanUnderTest::Lee)) && !L.Offered(L.Gift(FLeviathanUnderTest::Hands)));
+			L.Act(L.Gift(FLeviathanUnderTest::Quiet));
+			TestTrue(TEXT("the core cold for nothing: an hour left, and warp no way out"), FMath::IsNearlyEqual(L.Left(), 1.0, 0.01) && Ms->IsDriveCold() && L.M().State == EMissionState::Active);
+			TestFalse(TEXT("not to be abandoned"), Ms->Abandon(L.Id, L.Reply));
+			TestTrue(TEXT("and the refusal says the core is cold"), L.Reply.Contains(TEXT("the core is cold")) && L.Reply.Contains(TEXT("warp")));
+			const int32 StandingBefore = Ms->GetStanding();
+			if (!L.Carry(L.Gift(FLeviathanUnderTest::Plate))) { return false; }
+			TestEqual(TEXT("given what it wanted at last: the least regard a giving can have"), Ms->GetStanding() - StandingBefore, 5);
+			return true;
+		});
+		TestTrue(TEXT("some crew carried the plate after a shot, and some crew after everything"), bShot && bFloor);
+	}
+	{
+		// One followed, then given what it wants: six off the regard for the leaving.
+		const bool bFollowed = LevUnderSomeCrew([this](int32 Seed)
+		{
+			FLeviathanUnderTest L(FLeviathanUnderTest::Plate, {}, Seed);
+			UMissionSubsystem* Ms = L.S.Missions;
+			FMissionShipState Warp = L.S.Ship(); Warp.bAtWarp = true;
+			Ms->AdvanceSeconds(1.f, Warp); Ms->AdvanceSeconds(1.f, L.S.Ship());
+			if (!L.Next() || L.M().Pass != 1 || L.Wanted() != FLeviathanUnderTest::Plate) { return false; }
+			const int32 StandingBefore = Ms->GetStanding();
+			if (!L.Carry(L.Gift(FLeviathanUnderTest::Plate))) { return false; }
+			TestEqual(TEXT("given what it wants at the second meeting: six off its regard for the leaving"), Ms->GetStanding() - StandingBefore, 39);
+			return true;
+		});
+		TestTrue(TEXT("some crew carried the gift at the second meeting"), bFollowed);
+	}
+	{
+		// Quiet, to one that does not want it: the core is cold all the same, twelve hours from the hour it went; its
+		// three hours and one more; and a cold ship does not leave it at warp.
+		FLeviathanUnderTest L(FLeviathanUnderTest::Lee);
+		UMissionSubsystem* Ms = L.S.Missions;
+		const int32 Cold = L.Gift(FLeviathanUnderTest::Quiet);
+		if (!TestTrue(TEXT("one that wants lee"), Cold >= 0 && L.Wanted() == FLeviathanUnderTest::Lee)) { return false; }
+		TestTrue(TEXT("the core shut down cold for one that does not want quiet"), L.Act(Cold) && !L.Out.bSuccess && L.M().State == EMissionState::Active);
+		TestTrue(TEXT("cold all the same, twelve hours; three hours left of the seven"), Ms->IsDriveCold() && FMath::IsNearlyEqual(Ms->DriveColdHoursLeft(), 12.0, 0.01) && FMath::IsNearlyEqual(L.Left(), 3.0, 0.01));
+		FMissionShipState Warp = L.S.Ship(); Warp.bAtWarp = true;
+		Ms->AdvanceSeconds(1.f, Warp); Ms->AdvanceSeconds(1.f, L.S.Ship());
+		TestTrue(TEXT("a cold ship does not leave it at warp"), L.M().State == EMissionState::Active && Ms->IsCompanyAlongside());
+	}
+	{
+		// Each wanted gift's own price: the cold core; a day and a night in the ship's lee.
+		const bool bQuiet = LevUnderSomeCrew([this](int32 Seed)
+		{
+			FLeviathanUnderTest L(FLeviathanUnderTest::Quiet, {}, Seed);
+			UMissionSubsystem* Ms = L.S.Missions;
+			if (L.Wanted() != FLeviathanUnderTest::Quiet || !L.Carry(L.Gift(FLeviathanUnderTest::Quiet))) { return false; }
+			TestTrue(TEXT("quiet given to one that wants it: gone, and the core twelve hours cold"), L.M().Exit == FName(TEXT("Given")) && Ms->IsDriveCold() && FMath::IsNearlyEqual(Ms->DriveColdHoursLeft(), 12.0, 0.01));
+			return true;
+		});
+		const bool bLee = LevUnderSomeCrew([this](int32 Seed)
+		{
+			FLeviathanUnderTest L(FLeviathanUnderTest::Lee, {}, Seed);
+			UMissionSubsystem* Ms = L.S.Missions;
+			const int32 Lee = L.Gift(FLeviathanUnderTest::Lee);
+			if (L.Wanted() != FLeviathanUnderTest::Lee) { return false; }
+			const double DateWas = L.Stardate();
+			if (!L.Act(Lee) || !L.Out.bSuccess) { return false; }
+			TestTrue(TEXT("lee given to one that wants it: a day and a night on, closed where that left her, and the core lit"), L.M().Exit == FName(TEXT("Given")) && FMath::IsNearlyEqual(L.Stardate() - DateWas, 1.0, 1.0e-4)
+				&& FMath::IsNearlyEqual(L.M().ClosedStardate, L.Stardate(), 1.0e-6) && !Ms->IsDriveCold());
+			return true;
+		});
+		TestTrue(TEXT("some crew carried the cold core, and some crew the lee"), bQuiet && bLee);
+	}
+	{
+		// Stood fast for, one that wants quiet takes it: the core is out.
+		FLeviathanUnderTest L(FLeviathanUnderTest::Quiet);
+		UMissionSubsystem* Ms = L.S.Missions;
+		TestTrue(TEXT("stood fast for one that wants quiet: it leans on her until the core is out"), L.Act(L.Option(TEXT("Stand fast"))) && L.M().Exit == FName(TEXT("Taken")) && Ms->IsDriveCold() && L.Out.Text.Contains(TEXT("nacelles")));
+	}
+	{
+		// What the old road left. A lock answered: the creature may know the beats, and gives her room for them, the
+		// once. A lock broken: it comes on the faster; unless its kind have had better of the ship since.
+		FLeviathanUnderTest L(-1, { TEXT("Lock.Answered") });
+		const int32 Beats = L.Option(TEXT("five beats"));
+		TestTrue(TEXT("a ship the road knows: the beats on the board, and the board saying why"), L.Knows(TEXT("Road")) && L.Offered(Beats) && L.M().Stages[0].Text.Contains(TEXT("It may know the beats")));
+		TestTrue(TEXT("shown: an order, an hour, and three given back"), L.Act(Beats) && L.Out.bSuccess && L.Out.CheckSummary.Contains(TEXT("ordered")) && FMath::IsNearlyEqual(L.Left(), 9.0, 0.01) && L.Knows(TEXT("Hailed")));
+		TestTrue(TEXT("the once"), !L.Offered(Beats) && !L.Act(Beats) && L.M().Stages[0].Text.Contains(TEXT("fell back for them, the once")));
+		FLeviathanUnderTest B(-1, { TEXT("Lock.Broken") });
+		TestTrue(TEXT("a ship that broke a lock: six hours, and the board saying why"), B.Knows(TEXT("Wary")) && FMath::IsNearlyEqual(B.Left(), 6.0, 0.01) && B.M().Stages[0].Text.Contains(TEXT("word of the broken lock")));
+		FLeviathanUnderTest G(-1, { TEXT("Lock.Broken"), TEXT("Leviathan.Given") });
+		TestTrue(TEXT("unless its kind have had better of her since: seven hours, and its call on file"), !G.Knows(TEXT("Wary")) && FMath::IsNearlyEqual(G.Left(), 7.0, 0.01) && G.Knows(TEXT("Call")));
+	}
+	{
+		// One burned, then one given what it wants: the burning is unsaid.
+		const bool bMended = LevUnderSomeCrew([this](int32 Seed)
+		{
+			FLeviathanUnderTest L(FLeviathanUnderTest::Plate, { TEXT("Leviathan.Blooded") }, Seed);
+			UMissionSubsystem* Ms = L.S.Missions;
+			if (L.Wanted() != FLeviathanUnderTest::Plate || !L.Knows(TEXT("Shut")) || !L.Carry(L.Gift(FLeviathanUnderTest::Plate))) { return false; }
+			TestTrue(TEXT("given what it wants after one of its kind was burned: that is unsaid"), Ms->Remembers(TEXT("Leviathan.Given")) && !Ms->Remembers(TEXT("Leviathan.Blooded")));
+			return true;
+		});
+		TestTrue(TEXT("some crew carried the gift to a wary one"), bMended);
+	}
+	return true;
+}
+
+namespace
+{
+	/** What happens in space to a ship over so many days, hour by hour: every event as it comes, with any fold in time
+	 *  worn out at once (the run for clear space, twelve times) and any leviathan stood fast for, or (the first, when
+	 *  asked) left astern at warp. */
+	struct FLevSpaceRun
+	{
+		FSystems S;
+		FCrewShipState Clock;
+		TArray<EMissionKind> Kinds;
+		struct FMet { int32 Id; int32 Secret; int32 Pass; double Came; };
+		TArray<FMet> Leviathans;
+		double LeftAt = -1.0;
+		FLevSpaceRun(bool bClearSpace, bool bLeaveTheFirst, int32 Days)
+		{
+			S.ChartedWithWorlds();
+			int32 Seen = 0;
+			FMissionOutcome Out; FString Reply;
+			for (int32 h = 0; h < Days * 24; ++h)
+			{
+				S.Roster->DevAdvanceHours(1, Clock);
+				FMissionShipState Ship = S.Ship(); Ship.bClearSpace = bClearSpace;
+				S.Missions->AdvanceSeconds(1.f, Ship);
+				TArray<int32> Folds, Alongside;
+				for (; Seen < S.Missions->GetMissions().Num(); ++Seen)
+				{
+					const FMission& M = S.Missions->GetMissions()[Seen];
+					if (M.Source != EMissionSource::Event) { continue; }
+					Kinds.Add(M.Kind);
+					if (M.Kind == EMissionKind::TimeLoop) { Folds.Add(M.Id); }
+					if (M.Kind == EMissionKind::Leviathan) { Alongside.Add(M.Id); Leviathans.Add({ M.Id, M.Secret, M.Pass, S.Roster->GetStardate() }); }
+				}
+				for (int32 Id : Folds)
+				{
+					for (int32 k = 0; k < 14 && S.Missions->Find(Id)->IsOpen(); ++k)
+					{
+						const FMissionStage& St = S.Missions->Find(Id)->Stages[0];
+						for (int32 i = 0; i < St.Options.Num(); ++i) { if (St.Options[i].Text.Contains(TEXT("run for clear"))) { S.Missions->Act(Id, i, Out, Reply); break; } }
+					}
+				}
+				for (int32 Id : Alongside)
+				{
+					if (bLeaveTheFirst && LeftAt < 0.0)
+					{
+						FMissionShipState Warp = Ship; Warp.bAtWarp = true;
+						S.Missions->AdvanceSeconds(1.f, Warp); S.Missions->AdvanceSeconds(1.f, Ship);
+						LeftAt = S.Roster->GetStardate();
+						continue;
+					}
+					const FMissionStage& St = S.Missions->Find(Id)->Stages[0];
+					for (int32 i = 0; i < St.Options.Num(); ++i) { if (St.Options[i].Text.Contains(TEXT("Stand fast"))) { S.Missions->Act(Id, i, Out, Reply); break; } }
+				}
+			}
+		}
+		int32 FirstLeviathan() const { return Kinds.IndexOfByKey(EMissionKind::Leviathan); }
+	};
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkMissionLeviathanRollTest, "Slonk.Missions.LeviathanRoll", SLONK_TEST_FLAGS)
+bool FSlonkMissionLeviathanRollTest::RunTest(const FString& Parameters)
+{
+	// When one comes. Out of open space none ever does; in open space the same events fall, the same, up to the first
+	// leviathan, which takes the place of one of them. (That the events without one are the events there were before
+	// there were any is read from RollEvent, where the fold's and the leviathan's draw is a stream of its own: two
+	// runs of this code cannot show it.) Strangers keep ten days apart. One left astern is the same creature back, the next of its kind to
+	// come, two days on or a little more (what else is on the board must be done with first).
+	const int32 Days = 120;
+	FLevSpaceRun Shut(false, false, Days), Open(true, false, Days), Left(true, true, Days);
+	const int32 First = Open.FirstLeviathan();
+	AddInfo(FString::Printf(TEXT("%d days: %d events out of open space; %d in it, %d of them leviathans, the first the %dth event"), Days, Shut.Kinds.Num(), Open.Kinds.Num(), Open.Leviathans.Num(), First + 1));
+	TestTrue(TEXT("out of open space no leviathan comes"), Shut.Kinds.Num() > 20 && !Shut.Kinds.Contains(EMissionKind::Leviathan));
+	if (!TestTrue(TEXT("in open space one comes inside the days"), First >= 0 && Shut.Kinds.IsValidIndex(First))) { return false; }
+	bool bSameBefore = true; for (int32 i = 0; i < First; ++i) { bSameBefore &= Open.Kinds[i] == Shut.Kinds[i]; }
+	TestTrue(TEXT("and every event before it is the event that fell without it"), bSameBefore);
+	bool bApart = true; for (int32 i = 1; i < Open.Leviathans.Num(); ++i) { bApart &= Open.Leviathans[i].Came - Open.Leviathans[i - 1].Came >= 10.0 && Open.Leviathans[i].Pass == 0; }
+	TestTrue(TEXT("more than one stranger comes in the days, and they keep ten days apart"), Open.Leviathans.Num() >= 2 && bApart);
+	// Left astern: the first is the same one the open run met; the next of its kind is that one again.
+	if (!TestTrue(TEXT("the one left astern, and another after it"), Left.Leviathans.Num() >= 2 && Left.LeftAt > 0.0 && Open.Leviathans.Num() >= 1)) { return false; }
+	const FLevSpaceRun::FMet& Was = Left.Leviathans[0]; const FLevSpaceRun::FMet& Back = Left.Leviathans[1];
+	AddInfo(FString::Printf(TEXT("left astern at %.2f; back at %.2f, %.2f days on"), Left.LeftAt, Back.Came, Back.Came - Left.LeftAt));
+	TestTrue(TEXT("the same first meeting as the run that stood fast"), Was.Secret == Open.Leviathans[0].Secret && FMath::IsNearlyEqual(Was.Came, Open.Leviathans[0].Came, 1.0e-6) && Was.Pass == 0);
+	TestTrue(TEXT("the next of its kind is the same creature, following"), Back.Secret == Was.Secret && Back.Pass == 1);
+	TestTrue(TEXT("two days on, or a little more"), Back.Came - Left.LeftAt >= 2.0 - 1.0e-6 && Back.Came - Left.LeftAt <= 4.5);
+	TestTrue(TEXT("and it is not left following for ever: its mark is spent"), !Left.S.Missions->Remembers(TEXT("Leviathan.Astern")));
 	return true;
 }
 

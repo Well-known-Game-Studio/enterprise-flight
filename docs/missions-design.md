@@ -155,7 +155,74 @@ The regard is less three for every pass after the first, never under ten. Torped
 investigation and the right answer is two passes with not an hour to spare (scan and probe; hull, faces and the
 answer). Guessing blind costs a wrong answer on the average, and its blow.
 
-## 7. Later
+## 7. A puzzle with a body: the leviathan alongside
+
+The second puzzle is built of the same pieces as the fold (§6), and has a body in space that the ship herself can
+act on (`EMissionKind::Leviathan`, "A leviathan alongside"; the body is `ALeviathan`, Leviathan.h). It comes one
+event in sixteen (the sixteenth after the fold's, of the same separate draw, so every other event falls as it did),
+never within ten days of the last, and only in open space with a core that could take the ship away from it; or
+`ship mission dev leviathan`.
+
+A living thing nine kilometres long, cased in rock and wreck, a light in every seam of its case and one worked stone
+of the old road's make set in its head, comes up from astern and lays itself along the starboard beam. It wants one
+thing of the ship, of four, another each time (`FMission::Secret`): **plate** for its case, **quiet** (her drive
+lies across its hearing of the road), **lee** from the star's flare, or **hands** to clean what it cannot reach.
+Four officers read it four ways on the board, each with what acting on that reading would cost.
+
+- **The hours are the distance.** It has so many hours of work before it is against the hull (seven;
+  `PassHours`, `HoursLeft`, as a fold's pass has, and the one pass only). Acts on the board spend them, carried or
+  not, and the first shot of the ship's guns into it takes one; nothing else does: the clock is held at ×1 while it
+  is alongside (`IsCompanyAlongside`) and the mission does not run out. It lies 1 km off the beam and 1.3 km more for every hour left (`ALeviathan::StationCm`: ten
+  kilometres at seven hours, inside the phasers' and the torpedoes' reach from the first), and comes on as they are
+  spent. At no hours nothing is forced: what costs hours is refused, and the captain stands fast, fires, or runs.
+- **Three findings, each striking out one reading.** Its call (1 h), its track (2 h) and what a boat sees along it
+  (2 h) each say one thing against one want it has not, a different one each: all three leave the one it has, two
+  leave an even pair. Three findings and the gift fit seven hours unless the gift is the cold core. The findings'
+  checks are surer than the gifts' (55, 60 and 65 against 70 and 75), so that a crew which carries a gift only three
+  times in four still does better by finding out than by guessing (by a few points of regard, the science, and the
+  prices spared).
+- **Every way's price is on the board before it is taken**, in words that do not tell what it wants: each gift's
+  beside the officer who reads it so; that a wrong gift, a shot and a leaving are each held against the ship when
+  the right thing is given; what standing fast can take besides the blow; what leaves it astern, and that a cold
+  core does not.
+- **Four gifts, one of them wanted.** Nothing the board or the console shows of a gift tells which. A gift it does
+  not want is done as ordered, with no check: its hours and one more, its price all the same where the price is in
+  the giving, twelve off the regard when the right one is found, and that gift off the board.
+
+| Gift | Hours | Its price |
+| --- | --- | --- |
+| Plate | 1 | The spare-parts lockers emptied and 35 off the hull, wanted or not |
+| Quiet (the core shut down cold) | 3 | No warp for twelve hours, wanted or not; and a cold ship cannot leave it at warp |
+| Lee | 2 | Wanted: a day and a night in her shadow (22 hours more, lived at once: every other deadline so much nearer) |
+| Hands | 2 | Wanted: a watch on its hide (6 hours more). Unwanted, or the check failed: someone of the party may be hurt (0.35) |
+
+| Way of parting | Regard | What follows |
+| --- | --- | --- |
+| Given what it wants | 45 | Science 200, and the findings' 240. Less 12 for each wrong gift and for a shot fired into it, less 6 for each time it was left astern, never under 5. Its kind know the ship: the next one's call is read as it comes up (`Leviathan.Given`) |
+| Stood fast (an order: no hours, no check, always on the board) | 10 | Science 150. It takes what it came for in its own way: a hard blow (60 hull points by the ship's own model of a blow: a system damaged, casualties), and by what it wanted a strake of hull (35) or the core out (twelve hours cold). Nothing remembered |
+| Driven off by the ship's own guns | 0 | Science 120 (pieces of its case). The first shot into it costs an hour and is held against her; 600 points of damage turn it, and it strikes as it goes (35 hull points). The crew carry it (`Beast.Harmed`, the kinder the harder), and its kind remember: the next comes on with two hours fewer (`Leviathan.Blooded`) |
+| Left astern (warp with a live core; or down into a world's air, or to ground) | 0 | Closed as the captain's leaving, not a mission completed. What was learned is kept (a shot fired and the gifts it refused with it), and the same creature with the same want and the same body is the next of its kind to come, once two days are out and the board is clear (`Leviathan.Astern`; a fold in time drawn first still comes first), with two hours fewer each time, never under three. The third leaving is the last: it turns back to its road |
+
+Given what it wants and one burned unsay each other. What the old road left counts too: a ship that answered a
+lock (`Lock.Answered`) can show it the road's five beats (an order, one hour) and it gives her three hours back,
+the once; one that broke a lock (`Lock.Broken`) gets an hour fewer, unless its kind have had better of her since.
+
+**In space.** The body keeps the ship's course and speed (it is placed from her each frame, once she has moved and
+the origin has shifted, so her helm, her beam, her phasers and the HUD all find it where it is: at impulse a frame
+of her travel is more than a thousand kilometres), turns as she turns, and is nearer with every hour spent. (Her
+torpedoes fly in the world's own frame, as at anything that keeps pace with a ship under way: they are sure of it
+only from a ship at rest.) It shows
+what is done: a pale band of light down its length for a finding or the beats, amber for a thing misread or a shot,
+blue when a tractor beam is tried, the ship's or her shuttle's (which finds nothing it can hold: Engineering says
+so); a lash, white from end to end and in along the hull, as it takes what it came for or is driven off; and its
+lights low as it goes with what it wanted. Going, it draws off ahead and away as the ship sees it; left astern, it
+stays where it was and the ship goes. The ship flies through it unchecked. Only the ship's own guns count against
+her (a cube's torpedo that bursts on it is not her shot); they land on any part of it, and it is never destroyed.
+The scanner makes nothing of it: what is to be learned is on the board. When it comes alongside the autopilot is
+let go and the way it had on her taken off, the once (a leg that went to warp of itself, or carried on down into a
+world's air, would leave it astern with nobody having chosen to).
+
+## 8. Later
 
 Options that need a real away party in the field (the shuttle down, people on foot: the crew figures and the
 interiors first), events between systems and at warp, missions that chain (a smuggler's manifest leads to a

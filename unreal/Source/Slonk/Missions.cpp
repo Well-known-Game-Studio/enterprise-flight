@@ -19,6 +19,7 @@
 #include "Exploration.h"
 #include "Frontier.h"
 #include "Impactor.h"
+#include "Leviathan.h"
 
 const TCHAR* UMissionSubsystem::SlotName = TEXT("Missions");
 namespace
@@ -114,13 +115,107 @@ namespace
 		for (const FString& K : Known) { T += TEXT("\n- ") + K; }
 		return T;
 	}
+	// ---- a leviathan alongside ----------------------------------------------------------------------------------
+	// A living thing nine kilometres long, cased in rock and wreck, lays itself along the beam and closes on the ship
+	// with every hour's work done under it. It wants one thing of her, of four, another each time (the mission's
+	// secret): 0 plate for its case, 1 quiet (her drive lies across its hearing of the road), 2 lee from the star's
+	// flare, 3 hands to clean what it cannot reach. Three things can be found out (0 its call, 1 its track, 2 what a
+	// boat sees), and each strikes out one want it has not, a different one each: the three together leave the one
+	// it has, two leave an even pair.
+	/** A mission whose acts are paid for in hours it has only so many of (FMission::PassHours, HoursLeft). */
+	bool Budgeted(const FMission& M) { return M.PassHours > 0.0; }
+	int32 LevWant(const FMission& M) { return M.Secret % 4; }
+	int32 LevRuledOut(const FMission& M, int32 Source)
+	{
+		static const int32 LevPerm[6][3] = { { 0, 1, 2 }, { 0, 2, 1 }, { 1, 0, 2 }, { 1, 2, 0 }, { 2, 0, 1 }, { 2, 1, 0 } };
+		return (LevWant(M) + 1 + LevPerm[(M.Secret / 4) % 6][Source % 3]) % 4;
+	}
+	/** What a finding says: one observation against one reading, silent on the other three. */
+	const TCHAR* LevClue(int32 Source, int32 Out)
+	{
+		static const TCHAR* Clues[3][4] = {
+			{ TEXT("It sounds the ship from stem to stern and lets every echo of her plating go by unanswered."),
+			  TEXT("The drive's field was run up and down its whole range while we listened. Its call did not change by a beat."),
+			  TEXT("When the star flared across every band, its call neither faltered nor fell quiet. The star does not trouble it."),
+			  TEXT("Listening close, its plates ride quiet on it: no grind of grit under them when it swims. Its hide is clean.") },
+			{ TEXT("Its track passes a hulk by a thousand kilometres: sixty thousand tons of plate adrift. It did not turn its head."),
+			  TEXT("It turned for the ship from farther off than her drive can be heard. Something told it she was here; not her engines."),
+			  TEXT("It has lain four days in the open glare of this star, and through the last flare it did not alter course."),
+			  TEXT("Twice in four days it has rolled through a dust lane, as its kind scour themselves. What tending it needs, it does.") },
+			{ TEXT("The boat trailed a ton of scrap plate on a line past its head, twice. It let the plate go by."),
+			  TEXT("The boat ran her drive up hard under its head, shut it down, and ran it up again. It did not turn to her drive or from it."),
+			  TEXT("The boat laid the lee of her shields over its head a quarter of an hour. It moved out from under, into the glare."),
+			  TEXT("The boat put two hands in suits onto its hide. It shut its plates under their boots, and held them shut until they were off.") } };
+		return Clues[Source % 3][Out % 4];
+	}
+	const TCHAR* LevSourceMark(int32 Source) { static const TCHAR* Marks[] = { TEXT("Call"), TEXT("Track"), TEXT("Boat") }; return Marks[Source % 3]; }
+	FName LevGiftMark(int32 Gift) { static const TCHAR* Marks[] = { TEXT("Not.Plate"), TEXT("Not.Quiet"), TEXT("Not.Lee"), TEXT("Not.Hands") }; return FName(Marks[Gift % 4]); }
+	/** The hours of work a meeting has before it is against the hull: seven, an hour fewer for a ship that broke a
+	 *  lock on its road, two for one that burned one of its kind, two for each time this one was left astern; never
+	 *  fewer than the dearest gift takes. */
+	double LevHours(const FMission& M, int32 TimesLeft)
+	{
+		return FMath::Max(3.0, 7.0 - (M.Marks.Contains(TEXT("Wary")) ? 1.0 : 0.0) - (M.Marks.Contains(TEXT("Shut")) ? 2.0 : 0.0) - 2.0 * TimesLeft);
+	}
+	/** Starfleet's regard for a leviathan given what it wanted: the less for each thing given that it did not want,
+	 *  for a shot fired into it, and for each time it was left astern to follow. */
+	int32 LevGivenRegard(const FMission& M)
+	{
+		int32 Misread = M.Marks.Contains(TEXT("Fired")) ? 1 : 0;
+		for (int32 k = 0; k < 4; ++k) { Misread += M.Marks.Contains(LevGiftMark(k)) ? 1 : 0; }
+		return FMath::Max(5, 45 - 12 * Misread - 6 * M.Pass);
+	}
+	/** The board of a leviathan alongside: how near it is, what each officer makes of it and what each reading would
+	 *  cost to act on, what every other way of parting from it costs, then one line a thing known. */
+	FString LeviathanText(const FMission& M)
+	{
+		auto Has = [&M](const TCHAR* Mark) { return M.Marks.Contains(FName(Mark)); };
+		const int32 Left = FMath::RoundToInt(FMath::Max(M.HoursLeft, 0.0));
+		FString T;
+		TArray<FString> Lines;
+		if (Left > 0)
+		{
+			T = FString::Printf(TEXT("It lies %.0f kilometres off the beam, and every hour's work done under it brings it on: %s, and it is against the hull. It has done her no harm. It wants something of her, and four officers read it four ways."),
+				ALeviathan::StationCm(M.HoursLeft) / 1.0e5, Left == 1 ? TEXT("one hour's work more") : *FString::Printf(TEXT("%d hours' work"), Left));
+			static const TCHAR* Readings[] = {
+				TEXT("The operations officer: plate. It wears wreck and wants more. All the lockers' stock and a strake of her own skin: gone, whether it wanted them or not."),
+				TEXT("The chief engineer: quiet. Her drive lies across its hearing of the road. A core shut down cold is twelve hours relighting, wanted or not, and a cold ship cannot go to warp."),
+				TEXT("The helmsman: lee. The star is working up to a flare. It would lie in her shadow a day and a night, and every other errand a day the nearer."),
+				TEXT("The doctor: hands. It is fouled under its plates where it cannot reach. Parties on its hide for a watch, and it can roll on them.") };
+			static const TCHAR* Refused[] = { TEXT("Given, and not wanted: plate."), TEXT("Given, and not wanted: quiet."), TEXT("Given, and not wanted: lee."), TEXT("Given, and not wanted: hands.") };
+			for (int32 k = 0; k < 4; ++k) { Lines.Add(M.Marks.Contains(LevGiftMark(k)) ? Refused[k] : Readings[k]); }
+			Lines.Add(TEXT("The wrong thing given costs an hour more, and is held against her when the right one is found."));
+		}
+		else
+		{
+			T = TEXT("It lies along the hull, feeling over her plating. There is no time left for work: stand fast, fire, or run if she can.");
+		}
+		// What each other way of parting costs, said before it is taken (and none of it telling what it wants).
+		Lines.Add(TEXT("Standing fast, it takes what it came for in its own way: a hard blow, people hurt, and if it is plate or quiet it wants, a strake of her skin or the core put out cold."));
+		Lines.Add(Has(TEXT("Fired")) ? TEXT("Her guns would turn it. It strikes as it goes; Starfleet will not thank her, and its kind remember.")
+			: TEXT("Her guns would turn it. The first shot brings it on and is held against her; it strikes as it goes; Starfleet will not thank her, and its kind remember."));
+		Lines.Add(M.Pass >= 2 ? FString(TEXT("Warp, with a lit core, or going down into a world's air, leaves it astern. It has followed her twice, and will not a third time: what it wanted would go unsaid."))
+			: FString::Printf(TEXT("Warp, with a lit core, or going down into a world's air, leaves it astern with what has been learned. It will follow%s, and the leaving is held against her when the right thing is given."),
+				LevHours(M, M.Pass + 1) < M.PassHours - 0.5 ? TEXT(", with less patience") : TEXT("")));
+		if (M.Pass > 0) { Lines.Add(TEXT("It is the same one: the same stone in its case. It has followed her, and comes on faster than when it first came.")); }
+		if (Has(TEXT("Road")) && !Has(TEXT("Hailed"))) { Lines.Add(TEXT("The stone in its case is of the road's make, and her mark is on its fellows. It may know the beats.")); }
+		if (Has(TEXT("Wary"))) { Lines.Add(TEXT("The stone in its case calls short and hard: word of the broken lock has gone down the road. It comes on the faster.")); }
+		if (Has(TEXT("Shut"))) { Lines.Add(TEXT("Every plate on it is shut. Its kind have been burned by a ship before, and it comes on fast.")); }
+		if (Has(TEXT("Filed"))) { Lines.Add(TEXT("Communications has the last one's calls on file: this one's was read as it came up.")); }
+		static const TCHAR* Sources[] = { TEXT("Its call. "), TEXT("Its track. "), TEXT("The boat. ") };
+		for (int32 s = 0; s < 3; ++s) { if (Has(LevSourceMark(s))) { Lines.Add(FString(Sources[s]) + LevClue(s, LevRuledOut(M, s))); } }
+		if (Has(TEXT("Fired"))) { Lines.Add(TEXT("It has been fired on, and holds it against her.")); }
+		if (Has(TEXT("Hailed"))) { Lines.Add(TEXT("It knew the road's beats, and fell back for them, the once.")); }
+		for (const FString& L : Lines) { T += TEXT("\n- ") + L; }
+		return T;
+	}
 	/** A stage at its own place: a Station with no name is any station the ship is alongside. */
 	FMissionStage StageAt(const TCHAR* Title, const FString& Text, EMissionTarget Kind, const FString& Name) { FMissionStage S = Stage(Title, Text, true); S.bOwnTarget = true; S.TargetKind = Kind; S.TargetName = Name; return S; }
 }
 
 FString UMissionSubsystem::KindName(EMissionKind K)
 {
-	static const TCHAR* N[] = { TEXT("Survey"), TEXT("Rescue"), TEXT("Diplomacy"), TEXT("Delivery"), TEXT("Anomaly"), TEXT("Medical"), TEXT("Patrol"), TEXT("Contact"), TEXT("Derelict"), TEXT("Smuggler"), TEXT("Support"), TEXT("Assist"), TEXT("Explore"), TEXT("FirstContact"), TEXT("PreWarp"), TEXT("Beacon"), TEXT("Outpost"), TEXT("Colony"), TEXT("Starbase"), TEXT("Impact"), TEXT("TimeLoop") };
+	static const TCHAR* N[] = { TEXT("Survey"), TEXT("Rescue"), TEXT("Diplomacy"), TEXT("Delivery"), TEXT("Anomaly"), TEXT("Medical"), TEXT("Patrol"), TEXT("Contact"), TEXT("Derelict"), TEXT("Smuggler"), TEXT("Support"), TEXT("Assist"), TEXT("Explore"), TEXT("FirstContact"), TEXT("PreWarp"), TEXT("Beacon"), TEXT("Outpost"), TEXT("Colony"), TEXT("Starbase"), TEXT("Impact"), TEXT("TimeLoop"), TEXT("Leviathan") };
 	return (int32)K < (int32)EMissionKind::Count ? N[(int32)K] : TEXT("-");
 }
 FString UMissionSubsystem::SourceName(EMissionSource S) { static const TCHAR* N[] = { TEXT("Starfleet"), TEXT("Starbase"), TEXT("Event"), TEXT("Fleet") }; return (int32)S < 4 ? N[(int32)S] : TEXT("-"); }
@@ -295,7 +390,8 @@ void UMissionSubsystem::AdvanceSeconds(float Seconds, const FMissionShipState& S
 {
 	if (RealSeconds < 0.f) { RealSeconds = Seconds; }
 	// (The first look after a load is not the drive being engaged.)
-	const bool bWasAtWarp = LastClockHours < 0.0 ? Ship.bAtWarp : Last.bAtWarp;
+	const bool bFirstLook = LastClockHours < 0.0;
+	const bool bWasAtWarp = bFirstLook ? Ship.bAtWarp : Last.bAtWarp;
 	Last = Ship;
 	if (UFleetSubsystem* F = Fleet())
 	{
@@ -347,6 +443,16 @@ void UMissionSubsystem::AdvanceSeconds(float Seconds, const FMissionShipState& S
 		if (Ship.bAtWarp && !bWasAtWarp) { ComeRound(M, TEXT("The ship runs for clear space at warp, and every heading bends back into the fold.")); }
 		if (M.State == EMissionState::Active) { M.DeadlineStardate = Stardate() + M.HoursLeft / 24.0; }
 	}
+	// A leviathan alongside is left astern by a ship that goes to warp (a cold core does not go), or down into a
+	// world's air, or to ground. Otherwise it waits on the captain: its hours are spent by what is done under it,
+	// and its body is put back in the world where a load, or a world not yet ready, left it without one.
+	for (FMission& M : Missions)
+	{
+		if (M.State != EMissionState::Active || M.Kind != EMissionKind::Leviathan) { continue; }
+		if (!bFirstLook && ((Ship.bAtWarp && !IsDriveCold()) || !Ship.bClearSpace)) { M.Exit = TEXT("Slipped"); LeaveLeviathan(M); continue; }
+		M.DeadlineStardate = Stardate() + M.HoursLeft / 24.0;
+		if (GetWorld() && !ALeviathan::FindByMission(GetWorld(), M.Id)) { SpawnLeviathan(M); }
+	}
 	Expire();
 	if (bSaveWanted) { SaveDelaySeconds -= RealSeconds; if (SaveDelaySeconds <= 0.f) { Save(); } }
 }
@@ -357,9 +463,15 @@ bool UMissionSubsystem::IsHeldInTime() const
 	return false;
 }
 
+bool UMissionSubsystem::IsCompanyAlongside() const
+{
+	for (const FMission& M : Missions) { if (M.State == EMissionState::Active && M.Kind == EMissionKind::Leviathan) { return true; } }
+	return false;
+}
+
 double UMissionSubsystem::PassHoursLeft(const FMission& M) const
 {
-	return M.State == EMissionState::Active && M.Kind == EMissionKind::TimeLoop ? FMath::Max(M.HoursLeft, 0.0) : 0.0;
+	return M.State == EMissionState::Active && Budgeted(M) ? FMath::Max(M.HoursLeft, 0.0) : 0.0;
 }
 
 void UMissionSubsystem::BeginPass(FMission& M)
@@ -371,7 +483,7 @@ void UMissionSubsystem::BeginPass(FMission& M)
 
 bool UMissionSubsystem::HasHoursFor(const FMission& M, const FMissionOption& O) const
 {
-	return O.Hours <= 0.f || M.Kind != EMissionKind::TimeLoop || PassHoursLeft(M) + 1.0e-3 >= O.Hours;
+	return O.Hours <= 0.f || !Budgeted(M) || PassHoursLeft(M) + 1.0e-3 >= O.Hours;
 }
 
 void UMissionSubsystem::ComeRound(FMission& M, const FString& How)
@@ -450,13 +562,137 @@ void UMissionSubsystem::LeaveFold(FMission& M, const FMissionOption& O)
 	Dirty();
 }
 
+void UMissionSubsystem::SpawnLeviathan(FMission& M)
+{
+	// Its body, on the beam of the ship whose people these are (none in a test, or before the world has her).
+	UWorld* W = GetWorld();
+	AStarshipPawn* Ship = W ? CrewedShip() : nullptr;
+	if (!Ship || M.Site.IsEmpty()) { return; }
+	ALeviathan::Spawn(W, Ship, M.Site, M.Id, M.HoursLeft);
+}
+
+void UMissionSubsystem::LeviathanOutcome(int32 MissionId, ELeviathanOutcome Outcome)
+{
+	FMission* MP = nullptr; for (FMission& Each : Missions) { if (Each.Id == MissionId && Each.Kind == EMissionKind::Leviathan && Each.State == EMissionState::Active) { MP = &Each; } }
+	if (!MP) { return; }
+	FMission& M = *MP;
+	if (Outcome == ELeviathanOutcome::Struck)
+	{
+		// The first shot into it, the once (a body put back after a load has been fired on already): it does not
+		// turn, it comes on; and it is held against her as a thing misread is.
+		if (M.Marks.Contains(TEXT("Fired"))) { return; }
+		M.Marks.Add(TEXT("Fired"));
+		M.HoursLeft = FMath::Max(M.HoursLeft - 1.0, 0.0);
+		M.Log.Add(FString::Printf(TEXT("%.1f  The ship fired on it. It did not turn: it came on."), Stardate()));
+		if (UCrewRosterSubsystem* R = Roster()) { FCrewExperience E; E.Tag = TEXT("Beast.Harmed"); E.Intensity = 0.4f; E.Text = TEXT("The ship fired on a living thing that had done her no harm"); E.bCaptainsChoice = true; R->Experience(E); }
+		Report(TEXT("It felt that, Captain. It has not turned: it has come on."), FLinearColor(1.f, 0.75f, 0.5f), ECrewDepartment::Tactical);
+		if (M.Stages.Num() > 0) { M.Stages[0].Text = LeviathanText(M); }
+		if (ALeviathan* Body = ALeviathan::FindByMission(GetWorld(), M.Id)) { Body->Ripple(ALeviathan::Amber()); }
+		Dirty();
+		return;
+	}
+	// Turned by her guns: no regard for it, and what it left adrift is the science (earned before the closing, which
+	// pays it).
+	M.Exit = TEXT("Driven"); M.Standing = 0; M.ScienceEarned += 120;
+	CompleteOutside(M, TEXT("driven off"), TEXT("Plate boils off its flank. It flares white end to end, lashes once along the hull as it turns, and goes. It has left pieces of its case adrift."));
+	LeaveLeviathan(M);
+}
+
+void UMissionSubsystem::LeviathanAfter(FMission& M, const FMissionOption& O, bool bSuccess)
+{
+	// What an act on the board costs beyond its hours, and what the creature shows for it.
+	UCrewRosterSubsystem* R = Roster();
+	ALeviathan* Body = ALeviathan::FindByMission(GetWorld(), M.Id);
+	int32 Gift = -1; for (int32 k = 0; k < 4; ++k) { if (O.NotIfMark == LevGiftMark(k)) { Gift = k; } }
+	if (Gift >= 0)
+	{
+		// The wrong thing given costs an hour more: of the work left, and of the stars' time.
+		if (O.bWrong) { if (R) { R->LiveHours(1); } M.HoursLeft = FMath::Max(M.HoursLeft - 1.0, 0.0); }
+		// What was given is gone, whether it was wanted or not (a check that failed gave nothing): the lockers' stock
+		// and a strake of hull; or the core, twelve hours in the relighting from the hour it went cold.
+		if (bSuccess || O.bWrong)
+		{
+			if (Gift == 0) { if (AStarshipPawn* Ship = CrewedShip()) { if (Ship->Systems) { Ship->Systems->Stores.SpareParts = 0.f; } Ship->HullIntegrity = FMath::Max(Ship->HullIntegrity - 35.f, 1.f); } }
+			if (Gift == 1) { DriveColdUntilHours = Hours() + 12.0; }
+		}
+		if (O.bWrong && Body) { Body->Ripple(ALeviathan::Amber()); }
+	}
+	else if (bSuccess && !O.GivesMark.IsNone())
+	{
+		// A finding; or the road's beats, for which it gives her room: three hours for the one they took.
+		if (O.GivesMark == FName(TEXT("Hailed"))) { M.HoursLeft += 3.0; }
+		if (Body) { Body->Ripple(ALeviathan::Pale()); }
+	}
+	if (M.IsOpen() && M.Stages.Num() > 0) { M.Stages[0].Text = LeviathanText(M); M.DeadlineStardate = Stardate() + M.HoursLeft / 24.0; }
+}
+
+void UMissionSubsystem::LeaveLeviathan(FMission& M)
+{
+	// Parted from: what follows is the way's own.
+	UCrewRosterSubsystem* R = Roster();
+	auto Felt = [R](const TCHAR* Tag, float Intensity, const FString& Text, bool bChoice) { if (R) { FCrewExperience E; E.Tag = Tag; E.Intensity = Intensity; E.Text = Text; E.bCaptainsChoice = bChoice; R->Experience(E); } };
+	const FLinearColor Good(0.6f, 1.f, 0.6f), Grave(1.f, 0.75f, 0.5f);
+	AStarshipPawn* Ship = GetWorld() ? CrewedShip() : nullptr;
+	ALeviathan* Body = ALeviathan::FindByMission(GetWorld(), M.Id);
+	const int32 Want = LevWant(M);
+	if (M.Exit == FName(TEXT("Given")))
+	{
+		// The lee is a day and a night in her shadow, the tending a watch on its hide: lived at once, and every other
+		// errand so much the nearer. Its kind know her for it; and what one of them was burned for is unsaid.
+		if (R && Want == 2) { R->LiveHours(22); } else if (R && Want == 3) { R->LiveHours(6); }
+		Legacy.AddUnique(TEXT("Leviathan.Given")); Legacy.Remove(TEXT("Leviathan.Blooded"));
+		Report(TEXT("It has what it came for, Captain, and is gone down its road."), Good, ECrewDepartment::Science);
+		if (Body) { Body->Depart(true); }
+	}
+	else if (M.Exit == FName(TEXT("Taken")))
+	{
+		// It takes what it came for in its own way: a hard blow by the ship's own model of one (something breaks, and
+		// people are hurt); and plate it takes from her skin, quiet by leaning on her until the core is out.
+		if (Ship && Ship->Systems) { Ship->Systems->OnHit(60.f, 60.f); }
+		if (Ship && Want == 0) { Ship->HullIntegrity = FMath::Max(Ship->HullIntegrity - 35.f, 1.f); }
+		if (Want == 1) { DriveColdUntilHours = Hours() + 12.0; }
+		Felt(TEXT("Beast.Struck"), 0.7f, TEXT("A leviathan took what it came for from the ship, and nobody stopped it"), false);
+		Report(Want == 1 ? TEXT("It has taken what it came for and gone, Captain, and the core has gone with it: twelve hours to relight. Damage and casualties to follow.")
+			: TEXT("It has taken what it came for and gone, Captain. Damage and casualties to follow."), Grave, ECrewDepartment::Engineering);
+		if (Body) { Body->Lash(); Body->Depart(false); }
+	}
+	else if (M.Exit == FName(TEXT("Driven")))
+	{
+		// It strikes as it goes, the lighter blow; the crew carry what was done to it, and its kind remember.
+		if (Ship && Ship->Systems) { Ship->Systems->OnHit(35.f, 35.f); }
+		Legacy.AddUnique(TEXT("Leviathan.Blooded")); Legacy.Remove(TEXT("Leviathan.Given"));
+		Felt(TEXT("Beast.Harmed"), 0.9f, TEXT("A living thing that had done the ship no harm, burned until it turned"), true);
+		Report(TEXT("It struck us as it went, Captain. The pieces are aboard for Science."), Grave, ECrewDepartment::Tactical);
+		if (Body) { Body->Lash(); Body->Depart(false); }
+	}
+	else if (M.Exit == FName(TEXT("Slipped")))
+	{
+		// Left astern: nothing settled, what was learned kept, and the same creature the next of its kind to come. The
+		// third time it does not follow (so there is an end to leaving it). No regard either way, and not a mission
+		// completed: the board has it as the captain's leaving.
+		const bool bLast = M.Pass >= 2;
+		const FString Text = bLast ? TEXT("She draws away, and this time it does not follow: it hangs astern a while, then turns back down its road with what it wanted of her unsaid.")
+			: TEXT("She draws away, and it falls astern still swimming after her. What it wanted, it wants yet.");
+		M.Standing = 0;
+		M.Log.Add(FString::Printf(TEXT("      %s"), *Text));
+		Close(M, EMissionState::Abandoned, TEXT("left astern"));
+		PayScience(M, Text);
+		if (!bLast) { Legacy.AddUnique(TEXT("Leviathan.Astern")); }
+		Report(bLast ? TEXT("It has turned back to its road, Captain. We shall not see that one again.") : TEXT("It has not turned back to its road, Captain. It is still coming."), FLinearColor(0.75f, 0.9f, 1.f), ECrewDepartment::Helm);
+		// (Its body finds the mission closed, and goes of itself.)
+	}
+	// (Closed where the hours lived on the way out left her: the next of its kind keeps its days from there.)
+	M.ClosedStardate = Stardate();
+	Dirty();
+}
+
 void UMissionSubsystem::Expire()
 {
 	const double SD = Stardate();
 	for (FMission& M : Missions)
 	{
-		// (A loop in time the ship is in does not run out: it comes round.)
-		if (!M.IsOpen() || M.DeadlineStardate <= 0.0 || SD <= M.DeadlineStardate || (M.Kind == EMissionKind::TimeLoop && M.State == EMissionState::Active)) { continue; }
+		// (A loop in time the ship is in does not run out: it comes round. Nor does a leviathan alongside: it waits.)
+		if (!M.IsOpen() || M.DeadlineStardate <= 0.0 || SD <= M.DeadlineStardate || (Budgeted(M) && M.State == EMissionState::Active)) { continue; }
 		if (M.State == EMissionState::Offered || M.Kind == EMissionKind::Assist)
 		{
 			Close(M, EMissionState::Expired, M.Kind == EMissionKind::Assist ? TEXT("their work went on without us") : TEXT("the offer lapsed"));
@@ -544,7 +780,7 @@ bool UMissionSubsystem::PickTarget(FMission& M, FRandomStream& R)
 		M.TargetKind = EMissionTarget::World; M.TargetName = E->PreWarpWorld; M.Group = FName(*FString::Printf(TEXT("%s people"), *E->PreWarpWorld)); return true;
 	}
 	case EMissionKind::Beacon: M.TargetKind = EMissionTarget::None; return true;   // the signal gives the target when decoded
-	case EMissionKind::TimeLoop: M.TargetKind = EMissionTarget::None; return true;   // it is where the ship is
+	case EMissionKind::TimeLoop: case EMissionKind::Leviathan: M.TargetKind = EMissionTarget::None; return true;   // it is where the ship is
 	case EMissionKind::Outpost: case EMissionKind::Colony: case EMissionKind::Starbase:
 	{
 		// Somewhere the Federation may found it (the frontier's rules); a colony's order names the world.
@@ -892,6 +1128,98 @@ FMission UMissionSubsystem::MakeMission(EMissionKind Kind, EMissionSource Source
 		M.Stages[0].Text = LoopWatchText(M);
 		break;
 	}
+	case EMissionKind::Leviathan:
+	{
+		// A leviathan alongside (the helpers above): one stage, and so many hours of work before it is against the
+		// hull. Three findings each strike out one reading of what it wants; four gifts, one of them wanted, each
+		// with a price of its own that is paid whether it was wanted or not; and four ways of parting from it
+		// (LeaveLeviathan): given what it wants, left to take it, driven off by the ship's own guns, or left astern
+		// at warp, to follow. Nothing here waits on the clock: the captain's order ends it, whenever it is given.
+		M.Title = TEXT("A leviathan alongside"); M.Standing = 0; M.TargetKind = EMissionTarget::None;
+		// One left astern is the same creature come back: the same want, what was learned of it, and less patience.
+		const FMission* Was = nullptr;
+		// (Only as the thing that happens, alongside at once: an offer of one, which only the console makes, is a
+		// stranger, and leaves the one that follows still to come.)
+		if (Source == EMissionSource::Event && Remembers(TEXT("Leviathan.Astern")))
+		{
+			for (const FMission& Old : Missions) { if (Old.Kind == EMissionKind::Leviathan && Old.Exit == FName(TEXT("Slipped"))) { Was = &Old; } }
+			Legacy.Remove(TEXT("Leviathan.Astern"));
+		}
+		if (Was)
+		{
+			M.Secret = Was->Secret; M.Site = Was->Site; M.Marks = Was->Marks; M.Pass = Was->Pass + 1;
+			M.Brief = TEXT("It is back. The leviathan that was left astern has come up with the ship again and laid itself along the starboard beam as before: the same one, by the stone in its case. It is edging in.");
+		}
+		else
+		{
+			M.Secret = R.RandRange(0, (1 << 20) - 1);
+			M.Site = FString::Printf(TEXT("Leviathan %d-%c"), (int32)Stardate(), TCHAR('A' + (M.Id % 26)));
+			M.Brief = TEXT("Something has come up from astern and laid itself along the starboard beam: a living thing nine kilometres long, cased in rock and wreck, pale lights in the seams of its case and one worked stone set among the wreck. It keeps the ship's course and speed to the metre, and it is edging in. It has not said what it wants.");
+			// What the ship's earlier meetings left: on the old road (a lock answered, and it may know the beats; one
+			// broken, and it comes on the faster, unless its kind have had better of her since), and with its kind (one
+			// given what it wanted, and this one's call is read as it comes up; one burned, and this one comes on fast).
+			if (Remembers(TEXT("Lock.Answered"))) { M.Marks.Add(TEXT("Road")); }
+			if (Remembers(TEXT("Lock.Broken")) && !Remembers(TEXT("Leviathan.Given"))) { M.Marks.Add(TEXT("Wary")); }
+			if (Remembers(TEXT("Leviathan.Blooded"))) { M.Marks.Add(TEXT("Shut")); }
+			if (Remembers(TEXT("Leviathan.Given"))) { M.Marks.Add(TEXT("Call")); M.Marks.Add(TEXT("Filed")); }
+		}
+		M.PassHours = LevHours(M, M.Pass);
+		M.HoursLeft = M.PassHours;
+		FMissionStage S0 = Stage(TEXT("Alongside"), FString(), false);
+		// What can be found out: each its hours, each one reading struck out. (Surer checks than the gifts': a crew
+		// that carries a gift only three times in four must still do better by finding out than by guessing.)
+		FMissionOption Listen = Opt(TEXT("Listen to it across the bands"), S::Operations, 55.f, D::Operations, TEXT("Discovery"), TEXT(""), LevClue(0, LevRuledOut(M, 0)), TEXT("It calls on a dozen bands at once; the hour goes in sorting them."), 0, 0, false, 0.f, 60);
+		Listen.Hours = 1.f; Listen.GivesMark = LevSourceMark(0);
+		FMissionOption Plot = Opt(TEXT("Plot its course back"), S::Science, 60.f, D::Science, TEXT("Discovery"), TEXT(""), LevClue(1, LevRuledOut(M, 1)), TEXT("The plot is too thin to carry its track past yesterday."), 0, 0, false, 0.f, 80);
+		Plot.Hours = 2.f; Plot.GivesMark = LevSourceMark(1);
+		FMissionOption Boat = Opt(TEXT("Send a boat down its length"), S::Helm, 65.f, D::Helm, TEXT("Away.Routine"), TEXT("Away.Danger"), LevClue(2, LevRuledOut(M, 2)), TEXT("Its wash throws the boat off twice before she can lie alongside; she comes back with nothing seen."), 0, 0, false, 0.2f, 100);
+		Boat.Hours = 2.f; Boat.GivesMark = LevSourceMark(2);
+		// (An order: a ship the road knows shows it the road's own beats, and it gives her room, the once.)
+		FMissionOption Beats = Opt(TEXT("Show it the road's five beats"), S::Operations, 0.f, D::Operations, TEXT(""), TEXT(""), TEXT("Five beats on the running lights, as the stone gave them. It checks, as its kind check at every lock on the road, and falls back."), TEXT(""), 0, 0, false, 0.f);
+		Beats.bSure = true; Beats.Hours = 1.f; Beats.NeedsMark = TEXT("Road"); Beats.GivesMark = TEXT("Hailed");
+		S0.Options = { Listen, Plot, Boat, Beats };
+		// The four gifts. One is what it wants; the others are done as ordered, and are not (and everything the board
+		// shows of a gift is the same whichever it is: only the creature knows the difference).
+		struct FLevGift { const TCHAR* Text; S Skill; float Difficulty; D Party; float Hours; float Risk; const TCHAR* FailTag; const TCHAR* Wanted; const TCHAR* NotWanted; const TCHAR* Failed; };
+		static const FLevGift Gifts[4] = {
+			{ TEXT("Give it plate: the lockers' stock and a strake of hull"), S::Operations, 70.f, D::Operations, 1.f, 0.f, TEXT(""),
+				TEXT("It takes the plate as a hand takes a coin, sets it into its case, and turns away down its road."),
+				TEXT("The plate drifts down its whole length untouched. It comes on."),
+				TEXT("The stock fouls in the lock and is got back aboard.") },
+			{ TEXT("Shut the warp core down cold"), S::Engineering, 70.f, D::Engineering, 3.f, 0.f, TEXT(""),
+				TEXT("As the field dies its head lifts off the ship, as if a door had shut on a noise. It listens; it finds its road; it goes."),
+				TEXT("The core is cold, and it has not slowed. It comes on, and now there is no going to warp."),
+				TEXT("The core will not go cold in the hours given to it.") },
+			{ TEXT("Lay her lee over it and hold"), S::Helm, 70.f, D::Helm, 2.f, 0.f, TEXT(""),
+				TEXT("She spreads her shields head to the star, and it settles into their shadow like a ship into a berth. A day and a night; then it goes."),
+				TEXT("Two hours it lies in her shadow, then moves out into the glare. It comes on."),
+				TEXT("She cannot be held head to the star so close aboard it.") },
+			{ TEXT("Send parties across to tend it"), S::Medicine, 75.f, D::Medical, 2.f, 0.35f, TEXT("Away.Danger"),
+				TEXT("It lifts its plates to them down its whole length; under them is a century of grit it could not reach. They work it clean in a watch, and it goes."),
+				TEXT("They find nothing under its plates to do, and it rolls to be rid of them. It comes on."),
+				TEXT("A plate comes down early; the parties are got off in a hurry.") } };
+		for (int32 k = 0; k < 4; ++k)
+		{
+			const FLevGift& G = Gifts[k];
+			const bool bWanted = k == LevWant(M);
+			FMissionOption Gift = Opt(G.Text, G.Skill, G.Difficulty, G.Party, TEXT("Beast.Tended"), G.FailTag, G.Wanted, bWanted ? G.Failed : G.NotWanted, -1, 0, false, G.Risk, 200);
+			Gift.Hours = G.Hours; Gift.NotIfMark = LevGiftMark(k); Gift.Exit = TEXT("Given"); Gift.ExitStanding = 45;
+			if (!bWanted) { Gift.bWrong = true; Gift.FailGivesMark = LevGiftMark(k); }
+			S0.Options.Add(Gift);
+		}
+		// Standing fast: always there, no hours, no check. What it does says what it wanted.
+		static const TCHAR* Takes[4] = {
+			TEXT("It lays its head along the hull and takes a strake of her plating, lifted like bark, with whatever was behind it. Then it goes."),
+			TEXT("It leans on the nacelles until the field dies and the core with it, lifts its head as if listening, and goes."),
+			TEXT("It shoulders in under her shields to lie in their shadow, hard against her, and every frame in her feels it. Then it goes."),
+			TEXT("It rubs its fouled flank down the length of her, plate grinding on plate. Then it goes.") };
+		FMissionOption Stand = Opt(TEXT("Stand fast and let it come"), S::Command, 0.f, D::Command, TEXT(""), TEXT(""), Takes[LevWant(M)], TEXT(""), -1, -1, false, 0.f, 150);
+		Stand.bSure = true; Stand.Exit = TEXT("Taken"); Stand.ExitStanding = 10;
+		S0.Options.Add(Stand);
+		M.Stages = { S0 };
+		M.Stages[0].Text = LeviathanText(M);
+		break;
+	}
 	default: break;
 	}
 	return M;
@@ -1001,6 +1329,10 @@ void UMissionSubsystem::AfterOption(FMission& M, const FMissionOption& O, bool b
 	case EMissionKind::TimeLoop:
 		if (bOver && bSucceeded) { LeaveFold(M, O); }
 		break;
+	case EMissionKind::Leviathan:
+		LeviathanAfter(M, O, bSuccess);
+		if (bOver && bSucceeded) { LeaveLeviathan(M); }
+		break;
 	case EMissionKind::Impact:
 	{
 		if (M.Stage == 1 && !bOver && bSuccess && O.Skill == ECrewSkill::Operations) { M.bEvacuated = true; }
@@ -1062,9 +1394,19 @@ void UMissionSubsystem::RollEvent()
 	// Once in a long while the ship runs into a fold in time: one event in sixteen, and none within ten days of the
 	// last. (A draw of its own, off the event's seed, so every other event falls as it did before there were any.)
 	FRandomStream Odd((int32)HashCombine((uint32)R.GetInitialSeed(), 0x7f4a7c15u));
+	const float OddDraw = Odd.FRand();
 	bool bLoopLately = false;
 	for (const FMission& Was : Missions) { bLoopLately |= Was.Kind == EMissionKind::TimeLoop && (Was.IsOpen() || Was.ClosedStardate > Stardate() - 10.0); }
-	if (Odd.FRand() < 0.0625f && !bLoopLately) { M = MakeMission(EMissionKind::TimeLoop, EMissionSource::Event, R); }
+	// And once in as long a while something of the old road's comes alongside: the next sixteenth of the same draw,
+	// none within ten days of the last, and only in open space with a core that could take her away from it. One that
+	// was left astern is the next of its kind, once two days are out, whatever the draw (a fold on its own sixteenth
+	// still comes first).
+	const bool bFollowed = Remembers(TEXT("Leviathan.Astern"));
+	bool bLeviathanLately = false;
+	for (const FMission& Was : Missions) { bLeviathanLately |= Was.Kind == EMissionKind::Leviathan && (Was.IsOpen() || Was.ClosedStardate > Stardate() - (bFollowed ? 2.0 : 10.0)); }
+	const bool bLeviathan = !bLeviathanLately && Last.bClearSpace && !IsDriveCold() && (bFollowed || (OddDraw >= 0.0625f && OddDraw < 0.125f));
+	if (OddDraw < 0.0625f && !bLoopLately) { M = MakeMission(EMissionKind::TimeLoop, EMissionSource::Event, R); }
+	else if (bLeviathan) { M = MakeMission(EMissionKind::Leviathan, EMissionSource::Event, R); }
 	else if (R.FRand() < 0.17f) { M = MakeMission(EMissionKind::Impact, EMissionSource::Event, R); }
 	if (M.Id < 0) { M = MakeMission(Kind, EMissionSource::Event, R); }
 	M.State = EMissionState::Active; if (M.Kind != EMissionKind::Impact) { M.DeadlineStardate = Stardate() + 1.0; }
@@ -1072,7 +1414,7 @@ void UMissionSubsystem::RollEvent()
 	Place(M);
 	Missions.Add(M);
 	Report(FString::Printf(TEXT("%s It is on the mission board, Captain."), *M.Brief), FLinearColor(1.f, 0.85f, 0.5f),
-		M.Kind == EMissionKind::Anomaly || M.Kind == EMissionKind::Contact || M.Kind == EMissionKind::Impact || M.Kind == EMissionKind::TimeLoop ? ECrewDepartment::Science : ECrewDepartment::Operations);
+		M.Kind == EMissionKind::Anomaly || M.Kind == EMissionKind::Contact || M.Kind == EMissionKind::Impact || M.Kind == EMissionKind::TimeLoop || M.Kind == EMissionKind::Leviathan ? ECrewDepartment::Science : ECrewDepartment::Operations);
 	Dirty();
 }
 
@@ -1081,6 +1423,7 @@ void UMissionSubsystem::Place(FMission& M)
 	if (M.TargetKind == EMissionTarget::Vessel && M.Source == EMissionSource::Event) { SpawnEventVessel(M, M.TargetName); }
 	if (M.Kind == EMissionKind::Impact) { SpawnImpactor(M, M.ImpactHours); }
 	if (M.Kind == EMissionKind::TimeLoop && M.State == EMissionState::Active) { BeginPass(M); }
+	if (M.Kind == EMissionKind::Leviathan && M.State == EMissionState::Active) { BeginPass(M); SpawnLeviathan(M); bHelmStop = true; }
 }
 
 bool UMissionSubsystem::HasOpenExpansion(EMissionKind Kind, const FString& System) const
@@ -1367,6 +1710,7 @@ bool UMissionSubsystem::Accept(int32 Id, FString& OutReply)
 		if (M.State != EMissionState::Offered) { OutReply = FString::Printf(TEXT("%s is %s"), *M.Title, *StateName(M.State).ToLower()); return false; }
 		M.State = EMissionState::Active;
 		if (M.Kind == EMissionKind::TimeLoop) { BeginPass(M); }
+		if (M.Kind == EMissionKind::Leviathan) { BeginPass(M); SpawnLeviathan(M); bHelmStop = true; }
 		M.Log.Add(FString::Printf(TEXT("%.1f  Accepted%s."), Stardate(), M.Source == EMissionSource::Starbase ? *(TEXT(" at ") + M.PostedAt) : TEXT("")));
 		for (FStarfleetMessage& Msg : Inbox) { if (Msg.MissionId == Id) { Msg.bRead = true; } }
 		OutReply = FString::Printf(TEXT("%s accepted%s"), *M.Title, M.TargetName.IsEmpty() ? TEXT("") : *FString::Printf(TEXT("; make for %s"), *M.TargetName));
@@ -1383,6 +1727,7 @@ bool UMissionSubsystem::Abandon(int32 Id, FString& OutReply)
 		if (M.Id != Id) { continue; }
 		if (!M.IsOpen()) { OutReply = FString::Printf(TEXT("%s is already %s"), *M.Title, *StateName(M.State).ToLower()); return false; }
 		if (M.Kind == EMissionKind::TimeLoop && M.State == EMissionState::Active) { OutReply = TEXT("There is nowhere to leave it for: the fold is all round the ship"); return false; }
+		if (M.Kind == EMissionKind::Leviathan && M.State == EMissionState::Active) { OutReply = IsDriveCold() ? TEXT("It is alongside, and the core is cold: there is no leaving it at warp until she is lit") : TEXT("It is alongside: take her to warp, or down into a world's air, and it is left astern"); return false; }
 		const bool bWasActive = M.State == EMissionState::Active;
 		Close(M, EMissionState::Abandoned, TEXT("by the captain's decision"));
 		if (bWasActive && M.Source != EMissionSource::Event) { Standing -= M.Standing / 2; ++Failed; }
@@ -1465,7 +1810,8 @@ void UMissionSubsystem::Hurt(const FMission& M, const TArray<int32>& Party, floa
 	const FCrewMember* C = R->Find(Id);
 	if (!C) { return; }
 	const bool bKilled = Risk > 0.3f && Rng.FRand() < 0.25f;
-	const FString Where = M.TargetName.IsEmpty() ? M.Title : M.TargetName;
+	// (Where there is no place named, the mission's own name; a leviathan by its own, as the HUD has it.)
+	const FString Where = !M.TargetName.IsEmpty() ? M.TargetName : M.Kind == EMissionKind::Leviathan && !M.Site.IsEmpty() ? M.Site : M.Title;
 	if (!Ship->Systems->HurtCrewMember(Id, bKilled, Rng.FRand() < 0.35f, Where)) { return; }
 	Report(FString::Printf(TEXT("%s %s on %s."), *C->Styled(), bKilled ? TEXT("was killed") : TEXT("is hurt"), *Where), FLinearColor(1.f, 0.5f, 0.4f), ECrewDepartment::Medical);
 }
@@ -1482,13 +1828,21 @@ bool UMissionSubsystem::Act(int32 Id, int32 Option, FMissionOutcome& Out, FStrin
 	UCrewRosterSubsystem* R = Roster();
 	if (!R) { OutReply = TEXT("No crew"); return false; }
 	const FMissionOption O = St->Options[Option];
+	const bool bLeviathan = M.Kind == EMissionKind::Leviathan;
 	if (!M.Offers(O))
 	{
-		OutReply = M.Learned(O) ? TEXT("That is known already: it is in the watch's report") : M.Closed(O) ? TEXT("That way is closed: it was tried, and refused")
+		OutReply = M.Learned(O) ? (bLeviathan ? TEXT("That is known already: it is on the board") : TEXT("That is known already: it is in the watch's report"))
+			: M.Closed(O) ? (bLeviathan ? TEXT("That was given, and not wanted") : TEXT("That way is closed: it was tried, and refused"))
 			: M.Done(O) ? TEXT("That is done already, this watch") : TEXT("Nobody aboard knows to try that yet");
 		return false;
 	}
-	if (!HasHoursFor(M, O)) { OutReply = FString::Printf(TEXT("There is not the time left in this watch: it wants %.0f hours, and the fold closes in %.1f"), O.Hours, PassHoursLeft(M)); return false; }
+	if (!HasHoursFor(M, O))
+	{
+		OutReply = bLeviathan ? FString::Printf(TEXT("There is not the time: it wants %s, and it is against the hull %s"), O.Hours < 1.5f ? TEXT("an hour's work") : *FString::Printf(TEXT("%.0f hours' work"), O.Hours),
+				PassHoursLeft(M) < 0.5 ? TEXT("now") : *FString::Printf(TEXT("in %.0f"), PassHoursLeft(M)))
+			: FString::Printf(TEXT("There is not the time left in this watch: it wants %.0f hours, and the fold closes in %.1f"), O.Hours, PassHoursLeft(M));
+		return false;
+	}
 	if (O.bNeedsSurvey)
 	{
 		const UScienceLogSubsystem* L = GetGameInstance() ? GetGameInstance()->GetSubsystem<UScienceLogSubsystem>() : nullptr;
@@ -1510,7 +1864,7 @@ bool UMissionSubsystem::Act(int32 Id, int32 Option, FMissionOutcome& Out, FStrin
 	FCrewCheck C;
 	if (O.bNeedsSurvey || O.bNeedsWorks) { C.bSuccess = true; C.Margin = 100.f; C.BestId = Party[0]; C.Summary = O.bNeedsSurvey ? TEXT("the survey on file") : TEXT("the works complete"); }
 	// (A wrong guess is wrong whoever makes it; and what is only an order given is carried as given.)
-	else if (O.bWrong) { C.bSuccess = false; C.Margin = -100.f; C.BestId = Party[0]; C.Summary = TEXT("Sent true, and in time. It was not the answer"); }
+	else if (O.bWrong) { C.bSuccess = false; C.Margin = -100.f; C.BestId = Party[0]; C.Summary = bLeviathan ? TEXT("Done as ordered. It was not what it wanted") : TEXT("Sent true, and in time. It was not the answer"); }
 	else if (O.bSure) { C.bSuccess = true; C.Margin = 100.f; C.BestId = Party[0]; C.Summary = TEXT("Done as ordered"); }
 	else { C = R->Check(O.Skill, O.Difficulty, Party, 0.f, M.Group); }
 	Out.bSuccess = C.bSuccess; Out.CheckSummary = C.Summary; Out.Text = C.bSuccess ? O.SuccessText : O.FailText;
@@ -1569,6 +1923,8 @@ bool UMissionSubsystem::Act(int32 Id, int32 Option, FMissionOutcome& Out, FStrin
 			M.Exit = O.Exit;
 			if (O.ExitStanding > 0) { M.Standing = O.ExitStanding; }
 			if (M.Kind == EMissionKind::TimeLoop) { M.Standing = FMath::Max(10, M.Standing - 3 * M.Pass); }
+			// A leviathan given what it wanted: the less for every misreading on the way to it.
+			if (bLeviathan && M.Exit == FName(TEXT("Given"))) { M.Standing = LevGivenRegard(M); }
 			Close(M, EMissionState::Completed, C.bSuccess ? TEXT("carried through") : TEXT("done, though not well"));
 			Standing += C.bSuccess ? M.Standing : M.Standing / 3; ++Completed;
 			PayScience(M, Out.Text);

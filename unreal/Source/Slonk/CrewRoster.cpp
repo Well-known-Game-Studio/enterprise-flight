@@ -19,7 +19,7 @@ namespace
 	const TCHAR* BetazoidNames[] = { TEXT("Lwaxana"), TEXT("Tam"), TEXT("Devinoni"), TEXT("Kestra"), TEXT("Rael") };
 	const TCHAR* RigelianNames[] = { TEXT("Vaal"), TEXT("Orin"), TEXT("Kesh"), TEXT("Tarn") };
 	const TCHAR* SaurianNames[] = { TEXT("Sssk"), TEXT("Rrash"), TEXT("Lssar") };
-	const TCHAR* Homes[] = { TEXT("Lagos, Earth"), TEXT("San Francisco, Earth"), TEXT("Nairobi, Earth"), TEXT("Kyoto, Earth"), TEXT("Montreal, Earth"), TEXT("Mumbai, Earth"), TEXT("Sao Paulo, Earth"), TEXT("Reykjavik, Earth"), TEXT("Luna, Tycho City"), TEXT("Mars, Utopia Planitia"), TEXT("Alpha Centauri"), TEXT("Deneva"), TEXT("Tarsus IV"), TEXT("Cestus III"), TEXT("Vega Colony"), TEXT("Rigel II"), TEXT("Starbase 11"), TEXT("the Bradbury colony") };
+	const TCHAR* CrewHomes[] = { TEXT("Lagos, Earth"), TEXT("San Francisco, Earth"), TEXT("Nairobi, Earth"), TEXT("Kyoto, Earth"), TEXT("Montreal, Earth"), TEXT("Mumbai, Earth"), TEXT("Sao Paulo, Earth"), TEXT("Reykjavik, Earth"), TEXT("Luna, Tycho City"), TEXT("Mars, Utopia Planitia"), TEXT("Alpha Centauri"), TEXT("Deneva"), TEXT("Tarsus IV"), TEXT("Cestus III"), TEXT("Vega Colony"), TEXT("Rigel II"), TEXT("Starbase 11"), TEXT("the Bradbury colony") };
 	const TCHAR* Classes[] = { TEXT("Academy class of '74"), TEXT("Academy class of '77"), TEXT("Academy class of '79"), TEXT("Academy class of '81"), TEXT("enlisted at Mars"), TEXT("enlisted at Earth"), TEXT("transferred from the Lexington"), TEXT("transferred from the Yorktown"), TEXT("transferred from Starbase 11"), TEXT("transferred from the Hood") };
 	const TCHAR* Hobbies[] = { TEXT("chess"), TEXT("the rec deck's handball court"), TEXT("Andorian flute"), TEXT("old films"), TEXT("the hydroponics bay"), TEXT("cards"), TEXT("tri-dimensional chess"), TEXT("sketching the nebulae"), TEXT("the ship's choir"), TEXT("fencing") };
 
@@ -435,7 +435,7 @@ FCrewMember UCrewRosterSubsystem::MakePerson(FRandomStream& R, ECrewDepartment D
 	M.Rank = Rank;
 	M.Department = Dept;
 	M.Age = (int32)FMath::Clamp(22 + (int32)Rank * 3 + R.RandRange(-3, 9), 19, 64);
-	M.Home = M.Species == TEXT("Human") ? Pick(R, Homes) : (M.Species == TEXT("Vulcan") ? TEXT("Vulcan") : M.Species == TEXT("Andorian") ? TEXT("Andoria") : M.Species == TEXT("Tellarite") ? TEXT("Tellar Prime") : M.Species == TEXT("Caitian") ? TEXT("Cait") : M.Species == TEXT("Bolian") ? TEXT("Bolarus IX") : M.Species == TEXT("Deltan") ? TEXT("Delta IV") : M.Species == TEXT("Betazoid") ? TEXT("Betazed") : M.Species == TEXT("Rigelian") ? TEXT("Rigel V") : TEXT("Sauria"));
+	M.Home = M.Species == TEXT("Human") ? Pick(R, CrewHomes) : (M.Species == TEXT("Vulcan") ? TEXT("Vulcan") : M.Species == TEXT("Andorian") ? TEXT("Andoria") : M.Species == TEXT("Tellarite") ? TEXT("Tellar Prime") : M.Species == TEXT("Caitian") ? TEXT("Cait") : M.Species == TEXT("Bolian") ? TEXT("Bolarus IX") : M.Species == TEXT("Deltan") ? TEXT("Delta IV") : M.Species == TEXT("Betazoid") ? TEXT("Betazed") : M.Species == TEXT("Rigelian") ? TEXT("Rigel V") : TEXT("Sauria"));
 	M.Backstory = FString::Printf(TEXT("%s; %s"), Pick(R, Classes), Pick(R, Hobbies));
 	M.Birthday = R.RandRange(0, 364);
 	M.Watch = (ECrewWatch)(Index % 3);
@@ -1384,11 +1384,15 @@ void UCrewRosterSubsystem::Experience(const FCrewExperience& E)
 		{ TEXT("Time.Loop"), -0.03f, 0.12f }, { TEXT("Time.Freed"), 0.15f, 0.f },
 		// Days gone that nobody lived (letters unanswered, a birthday missed); and a thing of a vanished people's destroyed.
 		{ TEXT("Time.Lost"), -0.1f, 0.08f }, { TEXT("Relic.Broken"), -0.06f, 0.04f },
+		// A great living thing met in space: given what it came for; harmed by the ship's own guns (the kinder the
+		// person, the harder it is carried); and let take what it wanted of her, the ship struck for it.
+		{ TEXT("Beast.Tended"), 0.14f, 0.f }, { TEXT("Beast.Harmed"), -0.1f, 0.05f }, { TEXT("Beast.Struck"), -0.06f, 0.2f },
 	};
 	float Valence = 0.05f, StressK = 0.05f;
 	for (const FKind& K : Kinds) { if (E.Tag == FName(K.Tag)) { Valence = K.Valence; StressK = K.StressK; } }
 	const FString TagS = E.Tag.ToString();
 	const bool bKill = TagS == TEXT("Combat.EnemyDestroyed"), bSpared = TagS == TEXT("Combat.ShipSpared"), bFirst = TagS == TEXT("Contact.First"), bRescue = TagS == TEXT("Rescue");
+	const bool bBeastHarmed = TagS == TEXT("Beast.Harmed");
 	const bool bCivilians = TagS == TEXT("Loss.Civilians"), bDanger = TagS == TEXT("Away.Danger"), bHostile = TagS == TEXT("Contact.Hostile"), bFriendlyContact = TagS == TEXT("Contact.Friendly") || TagS == TEXT("Parley.Held");
 	const bool bUnfair = TagS == TEXT("Captain.Unfair"), bFair = TagS == TEXT("Captain.Fair"), bFriendlyLost = TagS == TEXT("Combat.FriendlyLost");
 	const float I = FMath::Clamp(E.Intensity, 0.05f, 1.f);
@@ -1409,6 +1413,7 @@ void UCrewRosterSubsystem::Experience(const FCrewExperience& E)
 		if (bFirst) { V *= 0.5f + Cur; }
 		if (bRescue) { V *= 0.5f + Emp; }
 		if (bCivilians) { V *= 0.5f + Emp; }
+		if (bBeastHarmed) { V *= 0.5f + Emp; }
 		if (bDanger) { V = bThere ? (M.HasTrait(TEXT("ThrillSeeker")) ? 0.18f : (Cour - 0.6f) * 0.3f) : 0.f; }
 		if (bHostile) { V -= FMath::Max(-Bias, 0.f) * 0.15f; }
 		if (bFriendlyContact) { V += FMath::Max(Bias, 0.f) * 0.1f; }
