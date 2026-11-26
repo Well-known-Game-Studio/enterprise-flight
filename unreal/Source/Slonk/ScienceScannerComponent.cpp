@@ -613,6 +613,18 @@ void UScienceScannerComponent::FactsForStar(const AActor* A, FScanRecord& R) con
 	}
 	R.Facts.Add(FString::Printf(TEXT("Spectral class %s"), StarClassName(Class)));
 	R.Facts.Add(FString::Printf(TEXT("Diameter %.2f solar, photosphere ~%d K"), S->RadiusKm / 695700.f, StarTemperatureK(Class)));
+	// What else it is: young in its disk, or a dying star's core in the shells it shed.
+	if (S->bYoung)
+	{
+		R.Facts.Add(FString::Printf(TEXT("%s: protoplanetary disk to %.1f AU, %d gap%s, bipolar jets %.1f AU"),
+			Class == EStarClass::A || Class == EStarClass::F ? TEXT("Young Herbig star") : TEXT("Young T Tauri star"),
+			S->DiskOuterAu, S->DiskGaps, S->DiskGaps == 1 ? TEXT("") : TEXT("s"), S->JetLengthAu));
+	}
+	if (S->bShell)
+	{
+		R.Facts.Add(FString::Printf(TEXT("Planetary nebula: %s shell, %.0f AU, ionised oxygen within, hydrogen and nitrogen without"),
+			S->ShellLobes > 0.4f ? TEXT("bipolar") : TEXT("ring"), S->ShellRadiusAu));
+	}
 	if (Sys)
 	{
 		int32 Planets = 0;

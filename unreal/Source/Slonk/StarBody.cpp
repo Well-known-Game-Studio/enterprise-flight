@@ -57,7 +57,7 @@ AStarBody::AStarBody()
 	if (PlaneFinder.Succeeded()) { Corona->SetStaticMesh(PlaneFinder.Object); }
 
 	// A young star's disk (an engine plane in its equator) and its jets (engine cones from its centre out along its
-	// axis), in absolute scale; hidden unless it is young (ApplyYoung).
+	// axis), in absolute scale; hidden unless it is young (ApplySurroundings).
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> ConeFinder(TEXT("/Engine/BasicShapes/Cone.Cone"));
 	auto Part = [this](const TCHAR* Name, UStaticMesh* Mesh)
 	{
@@ -76,6 +76,10 @@ AStarBody::AStarBody()
 	Disk = Part(TEXT("Disk"), PlaneFinder.Succeeded() ? PlaneFinder.Object : nullptr);
 	JetNorth = Part(TEXT("JetNorth"), ConeFinder.Succeeded() ? ConeFinder.Object : nullptr);
 	JetSouth = Part(TEXT("JetSouth"), ConeFinder.Succeeded() ? ConeFinder.Object : nullptr);
+	// A planetary nebula's shell: the unit sphere the nebula march runs in, two-sided by its material. Sorted as a
+	// nebula is (Nebula.cpp), over the distant-star sprites.
+	ShellVolume = Part(TEXT("Shell"), Mesh);
+	ShellVolume->SetTranslucentSortPriority(2);
 
 	StarMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_Star.M_Star")));
 	CoronaMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_StarGlow.M_StarGlow")));
@@ -133,17 +137,19 @@ void AStarBody::ApplyAppearance()
 		CoronaMID->SetScalarParameterValue(TEXT("Activity"), Activity);
 		CoronaMID->SetScalarParameterValue(TEXT("Seed"), (float)(GetTypeHash(StarName) % 997u));
 	}
-	ApplyYoung();
+	ApplySurroundings();
 }
 
-void AStarBody::ApplyYoung()
+void AStarBody::ApplySurroundings()
 {
-	if (!Disk || !JetNorth || !JetSouth) { return; }
-	// (Seen from any distance: beyond the star's own horizon they are drawn shrunk toward the camera, PlaceYoung.)
+	if (!Disk || !JetNorth || !JetSouth || !ShellVolume) { return; }
+	// (Seen from any distance: beyond the star's own horizon they are drawn shrunk toward the camera,
+	// PlaceSurroundings.)
 	Disk->SetVisibility(bYoung);
 	JetNorth->SetVisibility(bYoung);
 	JetSouth->SetVisibility(bYoung);
-	if (!bYoung) { return; }
+	ShellVolume->SetVisibility(bShell);
+	if (!HasSurroundings()) { return; }
 	constexpr double AuCm = 1.495978707e13;
 	const double Outer = FMath::Max((double)DiskOuterAu, 0.2) * AuCm;
 	auto Mat = [this](TObjectPtr<UMaterialInstanceDynamic>& Slot, const TCHAR* Path, const TCHAR* Debug)
@@ -154,6 +160,24 @@ void AStarBody::ApplyYoung()
 		}
 		return Slot.Get();
 	};
+	if (bShell)
+	{
+		if (UMaterialInstanceDynamic* N = Mat(ShellMID, TEXT("/Game/Slonk/Materials/M_Nebula.M_Nebula"), TEXT("StarShell")))
+		{
+			ShellVolume->SetMaterial(0, N);
+			// The nebula march in its shell mode: its own glow, blue-green within and red without.
+			N->SetScalarParameterValue(TEXT("Shell"), 1.f);
+			N->SetScalarParameterValue(TEXT("Lobes"), ShellLobes);
+			N->SetScalarParameterValue(TEXT("Density"), 0.12f);
+			N->SetScalarParameterValue(TEXT("Emission"), 1.f);
+			N->SetScalarParameterValue(TEXT("Brightness"), 14.f);
+			N->SetScalarParameterValue(TEXT("Seed"), (float)(GetTypeHash(StarName) % 997u));
+			N->SetVectorParameterValue(TEXT("ColorA"), ShellOuter);
+			N->SetVectorParameterValue(TEXT("ColorB"), ShellInner);
+			N->SetVectorParameterValue(TEXT("EmissiveColor"), FLinearColor::White);
+		}
+	}
+	if (!bYoung) { return; }
 	if (UMaterialInstanceDynamic* D = Mat(DiskMID, TEXT("/Game/Slonk/Materials/M_StarDisk.M_StarDisk"), TEXT("StarDisk")))
 	{
 		Disk->SetMaterial(0, D);
@@ -170,19 +194,29 @@ void AStarBody::ApplyYoung()
 	}
 }
 
-void AStarBody::PlaceYoung(const FVector& ViewLoc)
+void AStarBody::PlaceSurroundings(const FVector& ViewLoc)
 {
-	if (!bYoung || !Disk || !JetNorth || !JetSouth) { return; }
+	if (!HasSurroundings() || !Disk || !JetNorth || !JetSouth || !ShellVolume) { return; }
 	constexpr double AuCm = 1.495978707e13;
 	const FVector Centre = GetActorLocation();
 	const double Dist = FVector::Dist(Centre, ViewLoc);
 	// Everything at k of its size and k of the way from the camera (the same angles), k such that the farthest
 	// reach of the disk or a jet is within the proxy distance.
-	const double Reach = Dist + FMath::Max((double)DiskOuterAu, (double)JetLengthAu) * AuCm;
-	const double K = FMath::Min(1.0, YoungProxyCm / FMath::Max(Reach, 1.0));
+	const double Reach = Dist + FMath::Max(bYoung ? FMath::Max((double)DiskOuterAu, (double)JetLengthAu) : 0.0, bShell ? FMath::Max((double)ShellRadiusAu, 0.01) : 0.0) * AuCm;
+	const double K = FMath::Min(1.0, ProxyCm / FMath::Max(Reach, 1.0));
 	const FVector At = ViewLoc + (Centre - ViewLoc) * K;
 	const FQuat Q = GetActorQuat();
 	const FVector Up = Q.GetUpVector();
+	if (bShell && ShellMID)
+	{
+		// The march's sphere is the shell's radius at the proxy's scale; its lobes along the star's axis.
+		const double SR = FMath::Max((double)ShellRadiusAu, 0.01) * AuCm * K;
+		ShellVolume->SetWorldLocationAndRotation(At, Q);
+		ShellVolume->SetWorldScale3D(FVector(SR / MeshUnitRadius));
+		ShellMID->SetScalarParameterValue(TEXT("RadiusCm"), (float)SR);
+		ShellMID->SetVectorParameterValue(TEXT("Axis"), FLinearColor(Up.X, Up.Y, Up.Z, 0.f));
+	}
+	if (!bYoung) { return; }
 	const double Outer = FMath::Max((double)DiskOuterAu, 0.2) * AuCm;
 	// The plane is 100 cm across and faces +Z, the star's axis: laid in its equator.
 	Disk->SetWorldLocationAndRotation(At, Q);
@@ -199,7 +233,7 @@ void AStarBody::PlaceYoung(const FVector& ViewLoc)
 void AStarBody::SetBeyondHorizon(bool bBeyond)
 {
 	bBeyondHorizon = bBeyond;
-	SetActorHiddenInGame(bBeyond && !bYoung);   // (a young star's disk and jets are drawn from any distance: only its body and glow hide)
+	SetActorHiddenInGame(bBeyond && !HasSurroundings());   // (a young star's disk and jets, a shell, are drawn from any distance: only its body and glow hide)
 #if WITH_EDITOR
 	if (GetWorld() && !GetWorld()->IsGameWorld())
 	{
@@ -208,8 +242,9 @@ void AStarBody::SetBeyondHorizon(bool bBeyond)
 #endif
 	if (Body) { Body->SetVisibility(!bBeyond); }
 	if (Corona) { Corona->SetVisibility(!bBeyond); }
-	// (A young star's disk and jets stay: they are placed for the camera, PlaceYoung.)
+	// (A young star's disk and jets, and a shell, stay: they are placed for the camera, PlaceSurroundings.)
 	if (bYoung && Disk && JetNorth && JetSouth) { Disk->SetVisibility(true); JetNorth->SetVisibility(true); JetSouth->SetVisibility(true); }
+	if (bShell && ShellVolume) { ShellVolume->SetVisibility(true); }
 }
 
 void AStarBody::OnConstruction(const FTransform& Transform)
@@ -327,7 +362,7 @@ void AStarBody::Tick(float DeltaTime)
 		PC->GetPlayerViewPoint(ViewLoc, ViewRot);
 		const FVector ToCam = ViewLoc - GetActorLocation();
 		const double Dist = ToCam.Size();
-		PlaceYoung(ViewLoc);
+		PlaceSurroundings(ViewLoc);
 		// Past the hand-over distance the distant-star sprite on the player takes over.
 		const bool bNear = Dist < FarSpriteDistanceCm;
 		if (Corona->IsVisible() != (bNear && !bBeyondHorizon))

@@ -143,6 +143,7 @@ void AStarSystem::ApplyStarClass(AStarBody* S, EStarClass Class, FRandomStream& 
 
 EStellarKind AStarSystem::StellarKindFor(const FStarSystemSpec& Spec)
 {
+	if (Spec.Kind != EStellarKind::Ordinary) { return Spec.Kind; }
 	// (A stream of its own off the seed: the catalogue's own draws are untouched.)
 	FRandomStream K((int32)HashCombine((uint32)Spec.Seed, 0x2c1b3c6du));
 	const float Roll = K.FRand();
@@ -253,6 +254,7 @@ AStarSystem* AStarSystem::Generate(UWorld* World, const FStarSystemSpec& Spec, c
 	// A young star: still in the disk it formed from, jets from its poles; restless, spotted. (Its sizes from a stream
 	// of its own, so the system's own draws are as they were.)
 	const EStellarKind Kind = StellarKindFor(Spec);
+	FQuat StarRot = FQuat::Identity;
 	if (Kind == EStellarKind::YoungTTauri || Kind == EStellarKind::YoungHerbig)
 	{
 		FRandomStream Y((int32)HashCombine((uint32)Spec.Seed, 0x6a09e667u));
@@ -262,8 +264,24 @@ AStarSystem* AStarSystem::Generate(UWorld* World, const FStarSystemSpec& Spec, c
 		S->DiskOuterAu = bHerbig ? Y.FRandRange(6.f, 14.f) : Y.FRandRange(2.5f, 7.f);
 		S->DiskGaps = Y.RandRange(1, 4);
 		S->JetLengthAu = S->DiskOuterAu * Y.FRandRange(0.8f, 1.6f);
+		// Its axis anywhere (so its disk is seldom edge-on to the ship coming in from the planets' plane).
+		StarRot = FRotator(Y.FRandRange(-75.f, 75.f), Y.FRandRange(0.f, 360.f), 0.f).Quaternion();
 	}
-	S->FinishSpawning(FTransform(Loc));
+	else if (Kind == EStellarKind::PlanetaryNebula)
+	{
+		// The shells it shed, well beyond its worlds: round, or pinched into two lobes along an axis anywhere; most
+		// glow blue-green within and red without, some more evenly red or greener.
+		FRandomStream Y((int32)HashCombine((uint32)Spec.Seed, 0x3c6ef372u));
+		S->bShell = true;
+		S->Activity = 0.f;
+		S->ShellRadiusAu = Y.FRandRange(60.f, 160.f);
+		S->ShellLobes = Y.FRand() < 0.45f ? Y.FRandRange(0.f, 0.2f) : Y.FRandRange(0.55f, 1.f);
+		const float Hue = Y.FRand();
+		S->ShellInner = Hue < 0.6f ? FLinearColor(0.3f, 0.95f, 0.85f) : Hue < 0.8f ? FLinearColor(0.55f, 1.0f, 0.5f) : FLinearColor(1.0f, 0.55f, 0.6f);
+		S->ShellOuter = Hue < 0.8f ? FLinearColor(1.0f, 0.3f, 0.35f) : FLinearColor(1.0f, 0.25f, 0.2f);
+		StarRot = FRotator(Y.FRandRange(-80.f, 80.f), Y.FRandRange(0.f, 360.f), 0.f).Quaternion();
+	}
+	S->FinishSpawning(FTransform(StarRot, Loc));
 	Sys->Star = S;
 	Sys->Adopt(S);
 

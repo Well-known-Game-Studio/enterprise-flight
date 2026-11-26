@@ -31,6 +31,8 @@ enum class EStellarKind : uint8
 	YoungTTauri,
 	/** A young hot star (Herbig Ae/Be): white or yellow-white, its disk the larger and brighter. */
 	YoungHerbig,
+	/** A white dwarf in the planetary nebula it shed as a dying giant, a glowing shell about its system. */
+	PlanetaryNebula,
 };
 
 /** Where a neighbouring system sits: a real-sky bearing (right ascension, declination) and distance in light-years. */
@@ -53,6 +55,9 @@ struct FStarSystemSpec
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "System") bool bStarOnly = false;
 	/** Starfleet is here: a station with its ships at each world. False for space nobody has reached. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "System") bool bPopulate = true;
+	/** What else its star is, when the spec says (the catalogue's remarkable stars); Ordinary leaves it to the
+	 *  seed (StellarKindFor). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "System") EStellarKind Kind = EStellarKind::Ordinary;
 };
 
 /**
@@ -114,7 +119,8 @@ public:
 
 	/** sqrt of a class's luminosity relative to the Sun: orbit radii scale by it so the temperate band stays put. */
 	static double LuminosityScale(EStarClass Class);
-	/** What else the star of a spec is (see EStellarKind): one young star in twelve among the cool and the hot. */
+	/** What else the star of a spec is (see EStellarKind): the spec's own Kind, or else one young star in twelve
+	 *  among the cool and the hot. */
 	static EStellarKind StellarKindFor(const FStarSystemSpec& Spec);
 
 	/** Roman numeral for a planet or moon's place (0-based), "I".."XII". */

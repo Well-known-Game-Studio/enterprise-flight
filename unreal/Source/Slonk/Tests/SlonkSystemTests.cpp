@@ -1352,6 +1352,48 @@ bool FSlonkExplorationCatalogueTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkExplorationRemarkableTest, "Slonk.Exploration.Remarkable", SLONK_TEST_FLAGS)
+bool FSlonkExplorationRemarkableTest::RunTest(const FString& Parameters)
+{
+	// After the dozen, untouched, a young star in its disk and a white dwarf in its shells: apart from every star,
+	// numbered and named as the others are, the same every game.
+	const TArray<FCatalogueEntry> Dozen = UExplorationSubsystem::MakeCatalogue(UExplorationSubsystem::CatalogueSeed, UExplorationSubsystem::CatalogueCount);
+	const TArray<FCatalogueEntry> A = UExplorationSubsystem::MakeFullCatalogue(UExplorationSubsystem::CatalogueSeed, UExplorationSubsystem::CatalogueCount);
+	const TArray<FCatalogueEntry> B = UExplorationSubsystem::MakeFullCatalogue(UExplorationSubsystem::CatalogueSeed, UExplorationSubsystem::CatalogueCount);
+	TestEqual(TEXT("the dozen and two"), A.Num(), UExplorationSubsystem::CatalogueCount + 2);
+	for (int32 i = 0; i < Dozen.Num() && i < A.Num(); ++i)
+	{
+		TestEqual(TEXT("the dozen as they were"), A[i].Designation, Dozen[i].Designation);
+		TestEqual(TEXT("the dozen's stars as they were"), (int32)A[i].Spec.StarClass, (int32)Dozen[i].Spec.StarClass);
+		TestEqual(TEXT("the dozen ordinary by their specs"), (int32)A[i].Spec.Kind, (int32)EStellarKind::Ordinary);
+	}
+	if (A.Num() != UExplorationSubsystem::CatalogueCount + 2) { return false; }
+	const FCatalogueEntry& Young = A[UExplorationSubsystem::CatalogueCount];
+	const FCatalogueEntry& Shell = A[UExplorationSubsystem::CatalogueCount + 1];
+	const EStellarKind YK = AStarSystem::StellarKindFor(Young.Spec);
+	TestTrue(TEXT("a young star"), YK == EStellarKind::YoungTTauri || YK == EStellarKind::YoungHerbig);
+	const EStarClass YC = Young.Spec.StarClass;
+	TestTrue(TEXT("of its kind's classes"), YK == EStellarKind::YoungTTauri ? (YC == EStarClass::K || YC == EStarClass::M) : (YC == EStarClass::A || YC == EStarClass::F));
+	TestEqual(TEXT("a planetary nebula"), (int32)AStarSystem::StellarKindFor(Shell.Spec), (int32)EStellarKind::PlanetaryNebula);
+	TestEqual(TEXT("about a white dwarf"), (int32)Shell.Spec.StarClass, (int32)EStarClass::WhiteDwarf);
+	TSet<FString> Designations, Names;
+	for (int32 i = 0; i < A.Num(); ++i)
+	{
+		TestFalse(TEXT("numbers unique"), Designations.Contains(A[i].Designation)); Designations.Add(A[i].Designation);
+		TestFalse(TEXT("names unique"), Names.Contains(A[i].ProperName)); Names.Add(A[i].ProperName);
+		TestEqual(TEXT("deterministic"), A[i].Designation, B[i].Designation);
+		TestEqual(TEXT("deterministic kind"), (int32)A[i].Spec.Kind, (int32)B[i].Spec.Kind);
+		TestTrue(TEXT("in the band"), A[i].Spec.DistanceLy >= 6.f && A[i].Spec.DistanceLy <= 30.f);
+		const FVector P = AStarSystem::DirectionFromSky(A[i].Spec.RightAscensionHours, A[i].Spec.DeclinationDeg) * (double)A[i].Spec.DistanceLy;
+		for (int32 j = 0; j < i; ++j)
+		{
+			const FVector Q = AStarSystem::DirectionFromSky(A[j].Spec.RightAscensionHours, A[j].Spec.DeclinationDeg) * (double)A[j].Spec.DistanceLy;
+			TestTrue(TEXT("apart"), FVector::Dist(P, Q) >= 1.4);
+		}
+	}
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkExplorationChartTest, "Slonk.Exploration.Chart", SLONK_TEST_FLAGS)
 bool FSlonkExplorationChartTest::RunTest(const FString& Parameters)
 {

@@ -3154,6 +3154,25 @@ void AStarshipPawn::ProcessDebugCommand()
 			Best->ApplyAppearance();
 		}
 	}
+	else if (Op == TEXT("star") && ArgStr(1) == TEXT("shell"))
+	{
+		// star shell [lobes 0..1] [radius AU] [degrees]: dev, the nearest star in a planetary nebula, round or lobed,
+		// its axis tipped that far.
+		AStarBody* Best = nullptr; double BestD = TNumericLimits<double>::Max();
+		for (TActorIterator<AStarBody> It(GetWorld()); It; ++It) { const double D = FVector::DistSquared(It->GetActorLocation(), GetActorLocation()); if (D < BestD) { BestD = D; Best = *It; } }
+		if (Best)
+		{
+			Best->bShell = true;
+			Best->ShellLobes = FMath::Clamp(Arg(2, 0.f), 0.f, 1.f);
+			if (Args.Num() > 3) { Best->ShellRadiusAu = FMath::Max(Arg(3, 100.f), 0.1f); }
+			if (Args.Num() > 4) { Best->SetActorRotation(FRotator(Arg(4, 0.f), 0.f, 0.f)); }
+			Best->ApplyAppearance();
+			FVector ViewLoc; FRotator ViewRot;
+			if (APlayerController* PC = Cast<APlayerController>(GetController())) { PC->GetPlayerViewPoint(ViewLoc, ViewRot); } else { ViewLoc = GetActorLocation(); }
+			UE_LOG(LogTemp, Log, TEXT("Star %s: a shell %.2f AU across it, lobes %.2f; the view %.3f AU from it"), *Best->StarName, Best->ShellRadiusAu, Best->ShellLobes,
+				FVector::Dist(ViewLoc, Best->GetActorLocation()) / 1.495978707e13);
+		}
+	}
 	else if (Op == TEXT("star") && ArgStr(1) == TEXT("cme"))
 	{
 		// star cme: an ejection now from the nearest star.

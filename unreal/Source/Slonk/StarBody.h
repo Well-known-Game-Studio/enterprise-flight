@@ -95,6 +95,16 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UStaticMeshComponent> JetNorth;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UStaticMeshComponent> JetSouth;
 
+	/** A planetary nebula about the star (a white dwarf, StarSystem's EStellarKind): the shells it shed as a dying
+	 *  giant, ShellRadiusAu across from it, round or (ShellLobes) pinched at the waist into two lobes along its axis,
+	 *  glowing ShellInner nearest it and ShellOuter at the edge (M_Nebula's shell mode). Hidden on any other star. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star|Shell") bool bShell = false;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star|Shell") float ShellRadiusAu = 100.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star|Shell", meta = (ClampMin = "0", ClampMax = "1")) float ShellLobes = 0.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star|Shell") FLinearColor ShellInner = FLinearColor(0.3f, 0.95f, 0.85f);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star|Shell") FLinearColor ShellOuter = FLinearColor(1.0f, 0.3f, 0.35f);
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UStaticMeshComponent> ShellVolume;
+
 	/** How spotted the star is: 0 a clean disc, 1 eight spot groups at once (the photosphere's Activity). Its spots,
 	 *  and where and when they come, are drawn from its name. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star", meta = (ClampMin = "0", ClampMax = "1"))
@@ -134,12 +144,14 @@ private:
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> CoronaMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> DiskMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> JetMID;
-	void ApplyYoung();
-	/** Place the disk and jets for the camera: a copy shrunk toward the camera along the line of sight, the same angles,
-	 *  so that its farthest point lies within YoungProxyCm: inside the ship's star sphere (5e11 cm, opaque, where the
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> ShellMID;
+	void ApplySurroundings();
+	/** Place the disk and jets, or the shell, for the camera: a copy shrunk toward the camera along the line of sight, the same angles,
+	 *  so that its farthest point lies within ProxyCm: inside the ship's star sphere (5e11 cm, opaque, where the
 	 *  sky is drawn) and the render horizon, both of which a disk of AUs would cross. As it is, when it fits. */
-	void PlaceYoung(const FVector& ViewLoc);
-	static constexpr double YoungProxyCm = 4.5e11;
+	void PlaceSurroundings(const FVector& ViewLoc);
+	static constexpr double ProxyCm = 4.5e11;
+	bool HasSurroundings() const { return bYoung || bShell; }
 	UPROPERTY(Transient) TObjectPtr<UNiagaraComponent> Ejecta;
 	void TickEjecta(float DeltaTime);
 	/** Seconds to the next ejection, and the seconds left of the one going. */
