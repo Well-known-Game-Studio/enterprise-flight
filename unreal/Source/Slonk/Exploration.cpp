@@ -106,8 +106,8 @@ TArray<FCatalogueEntry> UExplorationSubsystem::MakeRemarkable(int32 Seed, const 
 		const FString Digits = O.Designation.RightChop(4);
 		if (Digits.IsNumeric()) { UsedNumbers.Add(FCString::Atoi(*Digits)); }
 	}
-	// A young star, a T Tauri star or (one time in three) a Herbig star; a white dwarf in its shells.
-	const EStellarKind Kinds[] = { EStellarKind::YoungTTauri, EStellarKind::PlanetaryNebula };
+	// A young star, a T Tauri star or (one time in three) a Herbig star; a white dwarf in its shells; a close pair.
+	const EStellarKind Kinds[] = { EStellarKind::YoungTTauri, EStellarKind::PlanetaryNebula, EStellarKind::ClosePair };
 	TArray<FCatalogueEntry> Out;
 	for (int32 k = 0; k < UE_ARRAY_COUNT(Kinds); ++k)
 	{
@@ -128,6 +128,13 @@ TArray<FCatalogueEntry> UExplorationSubsystem::MakeRemarkable(int32 Seed, const 
 			const bool bHerbig = R.FRand() < 1.f / 3.f;
 			E.Spec.Kind = bHerbig ? EStellarKind::YoungHerbig : EStellarKind::YoungTTauri;
 			E.Spec.StarClass = bHerbig ? (R.FRand() < 0.5f ? EStarClass::A : EStarClass::F) : (R.FRand() < 0.5f ? EStarClass::K : EStarClass::M);
+		}
+		else if (E.Spec.Kind == EStellarKind::ClosePair)
+		{
+			// An orange or yellow star giving its gas to a white dwarf (the separation is set by the donor's size).
+			E.Spec.StarClass = R.FRand() < 0.6f ? EStarClass::K : EStarClass::G;
+			E.Spec.CompanionClass = EStarClass::WhiteDwarf;
+			E.Spec.CompanionSeparationAU = 0.01f;
 		}
 		else { E.Spec.StarClass = EStarClass::WhiteDwarf; }
 		int32 Number = 0; do { Number = R.RandRange(1000, 9999); } while (UsedNumbers.Contains(Number));

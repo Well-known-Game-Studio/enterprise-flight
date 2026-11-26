@@ -287,19 +287,33 @@ AStarSystem* AStarSystem::Generate(UWorld* World, const FStarSystemSpec& Spec, c
 
 	// A companion star, in the orbital plane at the given separation.
 	const bool bBinary = Spec.CompanionClass != EStarClass::None && Spec.CompanionSeparationAU > 0.f;
+	// (A close pair's separation is the donor's: it fills its Roche lobe, about 0.36 of the separation across.)
+	const bool bClose = bBinary && Kind == EStellarKind::ClosePair;
+	const double SepCm = bClose ? S->GetRadiusCm() / 0.36 : (double)Spec.CompanionSeparationAU * AuCm;
 	FVector CLoc = Loc;
 	if (bBinary)
 	{
 		const double Ang = Rng.FRandRange(0.0, 2.0 * PI);
-		CLoc = Loc + FVector(FMath::Cos(Ang), FMath::Sin(Ang), 0.0) * ((double)Spec.CompanionSeparationAU * AuCm);
+		CLoc = Loc + FVector(FMath::Cos(Ang), FMath::Sin(Ang), 0.0) * SepCm;
 		AStarBody* C = World->SpawnActorDeferred<AStarBody>(AStarBody::StaticClass(), FTransform(CLoc), nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
 		if (C)
 		{
 			C->StarName = Spec.Name + TEXT(" B");
 			ApplyStarClass(C, Spec.CompanionClass, Rng);
+			if (bClose)
+			{
+				// Going round the donor in its Kepler period (a star and a white dwarf of about one and a half suns
+				// together), its disk fed from it; and the donor drawn toward it.
+				C->bAccreting = true;
+				C->Partner = S;
+				C->OrbitRadiusCm = SepCm;
+				C->OrbitPhase = (float)Ang;
+				C->OrbitPeriodS = (float)(2.0 * PI * FMath::Sqrt(SepCm * SepCm * SepCm / (1.5 * 1.327e26)));
+			}
 			C->FinishSpawning(FTransform(CLoc));
 			Sys->Companion = C;
 			Sys->Adopt(C);
+			if (bClose) { S->Tide = 0.4f; S->Partner = C; S->ApplyAppearance(); }
 		}
 	}
 
@@ -328,9 +342,12 @@ void AStarSystem::Reveal()
 	// Planets: the primary's inside a third of the separation (a binary's stable zone), then a few of the
 	// companion's own.
 	TArray<APlanetBody*> Primary, Secondary;
-	const double MaxPrimaryAu = bBinary ? (double)Spec.CompanionSeparationAU * 0.3 : 1.0e9;
+	// (A close pair's worlds go round both, far outside the pair: they are the primary's, unbounded, and the
+	// companion has none of its own.)
+	const bool bClose = bBinary && StellarKindFor(Spec) == EStellarKind::ClosePair;
+	const double MaxPrimaryAu = bBinary && !bClose ? (double)Spec.CompanionSeparationAU * 0.3 : 1.0e9;
 	Sys->SpawnPlanets(World, Rng, Loc, Spec.Name, Spec.StarClass, Rng.RandRange(4, 7), MaxPrimaryAu, SeedShift, Primary);
-	if (bBinary && Sys->Companion)
+	if (bBinary && Sys->Companion && !bClose)
 	{
 		Sys->SpawnPlanets(World, Rng, CLoc, Spec.Name + TEXT(" B"), Spec.CompanionClass, Rng.RandRange(1, 3), (double)Spec.CompanionSeparationAU * 0.3, SeedShift, Secondary);
 	}

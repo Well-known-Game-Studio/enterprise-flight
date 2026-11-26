@@ -105,6 +105,18 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star|Shell") FLinearColor ShellOuter = FLinearColor(1.0f, 0.3f, 0.35f);
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UStaticMeshComponent> ShellVolume;
 
+	/** A star of a close pair (StarSystem's EStellarKind::ClosePair). The donor fills its Roche lobe: Tide draws it
+	 *  out toward its Partner into a teardrop pointed at the inner Lagrange point (M_Star's Tide, a fraction of its
+	 *  radius). The accretor (bAccreting) draws the gas into a disk round itself, fed by a stream from that point
+	 *  (M_AccretionDisk on the Disk plane), and goes round the donor at OrbitRadiusCm once in OrbitPeriodS of game
+	 *  time. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star|Pair") float Tide = 0.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star|Pair") bool bAccreting = false;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star|Pair") TObjectPtr<AStarBody> Partner;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star|Pair") double OrbitRadiusCm = 0.0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star|Pair") float OrbitPeriodS = 20000.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star|Pair") float OrbitPhase = 0.f;
+
 	/** How spotted the star is: 0 a clean disc, 1 eight spot groups at once (the photosphere's Activity). Its spots,
 	 *  and where and when they come, are drawn from its name. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star", meta = (ClampMin = "0", ClampMax = "1"))
@@ -145,13 +157,16 @@ private:
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> DiskMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> JetMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> ShellMID;
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> AccretionMID;
 	void ApplySurroundings();
 	/** Place the disk and jets, or the shell, for the camera: a copy shrunk toward the camera along the line of sight, the same angles,
 	 *  so that its farthest point lies within ProxyCm: inside the ship's star sphere (5e11 cm, opaque, where the
 	 *  sky is drawn) and the render horizon, both of which a disk of AUs would cross. As it is, when it fits. */
 	void PlaceSurroundings(const FVector& ViewLoc);
 	static constexpr double ProxyCm = 4.5e11;
-	bool HasSurroundings() const { return bYoung || bShell; }
+	bool HasSurroundings() const { return bYoung || bShell || (bAccreting && Partner); }
+	/** The plane's half-width round an accretor: out past the inner Lagrange point. */
+	double AccretionHalfCm() const { return OrbitRadiusCm * 0.56; }
 	UPROPERTY(Transient) TObjectPtr<UNiagaraComponent> Ejecta;
 	void TickEjecta(float DeltaTime);
 	/** Seconds to the next ejection, and the seconds left of the one going. */

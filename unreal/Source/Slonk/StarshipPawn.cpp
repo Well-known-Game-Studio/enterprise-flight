@@ -3138,7 +3138,33 @@ void AStarshipPawn::ProcessDebugCommand()
 		// Test: damage with no place to it, as the crush of an atmosphere arrives; the whole grid bears it.
 		TakeDamage(Arg(1, 15.f), FDamageEvent(), nullptr, nullptr);
 	}
-	else if (Op == TEXT("jump")) { JumpToNavTarget(); }
+	else if (Op == TEXT("jump"))
+	{
+		// jump [radii] [degrees]: to the nav target; dev, that many of a star's radii off it (else 1.5), that far
+		// above the planets' plane (approaching from the ship's own bearing round it).
+		AStarshipHUD* H = PlayerHUD();
+		FNavObject Info;
+		if (Args.Num() > 1 && H && H->GetNavTargetInfo(Info) && Info.Actor)
+		{
+			const FVector T = Info.Actor->GetActorLocation();
+			FVector Flat = GetActorLocation() - T; Flat.Z = 0.0;
+			Flat = Flat.IsNearlyZero() ? FVector::ForwardVector : Flat.GetSafeNormal();
+			const double E = FMath::DegreesToRadians((double)Arg(2, 0.f));
+			SetActorLocation(T + (Flat * FMath::Cos(E) + FVector::UpVector * FMath::Sin(E)) * (Info.RadiusCm * 1000.0));
+			const float Was = StarJumpStandoffRadii;
+			StarJumpStandoffRadii = Arg(1, 1.5f);
+			JumpToActor(Info.Actor, Info.RadiusCm, StarJumpStandoffRadii);
+			StarJumpStandoffRadii = Was;
+			// (jump <radii> <degrees> pair: then facing the middle of a close pair, to see both.)
+			const AStarBody* SB = Cast<AStarBody>(Info.Actor);
+			if (ArgStr(3) == TEXT("pair") && SB && SB->Partner)
+			{
+				const FVector Mid = (SB->GetActorLocation() + SB->Partner->GetActorLocation()) * 0.5;
+				SetActorRotation((Mid - GetActorLocation()).Rotation());
+			}
+		}
+		else { JumpToNavTarget(); }
+	}
 	else if (Op == TEXT("star") && ArgStr(1) == TEXT("young"))
 	{
 		// star young: dev, the nearest star made young (its disk and jets), to see them without travelling to one.
@@ -3172,6 +3198,32 @@ void AStarshipPawn::ProcessDebugCommand()
 			UE_LOG(LogTemp, Log, TEXT("Star %s: a shell %.2f AU across it, lobes %.2f; the view %.3f AU from it"), *Best->StarName, Best->ShellRadiusAu, Best->ShellLobes,
 				FVector::Dist(ViewLoc, Best->GetActorLocation()) / 1.495978707e13);
 		}
+	}
+	else if (Op == TEXT("star") && ArgStr(1) == TEXT("pair"))
+	{
+		// star pair [tide]: dev, the nearest star a close pair's donor, a white dwarf going round it at the separation
+		// where it fills its Roche lobe, an accretion disk fed from it.
+		AStarBody* Best = nullptr; double BestD = TNumericLimits<double>::Max();
+		for (TActorIterator<AStarBody> It(GetWorld()); It; ++It) { const double D = FVector::DistSquared(It->GetActorLocation(), GetActorLocation()); if (D < BestD) { BestD = D; Best = *It; } }
+		if (Best && !Best->Partner)
+		{
+			const double Sep = Best->GetRadiusCm() / 0.36;
+			const FVector CLoc = Best->GetActorLocation() + FVector(Sep, 0.0, 0.0);
+			AStarBody* C = GetWorld()->SpawnActorDeferred<AStarBody>(AStarBody::StaticClass(), FTransform(CLoc), nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+			if (C)
+			{
+				FRandomStream R(7);
+				C->StarName = Best->StarName + TEXT(" B");
+				AStarSystem::ApplyStarClass(C, EStarClass::WhiteDwarf, R);
+				C->bAccreting = true; C->Partner = Best; C->OrbitRadiusCm = Sep;
+				C->OrbitPeriodS = (float)(2.0 * PI * FMath::Sqrt(Sep * Sep * Sep / (1.5 * 1.327e26)));
+				C->FinishSpawning(FTransform(CLoc));
+				if (AStarSystem* Sys = AStarSystem::Nearest(GetWorld(), Best->GetActorLocation())) { Sys->Adopt(C); }
+				Best->Partner = C;
+				UE_LOG(LogTemp, Log, TEXT("Star %s: a close pair, separation %.0f km, period %.1f h"), *Best->StarName, Sep / 1.0e5, C->OrbitPeriodS / 3600.f);
+			}
+		}
+		if (Best) { Best->Tide = FMath::Clamp(Arg(2, 0.4f), 0.f, 1.f); Best->ApplyAppearance(); }
 	}
 	else if (Op == TEXT("star") && ArgStr(1) == TEXT("cme"))
 	{

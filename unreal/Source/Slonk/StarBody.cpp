@@ -122,6 +122,10 @@ void AStarBody::ApplyAppearance()
 		StarMID->SetScalarParameterValue(TEXT("GranuleScale"), GranuleScale);
 		StarMID->SetScalarParameterValue(TEXT("Activity"), Activity);
 		StarMID->SetScalarParameterValue(TEXT("Seed"), (float)(GetTypeHash(StarName) % 997u));
+		// A close pair's donor, drawn toward its companion (the way set as it goes round, Tick); its bounds grown to
+		// hold it.
+		StarMID->SetScalarParameterValue(TEXT("Tide"), Tide);
+		Body->SetBoundsScale(1.f + Tide);
 	}
 	if (CoronaMID)
 	{
@@ -145,7 +149,7 @@ void AStarBody::ApplySurroundings()
 	if (!Disk || !JetNorth || !JetSouth || !ShellVolume) { return; }
 	// (Seen from any distance: beyond the star's own horizon they are drawn shrunk toward the camera,
 	// PlaceSurroundings.)
-	Disk->SetVisibility(bYoung);
+	Disk->SetVisibility(bYoung || (bAccreting && Partner));
 	JetNorth->SetVisibility(bYoung);
 	JetSouth->SetVisibility(bYoung);
 	ShellVolume->SetVisibility(bShell);
@@ -177,6 +181,20 @@ void AStarBody::ApplySurroundings()
 			N->SetVectorParameterValue(TEXT("EmissiveColor"), FLinearColor::White);
 		}
 	}
+	if (bAccreting && Partner && !bYoung)
+	{
+		if (UMaterialInstanceDynamic* A = Mat(AccretionMID, TEXT("/Game/Slonk/Materials/M_AccretionDisk.M_AccretionDisk"), TEXT("AccretionDisk")))
+		{
+			Disk->SetMaterial(0, A);
+			// On the plane out past L1: the disk to a third of the separation, its inner edge a few of the accretor's
+			// radii, L1 half the way to the donor.
+			const double Half = FMath::Max(AccretionHalfCm(), 1.0);
+			A->SetScalarParameterValue(TEXT("InnerFrac"), (float)FMath::Clamp(GetRadiusCm() * 3.0 / Half, 0.005, 0.2));
+			A->SetScalarParameterValue(TEXT("DiskFrac"), (float)(OrbitRadiusCm * 0.35 / Half));
+			A->SetScalarParameterValue(TEXT("L1Frac"), (float)(OrbitRadiusCm * 0.5 / Half));
+			A->SetScalarParameterValue(TEXT("Seed"), (float)(GetTypeHash(StarName) % 997u));
+		}
+	}
 	if (!bYoung) { return; }
 	if (UMaterialInstanceDynamic* D = Mat(DiskMID, TEXT("/Game/Slonk/Materials/M_StarDisk.M_StarDisk"), TEXT("StarDisk")))
 	{
@@ -202,7 +220,8 @@ void AStarBody::PlaceSurroundings(const FVector& ViewLoc)
 	const double Dist = FVector::Dist(Centre, ViewLoc);
 	// Everything at k of its size and k of the way from the camera (the same angles), k such that the farthest
 	// reach of the disk or a jet is within the proxy distance.
-	const double Reach = Dist + FMath::Max(bYoung ? FMath::Max((double)DiskOuterAu, (double)JetLengthAu) : 0.0, bShell ? FMath::Max((double)ShellRadiusAu, 0.01) : 0.0) * AuCm;
+	const double Reach = Dist + FMath::Max(FMath::Max(bYoung ? FMath::Max((double)DiskOuterAu, (double)JetLengthAu) : 0.0, bShell ? FMath::Max((double)ShellRadiusAu, 0.01) : 0.0) * AuCm,
+		bAccreting && Partner ? AccretionHalfCm() : 0.0);
 	const double K = FMath::Min(1.0, ProxyCm / FMath::Max(Reach, 1.0));
 	const FVector At = ViewLoc + (Centre - ViewLoc) * K;
 	const FQuat Q = GetActorQuat();
@@ -215,6 +234,14 @@ void AStarBody::PlaceSurroundings(const FVector& ViewLoc)
 		ShellVolume->SetWorldScale3D(FVector(SR / MeshUnitRadius));
 		ShellMID->SetScalarParameterValue(TEXT("RadiusCm"), (float)SR);
 		ShellMID->SetVectorParameterValue(TEXT("Axis"), FLinearColor(Up.X, Up.Y, Up.Z, 0.f));
+	}
+	if (bAccreting && Partner && !bYoung)
+	{
+		// The plane in the orbital plane, its +X toward the donor (the stream and L1 lie that way).
+		const FVector ToDonor = (Partner->GetActorLocation() - Centre).GetSafeNormal();
+		Disk->SetWorldLocationAndRotation(At, FRotationMatrix::MakeFromXZ(ToDonor, FVector::UpVector).ToQuat());
+		Disk->SetWorldScale3D(FVector(AccretionHalfCm() * 2.0 * K / 100.0));
+		return;
 	}
 	if (!bYoung) { return; }
 	const double Outer = FMath::Max((double)DiskOuterAu, 0.2) * AuCm;
@@ -245,6 +272,7 @@ void AStarBody::SetBeyondHorizon(bool bBeyond)
 	// (A young star's disk and jets, and a shell, stay: they are placed for the camera, PlaceSurroundings.)
 	if (bYoung && Disk && JetNorth && JetSouth) { Disk->SetVisibility(true); JetNorth->SetVisibility(true); JetSouth->SetVisibility(true); }
 	if (bShell && ShellVolume) { ShellVolume->SetVisibility(true); }
+	if (bAccreting && Partner && Disk) { Disk->SetVisibility(true); }
 }
 
 void AStarBody::OnConstruction(const FTransform& Transform)
@@ -348,6 +376,18 @@ void AStarBody::Tick(float DeltaTime)
 	if (!FMath::IsNearlyZero(SpinDegPerSec))
 	{
 		AddActorLocalRotation(FRotator(0.f, SpinDegPerSec * UGameClockSubsystem::Sim(this, DeltaTime), 0.f));
+	}
+	// A close pair: the accretor goes round the donor (counter-clockwise seen from above, as its disk's stream
+	// bends), and the donor's teardrop follows it.
+	if (bAccreting && Partner && OrbitRadiusCm > 0.0)
+	{
+		OrbitPhase = FMath::Fmod(OrbitPhase + 2.f * PI * UGameClockSubsystem::Sim(this, DeltaTime) / FMath::Max(OrbitPeriodS, 1.f), 2.f * PI);
+		SetActorLocation(Partner->GetActorLocation() + FVector(FMath::Cos(OrbitPhase), FMath::Sin(OrbitPhase), 0.0) * OrbitRadiusCm);
+	}
+	if (Tide > 0.f && Partner && StarMID)
+	{
+		const FVector D = (Partner->GetActorLocation() - GetActorLocation()).GetSafeNormal();
+		StarMID->SetVectorParameterValue(TEXT("TideDir"), FLinearColor(D.X, D.Y, D.Z, 0.f));
 	}
 	// Beyond the GPU precision horizon the player's distant-star sprite stands in for the mesh.
 	SetBeyondHorizon(IsLocationBeyondHorizon(GetActorLocation()));

@@ -201,6 +201,15 @@ col += float3(1.0, 0.97, 0.92) * (Intensity * DiscScale * 1.6) * flare;
 return col;
 """
 
+TIDE = r"""
+if (Tide <= 0.0) { return float3(0.0, 0.0, 0.0); }
+float3 d = normalize(TideDir);
+float c = dot(normalize(N), d);
+float toward = pow(saturate(c), 4.0) * 0.9 + saturate(c) * saturate(c) * 0.1;
+float away = 0.12 * saturate(-c) * saturate(-c);
+return normalize(N) * 0.0 + d * (R * Tide * (toward - away));
+"""
+
 INPUTS = ["Fn", "LP", "N", "V", "Time", "StarColor", "Intensity", "DiscScale", "LimbDarkening", "GranuleScale", "Activity", "Seed"]
 
 
@@ -218,6 +227,15 @@ def build():
     for name, v in (("Intensity", 80.0), ("DiscScale", 0.24), ("LimbDarkening", 0.35), ("GranuleScale", 6.0), ("Activity", 0.6), ("Seed", 0.0)):
         g.c(g.scalar(name, v), e, name)
     g.out(e, "MP_EmissiveColor")
+    # A star in a close pair, filling its Roche lobe: drawn out toward its companion into a teardrop, pointed at the
+    # inner Lagrange point, a little long on its far side too (Tide 0 is a sphere; TideDir is the companion's way,
+    # in the world).
+    w = g.custom(TIDE, ["N", "TideDir", "Tide", "R"], "CMOT_Float3", "tidal teardrop")
+    g.c(g.node("VertexNormalWS"), w, "N")
+    td = g.vec("TideDir", (1.0, 0.0, 0.0)); g.c(mask(g, td, r=True, gg=True, b=True), w, "TideDir")
+    g.c(g.scalar("Tide", 0.0), w, "Tide")
+    g.c(g.node("ObjectRadius"), w, "R")
+    g.out(w, "MP_WorldPositionOffset")
     g.finish()
 
 

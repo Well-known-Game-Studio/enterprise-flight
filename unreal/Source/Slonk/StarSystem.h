@@ -33,6 +33,9 @@ enum class EStellarKind : uint8
 	YoungHerbig,
 	/** A white dwarf in the planetary nebula it shed as a dying giant, a glowing shell about its system. */
 	PlanetaryNebula,
+	/** A close pair: an orange or yellow star filling its Roche lobe, drawn into a teardrop, its gas streaming from
+	 *  the inner Lagrange point onto a white dwarf's accretion disk; the two go round in hours, the worlds round both. */
+	ClosePair,
 };
 
 /** Where a neighbouring system sits: a real-sky bearing (right ascension, declination) and distance in light-years. */
@@ -134,8 +137,10 @@ public:
 	/** Give every unnamed world of this system a name: planets a generated one in orbit order, moons their primary's designation. */
 	void NameUnnamedWorlds();
 
-private:
+	/** A star's size, colour and brightness for its class (one draw for its size from the stream). */
 	static void ApplyStarClass(AStarBody* S, EStarClass Class, FRandomStream& Rng);
+
+private:
 	/** Planets on geometric orbits out from `StartAu` about `Centre`, named "<Prefix> I, II, ..." until MaxAu. */
 	void SpawnPlanets(UWorld* World, FRandomStream& Rng, const FVector& Centre, const FString& Prefix, EStarClass Class, int32 Count, double MaxAu, const FVector& SeedShift, TArray<APlanetBody*>& Out);
 	UPROPERTY() TObjectPtr<USceneComponent> Anchor;

@@ -11,6 +11,14 @@ M_StarJet, a polar jet: on an engine cone (its point at the star, its base out a
 a narrow glowing column, brightest along its axis, with knots of shocked gas streaming out along it (JetSpeed), fading
 toward the far end. JetColor.
 
+M_AccretionDisk, a close pair's accretion disk and the stream that feeds it: on an engine plane in the orbital plane,
+centred on the companion that takes the gas, its +X toward the star that gives it. Additive and unlit (hot gas, it
+glows; and so it adds to the donor's far sprite behind it rather than hiding it). The disk from InnerFrac to DiskFrac of
+the plane's half-width, hottest and bluest at its inner edge (the temperature falling as the radius to the three
+quarters), orange and red outward, in spiral streaks sheared by its Keplerian turning; the stream leaves the inner
+Lagrange point (L1Frac along +X), bent by the pair's turning toward +Y (the pair turns counter-clockwise seen from +Z),
+and strikes the disk's rim in a hot spot.
+
 Time is the material's own (real seconds times TimeRate).
 
 Run with the editor open and no play session:  python3 tools/planet_materials/star_disk_material.py
@@ -91,6 +99,63 @@ return JetColor * Brightness * core * knots * fade;
 """
 
 
+ACCRETION = r"""
+float2 q = LP.xy / 50.0;
+float r = length(q);
+float a = atan2(q.y, q.x);
+float3 col = float3(0.0, 0.0, 0.0);
+float inner = max(InnerFrac, 0.005);
+// The disk.
+if (r < DiskFrac * 1.08 && r > inner * 0.8)
+{
+    float temp = pow(inner / max(r, inner), 0.75);
+    float spin = Time * 0.3 * pow(inner / max(r, inner), 1.5);
+    float x = saturate((r - inner) / max(DiskFrac - inner, 1e-3));
+    // (Graded across its width as it is seen: hot within, cooling outward; and bright enough to the rim to be seen.)
+    float3 c = lerp(HotColor, CoolColor, smoothstep(0.0, 0.75, x));
+    float2 sp = float2(x * 70.0, (a - spin) * 3.0);
+    float n = SlonkDiskValue(sp + Seed) * 0.6 + SlonkDiskValue(sp * 3.1 - Seed) * 0.4;
+    float edge = smoothstep(inner * 0.8, inner * 1.4, r) * (1.0 - smoothstep(DiskFrac * 0.8, DiskFrac * 1.08, r));
+    col += c * (0.45 + 0.9 * (1.0 - x) + 3.0 * temp * temp) * (0.6 + 0.8 * n) * edge;
+}
+// The stream: a quadratic curve from L1 to the rim, ahead of the donor's line.
+float2 P0 = float2(L1Frac, 0.0);
+float2 P2 = DiskFrac * float2(cos(1.25), sin(1.25));
+float2 P1 = float2(0.55 * L1Frac, 0.42 * L1Frac);
+float best = 1e9, bestS = 0.0;
+[loop] for (int i = 0; i <= 24; ++i)
+{
+    float s = i / 24.0;
+    float2 P = (1.0 - s) * (1.0 - s) * P0 + 2.0 * (1.0 - s) * s * P1 + s * s * P2;
+    float d2 = dot(q - P, q - P);
+    if (d2 < best) { best = d2; bestS = s; }
+}
+float w = lerp(0.012, 0.03, bestS);
+float flow = 0.7 + 0.3 * sin(bestS * 40.0 - Time * 3.0) * SlonkDiskValue(float2(bestS * 12.0 - Time * 0.4, Seed));
+col += StreamColor * exp(-best / (w * w)) * flow * (0.8 + 0.6 * bestS);
+// Where it strikes the disk.
+col += HotColor * 4.0 * exp(-dot(q - P2, q - P2) / (0.035 * 0.035));
+return col * Brightness;
+"""
+
+
+def build_accretion():
+    name = "M_AccretionDisk"
+    wipe(name)
+    g = G(name, {"ShadingModel": "MSM_Unlit", "BlendMode": "BLEND_Additive", "TwoSided": True})
+    fn = g.custom(FUNCS, [], "CMOT_Float1", "disk functions")
+    e = g.custom(ACCRETION, ["Fn", "LP", "Time", "InnerFrac", "DiskFrac", "L1Frac", "Seed", "HotColor", "CoolColor", "StreamColor", "Brightness"], "CMOT_Float3", "accretion disk")
+    g.c(fn, e, "Fn")
+    g.c(g.node("LocalPosition", {"IncludedOffsets": "IncludeOffsets", "LocalOrigin": "Instance"}), e, "LP")
+    g.c(g.mul(g.node("Time"), g.scalar("TimeRate", 1.0)), e, "Time")
+    for n, v in (("InnerFrac", 0.03), ("DiskFrac", 0.62), ("L1Frac", 0.9), ("Seed", 0.0), ("Brightness", 30.0)):
+        g.c(g.scalar(n, v), e, n)
+    for n, rgb in (("HotColor", (0.75, 0.85, 1.0)), ("CoolColor", (1.0, 0.45, 0.2)), ("StreamColor", (1.0, 0.7, 0.45))):
+        v = g.vec(n, rgb); m = mask(g, v, r=True, gg=True, b=True); g.c(m, e, n)
+    g.out(e, "MP_EmissiveColor")
+    g.finish()
+
+
 def build_disk():
     name = "M_StarDisk"
     wipe(name)
@@ -136,3 +201,4 @@ def build_jet():
 if __name__ == "__main__":
     build_disk()
     build_jet()
+    build_accretion()

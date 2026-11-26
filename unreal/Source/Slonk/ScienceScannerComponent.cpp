@@ -625,6 +625,14 @@ void UScienceScannerComponent::FactsForStar(const AActor* A, FScanRecord& R) con
 		R.Facts.Add(FString::Printf(TEXT("Planetary nebula: %s shell, %.0f AU, ionised oxygen within, hydrogen and nitrogen without"),
 			S->ShellLobes > 0.4f ? TEXT("bipolar") : TEXT("ring"), S->ShellRadiusAu));
 	}
+	if (S->Tide > 0.f && S->Partner)
+	{
+		R.Facts.Add(FString::Printf(TEXT("Filling its Roche lobe: drawn toward %s, losing gas from the inner Lagrange point"), *S->Partner->StarName));
+	}
+	if (S->bAccreting && S->Partner)
+	{
+		R.Facts.Add(FString::Printf(TEXT("Accretion disk fed by a stream from %s; orbit %.1f h, separation %.0f km"), *S->Partner->StarName, S->OrbitPeriodS / 3600.f, S->OrbitRadiusCm / 1.0e5));
+	}
 	if (Sys)
 	{
 		int32 Planets = 0;
