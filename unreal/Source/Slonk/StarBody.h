@@ -117,6 +117,19 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star|Pair") float OrbitPeriodS = 20000.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star|Pair") float OrbitPhase = 0.f;
 
+	/** A black hole (StarSystem's EStellarKind::BlackHole): no body and no glow of its own; its shadow, its accretion
+	 *  disk and the bending of the light about it are traced through the space round it (M_BlackHole on the Lens
+	 *  sphere, LensRadiusRs Schwarzschild radii across, placed for the camera as the other surroundings are).
+	 *  RadiusKm is its Schwarzschild radius (2.95 km a sun's mass); the disk runs from the innermost stable orbit,
+	 *  three of those, out to DiskOuterRs, DiskTempK near its inner edge. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star|Black hole") bool bBlackHole = false;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star|Black hole") float DiskOuterRs = 30.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star|Black hole") float DiskTempK = 9000.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star|Black hole") float LensRadiusRs = 60.f;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UStaticMeshComponent> LensVolume;
+	/** Its mass in suns, from its Schwarzschild radius. */
+	float GetMassSuns() const { return RadiusKm / 2.953f; }
+
 	/** How spotted the star is: 0 a clean disc, 1 eight spot groups at once (the photosphere's Activity). Its spots,
 	 *  and where and when they come, are drawn from its name. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star", meta = (ClampMin = "0", ClampMax = "1"))
@@ -158,13 +171,14 @@ private:
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> JetMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> ShellMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> AccretionMID;
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> LensMID;
 	void ApplySurroundings();
 	/** Place the disk and jets, or the shell, for the camera: a copy shrunk toward the camera along the line of sight, the same angles,
 	 *  so that its farthest point lies within ProxyCm: inside the ship's star sphere (5e11 cm, opaque, where the
 	 *  sky is drawn) and the render horizon, both of which a disk of AUs would cross. As it is, when it fits. */
 	void PlaceSurroundings(const FVector& ViewLoc);
 	static constexpr double ProxyCm = 4.5e11;
-	bool HasSurroundings() const { return bYoung || bShell || (bAccreting && Partner); }
+	bool HasSurroundings() const { return bYoung || bShell || (bAccreting && Partner) || bBlackHole; }
 	/** The plane's half-width round an accretor: out past the inner Lagrange point. */
 	double AccretionHalfCm() const { return OrbitRadiusCm * 0.56; }
 	UPROPERTY(Transient) TObjectPtr<UNiagaraComponent> Ejecta;

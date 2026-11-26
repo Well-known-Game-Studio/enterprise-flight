@@ -281,6 +281,20 @@ AStarSystem* AStarSystem::Generate(UWorld* World, const FStarSystemSpec& Spec, c
 		S->ShellOuter = Hue < 0.8f ? FLinearColor(1.0f, 0.3f, 0.35f) : FLinearColor(1.0f, 0.25f, 0.2f);
 		StarRot = FRotator(Y.FRandRange(-80.f, 80.f), Y.FRandRange(0.f, 360.f), 0.f).Quaternion();
 	}
+	else if (Kind == EStellarKind::BlackHole)
+	{
+		// What a great star left: six to eighteen suns' mass, its Schwarzschild radius its radius; a disk round it,
+		// its axis anywhere. Its far glow the disk's.
+		FRandomStream Y((int32)HashCombine((uint32)Spec.Seed, 0xa54ff53au));
+		S->bBlackHole = true;
+		S->Activity = 0.f;
+		S->RadiusKm = 2.953f * Y.FRandRange(6.f, 18.f);
+		S->DiskOuterRs = Y.FRandRange(18.f, 40.f);
+		S->LensRadiusRs = FMath::Max(60.f, S->DiskOuterRs * 1.6f);
+		S->DiskTempK = Y.FRandRange(7000.f, 12000.f);
+		S->StarColor = FLinearColor(1.0f, 0.82f, 0.62f); S->CoronaColor = FLinearColor(1.0f, 0.7f, 0.45f);
+		StarRot = FRotator(Y.FRandRange(-70.f, 70.f), Y.FRandRange(0.f, 360.f), 0.f).Quaternion();
+	}
 	S->FinishSpawning(FTransform(StarRot, Loc));
 	Sys->Star = S;
 	Sys->Adopt(S);

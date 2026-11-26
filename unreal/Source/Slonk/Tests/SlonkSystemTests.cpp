@@ -1355,19 +1355,20 @@ bool FSlonkExplorationCatalogueTest::RunTest(const FString& Parameters)
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkExplorationRemarkableTest, "Slonk.Exploration.Remarkable", SLONK_TEST_FLAGS)
 bool FSlonkExplorationRemarkableTest::RunTest(const FString& Parameters)
 {
-	// After the dozen, untouched, a young star in its disk, a white dwarf in its shells and a close pair: apart from every star,
+	// After the dozen, untouched, a young star in its disk, a white dwarf in its shells, a close pair and a black hole:
+	// apart from every star,
 	// numbered and named as the others are, the same every game.
 	const TArray<FCatalogueEntry> Dozen = UExplorationSubsystem::MakeCatalogue(UExplorationSubsystem::CatalogueSeed, UExplorationSubsystem::CatalogueCount);
 	const TArray<FCatalogueEntry> A = UExplorationSubsystem::MakeFullCatalogue(UExplorationSubsystem::CatalogueSeed, UExplorationSubsystem::CatalogueCount);
 	const TArray<FCatalogueEntry> B = UExplorationSubsystem::MakeFullCatalogue(UExplorationSubsystem::CatalogueSeed, UExplorationSubsystem::CatalogueCount);
-	TestEqual(TEXT("the dozen and three"), A.Num(), UExplorationSubsystem::CatalogueCount + 3);
+	TestEqual(TEXT("the dozen and four"), A.Num(), UExplorationSubsystem::CatalogueCount + 4);
 	for (int32 i = 0; i < Dozen.Num() && i < A.Num(); ++i)
 	{
 		TestEqual(TEXT("the dozen as they were"), A[i].Designation, Dozen[i].Designation);
 		TestEqual(TEXT("the dozen's stars as they were"), (int32)A[i].Spec.StarClass, (int32)Dozen[i].Spec.StarClass);
 		TestEqual(TEXT("the dozen ordinary by their specs"), (int32)A[i].Spec.Kind, (int32)EStellarKind::Ordinary);
 	}
-	if (A.Num() != UExplorationSubsystem::CatalogueCount + 3) { return false; }
+	if (A.Num() != UExplorationSubsystem::CatalogueCount + 4) { return false; }
 	const FCatalogueEntry& Young = A[UExplorationSubsystem::CatalogueCount];
 	const FCatalogueEntry& Shell = A[UExplorationSubsystem::CatalogueCount + 1];
 	const EStellarKind YK = AStarSystem::StellarKindFor(Young.Spec);
@@ -1381,6 +1382,7 @@ bool FSlonkExplorationRemarkableTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("an orange or yellow donor"), Pair.Spec.StarClass == EStarClass::K || Pair.Spec.StarClass == EStarClass::G);
 	TestEqual(TEXT("giving to a white dwarf"), (int32)Pair.Spec.CompanionClass, (int32)EStarClass::WhiteDwarf);
 	TestTrue(TEXT("a companion by its spec"), Pair.Spec.CompanionSeparationAU > 0.f);
+	TestEqual(TEXT("a black hole"), (int32)AStarSystem::StellarKindFor(A[UExplorationSubsystem::CatalogueCount + 3].Spec), (int32)EStellarKind::BlackHole);
 	TSet<FString> Designations, Names;
 	for (int32 i = 0; i < A.Num(); ++i)
 	{

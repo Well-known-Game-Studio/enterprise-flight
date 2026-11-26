@@ -3225,6 +3225,23 @@ void AStarshipPawn::ProcessDebugCommand()
 		}
 		if (Best) { Best->Tide = FMath::Clamp(Arg(2, 0.4f), 0.f, 1.f); Best->ApplyAppearance(); }
 	}
+	else if (Op == TEXT("star") && ArgStr(1) == TEXT("hole"))
+	{
+		// star hole [suns] [disk radii] [degrees]: dev, the nearest star a black hole of that mass, its disk out to that
+		// many Schwarzschild radii, its axis tipped that far.
+		AStarBody* Best = nullptr; double BestD = TNumericLimits<double>::Max();
+		for (TActorIterator<AStarBody> It(GetWorld()); It; ++It) { const double D = FVector::DistSquared(It->GetActorLocation(), GetActorLocation()); if (D < BestD) { BestD = D; Best = *It; } }
+		if (Best)
+		{
+			Best->bBlackHole = true; Best->Activity = 0.f;
+			Best->RadiusKm = 2.953f * FMath::Max(Arg(2, 10.f), 0.1f);
+			Best->DiskOuterRs = FMath::Clamp(Arg(3, 30.f), 4.f, 200.f);
+			Best->LensRadiusRs = FMath::Max(60.f, Best->DiskOuterRs * 1.6f);
+			if (Args.Num() > 4) { Best->SetActorRotation(FRotator(Arg(4, 0.f), 0.f, 0.f)); }
+			Best->ApplyAppearance();
+			UE_LOG(LogTemp, Log, TEXT("Star %s: a black hole of %.1f suns, horizon %.0f km across, disk to %.0f km"), *Best->StarName, Best->GetMassSuns(), Best->RadiusKm * 2.f, Best->RadiusKm * Best->DiskOuterRs);
+		}
+	}
 	else if (Op == TEXT("star") && ArgStr(1) == TEXT("cme"))
 	{
 		// star cme: an ejection now from the nearest star.
@@ -5281,9 +5298,10 @@ void AStarshipPawn::JumpToActor(AActor* Target, double TargetRadiusCm, float Sta
 	{
 		Approach = FVector::ForwardVector;
 	}
-	if (Target->IsA<AStarBody>())
+	if (const AStarBody* SB = Cast<AStarBody>(Target))
 	{
-		StandoffRadii = StarJumpStandoffRadii;
+		// (A black hole's radius is its horizon's: off it by its disk's radii instead.)
+		StandoffRadii = StarJumpStandoffRadii * (SB->bBlackHole ? SB->DiskOuterRs : 1.f);
 	}
 	double Standoff = FMath::Max(TargetRadiusCm * StandoffRadii, GetShipLengthCm() * 20.0);
 	if (Target->IsA<ASpaceVessel>() || Target->IsA<ASpaceTarget>())

@@ -611,8 +611,17 @@ void UScienceScannerComponent::FactsForStar(const AActor* A, FScanRecord& R) con
 		// The companion's class is not stored: tell it from its size.
 		Class = S->RadiusKm < 20000.f ? EStarClass::WhiteDwarf : S->RadiusKm < 500000.f ? EStarClass::M : EStarClass::K;
 	}
-	R.Facts.Add(FString::Printf(TEXT("Spectral class %s"), StarClassName(Class)));
-	R.Facts.Add(FString::Printf(TEXT("Diameter %.2f solar, photosphere ~%d K"), S->RadiusKm / 695700.f, StarTemperatureK(Class)));
+	if (S->bBlackHole)
+	{
+		R.Facts.Add(FString::Printf(TEXT("Black hole: %.1f solar masses, event horizon %.0f km across"), S->GetMassSuns(), S->RadiusKm * 2.f));
+		R.Facts.Add(FString::Printf(TEXT("Accretion disk from the innermost stable orbit, %.0f km, to %.0f km; ~%.0f K at its inner edge"), S->RadiusKm * 3.f, S->RadiusKm * S->DiskOuterRs, S->DiskTempK));
+		R.Facts.Add(TEXT("Light bent round it: an Einstein ring of the stars behind; its shadow 2.6 horizon radii across"));
+	}
+	else
+	{
+		R.Facts.Add(FString::Printf(TEXT("Spectral class %s"), StarClassName(Class)));
+		R.Facts.Add(FString::Printf(TEXT("Diameter %.2f solar, photosphere ~%d K"), S->RadiusKm / 695700.f, StarTemperatureK(Class)));
+	}
 	// What else it is: young in its disk, or a dying star's core in the shells it shed.
 	if (S->bYoung)
 	{

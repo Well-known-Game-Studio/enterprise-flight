@@ -36,6 +36,9 @@ enum class EStellarKind : uint8
 	/** A close pair: an orange or yellow star filling its Roche lobe, drawn into a teardrop, its gas streaming from
 	 *  the inner Lagrange point onto a white dwarf's accretion disk; the two go round in hours, the worlds round both. */
 	ClosePair,
+	/** A black hole of a few suns' mass, what a great star left: a shadow ringed with bent light in a hot
+	 *  accretion disk, the stars behind it drawn round it. Its worlds dark and cold. */
+	BlackHole,
 };
 
 /** Where a neighbouring system sits: a real-sky bearing (right ascension, declination) and distance in light-years. */

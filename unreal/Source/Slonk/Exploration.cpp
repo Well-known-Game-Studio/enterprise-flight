@@ -106,8 +106,9 @@ TArray<FCatalogueEntry> UExplorationSubsystem::MakeRemarkable(int32 Seed, const 
 		const FString Digits = O.Designation.RightChop(4);
 		if (Digits.IsNumeric()) { UsedNumbers.Add(FCString::Atoi(*Digits)); }
 	}
-	// A young star, a T Tauri star or (one time in three) a Herbig star; a white dwarf in its shells; a close pair.
-	const EStellarKind Kinds[] = { EStellarKind::YoungTTauri, EStellarKind::PlanetaryNebula, EStellarKind::ClosePair };
+	// A young star, a T Tauri star or (one time in three) a Herbig star; a white dwarf in its shells; a close pair; a
+	// black hole (its worlds made as a red dwarf's would be: close in, and cold).
+	const EStellarKind Kinds[] = { EStellarKind::YoungTTauri, EStellarKind::PlanetaryNebula, EStellarKind::ClosePair, EStellarKind::BlackHole };
 	TArray<FCatalogueEntry> Out;
 	for (int32 k = 0; k < UE_ARRAY_COUNT(Kinds); ++k)
 	{
@@ -136,6 +137,7 @@ TArray<FCatalogueEntry> UExplorationSubsystem::MakeRemarkable(int32 Seed, const 
 			E.Spec.CompanionClass = EStarClass::WhiteDwarf;
 			E.Spec.CompanionSeparationAU = 0.01f;
 		}
+		else if (E.Spec.Kind == EStellarKind::BlackHole) { E.Spec.StarClass = EStarClass::M; }
 		else { E.Spec.StarClass = EStarClass::WhiteDwarf; }
 		int32 Number = 0; do { Number = R.RandRange(1000, 9999); } while (UsedNumbers.Contains(Number));
 		UsedNumbers.Add(Number);

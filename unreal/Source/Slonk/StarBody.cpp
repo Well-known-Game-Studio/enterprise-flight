@@ -80,6 +80,9 @@ AStarBody::AStarBody()
 	// nebula is (Nebula.cpp), over the distant-star sprites.
 	ShellVolume = Part(TEXT("Shell"), Mesh);
 	ShellVolume->SetTranslucentSortPriority(2);
+	// A black hole's lens: the same sphere, over everything translucent behind it (it redraws what is behind).
+	LensVolume = Part(TEXT("Lens"), Mesh);
+	LensVolume->SetTranslucentSortPriority(3);
 
 	StarMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_Star.M_Star")));
 	CoronaMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_StarGlow.M_StarGlow")));
@@ -146,13 +149,16 @@ void AStarBody::ApplyAppearance()
 
 void AStarBody::ApplySurroundings()
 {
-	if (!Disk || !JetNorth || !JetSouth || !ShellVolume) { return; }
+	if (!Disk || !JetNorth || !JetSouth || !ShellVolume || !LensVolume) { return; }
 	// (Seen from any distance: beyond the star's own horizon they are drawn shrunk toward the camera,
 	// PlaceSurroundings.)
 	Disk->SetVisibility(bYoung || (bAccreting && Partner));
 	JetNorth->SetVisibility(bYoung);
 	JetSouth->SetVisibility(bYoung);
 	ShellVolume->SetVisibility(bShell);
+	LensVolume->SetVisibility(bBlackHole);
+	// A black hole has no surface to see and no glow of its own: only what its lens draws.
+	if (bBlackHole) { Body->SetVisibility(false); Corona->SetVisibility(false); }
 	if (!HasSurroundings()) { return; }
 	constexpr double AuCm = 1.495978707e13;
 	const double Outer = FMath::Max((double)DiskOuterAu, 0.2) * AuCm;
@@ -179,6 +185,18 @@ void AStarBody::ApplySurroundings()
 			N->SetVectorParameterValue(TEXT("ColorA"), ShellOuter);
 			N->SetVectorParameterValue(TEXT("ColorB"), ShellInner);
 			N->SetVectorParameterValue(TEXT("EmissiveColor"), FLinearColor::White);
+		}
+	}
+	if (bBlackHole)
+	{
+		if (UMaterialInstanceDynamic* L = Mat(LensMID, TEXT("/Game/Slonk/Materials/M_BlackHole.M_BlackHole"), TEXT("BlackHole")))
+		{
+			LensVolume->SetMaterial(0, L);
+			L->SetScalarParameterValue(TEXT("LensRadius"), LensRadiusRs);
+			L->SetScalarParameterValue(TEXT("DiskInner"), 3.f);
+			L->SetScalarParameterValue(TEXT("DiskOuter"), FMath::Min(DiskOuterRs, LensRadiusRs * 0.9f));
+			L->SetScalarParameterValue(TEXT("DiskTemp"), DiskTempK);
+			L->SetScalarParameterValue(TEXT("Seed"), (float)(GetTypeHash(StarName) % 997u));
 		}
 	}
 	if (bAccreting && Partner && !bYoung)
@@ -214,14 +232,14 @@ void AStarBody::ApplySurroundings()
 
 void AStarBody::PlaceSurroundings(const FVector& ViewLoc)
 {
-	if (!HasSurroundings() || !Disk || !JetNorth || !JetSouth || !ShellVolume) { return; }
+	if (!HasSurroundings() || !Disk || !JetNorth || !JetSouth || !ShellVolume || !LensVolume) { return; }
 	constexpr double AuCm = 1.495978707e13;
 	const FVector Centre = GetActorLocation();
 	const double Dist = FVector::Dist(Centre, ViewLoc);
 	// Everything at k of its size and k of the way from the camera (the same angles), k such that the farthest
 	// reach of the disk or a jet is within the proxy distance.
 	const double Reach = Dist + FMath::Max(FMath::Max(bYoung ? FMath::Max((double)DiskOuterAu, (double)JetLengthAu) : 0.0, bShell ? FMath::Max((double)ShellRadiusAu, 0.01) : 0.0) * AuCm,
-		bAccreting && Partner ? AccretionHalfCm() : 0.0);
+		FMath::Max(bAccreting && Partner ? AccretionHalfCm() : 0.0, bBlackHole ? GetRadiusCm() * LensRadiusRs : 0.0));
 	const double K = FMath::Min(1.0, ProxyCm / FMath::Max(Reach, 1.0));
 	const FVector At = ViewLoc + (Centre - ViewLoc) * K;
 	const FQuat Q = GetActorQuat();
@@ -234,6 +252,16 @@ void AStarBody::PlaceSurroundings(const FVector& ViewLoc)
 		ShellVolume->SetWorldScale3D(FVector(SR / MeshUnitRadius));
 		ShellMID->SetScalarParameterValue(TEXT("RadiusCm"), (float)SR);
 		ShellMID->SetVectorParameterValue(TEXT("Axis"), FLinearColor(Up.X, Up.Y, Up.Z, 0.f));
+	}
+	if (bBlackHole && LensMID)
+	{
+		// The lens at the proxy's scale (the trace is in Schwarzschild radii: the same picture at any scale), the disk
+		// in the hole's equator.
+		const double Rs = GetRadiusCm() * K;
+		LensVolume->SetWorldLocationAndRotation(At, Q);
+		LensVolume->SetWorldScale3D(FVector(Rs * LensRadiusRs / MeshUnitRadius));
+		LensMID->SetScalarParameterValue(TEXT("RsCm"), (float)Rs);
+		LensMID->SetVectorParameterValue(TEXT("Axis"), FLinearColor(Up.X, Up.Y, Up.Z, 0.f));
 	}
 	if (bAccreting && Partner && !bYoung)
 	{
@@ -267,8 +295,9 @@ void AStarBody::SetBeyondHorizon(bool bBeyond)
 		SetIsTemporarilyHiddenInEditor(bBeyond);
 	}
 #endif
-	if (Body) { Body->SetVisibility(!bBeyond); }
-	if (Corona) { Corona->SetVisibility(!bBeyond); }
+	if (Body) { Body->SetVisibility(!bBeyond && !bBlackHole); }
+	if (Corona) { Corona->SetVisibility(!bBeyond && !bBlackHole); }
+	if (bBlackHole && LensVolume) { LensVolume->SetVisibility(true); }
 	// (A young star's disk and jets, and a shell, stay: they are placed for the camera, PlaceSurroundings.)
 	if (bYoung && Disk && JetNorth && JetSouth) { Disk->SetVisibility(true); JetNorth->SetVisibility(true); JetSouth->SetVisibility(true); }
 	if (bShell && ShellVolume) { ShellVolume->SetVisibility(true); }
@@ -392,7 +421,9 @@ void AStarBody::Tick(float DeltaTime)
 	// Beyond the GPU precision horizon the player's distant-star sprite stands in for the mesh.
 	SetBeyondHorizon(IsLocationBeyondHorizon(GetActorLocation()));
 	TickEjecta(DeltaTime);
-	if (Ejecta && Ejecta->IsVisible() == bBeyondHorizon) { Ejecta->SetVisibility(!bBeyondHorizon); }
+	// (A black hole throws off no wind.)
+	if (Ejecta && bBlackHole && Ejecta->IsActive()) { Ejecta->Deactivate(); Ejecta->SetVisibility(false); }
+	if (Ejecta && !bBlackHole && Ejecta->IsVisible() == bBeyondHorizon) { Ejecta->SetVisibility(!bBeyondHorizon); }
 
 	// Billboard the glow toward the player's camera and keep it a minimum angular size.
 	if (APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr)
@@ -407,7 +438,7 @@ void AStarBody::Tick(float DeltaTime)
 		const bool bNear = Dist < FarSpriteDistanceCm;
 		if (Corona->IsVisible() != (bNear && !bBeyondHorizon))
 		{
-			Corona->SetVisibility(bNear && !bBeyondHorizon);
+			Corona->SetVisibility(bNear && !bBeyondHorizon && !bBlackHole);
 		}
 		if (Dist > 1.0 && bNear)
 		{
