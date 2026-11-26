@@ -203,7 +203,9 @@ void UMissionPanel::FillFile()
 	const FMission* Ms = M->Find(SelectedId);
 	if (!Ms) { Line(TEXT("Select a mission."), 14.f, Lcars::Dim); return; }
 	AddLine(FileBox, Ms->Title, 20.f, Lcars::Peach, true, false);
-	Line(FString::Printf(TEXT("%s, from %s; %s. %s%s"), *UMissionSubsystem::KindName(Ms->Kind), *Ms->From, *UMissionSubsystem::StateName(Ms->State).ToLower(), Ms->TargetName.IsEmpty() ? TEXT("") : *FString::Printf(TEXT("At %s%s. "), *Ms->TargetName, M->IsAtTarget(*Ms) ? TEXT(" (in range)") : TEXT("")), Ms->IsOpen() ? *FString::Printf(TEXT("Due by stardate %.1f."), Ms->DeadlineStardate) : *FString::Printf(TEXT("Closed stardate %.1f."), Ms->ClosedStardate)), 13.f, Lcars::Dim);
+	Line(FString::Printf(TEXT("%s, from %s; %s. %s%s"), *UMissionSubsystem::KindName(Ms->Kind), *Ms->From, *UMissionSubsystem::StateName(Ms->State).ToLower(), Ms->TargetName.IsEmpty() ? TEXT("") : *FString::Printf(TEXT("At %s%s. "), *Ms->TargetName, M->IsAtTarget(*Ms) ? TEXT(" (in range)") : TEXT("")), !Ms->IsOpen() ? *FString::Printf(TEXT("Closed stardate %.1f."), Ms->ClosedStardate)
+		: Ms->Kind == EMissionKind::TimeLoop ? *FString::Printf(TEXT("Pass %d; the fold closes in %.1f hours."), Ms->Pass + 1, M->PassHoursLeft(*Ms))
+		: *FString::Printf(TEXT("Due by stardate %.1f."), Ms->DeadlineStardate)), 13.f, Lcars::Dim);
 	Line(Ms->Brief, 14.f, FLinearColor::White, 6.f);
 	if (!Ms->Group.IsNone()) { Line(FString::Printf(TEXT("Concerns the %s. The crew's feelings about them weigh on every check, and what happens here will move them."), *Ms->Group.ToString()), 13.f, Lcars::Gold, 4.f); }
 	if (Ms->State == EMissionState::Active)
@@ -218,8 +220,17 @@ void UMissionPanel::FillFile()
 			for (int32 i = 0; i < St->Options.Num(); ++i)
 			{
 				const FMissionOption& O = St->Options[i];
+				// (What nobody aboard knows to try yet is not on the board, nor what has told all it can.)
+				if (!Ms->Offers(O)) { continue; }
 				UTextBlock* Label = nullptr;
-				UButton* B = Lcars::MakeButton(WidgetTree, FString::Printf(TEXT("%s   [%s %s %.0f%s%s]"), *O.Text, *UCrewRosterSubsystem::DepartmentName(O.Party), *UCrewRosterSubsystem::SkillName(O.Skill).ToLower(), O.Difficulty, O.Risk > 0.f ? TEXT(", risk") : TEXT(""), O.Science > 0 ? TEXT(", science") : TEXT("")), bHere ? Lcars::Gold : Lcars::Darker(Lcars::Gold, 0.6f), &Label);
+				// The department and its skill, said once where they are the one word (Helm helm).
+				const FString Dept = UCrewRosterSubsystem::DepartmentName(O.Party), Skill = UCrewRosterSubsystem::SkillName(O.Skill).ToLower();
+				// The hours it takes, where it takes any; and one the watch has not the hours left for is dimmed.
+				const FString Takes = O.Hours > 0.f ? FString::Printf(TEXT(", %.0f h"), O.Hours) : FString();
+				const bool bCan = bHere && M->HasHoursFor(*Ms, O);
+				// (An order has no odds to show; a guess that could be a blow to the ship is a risk as much as a party's.)
+				const FString Odds = O.bSure ? FString() : FString::Printf(TEXT(" %.0f"), O.Difficulty);
+				UButton* B = Lcars::MakeButton(WidgetTree, FString::Printf(TEXT("%s   [%s%s%s%s%s%s%s]"), *O.Text, *Dept, Dept.ToLower() == Skill ? TEXT("") : TEXT(" "), Dept.ToLower() == Skill ? TEXT("") : *Skill, *Odds, *Takes, O.Risk > 0.f || O.WrongBlow > 0.f ? TEXT(", risk") : TEXT(""), O.Science > 0 ? TEXT(", science") : TEXT("")), bCan ? Lcars::Gold : Lcars::Darker(Lcars::Gold, 0.6f), &Label);
 				if (Label) { Label->SetFont(Lcars::Font(13.f, false, 0)); Label->SetJustification(ETextJustify::Left); Label->SetColorAndOpacity(FSlateColor(Lcars::Black)); }
 				const int32 Id = Ms->Id;
 				Bind(B, [this, Id, i]()

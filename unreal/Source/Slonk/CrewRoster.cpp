@@ -942,7 +942,7 @@ void UCrewRosterSubsystem::AdvanceSeconds(float Seconds, const FCrewShipState& S
 {
 	if (RealSeconds < 0.f) { RealSeconds = Seconds; }
 	ReportCooldownSeconds = FMath::Max(ReportCooldownSeconds - RealSeconds, 0.f);
-	bAlongside = Ship.bAlongside; AlongsideStation = Ship.StationName;
+	bAlongside = Ship.bAlongside; AlongsideStation = Ship.StationName; LastShip = Ship;
 	if (bSaveWanted) { SaveDelaySeconds -= RealSeconds; if (SaveDelaySeconds <= 0.f) { Save(); } }
 	HourAccumulator += Seconds / FMath::Max(SecondsPerShipHour, 1.f);
 	int32 Guard = 0;
@@ -953,6 +953,27 @@ void UCrewRosterSubsystem::AdvanceSeconds(float Seconds, const FCrewShipState& S
 		LiveHour(Ship);
 		if (GetHourOfDay() == 0) { LiveDay(Ship); }
 	}
+}
+
+void UCrewRosterSubsystem::LiveHours(int32 HoursToLive)
+{
+	for (int32 h = 0; h < HoursToLive; ++h)
+	{
+		Hours += 1.0;
+		LiveHour(LastShip);
+		if (GetHourOfDay() == 0) { LiveDay(LastShip); }
+	}
+	if (HoursToLive > 0) { RequestSave(); }
+}
+
+void UCrewRosterSubsystem::SkipDays(int32 Days)
+{
+	// Whole days, so the hour of the ship's day is the one it was: nobody's watch changes under them.
+	if (Days <= 0) { return; }
+	Hours += 24.0 * Days;
+	// (What the crew count in days of their own does not run on: a promise is no nearer broken for days nobody lived.)
+	for (FCrewMember& M : Roster) { for (FCrewWant& W : M.Wants) { if (W.bPromised) { W.PromisedDay += Days; } } }
+	Save();
 }
 
 void UCrewRosterSubsystem::DevAdvanceHours(int32 HoursToLive, const FCrewShipState& Ship)
@@ -1359,6 +1380,10 @@ void UCrewRosterSubsystem::Experience(const FCrewExperience& E)
 		{ TEXT("Away.Danger"), -0.05f, 0.25f }, { TEXT("Away.Routine"), 0.06f, 0.f }, { TEXT("Order.Refused"), -0.12f, 0.1f },
 		{ TEXT("Promise.Kept"), 0.15f, 0.f }, { TEXT("Promise.Broken"), -0.25f, 0.05f }, { TEXT("Captain.Fair"), 0.1f, 0.f }, { TEXT("Captain.Unfair"), -0.15f, 0.05f },
 		{ TEXT("Discovery"), 0.1f, 0.f }, { TEXT("Shore"), 0.1f, 0.f },
+		// A watch lived over in a loop in time, remembered by nobody and felt by everybody; and being out of it.
+		{ TEXT("Time.Loop"), -0.03f, 0.12f }, { TEXT("Time.Freed"), 0.15f, 0.f },
+		// Days gone that nobody lived (letters unanswered, a birthday missed); and a thing of a vanished people's destroyed.
+		{ TEXT("Time.Lost"), -0.1f, 0.08f }, { TEXT("Relic.Broken"), -0.06f, 0.04f },
 	};
 	float Valence = 0.05f, StressK = 0.05f;
 	for (const FKind& K : Kinds) { if (E.Tag == FName(K.Tag)) { Valence = K.Valence; StressK = K.StressK; } }

@@ -11,7 +11,7 @@
 #include "Missions.generated.h"
 
 UENUM(BlueprintType)
-enum class EMissionKind : uint8 { Survey = 0, Rescue, Diplomacy, Delivery, Anomaly, Medical, Patrol, Contact, Derelict, Smuggler, Support, Assist, Explore, FirstContact, PreWarp, Beacon, Outpost, Colony, Starbase, Impact, Count UMETA(Hidden) };
+enum class EMissionKind : uint8 { Survey = 0, Rescue, Diplomacy, Delivery, Anomaly, Medical, Patrol, Contact, Derelict, Smuggler, Support, Assist, Explore, FirstContact, PreWarp, Beacon, Outpost, Colony, Starbase, Impact, TimeLoop, Count UMETA(Hidden) };
 
 UENUM(BlueprintType)
 enum class EMissionSource : uint8 { Starfleet = 0, Starbase, Event, Fleet, Count UMETA(Hidden) };
@@ -49,6 +49,40 @@ struct FMissionOption
 	UPROPERTY(BlueprintReadOnly) bool bNeedsSurvey = false;
 	/** Refused while a starbase's works in the target system have hours to go; carried without a check then. */
 	UPROPERTY(BlueprintReadOnly) bool bNeedsWorks = false;
+	/** Not offered until the mission knows these (FMission::Marks; none for always), nor before this pass of a mission
+	 *  that comes round again (FMission::Pass). */
+	UPROPERTY(BlueprintReadOnly) FName NeedsMark;
+	UPROPERTY(BlueprintReadOnly) FName NeedsMark2;
+	UPROPERTY(BlueprintReadOnly) int32 MinPass = 0;
+	/** What a success teaches the mission: kept from pass to pass. */
+	UPROPERTY(BlueprintReadOnly) FName GivesMark;
+	/** The outcome ends the pass: the mission comes round again. */
+	UPROPERTY(BlueprintReadOnly) bool bSuccessEndsPass = false;
+	UPROPERTY(BlueprintReadOnly) bool bFailEndsPass = false;
+	/** Ship's hours the attempt takes, carried or not: the crew live them and the stardate moves. In a mission that
+	 *  comes round they come out of the pass, and the option is refused when the pass has fewer left. */
+	UPROPERTY(BlueprintReadOnly) float Hours = 0.f;
+	/** What the pass must have made ready, and what a success makes ready (FMission::Readied: undone when the pass
+	 *  ends). With SaferWhenReady made ready, the option's risk is a third. */
+	UPROPERTY(BlueprintReadOnly) FName NeedsReady;
+	UPROPERTY(BlueprintReadOnly) FName MakesReady;
+	UPROPERTY(BlueprintReadOnly) FName SaferWhenReady;
+	/** Not offered once the mission knows this: a way closed by what was learned. */
+	UPROPERTY(BlueprintReadOnly) FName NotIfMark;
+	/** A wrong guess: it fails whoever makes it, with no check. And what any failure teaches the mission. */
+	UPROPERTY(BlueprintReadOnly) bool bWrong = false;
+	UPROPERTY(BlueprintReadOnly) FName FailGivesMark;
+	/** A wrong guess is a blow to the ship of this many hull points (a third with SaferWhenReady made ready). A right
+	 *  guess carries the same figure, so nothing shown of it differs. */
+	UPROPERTY(BlueprintReadOnly) float WrongBlow = 0.f;
+	/** Carried as ordered, with no check (and so nothing for the crew to learn in the repeating of it). */
+	UPROPERTY(BlueprintReadOnly) bool bSure = false;
+	/** A failure shortens every pass after it by this many hours (never under three). */
+	UPROPERTY(BlueprintReadOnly) float FailShortensPass = 0.f;
+	/** The way out this option is, where its success ends the mission (kept in FMission::Exit: what follows from
+	 *  the mission depends on it), and Starfleet's regard for that way (0: the mission's own). */
+	UPROPERTY(BlueprintReadOnly) FName Exit;
+	UPROPERTY(BlueprintReadOnly) int32 ExitStanding = 0;
 };
 
 USTRUCT(BlueprintType)
@@ -107,6 +141,33 @@ struct FMission
 	UPROPERTY() bool bRockResolved = false;
 	/** A colony: the settlers embarked (0 for the eight hundred). */
 	UPROPERTY() double People = 0.0;
+	/** A mission that comes round again (a loop in time): which pass this is, from 0; what it has learned, kept from
+	 *  pass to pass; how many hours a pass has, and how many this one has left. The hours are spent by what is done
+	 *  in them (FMissionOption::Hours), never by the clock: the board can be read at leisure. */
+	UPROPERTY(BlueprintReadOnly) int32 Pass = 0;
+	UPROPERTY(BlueprintReadOnly) TArray<FName> Marks;
+	UPROPERTY(BlueprintReadOnly) double PassHours = 0.0;
+	UPROPERTY(BlueprintReadOnly) double HoursLeft = 0.0;
+	/** What this pass has made ready: undone when it ends. */
+	UPROPERTY(BlueprintReadOnly) TArray<FName> Readied;
+	/** The way the mission was got out of, where there is more than one. */
+	UPROPERTY(BlueprintReadOnly) FName Exit;
+	/** The particulars rolled for this one (which answer is the right one, and the like). */
+	UPROPERTY() int32 Secret = 0;
+	bool Knows(FName Mark) const { return Mark.IsNone() || Marks.Contains(Mark); }
+	/** What the option would teach is known already: there is nothing in asking again. */
+	bool Learned(const FMissionOption& O) const { return !O.GivesMark.IsNone() && Marks.Contains(O.GivesMark); }
+	/** The way is closed: something the mission has learned rules the option out. */
+	bool Closed(const FMissionOption& O) const { return !O.NotIfMark.IsNone() && Marks.Contains(O.NotIfMark); }
+	/** What the option would make ready is ready already this pass. */
+	bool Done(const FMissionOption& O) const { return !O.MakesReady.IsNone() && Readied.Contains(O.MakesReady); }
+	/** The option is one the captain can take now: the pass has come, the mission knows what it takes and has ready
+	 *  what it needs, and the option has something still to tell or to do. */
+	bool Offers(const FMissionOption& O) const
+	{
+		return Pass >= O.MinPass && Knows(O.NeedsMark) && Knows(O.NeedsMark2) && (O.NeedsReady.IsNone() || Readied.Contains(O.NeedsReady))
+			&& !Learned(O) && !Closed(O) && !Done(O);
+	}
 	bool IsOpen() const { return State == EMissionState::Offered || State == EMissionState::Active; }
 	const FMissionStage* Current() const { return Stages.IsValidIndex(Stage) ? &Stages[Stage] : nullptr; }
 };
@@ -167,6 +228,9 @@ public:
 	UPROPERTY() int32 Failed = 0;
 	/** The day each station last posted its board. */
 	UPROPERTY() TMap<FString, int32> BoardDays;
+	/** What earlier missions left behind them for later ones, and the hour a cold core is lit again. */
+	UPROPERTY() TArray<FName> Legacy;
+	UPROPERTY() double DriveColdUntilHours = 0.0;
 };
 
 /**
@@ -192,6 +256,20 @@ public:
 	void AddStanding(int32 Delta, const FString& Why);
 	/** A place was named: open missions pointed at it follow. */
 	void RenameTarget(const FString& OldName, const FString& NewName);
+	/** The ship is held in a loop in time: no orders reach her and nothing else happens to her until it is broken. */
+	bool IsHeldInTime() const;
+	/** Ship's hours left of the pass of a mission that comes round again (0 for any other). */
+	double PassHoursLeft(const FMission& M) const;
+	/** The pass has the hours the option takes (always, for a mission that does not come round). */
+	bool HasHoursFor(const FMission& M, const FMissionOption& O) const;
+	/** What the ship's earlier missions left behind them for later ones: a lock on the old road answered
+	 *  (Lock.Answered: every later fold's stone is known at sight) or broken (Lock.Broken: every later stone is the
+	 *  harder to answer). Lock.Ridden is kept too; nothing reads it yet. */
+	bool Remembers(FName What) const { return Legacy.Contains(What); }
+	const TArray<FName>& GetLegacy() const { return Legacy; }
+	/** The warp core is cold after a shutdown: the drive does not answer until it is lit again. */
+	bool IsDriveCold() const { return Hours() < DriveColdUntilHours; }
+	double DriveColdHoursLeft() const { return FMath::Max(DriveColdUntilHours - Hours(), 0.0); }
 	/** An expansion order (outpost, colony, starbase) for the system is open already. */
 	bool HasOpenExpansion(EMissionKind Kind, const FString& System) const;
 	/** A session's start, the planets in: the rocks of the open impact missions, where they would be by now. */
@@ -277,6 +355,11 @@ private:
 	void SpawnImpactor(FMission& M, double HoursToImpact);
 	/** An inhabited world (a lit one in a charted system, a colony of ours): here, or anywhere but here. */
 	bool PickInhabitedWorld(FMission& M, FRandomStream& R, bool bHere);
+	/** A loop in time comes round: the pass begins again, with what the mission has learned. */
+	void ComeRound(FMission& M, const FString& How);
+	void BeginPass(FMission& M);
+	/** Out of a fold in time: what follows from the way out that was taken (FMission::Exit). */
+	void LeaveFold(FMission& M, const FMissionOption& O);
 	/** Closed from outside the captain's choices (the rock missed): complete, paid, reported. */
 	void CompleteOutside(FMission& M, const FString& Why, const FString& Text);
 	void Expire();
@@ -317,5 +400,8 @@ private:
 	float SaveDelaySeconds = 0.f;
 	/** The clock's last reading, to notice it going back (a new complement starts it over). */
 	double LastClockHours = -1.0;
+	/** What earlier missions left behind them (saved), and the ship's hour a cold core is lit again (saved). */
+	TArray<FName> Legacy;
+	double DriveColdUntilHours = 0.0;
 	static const TCHAR* SlotName;
 };

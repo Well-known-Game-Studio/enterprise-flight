@@ -229,6 +229,304 @@ bool FSlonkMissionEventTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+namespace
+{
+	/** A fold in time under test: the systems it lives in, and the few things every test of it does. */
+	struct FFoldUnderTest
+	{
+		FSystems S;
+		int32 Id = -1, RunOption = -1;
+		FCrewShipState Clock;
+		FMissionOutcome Out; FString Reply;
+		FFoldUnderTest() { S.ChartedWithWorlds(); Id = S.Missions->DevSpawn(EMissionKind::TimeLoop, EMissionSource::Event); RunOption = Option(TEXT("run for clear")); }
+		const FMission& M() const { return *S.Missions->Find(Id); }
+		const FMissionOption& At(int32 i) const { return M().Stages[0].Options[i]; }
+		int32 Option(const TCHAR* Words) const { const FMissionStage& St = M().Stages[0]; for (int32 i = 0; i < St.Options.Num(); ++i) { if (St.Options[i].Text.Contains(Words)) { return i; } } return -1; }
+		bool Offered(int32 i) const { return M().Stages[0].Options.IsValidIndex(i) && M().Offers(At(i)); }
+		bool Knows(const TCHAR* Mark) const { return M().Marks.Contains(FName(Mark)); }
+		bool HasHours(int32 i) const { return S.Missions->HasHoursFor(M(), At(i)); }
+		double Left() const { return S.Missions->PassHoursLeft(M()); }
+		double Stardate() const { return S.Roster->GetStardate(); }
+		bool Act(int32 i) { return S.Missions->Act(Id, i, Out, Reply); }
+		/** The watch given up: the run for clear space, which brings the next pass. */
+		void EndPass() { Act(RunOption); }
+		/** Hours by the stars with nothing done in them. */
+		void AdvanceClock(int32 Hours) { S.Roster->DevAdvanceHours(Hours, Clock); S.Missions->AdvanceSeconds(1.f, S.Ship()); }
+		/** The option tried until it is carried (the checks are the crew's), on a new pass whenever the watch has not
+		 *  the hours for it: false if it is not on the board, never was carried, or the mission closed another way. */
+		bool Carry(int32 i, int32 Tries = 60)
+		{
+			for (int32 k = 0; k < Tries && M().IsOpen(); ++k)
+			{
+				if (!Offered(i)) { return false; }
+				if (!HasHours(i)) { EndPass(); continue; }
+				if (Act(i) && Out.bSuccess) { return true; }
+			}
+			return false;
+		}
+	};
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkMissionTimeLoopTest, "Slonk.Missions.TimeLoop", SLONK_TEST_FLAGS)
+bool FSlonkMissionTimeLoopTest::RunTest(const FString& Parameters)
+{
+	// A loop in time: the one watch comes round until the ship is got out of it. It holds her (no orders reach her, it
+	// cannot be abandoned) and does not run out. Its hours are spent by what is done in them, carried or not, and by
+	// nothing else: not by the clock. The run for clear space (an order, with no check in it), the ship going to
+	// warp, or the hours spent brings the next pass. What a pass learns the next starts with, and the option that
+	// taught it leaves the board; what a pass makes ready is undone; what nobody aboard knows to try is not offered,
+	// and what the watch has not the hours for is refused. The twelfth pass is the last, whatever was or was not done.
+	FFoldUnderTest F;
+	if (!TestNotNull(TEXT("spawned"), F.S.Missions->Find(F.Id))) { return false; }
+	UMissionSubsystem* Ms = F.S.Missions;
+	const int32 Scan = F.Option(TEXT("scan the fold")), Hail = F.Option(TEXT("Hail")), Doctor = F.Option(TEXT("doctor")), Probe = F.Option(TEXT("probe")), Hull = F.Option(TEXT("dead hull")),
+		Faces = F.Option(TEXT("faces")), Brace = F.Option(TEXT("rig for a blow")), Cold = F.Option(TEXT("cold")), Break = F.Option(TEXT("Torpedo")), Ride = F.Option(TEXT("Ride")), Run = F.RunOption,
+		Answer0 = F.Option(TEXT("Answer"));
+	if (!TestTrue(TEXT("its options"), Scan >= 0 && Hail >= 0 && Doctor >= 0 && Probe >= 0 && Hull >= 0 && Faces >= 0 && Brace >= 0 && Cold >= 0 && Break >= 0 && Ride >= 0 && Run >= 0 && Answer0 >= 0)) { return false; }
+	TestTrue(TEXT("active at once, its first pass, five hours to the fold"), F.M().State == EMissionState::Active && F.M().Pass == 0 && FMath::IsNearlyEqual(F.Left(), 5.0, 0.01));
+	TestTrue(TEXT("the ship is held in it"), Ms->IsHeldInTime());
+	TestTrue(TEXT("on the first pass: the scan, the hail and the run, and nothing nobody knows to try"), F.Offered(Scan) && F.Offered(Hail) && F.Offered(Run)
+		&& !F.Offered(Doctor) && !F.Offered(Probe) && !F.Offered(Hull) && !F.Offered(Faces) && !F.Offered(Brace) && !F.Offered(Cold) && !F.Offered(Break) && !F.Offered(Ride) && !F.Offered(Answer0));
+	TestFalse(TEXT("a way out is not to be had before it is known"), F.Act(Cold));
+	TestFalse(TEXT("nor the doctor asked before anyone has lived the watch twice"), F.Act(Doctor));
+	TestFalse(TEXT("it cannot be abandoned"), Ms->Abandon(F.Id, F.Reply));
+	TestTrue(TEXT("open still"), F.M().IsOpen());
+	// A game taken up again with the drive already engaged: the first look at the ship is not her running for it.
+	{ FMissionShipState Found = F.S.Ship(); Found.bAtWarp = true; Ms->AdvanceSeconds(1.f, Found); }
+	TestEqual(TEXT("the drive found engaged at the first look is no run"), F.M().Pass, 0);
+	Ms->AdvanceSeconds(1.f, F.S.Ship());
+
+	// The clock takes nothing from the watch: the board can be read at leisure.
+	F.AdvanceClock(7);
+	TestTrue(TEXT("seven hours by the stars with nothing done: the first pass still, and its five hours"), F.M().Pass == 0 && F.M().State == EMissionState::Active && FMath::IsNearlyEqual(F.Left(), 5.0, 0.01));
+	// The run for clear space is an order: no check in it, no hour by the stars, and the next pass at once.
+	double DateWas = F.Stardate();
+	TestTrue(TEXT("the run"), F.Act(Run));
+	TestTrue(TEXT("carried as ordered, with no check; the second pass, its five hours, and no time gone"), F.Out.bSuccess && F.Out.CheckSummary.Contains(TEXT("ordered")) && !F.Out.bMissionOver
+		&& F.M().Pass == 1 && FMath::IsNearlyEqual(F.Left(), 5.0, 0.01) && FMath::IsNearlyEqual(F.Stardate(), DateWas, 1.0e-6));
+	// Running for it at warp brings it round at once, and once: staying at warp does not spin it.
+	FMissionShipState Warp = F.S.Ship(); Warp.bAtWarp = true;
+	Ms->AdvanceSeconds(1.f, Warp);
+	Ms->AdvanceSeconds(1.f, Warp);
+	TestEqual(TEXT("the third pass, by running"), F.M().Pass, 2);
+	Ms->AdvanceSeconds(1.f, F.S.Ship());
+	// Two days of it by the stars: no order from Starfleet, and the mission open on the same pass.
+	for (int32 k = 0; k < 8; ++k) { F.AdvanceClock(6); }
+	TestTrue(TEXT("two days on: the same pass, still open"), F.M().Pass == 2 && F.M().State == EMissionState::Active);
+	TestEqual(TEXT("no orders reach a ship held in time"), Ms->GetInbox().Num(), 0);
+	TestTrue(TEXT("the doctor is offered now"), F.Offered(Doctor));
+
+	// An attempt takes its hours, carried or not: out of the watch, and out of the stars' time.
+	int32 Before = F.M().Pass;
+	double LeftWas = F.Left(); DateWas = F.Stardate();
+	TestTrue(TEXT("the hail made"), F.Act(Hail));
+	TestTrue(TEXT("an hour of the watch gone with it, and an hour by the stars"), F.M().Pass == Before && FMath::IsNearlyEqual(F.Left(), LeftWas - 1.0, 0.01) && FMath::IsNearlyEqual(F.Stardate() - DateWas, 1.0 / 24.0, 1.0e-4));
+	// Learning: kept, earned the once, and the option that taught it off the board.
+	TestTrue(TEXT("the fold understood"), F.Carry(Scan) && F.Knows(TEXT("Curve")));
+	const int32 ScienceOnce = F.M().ScienceEarned, LogOnce = F.M().Log.Num();
+	TestFalse(TEXT("the scan has told all it can: off the board"), F.Offered(Scan));
+	for (int32 k = 0; k < 5; ++k) { TestFalse(TEXT("and not to be had again"), F.Act(Scan)); }
+	TestTrue(TEXT("its science earned the once, and the log none the longer"), ScienceOnce >= 150 && F.M().ScienceEarned == ScienceOnce && F.M().Log.Num() == LogOnce);
+	TestTrue(TEXT("with the fold understood: the probe, the dead hull, the bracing, the cold core and the torpedoes; nothing of the stone yet"), F.Offered(Probe) && F.Offered(Hull) && F.Offered(Brace) && F.Offered(Cold) && F.Offered(Break)
+		&& !F.Offered(Faces) && !F.Offered(Answer0) && !F.Offered(Ride));
+
+	// The watch's hours: an option it has not the hours for is on the board and refused; the last of them spent
+	// brings the next pass of itself.
+	F.EndPass();
+	Before = F.M().Pass;
+	F.Act(Probe);   // three hours, carried or not
+	TestTrue(TEXT("two hours left of the five"), F.M().Pass == Before && FMath::IsNearlyEqual(F.Left(), 2.0, 0.01));
+	const int32 LogWas = F.M().Log.Num();
+	TestTrue(TEXT("the cold core is on the board, and wants more hours than the watch has"), F.Offered(Cold) && !F.HasHours(Cold));
+	TestFalse(TEXT("refused"), F.Act(Cold));
+	TestTrue(TEXT("and nothing spent on it"), F.M().Pass == Before && FMath::IsNearlyEqual(F.Left(), 2.0, 0.01) && F.M().Log.Num() == LogWas);
+	F.Act(Brace);    // an hour
+	F.Act(Doctor);   // the last hour
+	TestTrue(TEXT("the hours spent: the next pass, with its five hours, nothing made ready, and what was learned kept"), F.M().Pass == Before + 1 && FMath::IsNearlyEqual(F.Left(), 5.0, 0.01) && F.M().Readied.Num() == 0 && F.Knows(TEXT("Curve")));
+	// What a pass makes ready lasts the pass.
+	TestTrue(TEXT("rigged for a blow"), F.Carry(Brace) && F.M().Readied.Contains(TEXT("Braced")) && !F.Offered(Brace) && F.M().Stages[0].Text.Contains(TEXT("rigged for a blow")));
+	TestFalse(TEXT("not to be done twice in a watch"), F.Act(Brace));
+	F.EndPass();
+	TestTrue(TEXT("undone when the watch comes round, and to do again"), F.M().Readied.Num() == 0 && F.Offered(Brace) && !F.M().Stages[0].Text.Contains(TEXT("rigged for a blow")));
+
+	// The twelfth pass is the last: no crew is held for good, whatever it can or cannot carry.
+	const int32 StandingBefore = Ms->GetStanding(), ScienceKept = F.M().ScienceEarned;
+	int32 Runs = 0;
+	for (; Runs < 20 && F.M().IsOpen(); ++Runs) { F.EndPass(); }
+	AddInfo(FString::Printf(TEXT("let go after pass %d, with %d things known and science %d"), F.M().Pass, F.M().Marks.Num(), F.M().ScienceEarned));
+	TestTrue(TEXT("let go after twelve passes: complete, by no way of the captain's, and the act that ended it says so"), F.M().State == EMissionState::Completed && F.M().Pass == 12 && F.M().Exit == FName(TEXT("Worn")) && F.Out.bMissionOver);
+	TestTrue(TEXT("with no regard for it, the science it had, the core cold, and the ship free"), Ms->GetStanding() == StandingBefore && F.M().ScienceEarned == ScienceKept && Ms->IsDriveCold() && !Ms->IsHeldInTime());
+
+	// One offered (only the console offers one) can be turned down, and begins its first pass when it is accepted.
+	FSystems T;
+	const int32 Refused = T.Missions->DevSpawn(EMissionKind::TimeLoop, EMissionSource::Starfleet);
+	TestTrue(TEXT("an offer of one can be turned down"), T.Missions->Abandon(Refused, F.Reply) && !T.Missions->Find(Refused)->IsOpen());
+	const int32 Asked = T.Missions->DevSpawn(EMissionKind::TimeLoop, EMissionSource::Starfleet);
+	if (!TestTrue(TEXT("offered"), T.Missions->Find(Asked) && T.Missions->Find(Asked)->State == EMissionState::Offered)) { return false; }
+	TestFalse(TEXT("an offer holds nobody"), T.Missions->IsHeldInTime());
+	T.Roster->DevAdvanceHours(3, F.Clock);
+	TestTrue(TEXT("accepted"), T.Missions->Accept(Asked, F.Reply));
+	T.Missions->AdvanceSeconds(1.f, T.Ship());
+	TestTrue(TEXT("its first pass, with its five hours, from the accepting"), T.Missions->IsHeldInTime() && T.Missions->Find(Asked)->Pass == 0 && FMath::IsNearlyEqual(T.Missions->PassHoursLeft(*T.Missions->Find(Asked)), 5.0, 0.01));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkMissionTimeLoopLockTest, "Slonk.Missions.TimeLoopLock", SLONK_TEST_FLAGS)
+bool FSlonkMissionTimeLoopLockTest::RunTest(const FString& Parameters)
+{
+	// The lock's question. One answer of three is the stone's, another in every fold; the dead hull gave one of the
+	// wrong ones and the stone's faces rule out the other, so the two together leave the right one. A wrong answer
+	// is refused whoever sends it, with no check: the pass is over, every pass after is an hour the shorter (never
+	// under three), and the answer is known for wrong. The right one is the best way out, and every later fold is
+	// known at sight for it.
+	static const TCHAR* AnswerWords[] = { TEXT("as given"), TEXT("turned about"), TEXT("silence") };
+	{
+		FSystems S; S.ChartedWithWorlds();
+		int32 Right[3] = { 0, 0, 0 }, Sound = 0;
+		const int32 Folds = 60;
+		for (int32 n = 0; n < Folds; ++n)
+		{
+			const FMission* M = S.Missions->Find(S.Missions->DevSpawn(EMissionKind::TimeLoop, EMissionSource::Event));
+			if (!M || M->Stages.Num() != 1) { continue; }
+			int32 Answer = -1, Answers = 0, RightOnes = 0, Tried = -1, Carved = -1;
+			const FMissionOption* First = nullptr; bool bAlike = true;
+			for (const FMissionOption& O : M->Stages[0].Options)
+			{
+				if (O.Text.StartsWith(TEXT("Answer")))
+				{
+					++Answers; for (int32 k = 0; k < 3; ++k) { if (O.Text.Contains(AnswerWords[k]) && !O.bWrong) { Answer = k; ++RightOnes; } }
+					// Nothing the board or the console shows of an answer tells the right one from the wrong.
+					if (!First) { First = &O; }
+					bAlike &= O.Skill == First->Skill && O.Party == First->Party && O.Difficulty == First->Difficulty && O.Hours == First->Hours && O.Risk == First->Risk && O.WrongBlow == First->WrongBlow
+						&& O.Science == First->Science && O.bSure == First->bSure && O.NeedsMark == First->NeedsMark && O.MinPass == First->MinPass;
+				}
+				if (O.Text.Contains(TEXT("dead hull"))) { Tried = O.SuccessText.Contains(TEXT("as given")) ? 0 : O.SuccessText.Contains(TEXT("turned about")) ? 1 : O.SuccessText.Contains(TEXT("keep silence")) ? 2 : -1; }
+				if (O.Text.Contains(TEXT("faces"))) { Carved = O.SuccessText.Contains(TEXT("repeats the gate's")) ? 0 : O.SuccessText.Contains(TEXT("turned about")) ? 1 : O.SuccessText.Contains(TEXT("keeping still")) ? 2 : -1; }
+			}
+			if (Answers == 3 && RightOnes == 1 && bAlike && Tried >= 0 && Carved >= 0 && Tried != Answer && Carved != Answer && Tried != Carved) { ++Sound; ++Right[Answer]; }
+		}
+		TestEqual(TEXT("every fold has one right answer that looks as the wrong ones do, and its two clues rule out the two wrong ones"), Sound, Folds);
+		TestTrue(TEXT("and each of the three is the right one in some fold"), Right[0] > 0 && Right[1] > 0 && Right[2] > 0);
+		AddInfo(FString::Printf(TEXT("of %d folds the stone took its call as given in %d, turned about in %d, silence in %d"), Folds, Right[0], Right[1], Right[2]));
+	}
+
+	FFoldUnderTest F;
+	UMissionSubsystem* Ms = F.S.Missions;
+	const int32 Scan = F.Option(TEXT("scan the fold")), Probe = F.Option(TEXT("probe")), Hull = F.Option(TEXT("dead hull")), Faces = F.Option(TEXT("faces"));
+	int32 Right = -1, Wrong = -1, Wrong2 = -1;
+	for (int32 k = 0; k < 3; ++k) { const int32 i = F.Option(AnswerWords[k]); if (i < 0) { continue; } if (!F.At(i).bWrong) { Right = i; } else if (Wrong < 0) { Wrong = i; } else { Wrong2 = i; } }
+	if (!TestTrue(TEXT("its options"), Scan >= 0 && Probe >= 0 && Hull >= 0 && Faces >= 0 && Right >= 0 && Wrong >= 0 && Wrong2 >= 0)) { return false; }
+	TestTrue(TEXT("the fold understood, and the stone found"), F.Carry(Scan) && F.Carry(Probe) && F.Knows(TEXT("Anchor")));
+	TestTrue(TEXT("with the stone found, its answers are on the board, and its faces to be read"), F.Offered(Right) && F.Offered(Wrong) && F.Offered(Wrong2) && F.Offered(Faces));
+	// A wrong answer.
+	if (!F.HasHours(Wrong)) { F.EndPass(); }
+	int32 PassWas = F.M().Pass;
+	TestTrue(TEXT("a wrong answer sent"), F.Act(Wrong));
+	TestTrue(TEXT("refused whoever sends it, with no check; the pass over, and the next an hour the shorter"), !F.Out.bSuccess && F.Out.CheckSummary.Contains(TEXT("not the answer")) && F.M().IsOpen()
+		&& F.M().Pass == PassWas + 1 && FMath::IsNearlyEqual(F.M().PassHours, 4.0) && FMath::IsNearlyEqual(F.Left(), 4.0, 0.01));
+	TestTrue(TEXT("and known for wrong: off the board, and in the watch's report"), !F.Offered(Wrong) && F.Offered(Wrong2) && F.Offered(Right) && F.M().Stages[0].Text.Contains(TEXT("Refused by the stone")));
+	TestFalse(TEXT("not to be sent twice"), F.Act(Wrong));
+	// The clues, in the watch's report from then: the two fit a four-hour watch with not an hour over.
+	TestTrue(TEXT("the dead hull boarded and the stone's faces read"), F.Carry(Hull) && F.Carry(Faces));
+	TestTrue(TEXT("both in the watch's report"), F.M().Stages[0].Text.Contains(TEXT("The dead hull.")) && F.M().Stages[0].Text.Contains(TEXT("The stone's faces.")));
+	// The other wrong answer: a shorter watch again, and the floor of three hours.
+	if (!F.HasHours(Wrong2)) { F.EndPass(); }
+	PassWas = F.M().Pass;
+	TestTrue(TEXT("the other wrong answer sent"), F.Act(Wrong2));
+	TestTrue(TEXT("refused as the first was; three hours to a watch now, and only the right answer left on the board"), !F.Out.bSuccess && F.M().Pass == PassWas + 1 && FMath::IsNearlyEqual(F.M().PassHours, 3.0) && FMath::IsNearlyEqual(F.Left(), 3.0, 0.01)
+		&& !F.Offered(Wrong) && !F.Offered(Wrong2) && F.Offered(Right));
+	// The right answer.
+	const int32 StandingBefore = Ms->GetStanding();
+	TestTrue(TEXT("the stone answered"), F.Carry(Right));
+	AddInfo(FString::Printf(TEXT("answered on pass %d: regard %+d, science %d"), F.M().Pass + 1, Ms->GetStanding() - StandingBefore, F.M().ScienceEarned));
+	TestTrue(TEXT("out by the stone's own leave"), F.M().State == EMissionState::Completed && F.M().Exit == FName(TEXT("Answered")) && F.Out.bMissionOver && !Ms->IsHeldInTime() && !Ms->IsDriveCold());
+	TestEqual(TEXT("the best regard of the ways out, less three a pass"), Ms->GetStanding() - StandingBefore, FMath::Max(10, 50 - 3 * F.M().Pass));
+	TestEqual(TEXT("and the science of everything found on the way"), F.M().ScienceEarned, 150 + 120 + 80 + 100 + 250);
+	TestTrue(TEXT("remembered"), Ms->Remembers(TEXT("Lock.Answered")) && !Ms->Remembers(TEXT("Lock.Broken")));
+	// Starfleet's orders reach her again.
+	for (int32 k = 0; k < 12 && Ms->GetInbox().Num() == 0; ++k) { F.AdvanceClock(6); }
+	TestTrue(TEXT("orders reach her again"), Ms->GetInbox().Num() > 0);
+	// Every later fold is known at sight.
+	const FMission* Next = Ms->Find(Ms->DevSpawn(EMissionKind::TimeLoop, EMissionSource::Event));
+	if (!TestNotNull(TEXT("another fold"), Next)) { return false; }
+	bool bAnswersOffered = false, bScanOffered = false;
+	for (const FMissionOption& O : Next->Stages[0].Options) { if (O.Text.StartsWith(TEXT("Answer"))) { bAnswersOffered |= Next->Offers(O); } if (O.Text.Contains(TEXT("scan the fold"))) { bScanOffered |= Next->Offers(O); } }
+	TestTrue(TEXT("known at sight: the fold and its stone from the first pass, the answers on the board"), Next->Marks.Contains(TEXT("Curve")) && Next->Marks.Contains(TEXT("Anchor")) && bAnswersOffered && !bScanOffered
+		&& Next->Stages[0].Text.Contains(TEXT("another lock on the old road")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkMissionTimeLoopExitsTest, "Slonk.Missions.TimeLoopExits", SLONK_TEST_FLAGS)
+bool FSlonkMissionTimeLoopExitsTest::RunTest(const FString& Parameters)
+{
+	// The other three ways out, and what follows each. Cold: dead metal goes free, and the core is twelve hours in
+	// the relighting. Broken: to be had with nothing known but the fold, the least regard, no science for it, and
+	// every later stone the harder to answer. Thrown: carried through the closing, and the stars five to eleven days
+	// on. (The drive let go while the core is cold, and the blows to the ship, are the ship's: seen in the game.)
+	{
+		FFoldUnderTest F;
+		UMissionSubsystem* Ms = F.S.Missions;
+		const int32 Scan = F.Option(TEXT("scan the fold")), Cold = F.Option(TEXT("cold"));
+		TestTrue(TEXT("the fold understood"), F.Carry(Scan));
+		const int32 StandingBefore = Ms->GetStanding();
+		TestTrue(TEXT("the core shut down cold"), F.Carry(Cold));
+		AddInfo(FString::Printf(TEXT("cold: out on pass %d, regard %+d, science %d"), F.M().Pass + 1, Ms->GetStanding() - StandingBefore, F.M().ScienceEarned));
+		TestTrue(TEXT("out, and dark"), F.M().State == EMissionState::Completed && F.M().Exit == FName(TEXT("Cold")) && !Ms->IsHeldInTime() && Ms->IsDriveCold() && FMath::IsNearlyEqual(Ms->DriveColdHoursLeft(), 12.0, 0.01));
+		TestTrue(TEXT("not on the first pass: the scan's two hours and the core's four are more than a watch"), F.M().Pass >= 1);
+		TestEqual(TEXT("its regard, less three a pass"), Ms->GetStanding() - StandingBefore, FMath::Max(10, 35 - 3 * F.M().Pass));
+		TestTrue(TEXT("nothing for a later fold to remember"), Ms->GetLegacy().Num() == 0);
+		F.AdvanceClock(11);
+		TestTrue(TEXT("cold still, eleven hours on"), Ms->IsDriveCold());
+		F.AdvanceClock(2);
+		TestFalse(TEXT("lit again after twelve"), Ms->IsDriveCold());
+	}
+	{
+		FFoldUnderTest F;
+		UMissionSubsystem* Ms = F.S.Missions;
+		const int32 Scan = F.Option(TEXT("scan the fold")), Break = F.Option(TEXT("Torpedo"));
+		TestTrue(TEXT("the fold understood, and nothing more"), F.Carry(Scan) && !F.Knows(TEXT("Anchor")));
+		const int32 StandingBefore = Ms->GetStanding();
+		TestTrue(TEXT("the hard point broken, unseen"), F.Carry(Break));
+		AddInfo(FString::Printf(TEXT("broken: out on pass %d, regard %+d, science %d"), F.M().Pass + 1, Ms->GetStanding() - StandingBefore, F.M().ScienceEarned));
+		TestTrue(TEXT("out"), F.M().State == EMissionState::Completed && F.M().Exit == FName(TEXT("Broken")) && !Ms->IsHeldInTime() && !Ms->IsDriveCold());
+		TestEqual(TEXT("the least regard of the ways out, less three a pass"), Ms->GetStanding() - StandingBefore, FMath::Max(10, 20 - 3 * F.M().Pass));
+		TestEqual(TEXT("no science for the breaking"), F.M().ScienceEarned, 150);
+		TestTrue(TEXT("remembered"), Ms->Remembers(TEXT("Lock.Broken")) && !Ms->Remembers(TEXT("Lock.Answered")));
+		// Every later stone is wary: harder to answer, and not known at sight.
+		const FMission* Next = Ms->Find(Ms->DevSpawn(EMissionKind::TimeLoop, EMissionSource::Event));
+		if (!TestNotNull(TEXT("another fold"), Next)) { return false; }
+		float Hardest = 0.f; for (const FMissionOption& O : Next->Stages[0].Options) { if (O.Text.StartsWith(TEXT("Answer"))) { Hardest = FMath::Max(Hardest, O.Difficulty); } }
+		TestTrue(TEXT("the next stone the harder to answer, and to be found out from the start"), FMath::IsNearlyEqual(Hardest, 95.f) && Next->Marks.Contains(TEXT("Wary")) && !Next->Marks.Contains(TEXT("Curve")));
+	}
+	{
+		FFoldUnderTest F;
+		UMissionSubsystem* Ms = F.S.Missions;
+		const int32 Scan = F.Option(TEXT("scan the fold")), Doctor = F.Option(TEXT("doctor")), Ride = F.Option(TEXT("Ride"));
+		TestTrue(TEXT("the fold understood"), F.Carry(Scan));
+		TestFalse(TEXT("nobody thinks of riding it before the echoes are understood"), F.Offered(Ride));
+		if (F.M().Pass == 0) { F.EndPass(); }
+		TestTrue(TEXT("the echoes understood, and the ride on the board"), F.Carry(Doctor) && F.Offered(Ride));
+		const int32 StandingBefore = Ms->GetStanding();
+		double DateBefore = F.Stardate(); int32 Tries = 0, FailedPasses = 0;
+		for (; Tries < 40 && F.M().IsOpen(); ++Tries)
+		{
+			if (!F.HasHours(Ride)) { F.EndPass(); }
+			if (!F.M().IsOpen()) { break; }
+			const int32 Was = F.M().Pass; DateBefore = F.Stardate();
+			if (!TestTrue(TEXT("the ride tried"), F.Act(Ride))) { break; }
+			if (!F.Out.bSuccess) { FailedPasses += F.M().Pass == Was + 1 ? 1 : 0; }
+		}
+		const double Days = F.Stardate() - DateBefore - 1.0 / 24.0;
+		AddInfo(FString::Printf(TEXT("thrown: out on pass %d after %d tries, %.2f days on, regard %+d, science %d"), F.M().Pass + 1, Tries, Days, Ms->GetStanding() - StandingBefore, F.M().ScienceEarned));
+		TestTrue(TEXT("out, each failed ride having been another pass"), F.M().State == EMissionState::Completed && F.M().Exit == FName(TEXT("Thrown")) && FailedPasses == Tries - 1 && !Ms->IsHeldInTime());
+		TestTrue(TEXT("and the stars five to eleven whole days on, beyond the hour the ride took"), Days > 4.99 && Days < 11.01 && FMath::IsNearlyEqual(Days, (double)FMath::RoundToInt(Days), 1.0e-3));
+		TestTrue(TEXT("closed where she came out, so the next fold keeps its ten days from there"), FMath::IsNearlyEqual(F.M().ClosedStardate, F.Stardate(), 1.0e-6));
+		TestEqual(TEXT("its regard, less three a pass"), Ms->GetStanding() - StandingBefore, FMath::Max(10, 30 - 3 * F.M().Pass));
+		TestTrue(TEXT("remembered"), Ms->Remembers(TEXT("Lock.Ridden")));
+	}
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlonkMissionDeadlineTest, "Slonk.Missions.Deadline", SLONK_TEST_FLAGS)
 bool FSlonkMissionDeadlineTest::RunTest(const FString& Parameters)
 {

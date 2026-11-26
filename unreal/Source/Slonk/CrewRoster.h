@@ -460,6 +460,12 @@ public:
 	bool DevIncident(int32 Offender, int32 Victim);
 	/** Dev: live this many ship's hours at once. */
 	void DevAdvanceHours(int32 HoursToLive, const FCrewShipState& Ship);
+	/** Hours of work lived at once (a mission's task that takes hours of a watch): each lived as any hour is, with
+	 *  the ship as she last was. */
+	void LiveHours(int32 HoursToLive);
+	/** Days gone by the stars that nobody aboard lived (a ship thrown forward in time): the stardate moves, and the
+	 *  crew's own days do not. */
+	void SkipDays(int32 Days);
 	void Save();
 	/** Mark the roster changed; it is written a few seconds later, or at the day's end. */
 	void RequestSave();
@@ -513,6 +519,8 @@ private:
 	void SetRelation(FCrewMember& From, int32 To, ECrewRelation Kind, float Affinity);
 	bool bAlongside = false;
 	FString AlongsideStation;
+	/** The ship as the last tick gave her, for hours lived between ticks (LiveHours). */
+	FCrewShipState LastShip;
 
 	UPROPERTY() TArray<FCrewMember> Roster;
 	UPROPERTY() TArray<FCrewMember> Lost;

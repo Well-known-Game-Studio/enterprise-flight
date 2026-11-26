@@ -241,6 +241,9 @@ void UShipSystemsComponent::TickMissions(float DeltaTime, const TArray<FString>&
 	St.bAtWarp = S->WarpDrive && S->WarpDrive->IsWarpEngaged();
 	St.bUnderFire = IsUnderFire();
 	M->AdvanceSeconds(DeltaTime, St, RealDeltaTime);
+	// A ship held in a fold in time gets nowhere at warp: every heading bends back, and the drive is let go (the once:
+	// a drive already dropping is left to it). A cold core does not answer either, until it is lit again.
+	if (St.bAtWarp && S->WarpDrive->GetState() != EWarpState::Dropping && (M->IsHeldInTime() || M->IsDriveCold())) { S->SetAutopilot(0, 0.0, 0.f); S->WarpDrive->DisengageWarp(); }
 	TArray<FCrewReport> Said;
 	M->DrainReports(Said);
 	// New space: the catalogue's stars revealed on the approach and charted on arrival; its events go through M.
