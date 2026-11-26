@@ -12,6 +12,8 @@
 #include "PlanetBody.h"
 #include "SlonkMaterials.h"
 #include "UObject/ConstructorHelpers.h"
+#include "NiagaraComponent.h"
+#include "NiagaraSystem.h"
 
 AStarBody::AStarBody()
 {
@@ -54,8 +56,37 @@ AStarBody::AStarBody()
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> PlaneFinder(TEXT("/Engine/BasicShapes/Plane.Plane"));
 	if (PlaneFinder.Succeeded()) { Corona->SetStaticMesh(PlaneFinder.Object); }
 
+	// A young star's disk (an engine plane in its equator) and its jets (engine cones from its centre out along its
+	// axis), in absolute scale; hidden unless it is young (ApplySurroundings).
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> ConeFinder(TEXT("/Engine/BasicShapes/Cone.Cone"));
+	auto Part = [this](const TCHAR* Name, UStaticMesh* Mesh)
+	{
+		UStaticMeshComponent* C = CreateDefaultSubobject<UStaticMeshComponent>(Name);
+		C->SetupAttachment(Body);
+		C->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		C->SetMobility(EComponentMobility::Movable);
+		C->SetUsingAbsoluteScale(true);
+		C->SetUsingAbsoluteLocation(true);
+		C->SetUsingAbsoluteRotation(true);
+		C->CastShadow = false;
+		C->SetVisibility(false);
+		if (Mesh) { C->SetStaticMesh(Mesh); }
+		return C;
+	};
+	Disk = Part(TEXT("Disk"), PlaneFinder.Succeeded() ? PlaneFinder.Object : nullptr);
+	JetNorth = Part(TEXT("JetNorth"), ConeFinder.Succeeded() ? ConeFinder.Object : nullptr);
+	JetSouth = Part(TEXT("JetSouth"), ConeFinder.Succeeded() ? ConeFinder.Object : nullptr);
+	// A planetary nebula's shell: the unit sphere the nebula march runs in, two-sided by its material. Sorted as a
+	// nebula is (Nebula.cpp), over the distant-star sprites.
+	ShellVolume = Part(TEXT("Shell"), Mesh);
+	ShellVolume->SetTranslucentSortPriority(2);
+	// A black hole's lens: the same sphere, over everything translucent behind it (it redraws what is behind).
+	LensVolume = Part(TEXT("Lens"), Mesh);
+	LensVolume->SetTranslucentSortPriority(3);
+
 	StarMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_Star.M_Star")));
 	CoronaMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_StarGlow.M_StarGlow")));
+	EjectaSystem = TSoftObjectPtr<UNiagaraSystem>(FSoftObjectPath(TEXT("/Game/Slonk/FX/NS_StarEjecta.NS_StarEjecta")));
 
 	Tags.AddUnique(APlanetBody::StarTag);
 }
@@ -92,6 +123,12 @@ void AStarBody::ApplyAppearance()
 		StarMID->SetScalarParameterValue(TEXT("Intensity"), Intensity);
 		StarMID->SetScalarParameterValue(TEXT("LimbDarkening"), LimbDarkening);
 		StarMID->SetScalarParameterValue(TEXT("GranuleScale"), GranuleScale);
+		StarMID->SetScalarParameterValue(TEXT("Activity"), Activity);
+		StarMID->SetScalarParameterValue(TEXT("Seed"), (float)(GetTypeHash(StarName) % 997u));
+		// A close pair's donor, drawn toward its companion (the way set as it goes round, Tick); its bounds grown to
+		// hold it.
+		StarMID->SetScalarParameterValue(TEXT("Tide"), Tide);
+		Body->SetBoundsScale(1.f + Tide);
 	}
 	if (CoronaMID)
 	{
@@ -101,21 +138,170 @@ void AStarBody::ApplyAppearance()
 		CoronaMID->SetScalarParameterValue(TEXT("Falloff"), CoronaFalloff);
 		// Where the photosphere disc ends inside the sprite (0..1 of the half-width).
 		CoronaMID->SetScalarParameterValue(TEXT("DiscFraction"), 1.0f / (1.0f + CoronaDepth));
+		// For the near look (the chromosphere, prominences and streamers): the star's size, its spots' activity and
+		// its own seed, as the photosphere has them.
+		CoronaMID->SetScalarParameterValue(TEXT("StarRadiusCm"), (float)GetRadiusCm());
+		CoronaMID->SetScalarParameterValue(TEXT("Activity"), Activity);
+		CoronaMID->SetScalarParameterValue(TEXT("Seed"), (float)(GetTypeHash(StarName) % 997u));
 	}
+	ApplySurroundings();
+}
+
+void AStarBody::ApplySurroundings()
+{
+	if (!Disk || !JetNorth || !JetSouth || !ShellVolume || !LensVolume) { return; }
+	// (Seen from any distance: beyond the star's own horizon they are drawn shrunk toward the camera,
+	// PlaceSurroundings.)
+	Disk->SetVisibility(bYoung || (bAccreting && Partner));
+	JetNorth->SetVisibility(bYoung);
+	JetSouth->SetVisibility(bYoung);
+	ShellVolume->SetVisibility(bShell);
+	LensVolume->SetVisibility(bBlackHole);
+	// A black hole has no surface to see and no glow of its own: only what its lens draws.
+	if (bBlackHole) { Body->SetVisibility(false); Corona->SetVisibility(false); }
+	if (!HasSurroundings()) { return; }
+	constexpr double AuCm = 1.495978707e13;
+	const double Outer = FMath::Max((double)DiskOuterAu, 0.2) * AuCm;
+	auto Mat = [this](TObjectPtr<UMaterialInstanceDynamic>& Slot, const TCHAR* Path, const TCHAR* Debug)
+	{
+		if (!Slot)
+		{
+			if (UMaterialInterface* M = SlonkMaterials::LoadOrFallback(TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(Path)), Debug)) { Slot = UMaterialInstanceDynamic::Create(M, this); }
+		}
+		return Slot.Get();
+	};
+	if (bShell)
+	{
+		if (UMaterialInstanceDynamic* N = Mat(ShellMID, TEXT("/Game/Slonk/Materials/M_Nebula.M_Nebula"), TEXT("StarShell")))
+		{
+			ShellVolume->SetMaterial(0, N);
+			// The nebula march in its shell mode: its own glow, blue-green within and red without.
+			N->SetScalarParameterValue(TEXT("Shell"), 1.f);
+			N->SetScalarParameterValue(TEXT("Lobes"), ShellLobes);
+			N->SetScalarParameterValue(TEXT("Density"), 0.12f);
+			N->SetScalarParameterValue(TEXT("Emission"), 1.f);
+			N->SetScalarParameterValue(TEXT("Brightness"), 14.f);
+			N->SetScalarParameterValue(TEXT("Seed"), (float)(GetTypeHash(StarName) % 997u));
+			N->SetVectorParameterValue(TEXT("ColorA"), ShellOuter);
+			N->SetVectorParameterValue(TEXT("ColorB"), ShellInner);
+			N->SetVectorParameterValue(TEXT("EmissiveColor"), FLinearColor::White);
+		}
+	}
+	if (bBlackHole)
+	{
+		if (UMaterialInstanceDynamic* L = Mat(LensMID, TEXT("/Game/Slonk/Materials/M_BlackHole.M_BlackHole"), TEXT("BlackHole")))
+		{
+			LensVolume->SetMaterial(0, L);
+			L->SetScalarParameterValue(TEXT("LensRadius"), LensRadiusRs);
+			L->SetScalarParameterValue(TEXT("DiskInner"), 3.f);
+			L->SetScalarParameterValue(TEXT("DiskOuter"), FMath::Min(DiskOuterRs, LensRadiusRs * 0.9f));
+			L->SetScalarParameterValue(TEXT("DiskTemp"), DiskTempK);
+			L->SetScalarParameterValue(TEXT("Seed"), (float)(GetTypeHash(StarName) % 997u));
+		}
+	}
+	if (bAccreting && Partner && !bYoung)
+	{
+		if (UMaterialInstanceDynamic* A = Mat(AccretionMID, TEXT("/Game/Slonk/Materials/M_AccretionDisk.M_AccretionDisk"), TEXT("AccretionDisk")))
+		{
+			Disk->SetMaterial(0, A);
+			// On the plane out past L1: the disk to a third of the separation, its inner edge a few of the accretor's
+			// radii, L1 half the way to the donor.
+			const double Half = FMath::Max(AccretionHalfCm(), 1.0);
+			A->SetScalarParameterValue(TEXT("InnerFrac"), (float)FMath::Clamp(GetRadiusCm() * 3.0 / Half, 0.005, 0.2));
+			A->SetScalarParameterValue(TEXT("DiskFrac"), (float)(OrbitRadiusCm * 0.35 / Half));
+			A->SetScalarParameterValue(TEXT("L1Frac"), (float)(OrbitRadiusCm * 0.5 / Half));
+			A->SetScalarParameterValue(TEXT("Seed"), (float)(GetTypeHash(StarName) % 997u));
+		}
+	}
+	if (!bYoung) { return; }
+	if (UMaterialInstanceDynamic* D = Mat(DiskMID, TEXT("/Game/Slonk/Materials/M_StarDisk.M_StarDisk"), TEXT("StarDisk")))
+	{
+		Disk->SetMaterial(0, D);
+		// The inner edge a few tenths of an AU out, the star's own colour on the dust, and its gaps by its name.
+		D->SetScalarParameterValue(TEXT("InnerFrac"), (float)FMath::Clamp((0.05 * AuCm + GetRadiusCm() * 8.0) / Outer, 0.01, 0.3));
+		D->SetScalarParameterValue(TEXT("GapCount"), (float)DiskGaps);
+		D->SetScalarParameterValue(TEXT("Seed"), (float)(GetTypeHash(StarName) % 997u));
+		D->SetVectorParameterValue(TEXT("StarColor"), StarColor);
+	}
+	if (UMaterialInstanceDynamic* J = Mat(JetMID, TEXT("/Game/Slonk/Materials/M_StarJet.M_StarJet"), TEXT("StarJet")))
+	{
+		JetNorth->SetMaterial(0, J);
+		JetSouth->SetMaterial(0, J);
+	}
+}
+
+void AStarBody::PlaceSurroundings(const FVector& ViewLoc)
+{
+	if (!HasSurroundings() || !Disk || !JetNorth || !JetSouth || !ShellVolume || !LensVolume) { return; }
+	constexpr double AuCm = 1.495978707e13;
+	const FVector Centre = GetActorLocation();
+	const double Dist = FVector::Dist(Centre, ViewLoc);
+	// Everything at k of its size and k of the way from the camera (the same angles), k such that the farthest
+	// reach of the disk or a jet is within the proxy distance.
+	const double Reach = Dist + FMath::Max(FMath::Max(bYoung ? FMath::Max((double)DiskOuterAu, (double)JetLengthAu) : 0.0, bShell ? FMath::Max((double)ShellRadiusAu, 0.01) : 0.0) * AuCm,
+		FMath::Max(bAccreting && Partner ? AccretionHalfCm() : 0.0, bBlackHole ? GetRadiusCm() * LensRadiusRs : 0.0));
+	const double K = FMath::Min(1.0, ProxyCm / FMath::Max(Reach, 1.0));
+	const FVector At = ViewLoc + (Centre - ViewLoc) * K;
+	const FQuat Q = GetActorQuat();
+	const FVector Up = Q.GetUpVector();
+	if (bShell && ShellMID)
+	{
+		// The march's sphere is the shell's radius at the proxy's scale; its lobes along the star's axis.
+		const double SR = FMath::Max((double)ShellRadiusAu, 0.01) * AuCm * K;
+		ShellVolume->SetWorldLocationAndRotation(At, Q);
+		ShellVolume->SetWorldScale3D(FVector(SR / MeshUnitRadius));
+		ShellMID->SetScalarParameterValue(TEXT("RadiusCm"), (float)SR);
+		ShellMID->SetVectorParameterValue(TEXT("Axis"), FLinearColor(Up.X, Up.Y, Up.Z, 0.f));
+	}
+	if (bBlackHole && LensMID)
+	{
+		// The lens at the proxy's scale (the trace is in Schwarzschild radii: the same picture at any scale), the disk
+		// in the hole's equator.
+		const double Rs = GetRadiusCm() * K;
+		LensVolume->SetWorldLocationAndRotation(At, Q);
+		LensVolume->SetWorldScale3D(FVector(Rs * LensRadiusRs / MeshUnitRadius));
+		LensMID->SetScalarParameterValue(TEXT("RsCm"), (float)Rs);
+		LensMID->SetVectorParameterValue(TEXT("Axis"), FLinearColor(Up.X, Up.Y, Up.Z, 0.f));
+	}
+	if (bAccreting && Partner && !bYoung)
+	{
+		// The plane in the orbital plane, its +X toward the donor (the stream and L1 lie that way).
+		const FVector ToDonor = (Partner->GetActorLocation() - Centre).GetSafeNormal();
+		Disk->SetWorldLocationAndRotation(At, FRotationMatrix::MakeFromXZ(ToDonor, FVector::UpVector).ToQuat());
+		Disk->SetWorldScale3D(FVector(AccretionHalfCm() * 2.0 * K / 100.0));
+		return;
+	}
+	if (!bYoung) { return; }
+	const double Outer = FMath::Max((double)DiskOuterAu, 0.2) * AuCm;
+	// The plane is 100 cm across and faces +Z, the star's axis: laid in its equator.
+	Disk->SetWorldLocationAndRotation(At, Q);
+	Disk->SetWorldScale3D(FVector(Outer * 2.0 * K / 100.0));
+	// The cone is 100 cm tall, its point at +50 z and its base, 50 cm across, at -50: each jet's point at the centre.
+	const double L = FMath::Max((double)JetLengthAu, 0.2) * AuCm;
+	const double W = L * 0.035;
+	JetNorth->SetWorldLocationAndRotation(At + Up * (L * 0.5 * K), Q * FQuat(FVector::RightVector, PI));
+	JetNorth->SetWorldScale3D(FVector(W * K / 100.0, W * K / 100.0, L * K / 100.0));
+	JetSouth->SetWorldLocationAndRotation(At - Up * (L * 0.5 * K), Q);
+	JetSouth->SetWorldScale3D(FVector(W * K / 100.0, W * K / 100.0, L * K / 100.0));
 }
 
 void AStarBody::SetBeyondHorizon(bool bBeyond)
 {
 	bBeyondHorizon = bBeyond;
-	SetActorHiddenInGame(bBeyond);
+	SetActorHiddenInGame(bBeyond && !HasSurroundings());   // (a young star's disk and jets, a shell, are drawn from any distance: only its body and glow hide)
 #if WITH_EDITOR
 	if (GetWorld() && !GetWorld()->IsGameWorld())
 	{
 		SetIsTemporarilyHiddenInEditor(bBeyond);
 	}
 #endif
-	if (Body) { Body->SetVisibility(!bBeyond); }
-	if (Corona) { Corona->SetVisibility(!bBeyond); }
+	if (Body) { Body->SetVisibility(!bBeyond && !bBlackHole); }
+	if (Corona) { Corona->SetVisibility(!bBeyond && !bBlackHole); }
+	if (bBlackHole && LensVolume) { LensVolume->SetVisibility(true); }
+	// (A young star's disk and jets, and a shell, stay: they are placed for the camera, PlaceSurroundings.)
+	if (bYoung && Disk && JetNorth && JetSouth) { Disk->SetVisibility(true); JetNorth->SetVisibility(true); JetSouth->SetVisibility(true); }
+	if (bShell && ShellVolume) { ShellVolume->SetVisibility(true); }
+	if (bAccreting && Partner && Disk) { Disk->SetVisibility(true); }
 }
 
 void AStarBody::OnConstruction(const FTransform& Transform)
@@ -135,6 +321,76 @@ void AStarBody::BeginPlay()
 {
 	Super::BeginPlay();
 	ApplyAppearance();
+	// Its ejecta: one component at the centre, in cm about it (absolute scale: the body's is the radius), turning
+	// with the star. Game worlds only.
+	if (GetWorld() && GetWorld()->IsGameWorld())
+	{
+		if (UNiagaraSystem* Sys = EjectaSystem.LoadSynchronous())
+		{
+			Ejecta = NewObject<UNiagaraComponent>(this, TEXT("Ejecta"), RF_Transient);
+			Ejecta->SetupAttachment(Body);
+			Ejecta->SetUsingAbsoluteScale(true);
+			Ejecta->SetWorldScale3D(FVector::OneVector);
+			Ejecta->SetAsset(Sys);
+			Ejecta->SetCastShadow(false);
+			Ejecta->SetAutoActivate(true);
+			Ejecta->RegisterComponent();
+			const float R = (float)GetRadiusCm();
+			Ejecta->SetVariableFloat(TEXT("Radius"), R);
+			Ejecta->SetVariableFloat(TEXT("WindRate"), 6.f + 14.f * Activity);
+			Ejecta->SetVariableLinearColor(TEXT("WindColor"), FLinearColor(CoronaColor.R * 0.9f, CoronaColor.G * 0.9f, CoronaColor.B * 0.9f, 0.22f));
+			Ejecta->SetVariableLinearColor(TEXT("EjectaColor"), FLinearColor(3.2f, 2.7f, 2.2f, 0.3f));
+			Ejecta->SetVariableFloat(TEXT("EjectaRate"), 0.f);
+		}
+		EjectaRng.Initialize((int32)(GetTypeHash(StarName) ^ 0x5bd1e995u));
+		NextEjectaIn = EjectaRng.FRandRange(20.f, 90.f);
+	}
+}
+
+void AStarBody::TriggerEjecta()
+{
+	if (!Ejecta) { return; }
+	// From an activity belt, either side of the equator, anywhere round: a point on the surface in the star's frame.
+	const float Lat = (EjectaRng.FRand() < 0.5f ? -1.f : 1.f) * EjectaRng.FRandRange(0.1f, 0.55f);
+	const float Lon = EjectaRng.FRandRange(0.f, 2.f * PI);
+	const FVector Dir(FMath::Cos(Lat) * FMath::Cos(Lon), FMath::Cos(Lat) * FMath::Sin(Lon), FMath::Sin(Lat));
+	Ejecta->SetVariableVec3(TEXT("EjectaPos"), Dir * GetRadiusCm());
+	Ejecta->SetVariableFloat(TEXT("EjectaRate"), 500.f);
+	EjectaLeft = 1.6f;
+	UE_LOG(LogTemp, Log, TEXT("Star %s: an ejection at latitude %.0f"), *StarName, FMath::RadiansToDegrees(Lat));
+}
+
+void AStarBody::TriggerEjectaSeenFrom(const FVector& ViewLocation)
+{
+	if (!Ejecta) { return; }
+	// A point on the limb as seen from there: square to the line of sight, at a random angle round it, in the star's frame.
+	const FVector Los = (GetActorLocation() - ViewLocation).GetSafeNormal();
+	FVector A = FVector::CrossProduct(Los, GetActorUpVector()).GetSafeNormal();
+	if (A.IsNearlyZero()) { A = FVector::CrossProduct(Los, FVector::ForwardVector).GetSafeNormal(); }
+	const FVector B = FVector::CrossProduct(Los, A);
+	const float Ang = EjectaRng.FRandRange(0.f, 2.f * PI);
+	const FVector World = A * FMath::Cos(Ang) + B * FMath::Sin(Ang);
+	const FVector Local = Body->GetComponentQuat().UnrotateVector(World);
+	Ejecta->SetVariableVec3(TEXT("EjectaPos"), Local * GetRadiusCm());
+	Ejecta->SetVariableFloat(TEXT("EjectaRate"), 500.f);
+	EjectaLeft = 1.6f;
+}
+
+void AStarBody::TickEjecta(float DeltaTime)
+{
+	if (!Ejecta) { return; }
+	if (EjectaLeft > 0.f)
+	{
+		EjectaLeft -= DeltaTime;
+		if (EjectaLeft <= 0.f) { Ejecta->SetVariableFloat(TEXT("EjectaRate"), 0.f); }
+	}
+	// The more active the star, the more often: every two to six minutes at the Sun's middling activity.
+	NextEjectaIn -= DeltaTime;
+	if (NextEjectaIn <= 0.f)
+	{
+		NextEjectaIn = EjectaRng.FRandRange(120.f, 360.f) / FMath::Max(Activity / 0.6f, 0.1f);
+		if (Activity > 0.05f) { TriggerEjecta(); }
+	}
 }
 
 void AStarBody::Tick(float DeltaTime)
@@ -150,8 +406,24 @@ void AStarBody::Tick(float DeltaTime)
 	{
 		AddActorLocalRotation(FRotator(0.f, SpinDegPerSec * UGameClockSubsystem::Sim(this, DeltaTime), 0.f));
 	}
+	// A close pair: the accretor goes round the donor (counter-clockwise seen from above, as its disk's stream
+	// bends), and the donor's teardrop follows it.
+	if (bAccreting && Partner && OrbitRadiusCm > 0.0)
+	{
+		OrbitPhase = FMath::Fmod(OrbitPhase + 2.f * PI * UGameClockSubsystem::Sim(this, DeltaTime) / FMath::Max(OrbitPeriodS, 1.f), 2.f * PI);
+		SetActorLocation(Partner->GetActorLocation() + FVector(FMath::Cos(OrbitPhase), FMath::Sin(OrbitPhase), 0.0) * OrbitRadiusCm);
+	}
+	if (Tide > 0.f && Partner && StarMID)
+	{
+		const FVector D = (Partner->GetActorLocation() - GetActorLocation()).GetSafeNormal();
+		StarMID->SetVectorParameterValue(TEXT("TideDir"), FLinearColor(D.X, D.Y, D.Z, 0.f));
+	}
 	// Beyond the GPU precision horizon the player's distant-star sprite stands in for the mesh.
 	SetBeyondHorizon(IsLocationBeyondHorizon(GetActorLocation()));
+	TickEjecta(DeltaTime);
+	// (A black hole throws off no wind.)
+	if (Ejecta && bBlackHole && Ejecta->IsActive()) { Ejecta->Deactivate(); Ejecta->SetVisibility(false); }
+	if (Ejecta && !bBlackHole && Ejecta->IsVisible() == bBeyondHorizon) { Ejecta->SetVisibility(!bBeyondHorizon); }
 
 	// Billboard the glow toward the player's camera and keep it a minimum angular size.
 	if (APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr)
@@ -161,11 +433,12 @@ void AStarBody::Tick(float DeltaTime)
 		PC->GetPlayerViewPoint(ViewLoc, ViewRot);
 		const FVector ToCam = ViewLoc - GetActorLocation();
 		const double Dist = ToCam.Size();
+		PlaceSurroundings(ViewLoc);
 		// Past the hand-over distance the distant-star sprite on the player takes over.
 		const bool bNear = Dist < FarSpriteDistanceCm;
 		if (Corona->IsVisible() != (bNear && !bBeyondHorizon))
 		{
-			Corona->SetVisibility(bNear && !bBeyondHorizon);
+			Corona->SetVisibility(bNear && !bBeyondHorizon && !bBlackHole);
 		}
 		if (Dist > 1.0 && bNear)
 		{
@@ -182,6 +455,12 @@ void AStarBody::Tick(float DeltaTime)
 				CoronaMID->SetScalarParameterValue(TEXT("DiscFraction"), (float)(GetRadiusCm() * 2.0 / Width));
 				const float Radii = (float)(Dist / GetRadiusCm());
 				CoronaMID->SetScalarParameterValue(TEXT("Intensity"), CoronaIntensity * FMath::Clamp(Radii / 8.f, 1.f, 40.f));
+				// Close in, the corona's structure; from across the system, the halo and rays an eye sees. Crossed between
+				// twenty and sixty radii. And the star's north, so what stands on the limb stays put on the star.
+				CoronaMID->SetScalarParameterValue(TEXT("Near"), 1.f - FMath::SmoothStep(20.f, 60.f, Radii));
+				CoronaMID->SetScalarParameterValue(TEXT("CamRadii"), Radii);
+				const FVector Up = GetActorUpVector();
+				CoronaMID->SetVectorParameterValue(TEXT("StarUp"), FLinearColor((float)Up.X, (float)Up.Y, (float)Up.Z, 0.f));
 			}
 		}
 	}

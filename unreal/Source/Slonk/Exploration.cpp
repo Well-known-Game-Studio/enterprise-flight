@@ -32,7 +32,7 @@ void UExplorationSubsystem::InitForTest(UMissionSubsystem* InMissions, UFrontier
 {
 	bNoDisk = true; MissionsOverride = InMissions; FrontierOverride = InFrontier;
 	Rng.Initialize(13);
-	Catalogue = MakeCatalogue(CatalogueSeed, CatalogueCount);
+	Catalogue = MakeFullCatalogue(CatalogueSeed, CatalogueCount);
 	Contacts.Reset();
 }
 
@@ -91,6 +91,76 @@ TArray<FCatalogueEntry> UExplorationSubsystem::MakeCatalogue(int32 Seed, int32 C
 	return Out;
 }
 
+TArray<FCatalogueEntry> UExplorationSubsystem::MakeRemarkable(int32 Seed, const TArray<FCatalogueEntry>& Ordinary)
+{
+	FRandomStream R((int32)HashCombine((uint32)Seed, 0x510e527fu));
+	struct FKnown { float RA, Dec, Ly; };
+	static const FKnown Known[] = { { 14.66f, -60.83f, 4.37f }, { 17.96f, 4.69f, 5.96f }, { 6.75f, -16.72f, 8.6f } };
+	TSet<FString> UsedNames; TSet<int32> UsedNumbers;
+	TArray<FVector> Placed;
+	for (const FKnown& K : Known) { Placed.Add(AStarSystem::DirectionFromSky(K.RA, K.Dec) * (double)K.Ly); }
+	for (const FCatalogueEntry& O : Ordinary)
+	{
+		Placed.Add(AStarSystem::DirectionFromSky(O.Spec.RightAscensionHours, O.Spec.DeclinationDeg) * (double)O.Spec.DistanceLy);
+		UsedNames.Add(O.ProperName); UsedNames.Add(O.ProperName + TEXT(" Prime"));
+		const FString Digits = O.Designation.RightChop(4);
+		if (Digits.IsNumeric()) { UsedNumbers.Add(FCString::Atoi(*Digits)); }
+	}
+	// A young star, a T Tauri star or (one time in three) a Herbig star; a white dwarf in its shells; a close pair; a
+	// black hole (its worlds made as a red dwarf's would be: close in, and cold).
+	const EStellarKind Kinds[] = { EStellarKind::YoungTTauri, EStellarKind::PlanetaryNebula, EStellarKind::ClosePair, EStellarKind::BlackHole };
+	TArray<FCatalogueEntry> Out;
+	for (int32 k = 0; k < UE_ARRAY_COUNT(Kinds); ++k)
+	{
+		FCatalogueEntry E;
+		// Farther out than most (they are the sector's sights), apart from everything placed.
+		for (int32 Attempt = 0; Attempt < 200; ++Attempt)
+		{
+			E.Spec.RightAscensionHours = R.FRandRange(0.f, 24.f);
+			E.Spec.DeclinationDeg = FMath::RadiansToDegrees(FMath::Asin(R.FRandRange(-0.92f, 0.92f)));
+			E.Spec.DistanceLy = R.FRandRange(12.f, 28.f);
+			const FVector P = AStarSystem::DirectionFromSky(E.Spec.RightAscensionHours, E.Spec.DeclinationDeg) * (double)E.Spec.DistanceLy;
+			bool bClear = true; for (const FVector& Q : Placed) { if (FVector::Dist(P, Q) < 1.5) { bClear = false; break; } }
+			if (bClear) { Placed.Add(P); break; }
+		}
+		E.Spec.Kind = Kinds[k];
+		if (E.Spec.Kind == EStellarKind::YoungTTauri)
+		{
+			const bool bHerbig = R.FRand() < 1.f / 3.f;
+			E.Spec.Kind = bHerbig ? EStellarKind::YoungHerbig : EStellarKind::YoungTTauri;
+			E.Spec.StarClass = bHerbig ? (R.FRand() < 0.5f ? EStarClass::A : EStarClass::F) : (R.FRand() < 0.5f ? EStarClass::K : EStarClass::M);
+		}
+		else if (E.Spec.Kind == EStellarKind::ClosePair)
+		{
+			// An orange or yellow star giving its gas to a white dwarf (the separation is set by the donor's size).
+			E.Spec.StarClass = R.FRand() < 0.6f ? EStarClass::K : EStarClass::G;
+			E.Spec.CompanionClass = EStarClass::WhiteDwarf;
+			E.Spec.CompanionSeparationAU = 0.01f;
+		}
+		else if (E.Spec.Kind == EStellarKind::BlackHole) { E.Spec.StarClass = EStarClass::M; }
+		else { E.Spec.StarClass = EStarClass::WhiteDwarf; }
+		int32 Number = 0; do { Number = R.RandRange(1000, 9999); } while (UsedNumbers.Contains(Number));
+		UsedNumbers.Add(Number);
+		E.Designation = FString::Printf(TEXT("UFC %d"), Number);
+		E.Spec.Name = E.Designation;
+		E.Spec.Seed = Number * 31 + Ordinary.Num() + k;
+		E.Spec.bStarOnly = true; E.Spec.bPopulate = false;
+		FString Proper = AStarSystem::GenerateWorldName(R, UsedNames);
+		Proper.RemoveFromEnd(TEXT(" Prime"));
+		E.ProperName = Proper;
+		E.bHasBeacon = R.FRand() < 0.34f;
+		Out.Add(E);
+	}
+	return Out;
+}
+
+TArray<FCatalogueEntry> UExplorationSubsystem::MakeFullCatalogue(int32 Seed, int32 Count)
+{
+	TArray<FCatalogueEntry> Out = MakeCatalogue(Seed, Count);
+	Out.Append(MakeRemarkable(Seed, Out));
+	return Out;
+}
+
 void UExplorationSubsystem::Load()
 {
 	Catalogue.Reset(); Contacts.Reset();
@@ -101,7 +171,15 @@ void UExplorationSubsystem::Load()
 			Catalogue = S->Catalogue; Contacts = S->Contacts;
 		}
 	}
-	if (Catalogue.Num() != CatalogueCount) { Catalogue = MakeCatalogue(CatalogueSeed, CatalogueCount); }
+	{
+		// A catalogue saved before it had all of its remarkable stars keeps its charts and has the rest added; one
+		// that is not this catalogue's beginning is made anew.
+		const TArray<FCatalogueEntry> Full = MakeFullCatalogue(CatalogueSeed, CatalogueCount);
+		bool bPrefix = Catalogue.Num() >= CatalogueCount && Catalogue.Num() <= Full.Num();
+		for (int32 i = 0; bPrefix && i < Catalogue.Num(); ++i) { bPrefix = Catalogue[i].Designation == Full[i].Designation; }
+		if (!bPrefix) { Catalogue = Full; }
+		else { for (int32 i = Catalogue.Num(); i < Full.Num(); ++i) { Catalogue.Add(Full[i]); } }
+	}
 	UE_LOG(LogTemp, Log, TEXT("Exploration: %d stars in the catalogue, %d charted, %d peoples met"), Catalogue.Num(), CountCharted(), Contacts.Num());
 	++Revision;
 }
@@ -122,7 +200,7 @@ void UExplorationSubsystem::Reset()
 	// log's records, the stars and worlds in the sky) before the catalogue is made anew; the stars lose their
 	// worlds only with a new session.
 	for (FCatalogueEntry& E : Catalogue) { if (!E.GivenName.IsEmpty()) { ApplyRename(E, E.GivenName, E.Designation); } }
-	Catalogue = MakeCatalogue(CatalogueSeed, CatalogueCount); Contacts.Reset();
+	Catalogue = MakeFullCatalogue(CatalogueSeed, CatalogueCount); Contacts.Reset();
 	for (FCatalogueEntry& E : Catalogue) { if (AStarSystem* S = SystemOf(E)) { S->bCharted = false; } }
 	Save();
 }

@@ -611,8 +611,37 @@ void UScienceScannerComponent::FactsForStar(const AActor* A, FScanRecord& R) con
 		// The companion's class is not stored: tell it from its size.
 		Class = S->RadiusKm < 20000.f ? EStarClass::WhiteDwarf : S->RadiusKm < 500000.f ? EStarClass::M : EStarClass::K;
 	}
-	R.Facts.Add(FString::Printf(TEXT("Spectral class %s"), StarClassName(Class)));
-	R.Facts.Add(FString::Printf(TEXT("Diameter %.2f solar, photosphere ~%d K"), S->RadiusKm / 695700.f, StarTemperatureK(Class)));
+	if (S->bBlackHole)
+	{
+		R.Facts.Add(FString::Printf(TEXT("Black hole: %.1f solar masses, event horizon %.0f km across"), S->GetMassSuns(), S->RadiusKm * 2.f));
+		R.Facts.Add(FString::Printf(TEXT("Accretion disk from the innermost stable orbit, %.0f km, to %.0f km; ~%.0f K at its inner edge"), S->RadiusKm * 3.f, S->RadiusKm * S->DiskOuterRs, S->DiskTempK));
+		R.Facts.Add(TEXT("Light bent round it: an Einstein ring of the stars behind; its shadow 2.6 horizon radii across"));
+	}
+	else
+	{
+		R.Facts.Add(FString::Printf(TEXT("Spectral class %s"), StarClassName(Class)));
+		R.Facts.Add(FString::Printf(TEXT("Diameter %.2f solar, photosphere ~%d K"), S->RadiusKm / 695700.f, StarTemperatureK(Class)));
+	}
+	// What else it is: young in its disk, or a dying star's core in the shells it shed.
+	if (S->bYoung)
+	{
+		R.Facts.Add(FString::Printf(TEXT("%s: protoplanetary disk to %.1f AU, %d gap%s, bipolar jets %.1f AU"),
+			Class == EStarClass::A || Class == EStarClass::F ? TEXT("Young Herbig star") : TEXT("Young T Tauri star"),
+			S->DiskOuterAu, S->DiskGaps, S->DiskGaps == 1 ? TEXT("") : TEXT("s"), S->JetLengthAu));
+	}
+	if (S->bShell)
+	{
+		R.Facts.Add(FString::Printf(TEXT("Planetary nebula: %s shell, %.0f AU, ionised oxygen within, hydrogen and nitrogen without"),
+			S->ShellLobes > 0.4f ? TEXT("bipolar") : TEXT("ring"), S->ShellRadiusAu));
+	}
+	if (S->Tide > 0.f && S->Partner)
+	{
+		R.Facts.Add(FString::Printf(TEXT("Filling its Roche lobe: drawn toward %s, losing gas from the inner Lagrange point"), *S->Partner->StarName));
+	}
+	if (S->bAccreting && S->Partner)
+	{
+		R.Facts.Add(FString::Printf(TEXT("Accretion disk fed by a stream from %s; orbit %.1f h, separation %.0f km"), *S->Partner->StarName, S->OrbitPeriodS / 3600.f, S->OrbitRadiusCm / 1.0e5));
+	}
 	if (Sys)
 	{
 		int32 Planets = 0;

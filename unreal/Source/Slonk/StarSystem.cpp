@@ -141,6 +141,20 @@ void AStarSystem::ApplyStarClass(AStarBody* S, EStarClass Class, FRandomStream& 
 	}
 }
 
+EStellarKind AStarSystem::StellarKindFor(const FStarSystemSpec& Spec)
+{
+	if (Spec.Kind != EStellarKind::Ordinary) { return Spec.Kind; }
+	// (A stream of its own off the seed: the catalogue's own draws are untouched.)
+	FRandomStream K((int32)HashCombine((uint32)Spec.Seed, 0x2c1b3c6du));
+	const float Roll = K.FRand();
+	if (Roll < 1.f / 12.f)
+	{
+		if (Spec.StarClass == EStarClass::K || Spec.StarClass == EStarClass::M) { return EStellarKind::YoungTTauri; }
+		if (Spec.StarClass == EStarClass::A || Spec.StarClass == EStarClass::F) { return EStellarKind::YoungHerbig; }
+	}
+	return EStellarKind::Ordinary;
+}
+
 double AStarSystem::LuminosityScale(EStarClass Class)
 {
 	// Orbit scale of the temperate band relative to the Sun's: sqrt of the luminosity, roughly.
@@ -237,25 +251,83 @@ AStarSystem* AStarSystem::Generate(UWorld* World, const FStarSystemSpec& Spec, c
 	if (!S) { return Sys; }
 	S->StarName = Spec.Name;
 	ApplyStarClass(S, Spec.StarClass, Rng);
-	S->FinishSpawning(FTransform(Loc));
+	// A young star: still in the disk it formed from, jets from its poles; restless, spotted. (Its sizes from a stream
+	// of its own, so the system's own draws are as they were.)
+	const EStellarKind Kind = StellarKindFor(Spec);
+	FQuat StarRot = FQuat::Identity;
+	if (Kind == EStellarKind::YoungTTauri || Kind == EStellarKind::YoungHerbig)
+	{
+		FRandomStream Y((int32)HashCombine((uint32)Spec.Seed, 0x6a09e667u));
+		const bool bHerbig = Kind == EStellarKind::YoungHerbig;
+		S->bYoung = true;
+		S->Activity = 1.f;
+		S->DiskOuterAu = bHerbig ? Y.FRandRange(6.f, 14.f) : Y.FRandRange(2.5f, 7.f);
+		S->DiskGaps = Y.RandRange(1, 4);
+		S->JetLengthAu = S->DiskOuterAu * Y.FRandRange(0.8f, 1.6f);
+		// Its axis anywhere (so its disk is seldom edge-on to the ship coming in from the planets' plane).
+		StarRot = FRotator(Y.FRandRange(-75.f, 75.f), Y.FRandRange(0.f, 360.f), 0.f).Quaternion();
+	}
+	else if (Kind == EStellarKind::PlanetaryNebula)
+	{
+		// The shells it shed, well beyond its worlds: round, or pinched into two lobes along an axis anywhere; most
+		// glow blue-green within and red without, some more evenly red or greener.
+		FRandomStream Y((int32)HashCombine((uint32)Spec.Seed, 0x3c6ef372u));
+		S->bShell = true;
+		S->Activity = 0.f;
+		S->ShellRadiusAu = Y.FRandRange(60.f, 160.f);
+		S->ShellLobes = Y.FRand() < 0.45f ? Y.FRandRange(0.f, 0.2f) : Y.FRandRange(0.55f, 1.f);
+		const float Hue = Y.FRand();
+		S->ShellInner = Hue < 0.6f ? FLinearColor(0.3f, 0.95f, 0.85f) : Hue < 0.8f ? FLinearColor(0.55f, 1.0f, 0.5f) : FLinearColor(1.0f, 0.55f, 0.6f);
+		S->ShellOuter = Hue < 0.8f ? FLinearColor(1.0f, 0.3f, 0.35f) : FLinearColor(1.0f, 0.25f, 0.2f);
+		StarRot = FRotator(Y.FRandRange(-80.f, 80.f), Y.FRandRange(0.f, 360.f), 0.f).Quaternion();
+	}
+	else if (Kind == EStellarKind::BlackHole)
+	{
+		// What a great star left: six to eighteen suns' mass, its Schwarzschild radius its radius; a disk round it,
+		// its axis anywhere. Its far glow the disk's.
+		FRandomStream Y((int32)HashCombine((uint32)Spec.Seed, 0xa54ff53au));
+		S->bBlackHole = true;
+		S->Activity = 0.f;
+		S->RadiusKm = 2.953f * Y.FRandRange(6.f, 18.f);
+		S->DiskOuterRs = Y.FRandRange(18.f, 40.f);
+		S->LensRadiusRs = FMath::Max(60.f, S->DiskOuterRs * 1.6f);
+		S->DiskTempK = Y.FRandRange(7000.f, 12000.f);
+		S->StarColor = FLinearColor(1.0f, 0.82f, 0.62f); S->CoronaColor = FLinearColor(1.0f, 0.7f, 0.45f);
+		StarRot = FRotator(Y.FRandRange(-70.f, 70.f), Y.FRandRange(0.f, 360.f), 0.f).Quaternion();
+	}
+	S->FinishSpawning(FTransform(StarRot, Loc));
 	Sys->Star = S;
 	Sys->Adopt(S);
 
 	// A companion star, in the orbital plane at the given separation.
 	const bool bBinary = Spec.CompanionClass != EStarClass::None && Spec.CompanionSeparationAU > 0.f;
+	// (A close pair's separation is the donor's: it fills its Roche lobe, about 0.36 of the separation across.)
+	const bool bClose = bBinary && Kind == EStellarKind::ClosePair;
+	const double SepCm = bClose ? S->GetRadiusCm() / 0.36 : (double)Spec.CompanionSeparationAU * AuCm;
 	FVector CLoc = Loc;
 	if (bBinary)
 	{
 		const double Ang = Rng.FRandRange(0.0, 2.0 * PI);
-		CLoc = Loc + FVector(FMath::Cos(Ang), FMath::Sin(Ang), 0.0) * ((double)Spec.CompanionSeparationAU * AuCm);
+		CLoc = Loc + FVector(FMath::Cos(Ang), FMath::Sin(Ang), 0.0) * SepCm;
 		AStarBody* C = World->SpawnActorDeferred<AStarBody>(AStarBody::StaticClass(), FTransform(CLoc), nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
 		if (C)
 		{
 			C->StarName = Spec.Name + TEXT(" B");
 			ApplyStarClass(C, Spec.CompanionClass, Rng);
+			if (bClose)
+			{
+				// Going round the donor in its Kepler period (a star and a white dwarf of about one and a half suns
+				// together), its disk fed from it; and the donor drawn toward it.
+				C->bAccreting = true;
+				C->Partner = S;
+				C->OrbitRadiusCm = SepCm;
+				C->OrbitPhase = (float)Ang;
+				C->OrbitPeriodS = (float)(2.0 * PI * FMath::Sqrt(SepCm * SepCm * SepCm / (1.5 * 1.327e26)));
+			}
 			C->FinishSpawning(FTransform(CLoc));
 			Sys->Companion = C;
 			Sys->Adopt(C);
+			if (bClose) { S->Tide = 0.4f; S->Partner = C; S->ApplyAppearance(); }
 		}
 	}
 
@@ -284,9 +356,12 @@ void AStarSystem::Reveal()
 	// Planets: the primary's inside a third of the separation (a binary's stable zone), then a few of the
 	// companion's own.
 	TArray<APlanetBody*> Primary, Secondary;
-	const double MaxPrimaryAu = bBinary ? (double)Spec.CompanionSeparationAU * 0.3 : 1.0e9;
+	// (A close pair's worlds go round both, far outside the pair: they are the primary's, unbounded, and the
+	// companion has none of its own.)
+	const bool bClose = bBinary && StellarKindFor(Spec) == EStellarKind::ClosePair;
+	const double MaxPrimaryAu = bBinary && !bClose ? (double)Spec.CompanionSeparationAU * 0.3 : 1.0e9;
 	Sys->SpawnPlanets(World, Rng, Loc, Spec.Name, Spec.StarClass, Rng.RandRange(4, 7), MaxPrimaryAu, SeedShift, Primary);
-	if (bBinary && Sys->Companion)
+	if (bBinary && Sys->Companion && !bClose)
 	{
 		Sys->SpawnPlanets(World, Rng, CLoc, Spec.Name + TEXT(" B"), Spec.CompanionClass, Rng.RandRange(1, 3), (double)Spec.CompanionSeparationAU * 0.3, SeedShift, Secondary);
 	}

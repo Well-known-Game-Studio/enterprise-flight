@@ -102,7 +102,9 @@ void AImpactor::BuildComet()
 		if (Glow)
 		{
 			UMaterialInstanceDynamic* M = UMaterialInstanceDynamic::Create(Glow, this);
-			if (M) { M->SetVectorParameterValue(TEXT("Color"), FLinearColor(0.55f, 0.75f, 1.f) * (C == Coma ? 1.5f : 0.6f)); C->SetMaterial(0, M); }
+			// (The glow material's own colour and brightness: the coma at the material's default of 60, as it has always
+			// drawn, the tail at four tenths of it.)
+			if (M) { M->SetVectorParameterValue(TEXT("GlowColor"), FLinearColor(0.55f, 0.75f, 1.f)); M->SetScalarParameterValue(TEXT("Intensity"), C == Coma ? 60.f : 24.f); C->SetMaterial(0, M); }
 		}
 		C->SetVisibility(true);
 	}

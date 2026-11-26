@@ -136,6 +136,12 @@ public:
 	void InitForTest(UMissionSubsystem* InMissions, class UFrontierSubsystem* InFrontier = nullptr);
 	/** The catalogue from a seed (pure): designations unique, bearings apart, distances 6..30 ly. */
 	static TArray<FCatalogueEntry> MakeCatalogue(int32 Seed, int32 Count);
+	/** The catalogue's remarkable stars, after the ordinary ones and on a stream of their own (so those are as they
+	 *  were, and a catalogue saved before there were any keeps its charts and has them added): a young star in its
+	 *  disk, a white dwarf in its planetary nebula, a close pair trading gas, a black hole. Placed apart from the ordinary ones and named as they are. */
+	static TArray<FCatalogueEntry> MakeRemarkable(int32 Seed, const TArray<FCatalogueEntry>& Ordinary);
+	/** The ordinary dozen and the remarkable after them: the catalogue a new game has. */
+	static TArray<FCatalogueEntry> MakeFullCatalogue(int32 Seed, int32 Count);
 	static constexpr int32 CatalogueSeed = 2461;
 	static constexpr int32 CatalogueCount = 12;
 	static constexpr double RevealCm = 9.4607e17;   // a light-year
