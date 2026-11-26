@@ -85,6 +85,16 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star")
 	float SpinDegPerSec = 0.05f;
 
+	/** A young star (StarSystem's EStellarKind): its protoplanetary disk in its equator, out to DiskOuterAu, parted by
+	 *  DiskGaps gaps, and twin jets from its poles JetLengthAu long. Hidden on any other star. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star|Young") bool bYoung = false;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star|Young") float DiskOuterAu = 4.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star|Young") int32 DiskGaps = 2;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star|Young") float JetLengthAu = 5.f;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UStaticMeshComponent> Disk;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UStaticMeshComponent> JetNorth;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UStaticMeshComponent> JetSouth;
+
 	/** How spotted the star is: 0 a clean disc, 1 eight spot groups at once (the photosphere's Activity). Its spots,
 	 *  and where and when they come, are drawn from its name. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star", meta = (ClampMin = "0", ClampMax = "1"))
@@ -122,6 +132,14 @@ public:
 private:
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> StarMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> CoronaMID;
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> DiskMID;
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> JetMID;
+	void ApplyYoung();
+	/** Place the disk and jets for the camera: a copy shrunk toward the camera along the line of sight, the same angles,
+	 *  so that its farthest point lies within YoungProxyCm: inside the ship's star sphere (5e11 cm, opaque, where the
+	 *  sky is drawn) and the render horizon, both of which a disk of AUs would cross. As it is, when it fits. */
+	void PlaceYoung(const FVector& ViewLoc);
+	static constexpr double YoungProxyCm = 4.5e11;
 	UPROPERTY(Transient) TObjectPtr<UNiagaraComponent> Ejecta;
 	void TickEjecta(float DeltaTime);
 	/** Seconds to the next ejection, and the seconds left of the one going. */

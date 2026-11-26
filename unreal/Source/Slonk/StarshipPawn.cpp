@@ -3139,6 +3139,21 @@ void AStarshipPawn::ProcessDebugCommand()
 		TakeDamage(Arg(1, 15.f), FDamageEvent(), nullptr, nullptr);
 	}
 	else if (Op == TEXT("jump")) { JumpToNavTarget(); }
+	else if (Op == TEXT("star") && ArgStr(1) == TEXT("young"))
+	{
+		// star young: dev, the nearest star made young (its disk and jets), to see them without travelling to one.
+		AStarBody* Best = nullptr; double BestD = TNumericLimits<double>::Max();
+		for (TActorIterator<AStarBody> It(GetWorld()); It; ++It) { const double D = FVector::DistSquared(It->GetActorLocation(), GetActorLocation()); if (D < BestD) { BestD = D; Best = *It; } }
+		// (star young <degrees> [disk AU]: its axis tipped that far, so its disk is not seen edge-on from the planets'
+		// plane; and its disk that wide, its jets half again as long, to see it from outside.)
+		if (Best)
+		{
+			Best->bYoung = true; Best->Activity = 1.f;
+			if (Args.Num() > 2) { Best->SetActorRotation(FRotator(Arg(2, 0.f), 0.f, 0.f)); }
+			if (Args.Num() > 3) { Best->DiskOuterAu = FMath::Max(Arg(3, 4.f), 0.05f); Best->JetLengthAu = Best->DiskOuterAu * 1.5f; }
+			Best->ApplyAppearance();
+		}
+	}
 	else if (Op == TEXT("star") && ArgStr(1) == TEXT("cme"))
 	{
 		// star cme: an ejection now from the nearest star.

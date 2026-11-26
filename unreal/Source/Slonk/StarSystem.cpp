@@ -141,6 +141,19 @@ void AStarSystem::ApplyStarClass(AStarBody* S, EStarClass Class, FRandomStream& 
 	}
 }
 
+EStellarKind AStarSystem::StellarKindFor(const FStarSystemSpec& Spec)
+{
+	// (A stream of its own off the seed: the catalogue's own draws are untouched.)
+	FRandomStream K((int32)HashCombine((uint32)Spec.Seed, 0x2c1b3c6du));
+	const float Roll = K.FRand();
+	if (Roll < 1.f / 12.f)
+	{
+		if (Spec.StarClass == EStarClass::K || Spec.StarClass == EStarClass::M) { return EStellarKind::YoungTTauri; }
+		if (Spec.StarClass == EStarClass::A || Spec.StarClass == EStarClass::F) { return EStellarKind::YoungHerbig; }
+	}
+	return EStellarKind::Ordinary;
+}
+
 double AStarSystem::LuminosityScale(EStarClass Class)
 {
 	// Orbit scale of the temperate band relative to the Sun's: sqrt of the luminosity, roughly.
@@ -237,6 +250,19 @@ AStarSystem* AStarSystem::Generate(UWorld* World, const FStarSystemSpec& Spec, c
 	if (!S) { return Sys; }
 	S->StarName = Spec.Name;
 	ApplyStarClass(S, Spec.StarClass, Rng);
+	// A young star: still in the disk it formed from, jets from its poles; restless, spotted. (Its sizes from a stream
+	// of its own, so the system's own draws are as they were.)
+	const EStellarKind Kind = StellarKindFor(Spec);
+	if (Kind == EStellarKind::YoungTTauri || Kind == EStellarKind::YoungHerbig)
+	{
+		FRandomStream Y((int32)HashCombine((uint32)Spec.Seed, 0x6a09e667u));
+		const bool bHerbig = Kind == EStellarKind::YoungHerbig;
+		S->bYoung = true;
+		S->Activity = 1.f;
+		S->DiskOuterAu = bHerbig ? Y.FRandRange(6.f, 14.f) : Y.FRandRange(2.5f, 7.f);
+		S->DiskGaps = Y.RandRange(1, 4);
+		S->JetLengthAu = S->DiskOuterAu * Y.FRandRange(0.8f, 1.6f);
+	}
 	S->FinishSpawning(FTransform(Loc));
 	Sys->Star = S;
 	Sys->Adopt(S);

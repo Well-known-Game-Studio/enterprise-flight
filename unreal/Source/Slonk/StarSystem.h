@@ -20,6 +20,19 @@ enum class EStarClass : uint8
 	None UMETA(DisplayName = "None")
 };
 
+/** What else a star is, beyond its class: young and still in its birth disk, a dying star's shed shells, a close
+ *  pair trading gas. Drawn from the system's seed on a stream of its own (StellarKindFor), so a catalogue made before
+ *  there were kinds keeps every star where it was. */
+UENUM(BlueprintType)
+enum class EStellarKind : uint8
+{
+	Ordinary,
+	/** A young sun-like star (T Tauri): an orange or red star still in its protoplanetary disk, jets from its poles. */
+	YoungTTauri,
+	/** A young hot star (Herbig Ae/Be): white or yellow-white, its disk the larger and brighter. */
+	YoungHerbig,
+};
+
 /** Where a neighbouring system sits: a real-sky bearing (right ascension, declination) and distance in light-years. */
 USTRUCT(BlueprintType)
 struct FStarSystemSpec
@@ -101,6 +114,8 @@ public:
 
 	/** sqrt of a class's luminosity relative to the Sun: orbit radii scale by it so the temperate band stays put. */
 	static double LuminosityScale(EStarClass Class);
+	/** What else the star of a spec is (see EStellarKind): one young star in twelve among the cool and the hot. */
+	static EStellarKind StellarKindFor(const FStarSystemSpec& Spec);
 
 	/** Roman numeral for a planet or moon's place (0-based), "I".."XII". */
 	static const TCHAR* Numeral(int32 Index);

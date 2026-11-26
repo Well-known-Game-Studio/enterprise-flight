@@ -56,6 +56,27 @@ AStarBody::AStarBody()
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> PlaneFinder(TEXT("/Engine/BasicShapes/Plane.Plane"));
 	if (PlaneFinder.Succeeded()) { Corona->SetStaticMesh(PlaneFinder.Object); }
 
+	// A young star's disk (an engine plane in its equator) and its jets (engine cones from its centre out along its
+	// axis), in absolute scale; hidden unless it is young (ApplyYoung).
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> ConeFinder(TEXT("/Engine/BasicShapes/Cone.Cone"));
+	auto Part = [this](const TCHAR* Name, UStaticMesh* Mesh)
+	{
+		UStaticMeshComponent* C = CreateDefaultSubobject<UStaticMeshComponent>(Name);
+		C->SetupAttachment(Body);
+		C->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		C->SetMobility(EComponentMobility::Movable);
+		C->SetUsingAbsoluteScale(true);
+		C->SetUsingAbsoluteLocation(true);
+		C->SetUsingAbsoluteRotation(true);
+		C->CastShadow = false;
+		C->SetVisibility(false);
+		if (Mesh) { C->SetStaticMesh(Mesh); }
+		return C;
+	};
+	Disk = Part(TEXT("Disk"), PlaneFinder.Succeeded() ? PlaneFinder.Object : nullptr);
+	JetNorth = Part(TEXT("JetNorth"), ConeFinder.Succeeded() ? ConeFinder.Object : nullptr);
+	JetSouth = Part(TEXT("JetSouth"), ConeFinder.Succeeded() ? ConeFinder.Object : nullptr);
+
 	StarMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_Star.M_Star")));
 	CoronaMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_StarGlow.M_StarGlow")));
 	EjectaSystem = TSoftObjectPtr<UNiagaraSystem>(FSoftObjectPath(TEXT("/Game/Slonk/FX/NS_StarEjecta.NS_StarEjecta")));
@@ -112,12 +133,73 @@ void AStarBody::ApplyAppearance()
 		CoronaMID->SetScalarParameterValue(TEXT("Activity"), Activity);
 		CoronaMID->SetScalarParameterValue(TEXT("Seed"), (float)(GetTypeHash(StarName) % 997u));
 	}
+	ApplyYoung();
+}
+
+void AStarBody::ApplyYoung()
+{
+	if (!Disk || !JetNorth || !JetSouth) { return; }
+	// (Seen from any distance: beyond the star's own horizon they are drawn shrunk toward the camera, PlaceYoung.)
+	Disk->SetVisibility(bYoung);
+	JetNorth->SetVisibility(bYoung);
+	JetSouth->SetVisibility(bYoung);
+	if (!bYoung) { return; }
+	constexpr double AuCm = 1.495978707e13;
+	const double Outer = FMath::Max((double)DiskOuterAu, 0.2) * AuCm;
+	auto Mat = [this](TObjectPtr<UMaterialInstanceDynamic>& Slot, const TCHAR* Path, const TCHAR* Debug)
+	{
+		if (!Slot)
+		{
+			if (UMaterialInterface* M = SlonkMaterials::LoadOrFallback(TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(Path)), Debug)) { Slot = UMaterialInstanceDynamic::Create(M, this); }
+		}
+		return Slot.Get();
+	};
+	if (UMaterialInstanceDynamic* D = Mat(DiskMID, TEXT("/Game/Slonk/Materials/M_StarDisk.M_StarDisk"), TEXT("StarDisk")))
+	{
+		Disk->SetMaterial(0, D);
+		// The inner edge a few tenths of an AU out, the star's own colour on the dust, and its gaps by its name.
+		D->SetScalarParameterValue(TEXT("InnerFrac"), (float)FMath::Clamp((0.05 * AuCm + GetRadiusCm() * 8.0) / Outer, 0.01, 0.3));
+		D->SetScalarParameterValue(TEXT("GapCount"), (float)DiskGaps);
+		D->SetScalarParameterValue(TEXT("Seed"), (float)(GetTypeHash(StarName) % 997u));
+		D->SetVectorParameterValue(TEXT("StarColor"), StarColor);
+	}
+	if (UMaterialInstanceDynamic* J = Mat(JetMID, TEXT("/Game/Slonk/Materials/M_StarJet.M_StarJet"), TEXT("StarJet")))
+	{
+		JetNorth->SetMaterial(0, J);
+		JetSouth->SetMaterial(0, J);
+	}
+}
+
+void AStarBody::PlaceYoung(const FVector& ViewLoc)
+{
+	if (!bYoung || !Disk || !JetNorth || !JetSouth) { return; }
+	constexpr double AuCm = 1.495978707e13;
+	const FVector Centre = GetActorLocation();
+	const double Dist = FVector::Dist(Centre, ViewLoc);
+	// Everything at k of its size and k of the way from the camera (the same angles), k such that the farthest
+	// reach of the disk or a jet is within the proxy distance.
+	const double Reach = Dist + FMath::Max((double)DiskOuterAu, (double)JetLengthAu) * AuCm;
+	const double K = FMath::Min(1.0, YoungProxyCm / FMath::Max(Reach, 1.0));
+	const FVector At = ViewLoc + (Centre - ViewLoc) * K;
+	const FQuat Q = GetActorQuat();
+	const FVector Up = Q.GetUpVector();
+	const double Outer = FMath::Max((double)DiskOuterAu, 0.2) * AuCm;
+	// The plane is 100 cm across and faces +Z, the star's axis: laid in its equator.
+	Disk->SetWorldLocationAndRotation(At, Q);
+	Disk->SetWorldScale3D(FVector(Outer * 2.0 * K / 100.0));
+	// The cone is 100 cm tall, its point at +50 z and its base, 50 cm across, at -50: each jet's point at the centre.
+	const double L = FMath::Max((double)JetLengthAu, 0.2) * AuCm;
+	const double W = L * 0.035;
+	JetNorth->SetWorldLocationAndRotation(At + Up * (L * 0.5 * K), Q * FQuat(FVector::RightVector, PI));
+	JetNorth->SetWorldScale3D(FVector(W * K / 100.0, W * K / 100.0, L * K / 100.0));
+	JetSouth->SetWorldLocationAndRotation(At - Up * (L * 0.5 * K), Q);
+	JetSouth->SetWorldScale3D(FVector(W * K / 100.0, W * K / 100.0, L * K / 100.0));
 }
 
 void AStarBody::SetBeyondHorizon(bool bBeyond)
 {
 	bBeyondHorizon = bBeyond;
-	SetActorHiddenInGame(bBeyond);
+	SetActorHiddenInGame(bBeyond && !bYoung);   // (a young star's disk and jets are drawn from any distance: only its body and glow hide)
 #if WITH_EDITOR
 	if (GetWorld() && !GetWorld()->IsGameWorld())
 	{
@@ -126,6 +208,8 @@ void AStarBody::SetBeyondHorizon(bool bBeyond)
 #endif
 	if (Body) { Body->SetVisibility(!bBeyond); }
 	if (Corona) { Corona->SetVisibility(!bBeyond); }
+	// (A young star's disk and jets stay: they are placed for the camera, PlaceYoung.)
+	if (bYoung && Disk && JetNorth && JetSouth) { Disk->SetVisibility(true); JetNorth->SetVisibility(true); JetSouth->SetVisibility(true); }
 }
 
 void AStarBody::OnConstruction(const FTransform& Transform)
@@ -243,6 +327,7 @@ void AStarBody::Tick(float DeltaTime)
 		PC->GetPlayerViewPoint(ViewLoc, ViewRot);
 		const FVector ToCam = ViewLoc - GetActorLocation();
 		const double Dist = ToCam.Size();
+		PlaceYoung(ViewLoc);
 		// Past the hand-over distance the distant-star sprite on the player takes over.
 		const bool bNear = Dist < FarSpriteDistanceCm;
 		if (Corona->IsVisible() != (bNear && !bBeyondHorizon))
