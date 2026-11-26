@@ -11,7 +11,7 @@
 #include "Missions.generated.h"
 
 UENUM(BlueprintType)
-enum class EMissionKind : uint8 { Survey = 0, Rescue, Diplomacy, Delivery, Anomaly, Medical, Patrol, Contact, Derelict, Smuggler, Support, Assist, Explore, FirstContact, PreWarp, Beacon, Outpost, Colony, Starbase, Impact, TimeLoop, Count UMETA(Hidden) };
+enum class EMissionKind : uint8 { Survey = 0, Rescue, Diplomacy, Delivery, Anomaly, Medical, Patrol, Contact, Derelict, Smuggler, Support, Assist, Explore, FirstContact, PreWarp, Beacon, Outpost, Colony, Starbase, Impact, TimeLoop, Leviathan, Count UMETA(Hidden) };
 
 UENUM(BlueprintType)
 enum class EMissionSource : uint8 { Starfleet = 0, Starbase, Event, Fleet, Count UMETA(Hidden) };
@@ -143,7 +143,9 @@ struct FMission
 	UPROPERTY() double People = 0.0;
 	/** A mission that comes round again (a loop in time): which pass this is, from 0; what it has learned, kept from
 	 *  pass to pass; how many hours a pass has, and how many this one has left. The hours are spent by what is done
-	 *  in them (FMissionOption::Hours), never by the clock: the board can be read at leisure. */
+	 *  in them (FMissionOption::Hours), never by the clock: the board can be read at leisure. Any mission with hours
+	 *  to a pass is budgeted so (a leviathan alongside has the one pass: its Pass counts the times the same creature
+	 *  was left astern, and its hours are the work that can be done before it is against the hull). */
 	UPROPERTY(BlueprintReadOnly) int32 Pass = 0;
 	UPROPERTY(BlueprintReadOnly) TArray<FName> Marks;
 	UPROPERTY(BlueprintReadOnly) double PassHours = 0.0;
@@ -194,6 +196,8 @@ struct FMissionShipState
 	FString StationName;
 	bool bAtWarp = false;
 	bool bUnderFire = false;
+	/** In open space: not landed, and not down in a world's air (where nothing kilometres long can follow). */
+	bool bClearSpace = true;
 };
 
 /** What an act came to, for the console and the panel. */
@@ -212,6 +216,8 @@ class UFleetSubsystem;
 class UExplorationSubsystem;
 class UFrontierSubsystem;
 enum class EImpactOutcome : uint8;
+/** What the ship's own guns did to a leviathan alongside: the first shot into it, and the shot that turned it. */
+enum class ELeviathanOutcome : uint8 { Struck = 0, Driven };
 
 UCLASS()
 class SLONK_API USlonkMissionSaveGame : public USaveGame
@@ -258,13 +264,23 @@ public:
 	void RenameTarget(const FString& OldName, const FString& NewName);
 	/** The ship is held in a loop in time: no orders reach her and nothing else happens to her until it is broken. */
 	bool IsHeldInTime() const;
+	/** A leviathan lies alongside: its hours are spent by what is done under it, never by the clock, so the clock
+	 *  runs at x1 while it is there. */
+	bool IsCompanyAlongside() const;
+	/** Something has just come alongside: the helm's rote is to be let go, the once (an autopilot leg that went to
+	 *  warp of itself would leave it astern unasked). */
+	bool TakeHelmStop() { const bool bStop = bHelmStop; bHelmStop = false; return bStop; }
 	/** Ship's hours left of the pass of a mission that comes round again (0 for any other). */
 	double PassHoursLeft(const FMission& M) const;
 	/** The pass has the hours the option takes (always, for a mission that does not come round). */
 	bool HasHoursFor(const FMission& M, const FMissionOption& O) const;
 	/** What the ship's earlier missions left behind them for later ones: a lock on the old road answered
-	 *  (Lock.Answered: every later fold's stone is known at sight) or broken (Lock.Broken: every later stone is the
-	 *  harder to answer). Lock.Ridden is kept too; nothing reads it yet. */
+	 *  (Lock.Answered: every later fold's stone is known at sight, and a leviathan may know the road's beats) or
+	 *  broken (Lock.Broken: every later stone is the harder to answer, and a leviathan comes on the faster).
+	 *  Lock.Ridden is kept too; nothing reads it yet. A leviathan given what it wanted (Leviathan.Given: the next
+	 *  one's call is read as it comes up) or driven off by her guns (Leviathan.Blooded: the next comes on fast); each
+	 *  of the two unsays the other. One left astern (Leviathan.Astern) is the same creature come back: the mark is
+	 *  spent when it does. */
 	bool Remembers(FName What) const { return Legacy.Contains(What); }
 	const TArray<FName>& GetLegacy() const { return Legacy; }
 	/** The warp core is cold after a shutdown: the drive does not answer until it is lit again. */
@@ -289,12 +305,16 @@ public:
 	EMissionTarget TargetKindOf(const FMission& M) const;
 	/** The rock reported in from the world: missed, broken, or landed. The mission closes either way. */
 	void ImpactOutcome(const FString& Rock, const FString& World, EImpactOutcome Outcome);
+	/** The leviathan of this mission reported in from the world: the ship has fired on it, or her guns have turned it. */
+	void LeviathanOutcome(int32 MissionId, ELeviathanOutcome Outcome);
 	double Hours() const;
 	/** Dev: an order, a posting or an event of this kind, now. */
 	/** Returns the new id; -1 when nothing could be made (no target in reach), -2 when the kind brings its own hull and so only happens as an event. */
 	int32 DevSpawn(EMissionKind Kind, EMissionSource Source);
 	/** The same with the target named (a proposal's system, a rock's world); Site for a colony's system. */
 	int32 DevSpawnAt(EMissionKind Kind, EMissionSource Source, const FString& Target, const FString& Site);
+	/** Dev and tests: an earlier mission's leaving, as if it had happened (see Remembers). */
+	void DevRemember(FName What) { Legacy.AddUnique(What); }
 	/** The fleet ship's own work ended (done or failed): whatever of ours was on it closes. */
 	void FleetWorkOver(int32 MissionId, bool bTheirSuccess);
 	/** A fleet ship's request or offer is withdrawn (she managed, she is lost, she was recalled): closed, nothing owed. */
@@ -360,6 +380,11 @@ private:
 	void BeginPass(FMission& M);
 	/** Out of a fold in time: what follows from the way out that was taken (FMission::Exit). */
 	void LeaveFold(FMission& M, const FMissionOption& O);
+	/** A leviathan alongside: its body in the world; what an act on the board costs beyond its hours and shows on the
+	 *  creature; and what follows from the way it was parted from (FMission::Exit). */
+	void SpawnLeviathan(FMission& M);
+	void LeviathanAfter(FMission& M, const FMissionOption& O, bool bSuccess);
+	void LeaveLeviathan(FMission& M);
 	/** Closed from outside the captain's choices (the rock missed): complete, paid, reported. */
 	void CompleteOutside(FMission& M, const FString& Why, const FString& Text);
 	void Expire();
@@ -403,5 +428,6 @@ private:
 	/** What earlier missions left behind them (saved), and the ship's hour a cold core is lit again (saved). */
 	TArray<FName> Legacy;
 	double DriveColdUntilHours = 0.0;
+	bool bHelmStop = false;
 	static const TCHAR* SlotName;
 };

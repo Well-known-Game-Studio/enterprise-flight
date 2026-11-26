@@ -118,6 +118,36 @@ and its twelve hours), the hard point broken with nothing known but the fold (le
 next stone harder), the closing ridden (five to eleven whole days on, closed where she came out). Not covered by a
 test, and seen in the game instead: the drive let go while held or cold, and the blows to the ship (they are the
 ship's own, and the tests have no ship); nor the one-in-sixteen roll and its ten days, nor the save.
+
+`Slonk.Missions.Leviathan*` cover a leviathan alongside. `Leviathan`: alongside at once with its seven hours; not to
+be abandoned from the board; its hours untouched by thirty hours of the clock; an act's hours taken carried or not,
+of the work left and of the stars' time, and the board saying how near that brings it; a finding kept, off the board
+and its science earned the once; what the hours left will not cover refused with nothing spent; a gift it does not
+want done as ordered with no check; at no hours alongside still a day on, nothing that takes hours to be had, and
+standing fast (an order) ending it for small regard and the science of seeing what it did; its station (`StationCm`)
+at seven hours, at none and with the road's hours given back; one offered turned down, or alongside from the
+accepting, with the helm's rote let go the once. `LeviathanWant`: in ninety-six meetings one gift of four is wanted,
+nothing shown of a gift varies from one meeting to the next, the three findings strike out three different wants and
+never the wanted one, and each of the four is wanted somewhere; a wrong gift's hours and one more, its mark, its
+line on the board, and twelve off the regard of the right one after it; the next of its kind with its call on file;
+a full investigation leaving the hours for the wanted gift and not for the cold core, and the tending's watch lived.
+`LeviathanExits`: the first shot the once and the driving off (no regard, the pieces' science, the next with five
+hours); left astern at warp (the captain's leaving, nothing counted, the same want and what was learned back with two
+hours fewer, the third leaving the last), by going down into air, and not by a drive found engaged at the first
+look; a shot and a refused gift carried across a leaving, and a shot at the second meeting no first shot again; the
+hours never under three, and less patience promised only where there is less; twelve off the regard for a shot,
+six for a leaving, and its floor of five; the cold core cold whether wanted or not, a cold ship not leaving at
+warp, and the refusal saying so; the lee's day and where it closes; one that wants quiet taking the core when stood
+fast for; the road's beats (three hours for one, the once), the broken lock's hour, a giving unsaid by a burning
+and a burning by a giving. `LeviathanRoll` lives a hundred and twenty days three times, hour by hour: out of open
+space no leviathan comes; in it the same events fall, the same, up to the first leviathan; strangers keep ten days
+apart; and one left astern is the next of its kind to come, the same creature, two days on or a little more. A
+check that must carry inside the hours is tried under one crew after another. Not covered by a test, and seen in
+the game instead: its body (station at rest and under way, turning, the ripples, the lash, its going), the ship's
+guns and beam on it, the blows, the lockers and the hull, the autopilot let go, and what the panel and the HUD say
+of it; nor the rate of the roll (one in sixteen), the save, what the crew carry of it (`Beast.*`), the scanner's
+refusal, or the clock's hold. That the events without a leviathan are the events there were before is read from the
+roll (its draw is a stream of its own), not tested.
 `Slonk.Landmarks.*` (Tests/SlonkLandmarkTests.cpp) covers a strange world's landmarks (Landmarks.h): none rolled to
 strangeness 0.15 or on a world with no ground, the same on every roll and kept as the world grows stranger, arches, a
 vanished people's stones (monoliths or great rings, never both), reef towers, mound cities and giant shells at their

@@ -240,7 +240,18 @@ void UShipSystemsComponent::TickMissions(float DeltaTime, const TArray<FString>&
 	St.bAlongside = bAlongside; St.StationName = StationName;
 	St.bAtWarp = S->WarpDrive && S->WarpDrive->IsWarpEngaged();
 	St.bUnderFire = IsUnderFire();
+	// (Open space, as the clock tells it: not landed, and not down in a world's air.)
+	St.bClearSpace = !(S->Movement && (S->Movement->bLanded || (S->Movement->AltitudeAGLCm >= 0.0 && S->Movement->AltitudeAGLCm < 2.0e7)));
 	M->AdvanceSeconds(DeltaTime, St, RealDeltaTime);
+	// Something has come alongside: the helm's rote is let go, and the way it had on her with it (a leg that went to
+	// warp of itself, or carried on down into a world's air, would leave it astern with nobody having chosen to). A
+	// throttle set by hand is the captain's, and is left.
+	if (M->TakeHelmStop() && M->IsCompanyAlongside() && S->AutopilotState != 0)   // (not for one already left astern)
+	{
+		S->SetAutopilot(0, 0.0, 0.f);
+		if (S->Movement) { S->Movement->SetThrottle(0.0); }
+		Report(EStation::Helm, TEXT("Autopilot off and all stop, Captain: it is too close aboard to fly her by rote."), FLinearColor(1.f, 0.85f, 0.5f));
+	}
 	// A ship held in a fold in time gets nowhere at warp: every heading bends back, and the drive is let go (the once:
 	// a drive already dropping is left to it). A cold core does not answer either, until it is lit again.
 	if (St.bAtWarp && S->WarpDrive->GetState() != EWarpState::Dropping && (M->IsHeldInTime() || M->IsDriveCold())) { S->SetAutopilot(0, 0.0, 0.f); S->WarpDrive->DisengageWarp(); }

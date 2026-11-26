@@ -8,6 +8,7 @@
 #include "StarshipPawn.h"
 #include "StarshipHUD.h"
 #include "CrewRoster.h"
+#include "Leviathan.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/ScrollBox.h"
 #include "Components/ScrollBoxSlot.h"
@@ -205,6 +206,8 @@ void UMissionPanel::FillFile()
 	AddLine(FileBox, Ms->Title, 20.f, Lcars::Peach, true, false);
 	Line(FString::Printf(TEXT("%s, from %s; %s. %s%s"), *UMissionSubsystem::KindName(Ms->Kind), *Ms->From, *UMissionSubsystem::StateName(Ms->State).ToLower(), Ms->TargetName.IsEmpty() ? TEXT("") : *FString::Printf(TEXT("At %s%s. "), *Ms->TargetName, M->IsAtTarget(*Ms) ? TEXT(" (in range)") : TEXT("")), !Ms->IsOpen() ? *FString::Printf(TEXT("Closed stardate %.1f."), Ms->ClosedStardate)
 		: Ms->Kind == EMissionKind::TimeLoop ? *FString::Printf(TEXT("Pass %d; the fold closes in %.1f hours."), Ms->Pass + 1, M->PassHoursLeft(*Ms))
+		: Ms->Kind == EMissionKind::Leviathan && Ms->State == EMissionState::Active ? (M->PassHoursLeft(*Ms) < 0.5 ? TEXT("It lies against the hull.")
+			: *FString::Printf(TEXT("It lies %.0f km off; against the hull in %.0f %s work."), ALeviathan::StationCm(M->PassHoursLeft(*Ms)) / 1.0e5, M->PassHoursLeft(*Ms), M->PassHoursLeft(*Ms) < 1.5 ? TEXT("hour's") : TEXT("hours'")))
 		: *FString::Printf(TEXT("Due by stardate %.1f."), Ms->DeadlineStardate)), 13.f, Lcars::Dim);
 	Line(Ms->Brief, 14.f, FLinearColor::White, 6.f);
 	if (!Ms->Group.IsNone()) { Line(FString::Printf(TEXT("Concerns the %s. The crew's feelings about them weigh on every check, and what happens here will move them."), *Ms->Group.ToString()), 13.f, Lcars::Gold, 4.f); }

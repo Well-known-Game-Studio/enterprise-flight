@@ -94,7 +94,7 @@ void UMainMenuPanel::BuildContent()
 	{
 		AStarshipPawn* S = GetShip();
 		const AActor* T = (S && S->Weapons) ? S->Weapons->LockedTarget.Get() : nullptr;
-		return T ? T->GetActorNameOrLabel() : FString(TEXT("none"));
+		return !T ? FString(TEXT("none")) : Cast<ASpaceTarget>(T) ? Cast<ASpaceTarget>(T)->GetDisplayName() : T->GetActorNameOrLabel();
 	});
 	AddLiveRow(Content, TEXT("Science"), [this]()
 	{
@@ -546,7 +546,7 @@ void UTacticalPanel::BuildContent()
 	{
 		AStarshipPawn* S = GetShip(); if (!S || !S->Weapons) { return; }
 		S->Weapons->CycleTarget();
-		if (S->Systems) { S->Systems->Report(EStation::Tactical, S->Weapons->LockedTarget ? FString::Printf(TEXT("Target locked: %s."), *(Cast<ASpaceVessel>(S->Weapons->LockedTarget) ? Cast<ASpaceVessel>(S->Weapons->LockedTarget)->GetDisplayName() : S->Weapons->LockedTarget->GetActorNameOrLabel())) : TEXT("No targets in range.")); }
+		if (S->Systems) { S->Systems->Report(EStation::Tactical, S->Weapons->LockedTarget ? FString::Printf(TEXT("Target locked: %s."), *(Cast<ASpaceVessel>(S->Weapons->LockedTarget) ? Cast<ASpaceVessel>(S->Weapons->LockedTarget)->GetDisplayName() : Cast<ASpaceTarget>(S->Weapons->LockedTarget) ? Cast<ASpaceTarget>(S->Weapons->LockedTarget)->GetDisplayName() : S->Weapons->LockedTarget->GetActorNameOrLabel())) : TEXT("No targets in range.")); }
 	});
 	AddSidebarButton(TEXT("Lock Nearest"), Lcars::Periwinkle, [this]() { AStarshipPawn* S = GetShip(); if (S && S->Weapons) { S->Weapons->LockNearest(); } });
 	AddSidebarButton(TEXT("Clear Target"), Lcars::Lilac, [this]() { AStarshipPawn* S = GetShip(); if (S && S->Weapons) { S->Weapons->ClearTarget(); } });
@@ -615,7 +615,7 @@ void UTacticalPanel::BuildContent()
 		if (!T) { return FString(TEXT("none locked")); }
 		const ASpaceVessel* V = Cast<ASpaceVessel>(T);
 		const ABorgCube* Borg = Cast<ABorgCube>(T);
-		FString Name = V ? V->GetDisplayName() : T->GetActorNameOrLabel();
+		FString Name = V ? V->GetDisplayName() : Cast<ASpaceTarget>(T) ? Cast<ASpaceTarget>(T)->GetDisplayName() : T->GetActorNameOrLabel();
 		FString Extra = V ? FString::Printf(TEXT("   hull %d%%"), FMath::RoundToInt(100.f * V->Health / FMath::Max(V->MaxHealth, 1.f))) : FString();
 		if (Borg && Borg->IsHostile()) { Extra += TEXT("   HOSTILE"); }
 		return FString::Printf(TEXT("%s   %s%s"), *Name, *KmText(FVector::Dist(T->GetActorLocation(), S->GetActorLocation())), *Extra);
@@ -653,7 +653,7 @@ void UTacticalPanel::FillContacts()
 		const bool bLocked = S->Weapons && S->Weapons->LockedTarget == A;
 		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 		USizeBox* NBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass()); NBox->SetWidthOverride(320.f);
-		NBox->AddChild(Lcars::MakeText(WidgetTree, (bLocked ? TEXT("> ") : TEXT("")) + (V ? V->GetDisplayName() : A->GetActorNameOrLabel()), 13.f, bHostile ? Lcars::Red : bLocked ? Lcars::Orange : FLinearColor::White, true, false));
+		NBox->AddChild(Lcars::MakeText(WidgetTree, (bLocked ? TEXT("> ") : TEXT("")) + (V ? V->GetDisplayName() : Cast<ASpaceTarget>(A) ? Cast<ASpaceTarget>(A)->GetDisplayName() : A->GetActorNameOrLabel()), 13.f, bHostile ? Lcars::Red : bLocked ? Lcars::Orange : FLinearColor::White, true, false));
 		Row->AddChildToHorizontalBox(NBox);
 		USizeBox* DBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass()); DBox->SetWidthOverride(120.f);
 		DBox->AddChild(Lcars::MakeText(WidgetTree, KmText(List[i].D), 13.f, Lcars::Dim, false, false));

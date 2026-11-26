@@ -7,6 +7,7 @@
 #include "StarSystem.h"
 #include "Exploration.h"
 #include "Impactor.h"
+#include "Leviathan.h"
 #include "BeltField.h"
 #include "Nebula.h"
 #include "SpaceVessel.h"
@@ -210,6 +211,8 @@ bool UScienceScannerComponent::InRange(const AActor* Actor, EScanKind K, double&
 bool UScienceScannerComponent::BeginScan(AActor* NewTarget, const FString& Label, FString& OutReason)
 {
 	EScanKind K;
+	// (What is to be learned of a leviathan alongside is learned by the work on the mission board.)
+	if (NewTarget && NewTarget->IsA<ALeviathan>()) { OutReason = TEXT("the scanner makes nothing of it: what is to be learned of it is on the mission board"); return false; }
 	if (!ClassifyTarget(NewTarget, K)) { OutReason = TEXT("nothing to scan: pick a nav target or lock a target"); return false; }
 	if (NewTarget == GetOwner()) { OutReason = TEXT("sensors cannot scan this ship"); return false; }
 	double Dist, Range;

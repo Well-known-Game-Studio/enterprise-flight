@@ -3,6 +3,7 @@
 #include "Exploration.h"
 #include "Frontier.h"
 #include "Impactor.h"
+#include "Leviathan.h"
 #include "GameClock.h"
 #include "CrewRoster.h"
 #include "SlonkLoadSubsystem.h"
@@ -311,6 +312,8 @@ void AStarshipHUD::DrawHUD()
 					FString T = FString::Printf(TEXT("MISSION  %s"), *Obj->Title.ToUpper());
 					// A loop in time: which pass of it this is, and how long until the fold closes again.
 					if (Obj->Kind == EMissionKind::TimeLoop) { T += FString::Printf(TEXT("   PASS %d   %.1f H"), Obj->Pass + 1, Mis->PassHoursLeft(*Obj)); }
+					// A leviathan alongside: how far off the beam it lies, and the hours of work before it is against the hull.
+					if (Obj->Kind == EMissionKind::Leviathan) { T += Mis->PassHoursLeft(*Obj) < 0.5 ? FString(TEXT("   AGAINST THE HULL")) : FString::Printf(TEXT("   %.0f KM OFF   %.0f H"), ALeviathan::StationCm(Mis->PassHoursLeft(*Obj)) / 1.0e5, Mis->PassHoursLeft(*Obj)); }
 					if (Mis->TargetKindOf(*Obj) != EMissionTarget::None) { T += Mis->IsAtTarget(*Obj) ? TEXT("   IN RANGE") : FString::Printf(TEXT("   AT %s"), *Mis->TargetNameOf(*Obj).ToUpper()); }
 					if (Mis->Active().Num() > 1) { T += FString::Printf(TEXT("   +%d MORE"), Mis->Active().Num() - 1); }
 					if (Offers > 0 || Mis->Unread() > 0) { T += FString::Printf(TEXT("   (%d offered, %d unread)"), Offers, Mis->Unread()); }
@@ -413,7 +416,8 @@ void AStarshipHUD::DrawHUD()
 		if (const AActor* Target = Weapons->LockedTarget)
 		{
 			const double Dist = FVector::Dist(Target->GetActorLocation(), Ship->GetActorLocation());
-			DrawText(FString::Printf(TEXT("TARGET   %s  %s"), *Target->GetActorNameOrLabel(), *FormatDistance(Dist)), Warning, X, Y, Font, UIScale); Y += Line;
+			// (A rock or a creature with a name of its own is called by it: an impactor, a leviathan.)
+			DrawText(FString::Printf(TEXT("TARGET   %s  %s"), Cast<ASpaceTarget>(Target) ? *Cast<ASpaceTarget>(Target)->GetDisplayName() : *Target->GetActorNameOrLabel(), *FormatDistance(Dist)), Warning, X, Y, Font, UIScale); Y += Line;
 
 			// Target box in screen space.
 			FVector Screen = Project(Target->GetActorLocation());
