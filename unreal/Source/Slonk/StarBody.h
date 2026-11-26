@@ -83,6 +83,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star")
 	float SpinDegPerSec = 0.05f;
 
+	/** How spotted the star is: 0 a clean disc, 1 eight spot groups at once (the photosphere's Activity). Its spots,
+	 *  and where and when they come, are drawn from its name. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star", meta = (ClampMin = "0", ClampMax = "1"))
+	float Activity = 0.6f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star|Materials") TSoftObjectPtr<UMaterialInterface> StarMaterial;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star|Materials") TSoftObjectPtr<UMaterialInterface> CoronaMaterial;
 

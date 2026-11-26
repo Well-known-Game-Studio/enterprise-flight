@@ -92,6 +92,8 @@ void AStarBody::ApplyAppearance()
 		StarMID->SetScalarParameterValue(TEXT("Intensity"), Intensity);
 		StarMID->SetScalarParameterValue(TEXT("LimbDarkening"), LimbDarkening);
 		StarMID->SetScalarParameterValue(TEXT("GranuleScale"), GranuleScale);
+		StarMID->SetScalarParameterValue(TEXT("Activity"), Activity);
+		StarMID->SetScalarParameterValue(TEXT("Seed"), (float)(GetTypeHash(StarName) % 997u));
 	}
 	if (CoronaMID)
 	{
@@ -101,6 +103,11 @@ void AStarBody::ApplyAppearance()
 		CoronaMID->SetScalarParameterValue(TEXT("Falloff"), CoronaFalloff);
 		// Where the photosphere disc ends inside the sprite (0..1 of the half-width).
 		CoronaMID->SetScalarParameterValue(TEXT("DiscFraction"), 1.0f / (1.0f + CoronaDepth));
+		// For the near look (the chromosphere, prominences and streamers): the star's size, its spots' activity and
+		// its own seed, as the photosphere has them.
+		CoronaMID->SetScalarParameterValue(TEXT("StarRadiusCm"), (float)GetRadiusCm());
+		CoronaMID->SetScalarParameterValue(TEXT("Activity"), Activity);
+		CoronaMID->SetScalarParameterValue(TEXT("Seed"), (float)(GetTypeHash(StarName) % 997u));
 	}
 }
 
@@ -182,6 +189,12 @@ void AStarBody::Tick(float DeltaTime)
 				CoronaMID->SetScalarParameterValue(TEXT("DiscFraction"), (float)(GetRadiusCm() * 2.0 / Width));
 				const float Radii = (float)(Dist / GetRadiusCm());
 				CoronaMID->SetScalarParameterValue(TEXT("Intensity"), CoronaIntensity * FMath::Clamp(Radii / 8.f, 1.f, 40.f));
+				// Close in, the corona's structure; from across the system, the halo and rays an eye sees. Crossed between
+				// twenty and sixty radii. And the star's north, so what stands on the limb stays put on the star.
+				CoronaMID->SetScalarParameterValue(TEXT("Near"), 1.f - FMath::SmoothStep(20.f, 60.f, Radii));
+				CoronaMID->SetScalarParameterValue(TEXT("CamRadii"), Radii);
+				const FVector Up = GetActorUpVector();
+				CoronaMID->SetVectorParameterValue(TEXT("StarUp"), FLinearColor((float)Up.X, (float)Up.Y, (float)Up.Z, 0.f));
 			}
 		}
 	}
