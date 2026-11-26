@@ -9,6 +9,7 @@ What it draws, by the direction from the star's centre in the star's own frame (
     forms elsewhere, and they drift with the star's differential rotation (the equator the faster);
   - faculae: bright patches round the spot groups, seen near the limb;
   - flares: now and then an active region flashes white for a few seconds;
+  - filaments: prominences seen from above, long dark threads across the disc, each living a while;
   - limb darkening, the limb the redder.
 
 Time is the material's own (real seconds times TimeRate), so the surface lives whatever the game clock does.
@@ -152,6 +153,40 @@ for (int i = 0; i < 8; ++i)
     flare += f * (1.0 - smoothstep(0.3 * r0, 2.5 * r0, dm)) * (0.6 + 0.8 * SlonkStarValue(d * 400.0 + T * 0.2));
 }
 b *= 1.0 + 0.22 * saturate(fac) * pow(m1, 1.2) * (0.6 + 0.8 * granule);
+
+// Filaments: prominences seen from above, long dark threads lying across the disc along the boundaries between
+// the active regions' fields; each its own slow life, a gentle curve, ragged and thinning toward its ends.
+float fil = 0.0;
+int nf = (int)clamp(Activity * 6.0 + 0.5, 0.0, 6.0);
+for (int j = 0; j < 6; ++j)
+{
+    if (j >= nf) { break; }
+    float3 hj = SlonkStarHash3(float3(j, Seed, 21.3));
+    float lifeF = 500.0 + 700.0 * hj.x;
+    float tf = T / lifeF + hj.y;
+    float epf = floor(tf), uf = tf - epf;
+    float3 hf = SlonkStarHash3(float3(j, epf, Seed + 31.7));
+    float growF = smoothstep(0.0, 0.2, uf) * (1.0 - smoothstep(0.75, 1.0, uf));
+    float latF = (hf.x < 0.5 ? -1.0 : 1.0) * (0.15 + 0.6 * hf.y);
+    float lonF = 6.2831853 * hf.z + T * 0.0010 * (1.0 - 0.7 * sin(latF) * sin(latF));
+    float3 c = float3(cos(latF) * cos(lonF), cos(latF) * sin(lonF), sin(latF));
+    float3 east = normalize(cross(float3(0.0, 0.0, 1.0), c));
+    float3 north = cross(c, east);
+    float ang = (hf.x - 0.5) * 2.0;
+    float3 t = east * cos(ang) + north * sin(ang);
+    float3 n = cross(c, t);
+    float L = 0.08 + 0.18 * frac(hf.y * 5.7);
+    float3 v = d - c;
+    if (dot(v, v) > (L + 0.05) * (L + 0.05)) { continue; }
+    float sp = clamp(dot(v, t), -L, L);
+    float bend = (frac(hf.z * 3.3) - 0.5) * 1.5;
+    float off = dot(v, n) - bend * sp * sp;
+    float along = sp / L;
+    float w = (0.0025 + 0.003 * frac(hf.z * 9.1)) * sqrt(saturate(1.0 - along * along)) * (0.7 + 0.6 * SlonkStarValue(d * 900.0 + j));
+    float core = exp(-pow(off / max(w, 1.0e-5), 2.0)) * step(abs(dot(v, t)), L);
+    fil = max(fil, core * growF * (0.6 + 0.4 * SlonkStarValue(d * 300.0 + T * 0.01)));
+}
+b *= 1.0 - 0.55 * fil;
 
 // Limb darkening (the Sun's quadratic law, scaled), and the limb the redder.
 float k = LimbDarkening / 0.35;

@@ -11,6 +11,8 @@
 class UStaticMeshComponent;
 class USphereComponent;
 class UMaterialInstanceDynamic;
+class UNiagaraComponent;
+class UNiagaraSystem;
 
 UCLASS()
 class SLONK_API AStarBody : public AActor, public IFarBody
@@ -107,9 +109,25 @@ public:
 	UFUNCTION(BlueprintCallable, CallInEditor, Category = "Star")
 	void PCGPostSpawn() { ApplyAppearance(); }
 
+	/** The plasma it throws off (NS_StarEjecta, tools/fx/star_ejecta.py): a steady wind from its surface, leaning to
+	 *  the poles, and now and then an ejection from an active region. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Star|Materials") TSoftObjectPtr<UNiagaraSystem> EjectaSystem;
+
+	/** An ejection now, from a latitude of the activity belts (dev: ship star cme). */
+	UFUNCTION(BlueprintCallable, Category = "Star")
+	void TriggerEjecta();
+	/** The same, from the limb as seen from here (so it is seen leaving the disc's edge). */
+	void TriggerEjectaSeenFrom(const FVector& ViewLocation);
+
 private:
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> StarMID;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> CoronaMID;
+	UPROPERTY(Transient) TObjectPtr<UNiagaraComponent> Ejecta;
+	void TickEjecta(float DeltaTime);
+	/** Seconds to the next ejection, and the seconds left of the one going. */
+	float NextEjectaIn = 30.f;
+	float EjectaLeft = 0.f;
+	FRandomStream EjectaRng;
 	int32 SettleTicks = 3;
 	bool bBeyondHorizon = false;
 	float MeshUnitRadius = 50.f;

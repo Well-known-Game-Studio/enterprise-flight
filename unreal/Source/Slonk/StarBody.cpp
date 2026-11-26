@@ -12,6 +12,8 @@
 #include "PlanetBody.h"
 #include "SlonkMaterials.h"
 #include "UObject/ConstructorHelpers.h"
+#include "NiagaraComponent.h"
+#include "NiagaraSystem.h"
 
 AStarBody::AStarBody()
 {
@@ -56,6 +58,7 @@ AStarBody::AStarBody()
 
 	StarMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_Star.M_Star")));
 	CoronaMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Slonk/Materials/M_StarGlow.M_StarGlow")));
+	EjectaSystem = TSoftObjectPtr<UNiagaraSystem>(FSoftObjectPath(TEXT("/Game/Slonk/FX/NS_StarEjecta.NS_StarEjecta")));
 
 	Tags.AddUnique(APlanetBody::StarTag);
 }
@@ -142,6 +145,76 @@ void AStarBody::BeginPlay()
 {
 	Super::BeginPlay();
 	ApplyAppearance();
+	// Its ejecta: one component at the centre, in cm about it (absolute scale: the body's is the radius), turning
+	// with the star. Game worlds only.
+	if (GetWorld() && GetWorld()->IsGameWorld())
+	{
+		if (UNiagaraSystem* Sys = EjectaSystem.LoadSynchronous())
+		{
+			Ejecta = NewObject<UNiagaraComponent>(this, TEXT("Ejecta"), RF_Transient);
+			Ejecta->SetupAttachment(Body);
+			Ejecta->SetUsingAbsoluteScale(true);
+			Ejecta->SetWorldScale3D(FVector::OneVector);
+			Ejecta->SetAsset(Sys);
+			Ejecta->SetCastShadow(false);
+			Ejecta->SetAutoActivate(true);
+			Ejecta->RegisterComponent();
+			const float R = (float)GetRadiusCm();
+			Ejecta->SetVariableFloat(TEXT("Radius"), R);
+			Ejecta->SetVariableFloat(TEXT("WindRate"), 6.f + 14.f * Activity);
+			Ejecta->SetVariableLinearColor(TEXT("WindColor"), FLinearColor(CoronaColor.R * 0.9f, CoronaColor.G * 0.9f, CoronaColor.B * 0.9f, 0.22f));
+			Ejecta->SetVariableLinearColor(TEXT("EjectaColor"), FLinearColor(3.2f, 2.7f, 2.2f, 0.3f));
+			Ejecta->SetVariableFloat(TEXT("EjectaRate"), 0.f);
+		}
+		EjectaRng.Initialize((int32)(GetTypeHash(StarName) ^ 0x5bd1e995u));
+		NextEjectaIn = EjectaRng.FRandRange(20.f, 90.f);
+	}
+}
+
+void AStarBody::TriggerEjecta()
+{
+	if (!Ejecta) { return; }
+	// From an activity belt, either side of the equator, anywhere round: a point on the surface in the star's frame.
+	const float Lat = (EjectaRng.FRand() < 0.5f ? -1.f : 1.f) * EjectaRng.FRandRange(0.1f, 0.55f);
+	const float Lon = EjectaRng.FRandRange(0.f, 2.f * PI);
+	const FVector Dir(FMath::Cos(Lat) * FMath::Cos(Lon), FMath::Cos(Lat) * FMath::Sin(Lon), FMath::Sin(Lat));
+	Ejecta->SetVariableVec3(TEXT("EjectaPos"), Dir * GetRadiusCm());
+	Ejecta->SetVariableFloat(TEXT("EjectaRate"), 500.f);
+	EjectaLeft = 1.6f;
+	UE_LOG(LogTemp, Log, TEXT("Star %s: an ejection at latitude %.0f"), *StarName, FMath::RadiansToDegrees(Lat));
+}
+
+void AStarBody::TriggerEjectaSeenFrom(const FVector& ViewLocation)
+{
+	if (!Ejecta) { return; }
+	// A point on the limb as seen from there: square to the line of sight, at a random angle round it, in the star's frame.
+	const FVector Los = (GetActorLocation() - ViewLocation).GetSafeNormal();
+	FVector A = FVector::CrossProduct(Los, GetActorUpVector()).GetSafeNormal();
+	if (A.IsNearlyZero()) { A = FVector::CrossProduct(Los, FVector::ForwardVector).GetSafeNormal(); }
+	const FVector B = FVector::CrossProduct(Los, A);
+	const float Ang = EjectaRng.FRandRange(0.f, 2.f * PI);
+	const FVector World = A * FMath::Cos(Ang) + B * FMath::Sin(Ang);
+	const FVector Local = Body->GetComponentQuat().UnrotateVector(World);
+	Ejecta->SetVariableVec3(TEXT("EjectaPos"), Local * GetRadiusCm());
+	Ejecta->SetVariableFloat(TEXT("EjectaRate"), 500.f);
+	EjectaLeft = 1.6f;
+}
+
+void AStarBody::TickEjecta(float DeltaTime)
+{
+	if (!Ejecta) { return; }
+	if (EjectaLeft > 0.f)
+	{
+		EjectaLeft -= DeltaTime;
+		if (EjectaLeft <= 0.f) { Ejecta->SetVariableFloat(TEXT("EjectaRate"), 0.f); }
+	}
+	// The more active the star, the more often: every two to six minutes at the Sun's middling activity.
+	NextEjectaIn -= DeltaTime;
+	if (NextEjectaIn <= 0.f)
+	{
+		NextEjectaIn = EjectaRng.FRandRange(120.f, 360.f) / FMath::Max(Activity / 0.6f, 0.1f);
+		if (Activity > 0.05f) { TriggerEjecta(); }
+	}
 }
 
 void AStarBody::Tick(float DeltaTime)
@@ -159,6 +232,8 @@ void AStarBody::Tick(float DeltaTime)
 	}
 	// Beyond the GPU precision horizon the player's distant-star sprite stands in for the mesh.
 	SetBeyondHorizon(IsLocationBeyondHorizon(GetActorLocation()));
+	TickEjecta(DeltaTime);
+	if (Ejecta && Ejecta->IsVisible() == bBeyondHorizon) { Ejecta->SetVisibility(!bBeyondHorizon); }
 
 	// Billboard the glow toward the player's camera and keep it a minimum angular size.
 	if (APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr)

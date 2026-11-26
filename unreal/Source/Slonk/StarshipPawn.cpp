@@ -3139,6 +3139,15 @@ void AStarshipPawn::ProcessDebugCommand()
 		TakeDamage(Arg(1, 15.f), FDamageEvent(), nullptr, nullptr);
 	}
 	else if (Op == TEXT("jump")) { JumpToNavTarget(); }
+	else if (Op == TEXT("star") && ArgStr(1) == TEXT("cme"))
+	{
+		// star cme: an ejection now from the nearest star.
+		AStarBody* Best = nullptr; double BestD = TNumericLimits<double>::Max();
+		for (TActorIterator<AStarBody> It(GetWorld()); It; ++It) { const double D = FVector::DistSquared(It->GetActorLocation(), GetActorLocation()); if (D < BestD) { BestD = D; Best = *It; } }
+		FVector ViewLoc; FRotator ViewRot;
+		if (APlayerController* PC = Cast<APlayerController>(GetController())) { PC->GetPlayerViewPoint(ViewLoc, ViewRot); } else { ViewLoc = GetActorLocation(); }
+		if (Best) { Best->TriggerEjectaSeenFrom(ViewLoc); }
+	}
 	else if (Op == TEXT("systems"))
 	{
 		// systems: list every star system with its distance.
